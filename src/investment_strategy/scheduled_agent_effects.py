@@ -37,7 +37,9 @@ from investment_strategy.scheduled_agent_action_model import (
     ObservationProvenance as ModelObservationProvenance,
 )
 from investment_strategy.scheduled_agent_application_carrier import (
+    _pr_identity_is_coherent,
     current_reviewed_implementation_head,
+    qualify_change_carrier,
     qualify_implementation_carrier,
     qualify_supersession_branch,
 )
@@ -206,6 +208,14 @@ def semantic_intent_payload(raw_worker_result: str) -> str:
                 kind == GITHUB_MUTATION_KIND
                 and payload.get("operation") == "application-materialize"
             )
+            retirement = (
+                kind == GITHUB_MUTATION_KIND
+                and decoded.get("role") == "lead"
+                and decoded.get("action") == "resolve-question"
+                and decoded.get("result_kind") == "ready"
+                and payload.get("operation") == "pull-request-update"
+                and payload.get("fields") == {"state": "closed"}
+            )
             checkpoint = (
                 kind == "issue-comment"
                 and decoded.get("role") == "executor"
@@ -213,7 +223,7 @@ def semantic_intent_payload(raw_worker_result: str) -> str:
                 and isinstance(payload.get("body"), str)
                 and cast(str, payload["body"]).splitlines()[:1] == ["SLICE_CHECKPOINT"]
             )
-            if materialization or checkpoint:
+            if materialization or retirement or checkpoint:
                 retained_effects.append({"kind": cast(str, kind), "payload_json": payload_json})
     decoded["requested_effects"] = retained_effects
     return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
@@ -867,7 +877,7 @@ def _typed_application_plan(
 
 
 _ALLOWED_ISSUE_FIELDS = frozenset({"title", "body"})
-_ALLOWED_PR_FIELDS = frozenset({"title", "body", "base"})
+_ALLOWED_PR_FIELDS = frozenset({"title", "body", "base", "state"})
 _ALLOWED_MERGE_METHODS = frozenset({"merge", "squash", "rebase"})
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
@@ -1302,6 +1312,38 @@ def apply_effect_batch(
         return typed_rejection
     if typed_decision is None or derived_effect is None:
         return ApplyResult(False, "typed application rejected:plan-missing")
+
+    # A Lead retirement is one exact, irreversible carrier effect.  Do not
+    # normalize away additional requested writes and then claim that only the
+    # closure was accepted. The Application's one derived formal ACTION_RESULT
+    # is not another semantic request. Enforce this on accepted-intent recovery.
+    if (
+        batch.typed_result is not None
+        and (batch.source.role, batch.source.action) == ("lead", "resolve-question")
+        and batch.typed_result.result.kind is ResultKind.READY
+        and any(
+            effect.kind == GITHUB_MUTATION_KIND
+            and (_effect_payload(effect) or {}).get("operation") == "pull-request-update"
+            and (_effect_payload(effect) or {}).get("fields") == {"state": "closed"}
+            for effect in batch.effects
+        )
+        and (
+            len(batch.effects) not in {1, 2}
+            or batch.effects[0].kind != GITHUB_MUTATION_KIND
+            or (
+                len(batch.effects) == 2
+                and not (
+                    batch.effects[1].kind == "issue-comment"
+                    and isinstance((_effect_payload(batch.effects[1]) or {}).get("body"), str)
+                    and cast(str, (_effect_payload(batch.effects[1]) or {})["body"]).splitlines()[
+                        :1
+                    ]
+                    == ["ACTION_RESULT"]
+                )
+            )
+        )
+    ):
+        return ApplyResult(False, "typed application rejected:retirement-effect-cardinality")
 
     if apply_derived:
         if derived_effect.kind == "routing-transition" and not _typed_successor_effect_matches(
@@ -2081,6 +2123,77 @@ class GitHubEffectAdapter:
             return None
         return payload
 
+    def _lead_retirement_target(
+        self,
+        number: int,
+        expected_head_sha: str,
+        *,
+        require_open: bool,
+    ) -> Mapping[str, object] | None:
+        """Reuse the carrier owner for a Human-resolved exact-head PR retirement.
+
+        A retirement is not a merge and need not be mergeable.  It must still
+        be the unique recognized implementation carrier.  After an accepted
+        closure, only its same immutable closed/unmerged postcondition counts.
+        """
+
+        if (
+            (self.source.role, self.source.action) != ("lead", "resolve-question")
+            or self.expected_result_kind != "ready"
+            or not _valid_sha(expected_head_sha)
+        ):
+            return None
+        observation = self._authorized_issue_observation()
+        default_branch = self._default_branch()
+        current_revision = self.current_revision
+        if (
+            observation is None
+            or default_branch is None
+            or not _valid_sha(current_revision)
+            or self._default_branch_revision(default_branch) != current_revision
+        ):
+            return None
+        pr = _github_json(self.repository, self.token, f"pulls/{number}")
+        if not isinstance(pr, Mapping) or pr.get("number") != number:
+            return None
+        identity = _pr_identity_is_coherent(
+            pr,
+            repository=self.repository,
+            issue_number=self.source.issue_number,
+            default_branch=default_branch,
+        )
+        if identity is None or identity[1] != expected_head_sha or pr.get("draft") is not False:
+            return None
+        if not require_open:
+            return (
+                pr
+                if pr.get("state") == "closed"
+                and pr.get("merged") is False
+                and pr.get("merged_at") is None
+                and isinstance(pr.get("closed_at"), str)
+                else None
+            )
+        if pr.get("state") != "open" or pr.get("merged") is not False:
+            return None
+        qualified = qualify_change_carrier(
+            repository=self.repository,
+            token=self.token,
+            source=self.source,
+            change=observation.change,
+            pr_number=number,
+            current_revision=cast(str, current_revision),
+            read=_github_json,
+            # Lead remains the authorized Action owner; this query only
+            # classifies the PR as an implementation carrier for retirement.
+            implementation_retirement=True,
+        )
+        return (
+            pr
+            if qualified.disposition in {"QUALIFIED", "RECONCILIATION_REQUIRED"}
+            and (qualified.branch, qualified.head_sha) == identity
+            else None
+        )
+
     def _no_existing_source_pull_request(self, branch: str, base: str) -> bool:
         owner = self.repository.split("/", 1)[0]
         head = f"{owner}:{branch}"
@@ -2286,10 +2399,19 @@ class GitHubEffectAdapter:
 
         if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
             raise RuntimeError("carrier plan PR identity is invalid")
-        current = self._source_pull_request(
-            number,
-            require_open=operation != "pull-request-merge",
-            allow_reconciliation=operation == "pull-request-update",
+        retirement = operation == "pull-request-update" and payload.get("fields") == {
+            "state": "closed"
+        }
+        current = (
+            self._lead_retirement_target(
+                number, cast(str, payload.get("expected_head_sha")), require_open=True
+            )
+            if retirement
+            else self._source_pull_request(
+                number,
+                require_open=operation != "pull-request-merge",
+                allow_reconciliation=operation == "pull-request-update",
+            )
         )
         if current is None:
             raise RuntimeError("carrier plan PR observation is unavailable")
@@ -2383,12 +2505,23 @@ class GitHubEffectAdapter:
         number = payload.get("number")
         if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
             return None
-        current = self._source_pull_request(
-            number,
-            require_open=operation != "pull-request-merge",
-            allow_reconciliation=operation == "pull-request-update",
+        retirement = operation == "pull-request-update" and payload.get("fields") == {
+            "state": "closed"
+        }
+        current = (
+            self._lead_retirement_target(
+                number, cast(str, payload.get("expected_head_sha")), require_open=False
+            )
+            if retirement
+            else self._source_pull_request(
+                number,
+                require_open=operation != "pull-request-merge",
+                allow_reconciliation=operation == "pull-request-update",
+            )
         )
         if current is None:
+            if retirement:
+                return self._carrier_plan_for_github_mutation(payload)
             return None
         if operation == "pull-request-update":
             fields = payload.get("fields")
@@ -2685,6 +2818,20 @@ class GitHubEffectAdapter:
             return pr_state.get("state") == "open" and pr_state.get("merged") is not True
         if operation in {"pull-request-update", "pull-request-ready"}:
             number = cast(int, payload["number"])
+            fields = payload.get("fields")
+            if operation == "pull-request-update" and (
+                isinstance(fields, Mapping) and "state" in fields
+            ):
+                if fields != {"state": "closed"}:
+                    return False
+                target_head = cast(str, payload.get("expected_head_sha"))
+                return self._lead_retirement_target(
+                    number, target_head, require_open=True
+                ) is not None or (
+                    self.accepted_intent
+                    and self._lead_retirement_target(number, target_head, require_open=False)
+                    is not None
+                )
             pr_state = self._source_pull_request(
                 number,
                 require_open=True,
@@ -3054,12 +3201,32 @@ class GitHubEffectAdapter:
                 return
             raise CarrierRequired(self._carrier_plan_for_github_mutation(payload))
         if operation == "pull-request-update":
-            current = self._source_pull_request(
-                cast(int, payload["number"]),
-                require_open=True,
-                allow_reconciliation=True,
-            )
             fields = payload.get("fields")
+            retirement = fields == {"state": "closed"}
+            current = (
+                self._lead_retirement_target(
+                    cast(int, payload["number"]),
+                    cast(str, payload.get("expected_head_sha")),
+                    require_open=False,
+                )
+                if retirement
+                else self._source_pull_request(
+                    cast(int, payload["number"]),
+                    require_open=True,
+                    allow_reconciliation=True,
+                )
+            )
+            if retirement and current is None:
+                if (
+                    self._lead_retirement_target(
+                        cast(int, payload["number"]),
+                        cast(str, payload.get("expected_head_sha")),
+                        require_open=True,
+                    )
+                    is None
+                ):
+                    raise RuntimeError("pull request retirement source became stale")
+                raise CarrierRequired(self._carrier_plan_for_github_mutation(payload))
             if current is None or not isinstance(fields, Mapping):
                 raise RuntimeError("pull request update source became stale")
             if all(
@@ -3502,12 +3669,20 @@ class GitHubEffectAdapter:
                 current_pr, number, payload
             )
         if operation == "pull-request-update":
-            current = self._source_pull_request(
-                cast(int, payload["number"]),
-                require_open=True,
-                allow_reconciliation=True,
-            )
             fields = payload.get("fields")
+            current = (
+                self._lead_retirement_target(
+                    cast(int, payload["number"]),
+                    cast(str, payload.get("expected_head_sha")),
+                    require_open=False,
+                )
+                if fields == {"state": "closed"}
+                else self._source_pull_request(
+                    cast(int, payload["number"]),
+                    require_open=True,
+                    allow_reconciliation=True,
+                )
+            )
             if current is None or not isinstance(fields, Mapping):
                 return False
             for key, value in fields.items():

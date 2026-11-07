@@ -2444,6 +2444,10 @@ def _fresh_control_effect(
             fields = payload.get("fields")
             if not isinstance(fields, Mapping):
                 raise RuntimeError("application pull-request-update fields are invalid")
+            if fields == {"state": "closed"} and payload.get("expected_head_sha") != head_sha:
+                # A retirement is an irreversible effect, not a rebinding of
+                # a stale request to whichever HEAD happens to exist now.
+                raise RuntimeError("application retirement expected HEAD is stale")
             return {
                 "issue_number": source.issue_number,
                 "operation": operation,

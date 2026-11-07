@@ -25,6 +25,13 @@ update the required OpenSpec artifacts, preserve unrelated content, and obtain f
 review-openspec before implementation resumes. If no legal interpretation exists, return
 human-decision-required or blocked with the exact unresolved question and evidence.
 
+When a Human-authorized resolution explicitly retires an unmerged implementation PR instead of
+reconciling its HEAD, Lead may return `READY` with exactly one repository-owned `pull-request-update`
+request setting `state=closed` for the freshly qualified exact PR/head. The Application must
+independently authorize and verify that close. Closure alone does not authorize replacement;
+Executor's later supersession qualification requires the accepted Lead intent and closed-unmerged
+postcondition, and the replacement receives no inherited review or CI gate.
+
 Explore/proposal intake remains bounded: optional or merely deferred prose creates no routed work;
 a required separate follow-up must have an exact durable source decision and one deduplicated target.
 Do not recursively create arbitrary routed Issues.

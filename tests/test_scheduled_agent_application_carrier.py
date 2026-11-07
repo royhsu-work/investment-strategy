@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from investment_strategy import scheduled_agent_application_carrier as carrier
+from investment_strategy import scheduled_agent_effects as effects
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
 REPOSITORY = "royhsu-work/investment-strategy"
@@ -444,6 +445,42 @@ def test_code_only_continuation_is_qualified_from_historical_evidence(
     assert decision.historical_pr_number == 232
 
 
+def test_lead_retirement_guard_uses_real_code_only_implementation_qualification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not mock the shared carrier qualifier: Lead is retiring code, not OpenSpec."""
+
+    fake = _fake_github(pr_files=[{"filename": "src/investment_strategy/example.py"}])
+    monkeypatch.setattr(effects, "_github_json", fake)
+    adapter = effects.GitHubEffectAdapter(
+        REPOSITORY,
+        TEST_VALUE,
+        WorkerRequest(229, "lead", "resolve-question"),
+        authorized_change=CHANGE,
+        current_revision=MAIN,
+        expected_result_kind="ready",
+        accepted_intent=True,
+    )
+    monkeypatch.setattr(
+        adapter, "_authorized_issue_observation", lambda: SimpleNamespace(change=CHANGE)
+    )
+    monkeypatch.setattr(adapter, "_default_branch", lambda: "main")
+    monkeypatch.setattr(adapter, "_default_branch_revision", lambda _branch: MAIN)
+    target = adapter._lead_retirement_target(236, HEAD, require_open=True)
+    assert target is not None and target["number"] == 236
+    # Lead OpenSpec materialization still has the narrower active-Change gate.
+    openspec = carrier.qualify_change_carrier(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        source=WorkerRequest(229, "lead", "resolve-question"),
+        change=CHANGE,
+        pr_number=236,
+        current_revision=MAIN,
+        read=fake,
+    )
+    assert openspec.reason == "carrier-openspec-change-missing-or-competing"
+
+
 def _supersession_formal_comments(
     old_head: str,
     *,
@@ -635,6 +672,238 @@ def _accepted_supersession_comments(
             }
         )
     return formal, requests
+
+
+def _accepted_lead_retirement_comments(
+    old_head: str,
+    *,
+    retired_number: int = 236,
+    request_id: int = 1060,
+    close_fields: dict[str, str] | None = None,
+    decision_at: str = "2026-11-03T02:59:00Z",
+    versionless_ingress: bool = False,
+    extra_invocation_effect: bool = False,
+    accepted_content_override: str | None = None,
+) -> tuple[list[dict[str, object]], dict[int, dict[str, object]]]:
+    """One exact accepted Lead READY close, without inventing Reviewer FINDINGS."""
+
+    from investment_strategy.scheduled_agent_application_bridge import (
+        ApplicationRequest,
+        dispatch_correlation_for,
+        render_application_request,
+    )
+
+    result = {
+        "_semantic_intent_version": 2,
+        "issue_number": 229,
+        "role": "lead",
+        "action": "resolve-question",
+        "change": CHANGE,
+        "result_kind": "ready",
+        "result_content": "Human-resolved implementation readiness",
+        "requested_effects": [
+            {
+                "kind": "github-mutation",
+                "payload_json": json.dumps(
+                    {
+                        "issue_number": 229,
+                        "operation": "pull-request-update",
+                        "number": retired_number,
+                        "expected_head_sha": old_head,
+                        "fields": {"state": "closed"} if close_fields is None else close_fields,
+                    }
+                ),
+            }
+        ],
+    }
+    if extra_invocation_effect:
+        cast(list[dict[str, str]], result["requested_effects"]).append(
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps({"issue_number": 229, "body": "ACTION_RESULT\n..."}),
+            }
+        )
+    accepted_result = {**result}
+    if accepted_content_override is not None:
+        accepted_result["result_content"] = accepted_content_override
+    accepted = effects.semantic_intent_payload(
+        json.dumps(accepted_result, sort_keys=True, separators=(",", ":"))
+    )
+    if versionless_ingress:
+        del result["_semantic_intent_version"]
+    raw = json.dumps(result, sort_keys=True, separators=(",", ":"))
+    request_body = render_application_request(
+        ApplicationRequest(
+            authorization_revision=MAIN,
+            raw_worker_result=raw,
+            dispatch_correlation=dispatch_correlation_for(
+                REPOSITORY, WorkerRequest(229, "lead", "resolve-question"), MAIN
+            ),
+        )
+    )
+
+    def digest(value: str) -> str:
+        return hashlib.sha256(value.encode()).hexdigest()
+
+    decision = {
+        "id": request_id + 100,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+        "created_at": decision_at,
+        "body": "\n".join(
+            (
+                "APPLICATION_DECISION",
+                f"Request-Comment: {request_id}",
+                f"Request-Body-SHA256: {digest(request_body)}",
+                f"Authorization-Revision: {MAIN}",
+                "Issue: 229",
+                "Role: lead",
+                "Action: resolve-question",
+                f"Change: {CHANGE}",
+                "Result-Kind: ready",
+                "Disposition: ACCEPTED",
+                f"Worker-Result-SHA256: {digest(accepted)}",
+                f"Application-Intent-B64: {base64.b64encode(accepted.encode()).decode()}",
+                "Reason: accepted",
+            )
+        ),
+    }
+    formal = {
+        "id": request_id + 200,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+        "created_at": "2026-11-03T04:00:00Z",
+        "body": "\n".join(
+            (
+                "ACTION_RESULT",
+                "Workflow: #229",
+                f"Change: {CHANGE}",
+                "Role: lead",
+                "Action: resolve-question",
+                "Result: READY",
+                f"Revision: {MAIN}",
+                f"Default-Branch-Revision: {MAIN}",
+                "Application-Correlation: "
+                f"application:{request_id}:229:{CHANGE}:lead:resolve-question:ready:{MAIN}",
+                "Repository-derived successor: Executor / implement-change",
+            )
+        ),
+    }
+    return [decision, formal], {
+        request_id: {
+            "id": request_id,
+            "body": request_body,
+            "user": {"login": "royhsu-work"},
+            "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+        }
+    }
+
+
+@pytest.mark.parametrize("wrong_fields", [False, True])
+def test_lead_accepted_retirement_can_supersede_pass_carrier(
+    monkeypatch: pytest.MonkeyPatch, wrong_fields: bool
+) -> None:
+    retired = _continuation_pr(head_sha="5" * 40)
+    retired.update(state="closed", closed_at="2026-11-03T03:00:00Z")
+    replacement = _continuation_pr(number=237, branch=f"agent/{CHANGE}-supersedes-236")
+    formal, requests = _accepted_lead_retirement_comments(
+        "5" * 40, close_fields={"state": "open"} if wrong_fields else None
+    )
+    github = _fake_github(
+        current_pr=replacement,
+        merged_continuations=[retired],
+        open_prs=[replacement],
+        formal_comments=formal,
+        request_comments=requests,
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    assert (
+        carrier.qualify_supersession_branch(
+            repository=REPOSITORY,
+            token=TEST_VALUE,
+            issue_number=229,
+            change=CHANGE,
+            branch=f"agent/{CHANGE}-supersedes-236",
+            current_revision=MAIN,
+        )
+        is not wrong_fields
+    )
+
+
+@pytest.mark.parametrize("extra_invocation_effect", [False, True])
+@pytest.mark.parametrize("accepted_content_override", [None, "Changed semantic evidence"])
+def test_versionless_ingress_proves_accepted_lead_retirement(
+    monkeypatch: pytest.MonkeyPatch,
+    extra_invocation_effect: bool,
+    accepted_content_override: str | None,
+) -> None:
+    """The real ingress lacks the Application-owned semantic-intent version."""
+
+    retired = _continuation_pr(head_sha="5" * 40)
+    retired.update(state="closed", closed_at="2026-11-03T03:00:00Z")
+    replacement = _continuation_pr(number=237, branch=f"agent/{CHANGE}-supersedes-236")
+    formal, requests = _accepted_lead_retirement_comments(
+        "5" * 40,
+        versionless_ingress=True,
+        extra_invocation_effect=extra_invocation_effect,
+        accepted_content_override=accepted_content_override,
+    )
+    github = _fake_github(
+        current_pr=replacement,
+        merged_continuations=[retired],
+        open_prs=[replacement],
+        formal_comments=formal,
+        request_comments=requests,
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    assert carrier.qualify_supersession_branch(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        issue_number=229,
+        change=CHANGE,
+        branch=f"agent/{CHANGE}-supersedes-236",
+        current_revision=MAIN,
+    ) is (accepted_content_override is None)
+
+
+def test_lead_retirement_preserves_second_generation_supersession(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PASS-reviewed supersession can itself be retired without false FINDINGS."""
+
+    first_retired = _continuation_pr(head_sha="5" * 40)
+    first_retired.update(state="closed", merged=False, closed_at="2026-11-03T03:00:00Z")
+    second_retired = _continuation_pr(
+        number=237, branch=f"agent/{CHANGE}-supersedes-236", head_sha="6" * 40
+    )
+    second_retired.update(state="closed", merged=False, closed_at="2026-11-03T03:45:00Z")
+    replacement = _continuation_pr(number=238, branch=f"agent/{CHANGE}-supersedes-237")
+    first_formal, first_requests = _accepted_supersession_comments("5" * 40)
+    second_formal, second_requests = _accepted_lead_retirement_comments(
+        "6" * 40,
+        retired_number=237,
+        request_id=1090,
+        decision_at="2026-11-03T03:40:00Z",
+        versionless_ingress=True,
+    )
+    github = _fake_github(
+        current_pr=replacement,
+        merged_continuations=[first_retired, second_retired],
+        open_prs=[replacement],
+        formal_comments=first_formal + second_formal,
+        routing_timeline=_supersession_routing_timeline(),
+        request_comments=first_requests | second_requests,
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    decision = carrier.qualify_implementation_carrier(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        source=_source(),
+        change=CHANGE,
+        pr_number=238,
+        current_revision=MAIN,
+    )
+    assert decision.disposition == "QUALIFIED", decision.reason
 
 
 @pytest.mark.parametrize("replacement_merged", [False, True])
