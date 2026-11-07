@@ -40,6 +40,7 @@ from investment_strategy.scheduled_agent_effects import (
     EffectBatch,
     EffectRecoveryEvidence,
     GitHubEffectAdapter,
+    StagedEffect,
     formal_application_correlation,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
@@ -3509,6 +3510,599 @@ def test_public_failure_diagnostics_never_exposes_untrusted_guard_reason() -> No
     assert diagnostics["rejection_classification"] == "effect-precondition-unsatisfied"
     assert "guard_reason" not in diagnostics
     assert untrusted_value not in json.dumps(diagnostics)
+
+
+def test_merge_precondition_failure_is_diagnosable_without_leaking_raw_evidence() -> None:
+    rejection = ApplicationRejection(
+        ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+        json.dumps(
+            {"issue": 322, "change": _CHANGE, "pr": 418, "head": _REVISION, "failed_predicates": []}
+        ),
+        json.dumps(
+            {
+                "failed_predicates": ["current_carrier", "exact_review"],
+                "snapshot": {"raw_private_field": "REDACT_ME"},
+            }
+        ),
+    )
+    evidence = EffectRecoveryEvidence(
+        failed_effect_index=0,
+        failed_effect_kind="github-mutation",
+        failed_effect_sha256="a" * 64,
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status="not-complete",
+        unfinished_boundary="effect-precondition",
+        rejection=rejection,
+    )
+    diagnostic = bridge._public_failure_diagnostics(
+        bridge.ApplyResult(False, "effect precondition rejected", recovery_evidence=evidence)
+    )
+    assert diagnostic is not None
+    assert diagnostic["merge_failed_predicates"] == ["current_carrier", "exact_review"]
+    assert "REDACT_ME" not in json.dumps(diagnostic)
+
+
+def test_nonprogressing_merge_rejection_authorizes_recovery_only_continuation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = WorkerRequest(138, "executor", "merge-implementation-pr")
+    worker = _worker_result(action=source.action, role=source.role, result_kind="merged")
+    worker["change"] = _CHANGE
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    body = _effect_request(worker)
+    record = _accepted_record(raw, body, source=source, change=_CHANGE, result_kind="merged")
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_comment_for_request",
+        lambda **_kwargs: (record, "accepted decision"),
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "7001")
+    rejection = ApplicationRejection(
+        ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+        "expected exact head/current gate",
+        "observed stale head/current gate",
+    )
+    evidence = EffectRecoveryEvidence(
+        failed_effect_index=0,
+        failed_effect_kind="github-mutation",
+        failed_effect_sha256="a" * 64,
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status="not-complete",
+        unfinished_boundary="effect-precondition",
+        rejection=rejection,
+    )
+    output = tmp_path / "merge-rejection.json"
+    bridge._write_application_recovery_evidence(
+        str(output),
+        result=bridge.ApplyResult(
+            False, "effect precondition rejected", recovery_evidence=evidence
+        ),
+        repository=_REPOSITORY,
+        token=_REVISION,
+        source=source,
+        request_comment_id=record.request_comment_id,
+        trigger_comment_id=404,
+        authorization_revision=_REVISION,
+        current_revision=_REVISION,
+        run_attempt=1,
+        continuation=None,
+        predecessor=None,
+    )
+    document = json.loads(output.read_text(encoding="utf-8"))
+    assert document["continuation_eligible"] is True
+    assert document["failure_evidence"]["mutation_status"] == "not-complete"
+    assert document["failure_evidence"]["completed_effect_indexes"] == []
+
+
+@pytest.mark.parametrize(
+    ("mutation_status", "mergeable", "carrier_disposition", "expect_handoff"),
+    [
+        ("not-complete", False, "RECONCILIATION_REQUIRED", True),
+        ("not-complete", None, "INDETERMINATE", False),
+        ("not-complete", True, "QUALIFIED", False),
+        ("unknown", False, "RECONCILIATION_REQUIRED", False),
+    ],
+)
+def test_accepted_merge_recovery_routes_only_fresh_proven_zero_write_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    mutation_status: str,
+    mergeable: bool | None,
+    carrier_disposition: str,
+    expect_handoff: bool,
+) -> None:
+    """Original ACCEPTED MERGED stays immutable; only application recovery routes."""
+
+    source = WorkerRequest(138, "executor", "merge-implementation-pr")
+    merge_payload = {
+        "operation": "pull-request-merge",
+        "issue_number": 138,
+        "number": 418,
+        "expected_head_sha": _REVISION,
+        "merge_method": "squash",
+    }
+    effect = StagedEffect("github-mutation", json.dumps(merge_payload, sort_keys=True))
+    worker = _worker_result(action=source.action, role=source.role, result_kind="merged")
+    worker["change"] = _CHANGE
+    worker["requested_effects"] = [{"kind": effect.kind, "payload_json": effect.payload_json}]
+    parsed = bridge.parse_worker_result(json.dumps(worker), source, authorized_change=_CHANGE)
+    batch = EffectBatch(source, (effect,), typed_result=parsed.typed_result)
+    record = _accepted_record(
+        json.dumps(worker),
+        _effect_request(worker),
+        source=source,
+        change=_CHANGE,
+        result_kind="merged",
+    )
+    rejection = ApplicationRejection(
+        ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+        "exact carrier integration",
+        "current conflict",
+    )
+    evidence = EffectRecoveryEvidence(
+        failed_effect_index=0,
+        failed_effect_kind="github-mutation",
+        failed_effect_sha256=hashlib.sha256(effect.payload_json.encode()).hexdigest(),
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status=mutation_status,
+        unfinished_boundary="effect-precondition",
+        rejection=rejection,
+    )
+    result = bridge.ApplyResult(False, "effect precondition rejected", recovery_evidence=evidence)
+    labels = ["human:approved", "action:merge-implementation-pr"]
+    issue = {"number": 138, "state": "open", "body": f"Change: {_CHANGE}", "labels": []}
+    pr = {
+        "number": 418,
+        "state": "open",
+        "merged": False,
+        "mergeable": mergeable,
+        "head": {"sha": _REVISION},
+        "base": {"ref": "main"},
+    }
+    reads: list[str] = []
+    writes: list[tuple[str, object]] = []
+    comments: list[str] = []
+
+    def api(
+        _repo: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        **_kwargs: object,
+    ) -> object:
+        if method != "GET":
+            writes.append((path, payload))
+            assert path == "issues/138" and method == "PATCH"
+            assert payload is not None
+            labels[:] = cast(list[str], payload["labels"])
+            return issue
+        reads.append(path)
+        if path == "pulls/418":
+            return pr
+        if path == "issues/138":
+            issue["labels"] = [{"name": label} for label in labels]
+            return issue
+        raise AssertionError(f"unexpected API path {path}")
+
+    def normalize(_issue: object) -> SimpleNamespace:
+        action = next(label[7:] for label in labels if label.startswith("action:"))
+        return SimpleNamespace(
+            authoritative=True,
+            state="open",
+            change=_CHANGE,
+            routing=("lead" if action == "resolve-question" else "executor", action),
+        )
+
+    monkeypatch.setattr(bridge, "_github_json", api)
+    monkeypatch.setattr(bridge, "normalize_github_issue", normalize)
+    monkeypatch.setattr(bridge, "_fresh_branch_head", lambda *_args: _REVISION)
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_comment_for_request",
+        lambda **_kwargs: (record, "original immutable ACCEPTED MERGED decision"),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: SimpleNamespace(
+            disposition=carrier_disposition,
+            head_sha=_REVISION,
+            reason="carrier-confirmed-git-merge-conflict",
+        ),
+    )
+    monkeypatch.setattr(bridge, "acquire_current_github_preflight", lambda *_args: object())
+    monkeypatch.setattr(
+        bridge,
+        "classify_dispatch",
+        lambda _preflight: SimpleNamespace(
+            disposition="AUTHORIZE",
+            selected_issue_id=138,
+            selected_routing=normalize(issue).routing,
+        ),
+    )
+    monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args: ())
+
+    def persist_recovery(body: str, **_kwargs: object) -> int:
+        comments.append(body)
+        return 55
+
+    monkeypatch.setattr(bridge, "_persist_recovery_comment", persist_recovery)
+
+    assert (
+        bridge._recover_deterministic_accepted_merge_failure(
+            result=result,
+            batch=batch,
+            source=source,
+            repository=_REPOSITORY,
+            token=_REPOSITORY,
+            current_revision=_REVISION,
+            default_branch="main",
+            request_comment_id=record.request_comment_id,
+        )
+        is expect_handoff
+    )
+    assert (labels[-1] == "action:resolve-question") is expect_handoff
+    assert bool(writes) is expect_handoff
+    assert bool(comments) is expect_handoff
+    assert "human:approved" in labels
+    assert all(path != "pulls/418/merge" for path, _ in writes)
+    if expect_handoff:
+        assert "Accepted-Decision-SHA256" in comments[0]
+        assert "Failure-Evidence-SHA256" in comments[0]
+        assert "Reason: accepted-merge-precondition-rejected" in comments[0]
+
+
+@pytest.mark.parametrize("run_identity_available", [True, False])
+def test_recovery_evidence_is_prepared_before_first_administrative_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_identity_available: bool
+) -> None:
+    """A crash after recovery POST retains the original run's continuation proof."""
+
+    source = WorkerRequest(138, "executor", "merge-implementation-pr")
+    effect = StagedEffect(
+        "github-mutation",
+        json.dumps(
+            {
+                "operation": "pull-request-merge",
+                "issue_number": 138,
+                "number": 418,
+                "expected_head_sha": _REVISION,
+                "merge_method": "squash",
+            },
+            sort_keys=True,
+        ),
+    )
+    worker = _worker_result(action=source.action, role=source.role, result_kind="merged")
+    worker["change"] = _CHANGE
+    worker["requested_effects"] = [{"kind": effect.kind, "payload_json": effect.payload_json}]
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    request_body = _effect_request(worker)
+    accepted = _accepted_record(
+        raw, request_body, source=source, change=_CHANGE, result_kind="merged"
+    )
+    accepted_body = "qualified original ACCEPTED MERGED"
+    rejection = ApplicationRejection(
+        ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+        "merge current proof",
+        "confirmed Git conflict",
+    )
+    evidence = EffectRecoveryEvidence(
+        failed_effect_index=0,
+        failed_effect_kind=effect.kind,
+        failed_effect_sha256=hashlib.sha256(effect.payload_json.encode()).hexdigest(),
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status="not-complete",
+        unfinished_boundary="effect-precondition",
+        rejection=rejection,
+    )
+    result = bridge.ApplyResult(False, "effect precondition rejected", recovery_evidence=evidence)
+    batch = EffectBatch(source, (effect,), typed_result=None)
+    event_path = tmp_path / "effect-event.json"
+    event_path.write_text(json.dumps(_event(request_body)), encoding="utf-8")
+    evidence_path = tmp_path / "application-recovery-evidence"
+    github_output = tmp_path / "github-output"
+    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
+    assert "if: always() && steps.apply.outputs.recovery_evidence_path != ''" in workflow
+    assert "name: application-recovery-evidence" in workflow
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", "test")
+    if run_identity_available:
+        monkeypatch.setenv("GITHUB_RUN_ID", "8001")
+    else:
+        monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(github_output))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "application-bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+            "--recovery-evidence-path",
+            str(evidence_path),
+        ],
+    )
+    monkeypatch.setattr(bridge, "_fresh_event_observation", lambda *_args: False)
+    monkeypatch.setattr(bridge, "acquire_current_github_preflight", lambda *_args: object())
+    monkeypatch.setattr(
+        bridge,
+        "plan_application",
+        lambda **_kwargs: bridge.ApplicationPlan(
+            True, source=source, raw_worker_result=raw, change=_CHANGE, request_comment_id=102
+        ),
+    )
+    monkeypatch.setattr(
+        bridge, "_fresh_application_worker_result", lambda original, **_kw: original
+    )
+    monkeypatch.setattr(
+        bridge, "run_guarded_effect_application", lambda *_args, **_kwargs: (batch, result)
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_comment_for_request",
+        lambda **_kwargs: (accepted, accepted_body),
+    )
+
+    def interrupted_after_comment(**_kwargs: object) -> bool:
+        assert evidence_path.is_file(), "continuation evidence must precede recovery POST"
+        checkpoint = json.loads(evidence_path.read_text(encoding="utf-8"))
+        assert checkpoint["continuation_eligible"] is True
+        assert checkpoint["failure_evidence"]["completed_effect_indexes"] == []
+        assert (
+            checkpoint["accepted_decision_sha256"]
+            == hashlib.sha256(accepted_body.encode()).hexdigest()
+        )
+        assert f"recovery_evidence_path={evidence_path}" in github_output.read_text(
+            encoding="utf-8"
+        )
+        raise RuntimeError("interrupted after durable APPLICATION_RECOVERY comment")
+
+    monkeypatch.setattr(
+        bridge, "_recover_deterministic_accepted_merge_failure", interrupted_after_comment
+    )
+    if run_identity_available:
+        with pytest.raises(RuntimeError, match="interrupted after durable"):
+            bridge._main_unprotected(bridge.ApplicationExceptionContext())
+    else:
+        # An incomplete predecessor identity cannot authorize either the
+        # administrative comment or the routing write.
+        assert bridge._main_unprotected(bridge.ApplicationExceptionContext()) == 1
+        assert not evidence_path.exists()
+
+
+def test_interrupted_accepted_merge_recovery_completes_without_replaying_merge(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = WorkerRequest(138, "executor", "merge-implementation-pr")
+    worker = _worker_result(action=source.action, role=source.role, result_kind="merged")
+    worker["change"] = _CHANGE
+    record = _accepted_record(
+        json.dumps(worker),
+        _effect_request(worker),
+        source=source,
+        change=_CHANGE,
+        result_kind="merged",
+    )
+    labels = ["human:approved", "action:merge-implementation-pr"]
+    body = "\n".join(
+        (
+            "APPLICATION_RECOVERY",
+            "Workflow: #138",
+            f"Change: {_CHANGE}",
+            "Source: Executor / merge-implementation-pr",
+            "Target: Lead / resolve-question",
+            f"Default-Branch-Revision: {_REVISION}",
+            f"Failed-Authorization-Revision: {_REVISION}",
+            f"Request-Comment-ID: {record.request_comment_id}",
+            "Accepted-Decision-SHA256: " + "a" * 64,
+            "Failure-Evidence-SHA256: " + "b" * 64,
+            "PR-Number: 418",
+            f"PR-Head-SHA: {_REVISION}",
+            "Reason: accepted-merge-precondition-rejected",
+        )
+    )
+    comment = {
+        "id": 55,
+        "body": body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    issue = {"state": "open", "number": 138, "body": f"Change: {_CHANGE}", "labels": []}
+    writes: list[str] = []
+
+    def api(
+        _repo: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+    ) -> object:
+        if method == "PATCH":
+            assert path == "issues/138"
+            assert payload is not None
+            labels[:] = cast(list[str], payload["labels"])
+            writes.append(path)
+            return issue
+        if path == "issues/138":
+            issue["labels"] = [{"name": label} for label in labels]
+            return issue
+        if path == "pulls/418":
+            return {"state": "open", "merged": False, "head": {"sha": _REVISION}}
+        raise AssertionError(f"unexpected GitHub path: {path}")
+
+    def observation(_issue: object) -> SimpleNamespace:
+        action = next(label[7:] for label in labels if label.startswith("action:"))
+        return SimpleNamespace(
+            authoritative=True,
+            state="open",
+            change=_CHANGE,
+            routing=("lead" if action == "resolve-question" else "executor", action),
+        )
+
+    recovery_event = SimpleNamespace(
+        valid=True,
+        reason="accepted-merge-precondition-rejected",
+        request_comment_id=record.request_comment_id,
+        source=(source.role, source.action),
+        change=_CHANGE,
+        target=("lead", "resolve-question"),
+        pr_number=418,
+        pr_head_sha=_REVISION,
+    )
+    monkeypatch.setattr(bridge, "_github_json", api)
+    monkeypatch.setattr(bridge, "normalize_github_issue", observation)
+    monkeypatch.setattr(bridge, "_fresh_branch_head", lambda *_args: _REVISION)
+    monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args: (comment,))
+    monkeypatch.setattr(
+        bridge,
+        "build_qualification_input",
+        lambda **_kwargs: SimpleNamespace(recovery_events=(recovery_event,)),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "qualify_current_formal_consequence",
+        lambda *_args: SimpleNamespace(
+            qualified=True, reason="current-administrative-recovery-route-qualified"
+        ),
+    )
+    monkeypatch.setattr(bridge, "acquire_current_github_preflight", lambda *_args: object())
+    monkeypatch.setattr(
+        bridge,
+        "classify_dispatch",
+        lambda *_args: SimpleNamespace(
+            disposition="AUTHORIZE",
+            selected_issue_id=138,
+            selected_routing=observation(issue).routing,
+        ),
+    )
+
+    # An ordinary external dispatch wake transports the existing
+    # APPLICATION_CONTINUATION body as an issue_comment event. GitHub's
+    # original GITHUB_TOKEN-authored APPLICATION_RECOVERY comment does not
+    # itself launch an application job. Test the admitted event-to-repair
+    # entry point, not just a direct call to the private repair helper.
+    accepted_body = "original immutable ACCEPTED MERGED decision"
+    decision_digest = hashlib.sha256(accepted_body.encode()).hexdigest()
+    continuation = bridge.render_application_continuation_request(
+        repository=_REPOSITORY,
+        issue_number=source.issue_number,
+        original_request_comment_id=record.request_comment_id,
+        accepted_decision_sha256=decision_digest,
+        predecessor_run_id=8001,
+        predecessor_run_attempt=1,
+        predecessor_job_id=8002,
+        predecessor_artifact_id=8003,
+        predecessor_artifact_digest="sha256:" + "c" * 64,
+        failure_evidence_sha256="b" * 64,
+        recovery_episode_sha256="d" * 64,
+    )
+    event_path = tmp_path / "application-continuation-event.json"
+    event_path.write_text(
+        json.dumps(
+            {
+                "action": "created",
+                "issue": {"number": 142},
+                "comment": {"id": 8004, "body": continuation},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", "test")
+    monkeypatch.setattr(bridge, "_fresh_event_observation", lambda *_args: False)
+    monkeypatch.setattr(
+        bridge,
+        "_find_application_decision_from_current_frontier",
+        lambda **_kwargs: record,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_comment_for_request",
+        lambda **_kwargs: (record, accepted_body),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "qualify_application_continuation_predecessor",
+        lambda *_args, **_kwargs: SimpleNamespace(continuation_eligible=True),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "application-bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+        ],
+    )
+    assert "startsWith(github.event.comment.body, 'APPLICATION_CONTINUATION')" in Path(
+        ".github/workflows/scheduled-agent-application.yml"
+    ).read_text(encoding="utf-8")
+    assert bridge.main() == 0
+    assert writes == ["issues/138"]
+
+    for _ in range(2):
+        assert bridge._resume_pending_accepted_merge_recovery(
+            accepted=record,
+            repository=_REPOSITORY,
+            token=_REPOSITORY,
+            current_revision=_REVISION,
+            default_branch="main",
+        )
+    assert writes == ["issues/138"]
+    assert labels == ["human:approved", "action:resolve-question"]
+
+
+def test_checkpoint_can_only_rehydrate_known_zero_write_merge_rejection() -> None:
+    failure = {
+        "reason": "effect precondition rejected",
+        "failed_effect_index": 0,
+        "failed_effect_kind": "github-mutation",
+        "failed_effect_sha256": "a" * 64,
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+        "mutation_status": "not-complete",
+        "unfinished_boundary": "effect-precondition",
+        "rejection": {
+            "classification": "effect-precondition-unsatisfied",
+            "expected": "exact original accepted head",
+            "observed": "confirmed conflict",
+        },
+    }
+    predecessor = bridge.ApplicationRecoveryArtifact(
+        run_id=1,
+        run_attempt=1,
+        job_id=2,
+        artifact_id=3,
+        artifact_digest="sha256:" + "c" * 64,
+        request_comment_id=4,
+        accepted_decision_sha256="d" * 64,
+        failure_evidence_sha256="e" * 64,
+        recovery_episode_sha256="f" * 64,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={"failure_evidence": failure},
+    )
+    result = bridge._rejected_merge_result_from_checkpoint(predecessor)
+    assert result is not None
+    assert result.recovery_evidence is not None
+    assert result.recovery_evidence.completed_effect_indexes == ()
+    failure["mutation_status"] = "unknown"
+    assert bridge._rejected_merge_result_from_checkpoint(predecessor) is None
 
 
 def test_recovery_artifact_reader_propagates_transient_download_failure() -> None:

@@ -444,7 +444,13 @@ def test_code_only_continuation_is_qualified_from_historical_evidence(
     assert decision.historical_pr_number == 232
 
 
-def _supersession_formal_comments(old_head: str) -> list[dict[str, object]]:
+def _supersession_formal_comments(
+    old_head: str,
+    *,
+    first_id: int = 900,
+    ready_at: str = "2026-11-03T01:00:00Z",
+    findings_at: str = "2026-11-03T02:00:00Z",
+) -> list[dict[str, object]]:
     def result(
         *,
         comment_id: int,
@@ -480,20 +486,20 @@ def _supersession_formal_comments(old_head: str) -> list[dict[str, object]]:
 
     return [
         result(
-            comment_id=900,
+            comment_id=first_id,
             role="executor",
             action="implement-change",
             result_kind="ready",
             successor="Reviewer / review-implementation",
-            timestamp="2026-11-03T01:00:00Z",
+            timestamp=ready_at,
         ),
         result(
-            comment_id=901,
+            comment_id=first_id + 1,
             role="reviewer",
             action="review-implementation",
             result_kind="findings",
             successor="Executor / implement-change",
-            timestamp="2026-11-03T02:00:00Z",
+            timestamp=findings_at,
         ),
     ]
 
@@ -523,6 +529,10 @@ def _accepted_supersession_comments(
     carrier_number: int = 236,
     reformat_accepted_effects: bool = False,
     tamper_accepted_effect: bool = False,
+    first_id: int = 900,
+    ready_at: str = "2026-11-03T01:00:00Z",
+    findings_at: str = "2026-11-03T02:00:00Z",
+    branch: str | None = None,
 ) -> tuple[list[dict[str, object]], dict[int, dict[str, object]]]:
     """Use real ingress/decision parsers to bind both formal results to requests."""
 
@@ -532,7 +542,9 @@ def _accepted_supersession_comments(
         render_application_request,
     )
 
-    formal = _supersession_formal_comments(old_head)
+    formal = _supersession_formal_comments(
+        old_head, first_id=first_id, ready_at=ready_at, findings_at=findings_at
+    )
     requests: dict[int, dict[str, object]] = {}
     for entry in tuple(formal):
         body = cast(str, entry["body"])
@@ -550,7 +562,7 @@ def _accepted_supersession_comments(
                         {
                             "operation": "application-materialize",
                             "pr_number": carrier_number,
-                            "branch": f"agent/{CHANGE}-continuation-232",
+                            "branch": branch or f"agent/{CHANGE}-continuation-232",
                         }
                     ),
                 }
@@ -623,6 +635,74 @@ def _accepted_supersession_comments(
             }
         )
     return formal, requests
+
+
+@pytest.mark.parametrize("replacement_merged", [False, True])
+def test_supersession_can_retire_an_already_superseding_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+    replacement_merged: bool,
+) -> None:
+    first_retired = _continuation_pr(head_sha="5" * 40)
+    first_retired.update(state="closed", merged=False, closed_at="2026-11-03T03:00:00Z")
+    second_retired = _continuation_pr(
+        number=237, branch=f"agent/{CHANGE}-supersedes-236", head_sha="6" * 40
+    )
+    second_retired.update(state="closed", merged=False, closed_at="2026-11-03T05:00:00Z")
+    replacement = _continuation_pr(number=238, branch=f"agent/{CHANGE}-supersedes-237")
+    if replacement_merged:
+        replacement.update(
+            state="closed",
+            merged=True,
+            merged_at="2026-11-04T02:00:00Z",
+            merge_commit_sha=CONTINUATION_MERGE,
+        )
+    first_formal, first_requests = _accepted_supersession_comments("5" * 40)
+    second_formal, second_requests = _accepted_supersession_comments(
+        "6" * 40,
+        carrier_number=237,
+        first_id=920,
+        ready_at="2026-11-03T03:30:00Z",
+        findings_at="2026-11-03T04:00:00Z",
+        branch=f"agent/{CHANGE}-supersedes-236",
+    )
+    timeline = _supersession_routing_timeline() + [
+        {
+            "event": event,
+            "label": {"name": label},
+            "actor": {"login": "github-actions[bot]"},
+            "created_at": "2026-11-03T04:01:00Z",
+        }
+        for event, label in [
+            ("unlabeled", "action:review-implementation"),
+            ("labeled", "action:implement-change"),
+        ]
+    ]
+    github = _fake_github(
+        current_pr=replacement,
+        merged_continuations=[first_retired, second_retired],
+        open_prs=[] if replacement_merged else [replacement],
+        formal_comments=first_formal + second_formal,
+        routing_timeline=timeline,
+        request_comments=first_requests | second_requests,
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    assert carrier.qualify_supersession_branch(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        issue_number=229,
+        change=CHANGE,
+        branch=f"agent/{CHANGE}-supersedes-237",
+        current_revision=MAIN,
+    )
+    decision = carrier.qualify_implementation_carrier(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        source=_source(),
+        change=CHANGE,
+        pr_number=238,
+        current_revision=MAIN,
+    )
+    assert decision.disposition == ("HISTORICAL_MERGED" if replacement_merged else "QUALIFIED")
 
 
 @pytest.mark.parametrize(
@@ -1028,9 +1108,204 @@ def test_diverged_continuation_is_recognized_only_for_reconciliation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     decision = _qualify(monkeypatch, _fake_github(default_is_ancestor=False))
-    assert decision.disposition == "RECONCILIATION_REQUIRED"
-    assert decision.recognized
+    assert decision.disposition == "INDETERMINATE"
+    assert decision.reason == "carrier-current-integration-evidence-unavailable"
+    assert not decision.recognized
     assert not decision.qualified
+
+
+def test_confirmed_git_conflict_is_not_confused_with_plain_divergence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _continuation_pr()
+    current["mergeable"] = False
+    decision = _qualify(
+        monkeypatch,
+        _fake_github(current_pr=current, open_prs=[current], default_is_ancestor=False),
+    )
+    assert decision.disposition == "RECONCILIATION_REQUIRED"
+    assert decision.reason == "carrier-confirmed-git-merge-conflict"
+
+
+@pytest.mark.parametrize(
+    ("head_paths", "main_paths", "mergeable", "expected"),
+    [
+        (["src/work.py"], ["docs/readme.md"], True, True),
+        (["src/work.py"], ["src/work.py"], True, False),
+        (["src/work.py"], ["docs/readme.md"], False, False),
+        (["src/work.py"], ["docs/readme.md"], None, False),
+    ],
+)
+def test_diverged_mergeability_requires_complete_disjoint_git_proof(
+    head_paths: list[str], main_paths: list[str], mergeable: bool | None, expected: bool
+) -> None:
+    """Same-file changes are not *assumed* to conflict; they require reconciliation."""
+
+    base = "a" * 40
+    responses: dict[str, object] = {
+        f"compare/{HEAD}...{MAIN}": {"status": "diverged", "merge_base_commit": {"sha": base}},
+        f"compare/{base}...{HEAD}": {
+            "status": "ahead",
+            "behind_by": 0,
+            "files": [{"filename": path} for path in head_paths],
+        },
+        f"compare/{base}...{MAIN}": {
+            "status": "ahead",
+            "behind_by": 0,
+            "files": [{"filename": path} for path in main_paths],
+        },
+    }
+
+    def read(_repo: str, _token: str, path: str) -> object | None:
+        return responses.get(path)
+
+    assert (
+        carrier._disjoint_divergence_is_mergeable(
+            REPOSITORY,
+            TEST_VALUE,
+            pr={"mergeable": mergeable},
+            head_sha=HEAD,
+            default_revision=MAIN,
+            read=read,
+        )
+        is expected
+    )
+
+
+def test_divergence_does_not_treat_truncated_or_unavailable_evidence_as_safe() -> None:
+    base = "a" * 40
+
+    def read(_repo: str, _token: str, path: str) -> object | None:
+        if path == f"compare/{HEAD}...{MAIN}":
+            return {"status": "diverged", "merge_base_commit": {"sha": base}}
+        if path == f"compare/{base}...{MAIN}":
+            return {"status": "ahead", "behind_by": 0, "files": [{"filename": "a"}] * 300}
+        if path == f"compare/{base}...{HEAD}":
+            return {"status": "ahead", "behind_by": 0, "files": [{"filename": "b"}]}
+        return None
+
+    assert not carrier._disjoint_divergence_is_mergeable(
+        REPOSITORY,
+        TEST_VALUE,
+        pr={"mergeable": True},
+        head_sha=HEAD,
+        default_revision=MAIN,
+        read=read,
+    )
+
+
+@pytest.mark.parametrize(
+    ("mergeable", "drop_compare", "expected"),
+    [
+        (None, None, "INDETERMINATE"),
+        (True, "merge-base", "INDETERMINATE"),
+        (True, "main-paths", "INDETERMINATE"),
+        (True, None, "RECONCILIATION_REQUIRED"),
+        (False, None, "RECONCILIATION_REQUIRED"),
+    ],
+)
+def test_diverged_carrier_final_classification_preserves_unknown_git_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    mergeable: bool | None,
+    drop_compare: str | None,
+    expected: str,
+) -> None:
+    current = _continuation_pr(branch=f"agent/{CHANGE}")
+    current["mergeable"] = mergeable
+    base = "a" * 40
+    fake = _fake_github(
+        current_pr=current,
+        historical_pr=None,
+        open_prs=[current],
+        default_is_ancestor=False,
+        pr_files=[{"filename": f"openspec/changes/{CHANGE}/proposal.md"}],
+    )
+
+    def read(repo: str, token: str, path: str, **kwargs: object) -> object | None:
+        if path == f"compare/{HEAD}...{MAIN}":
+            if drop_compare == "merge-base":
+                return None
+            return {"status": "diverged", "merge_base_commit": {"sha": base}}
+        if path == f"compare/{base}...{HEAD}":
+            return {"status": "ahead", "behind_by": 0, "files": [{"filename": "a.py"}]}
+        if path == f"compare/{base}...{MAIN}":
+            if drop_compare == "main-paths":
+                return {"status": "ahead", "behind_by": 0, "files": [{"filename": "x"}] * 300}
+            return {"status": "ahead", "behind_by": 0, "files": [{"filename": "a.py"}]}
+        return fake(repo, token, path, **kwargs)
+
+    decision = _qualify(monkeypatch, read)
+    assert decision.disposition == expected, decision.reason
+    assert decision.recovery_classification == (
+        "INDETERMINATE" if expected == "INDETERMINATE" else "RECOVERABLE"
+    )
+
+
+@pytest.mark.parametrize(
+    ("disposition", "reason", "classification"),
+    [
+        ("QUALIFIED", "carrier-qualified", "RECOVERABLE"),
+        ("RECONCILIATION_REQUIRED", "carrier-confirmed-git-merge-conflict", "RECOVERABLE"),
+        ("INDETERMINATE", "carrier-default-revision-stale", "INDETERMINATE"),
+        ("INDETERMINATE", "carrier-competing-open-carrier", "UNSAFE"),
+    ],
+)
+def test_carrier_diagnostics_have_three_non_authorizing_recovery_classes(
+    disposition: carrier.CarrierDisposition, reason: str, classification: str
+) -> None:
+    decision = carrier.ImplementationCarrierQualification(
+        disposition=disposition,
+        reason=reason,
+        repository=REPOSITORY,
+        issue_number=229,
+        change=CHANGE,
+        action="merge-implementation-pr",
+        pr_number=236,
+    )
+    assert decision.recovery_classification == classification
+    assert not decision.qualified or disposition == "QUALIFIED"
+
+
+@pytest.mark.parametrize("initial", [False, True])
+def test_qualified_carrier_survives_disjoint_mergeable_main_advance(
+    monkeypatch: pytest.MonkeyPatch, initial: bool
+) -> None:
+    current = _continuation_pr(branch=f"agent/{CHANGE}" if initial else None)
+    current["mergeable"] = True
+    base = "a" * 40
+    default_fake = _fake_github(
+        current_pr=current,
+        historical_pr=None if initial else _DEFAULT_HISTORICAL,
+        open_prs=[current],
+        default_is_ancestor=False,
+        pr_files=[{"filename": f"openspec/changes/{CHANGE}/tasks.md"}],
+    )
+
+    def read(repo: str, token: str, path: str, **kwargs: object) -> object | None:
+        if path == f"compare/{HEAD}...{MAIN}":
+            return {"status": "diverged", "merge_base_commit": {"sha": base}}
+        if path == f"compare/{base}...{HEAD}":
+            return {
+                "status": "ahead",
+                "behind_by": 0,
+                "files": [{"filename": f"openspec/changes/{CHANGE}/tasks.md"}],
+            }
+        if path == f"compare/{base}...{MAIN}":
+            return {"status": "ahead", "behind_by": 0, "files": [{"filename": "docs/a.md"}]}
+        return default_fake(repo, token, path, **kwargs)
+
+    monkeypatch.setattr(carrier, "_github_json", read)
+    decision = carrier.qualify_implementation_carrier(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        source=_source("merge-implementation-pr"),
+        change=CHANGE,
+        pr_number=236,
+        current_revision=MAIN,
+    )
+    assert decision.qualified
+    assert decision.head_sha == HEAD
+    assert decision.reason == "carrier-qualified-after-disjoint-mergeable-default-advance"
 
 
 @pytest.mark.parametrize(
@@ -1135,10 +1410,10 @@ def test_stale_open_continuation_carrier_is_reconcilable_but_not_qualified(
         monkeypatch,
         _fake_github(current_pr=current, open_prs=[current], default_is_ancestor=False),
     )
-    assert decision.disposition == "RECONCILIATION_REQUIRED"
-    assert decision.recognized
+    assert decision.disposition == "INDETERMINATE"
+    assert not decision.recognized
     assert not decision.qualified
-    assert decision.reason == "carrier-pr-base-is-stale"
+    assert decision.reason == "carrier-current-integration-evidence-unavailable"
 
 
 def test_reconciled_continuation_branch_qualifies_even_if_pr_base_sha_is_old(
@@ -1270,11 +1545,11 @@ def test_historical_carrier_with_competing_active_change_fails_closed(
 @pytest.mark.parametrize(
     ("default_advance_files", "qualified"),
     [
-        ([{"filename": "src/investment_strategy/bootstrap.py"}], True),
+        ([{"filename": "src/investment_strategy/bootstrap.py"}], False),
         ([{"filename": "src/investment_strategy/example.py"}], False),
     ],
 )
-def test_initial_carrier_accepts_only_disjoint_ancestry_proven_default_advance(
+def test_initial_carrier_does_not_treat_missing_git_proof_as_recoverable(
     monkeypatch: pytest.MonkeyPatch,
     default_advance_files: list[dict[str, object]],
     qualified: bool,
@@ -1300,11 +1575,8 @@ def test_initial_carrier_accepts_only_disjoint_ancestry_proven_default_advance(
         current_revision=new_default,
     )
     assert decision.qualified is qualified
-    if qualified:
-        assert decision.reason == "initial-carrier-qualified-after-disjoint-default-advance"
-    else:
-        assert decision.disposition == "RECONCILIATION_REQUIRED"
-        assert decision.reason == "initial-carrier-requires-default-reconciliation"
+    assert decision.disposition == "INDETERMINATE"
+    assert decision.reason == "carrier-current-integration-evidence-unavailable"
 
 
 def test_second_generation_openspec_continuation_uses_latest_merged_predecessor(

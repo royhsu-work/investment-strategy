@@ -20,7 +20,17 @@ from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
-from investment_strategy.scheduled_agent_action_model import next_action, role_for
+from investment_strategy.scheduled_agent_action_model import (
+    Action as ModelAction,
+)
+from investment_strategy.scheduled_agent_action_model import (
+    ApplicationRejection,
+    ApplicationRejectionKind,
+    ResultKind,
+    TypedResult,
+    next_action,
+    role_for,
+)
 from investment_strategy.scheduled_agent_application_carrier import (
     _historical_carriers,
     canonical_implementation_branch,
@@ -49,6 +59,7 @@ from investment_strategy.scheduled_agent_effects import (
     GITHUB_MUTATION_KIND,
     ApplicationDecisionRecord,
     ApplyResult,
+    EffectRecoveryEvidence,
     GitHubEffectAdapter,
     StagedEffect,
     _archive_branch,
@@ -59,6 +70,7 @@ from investment_strategy.scheduled_agent_effects import (
     formal_application_correlation,
     merged_pr_readiness_complete,
     parse_application_decision,
+    parse_effect_batch,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
@@ -4091,6 +4103,434 @@ def _recover_partial_first_activation(
     raise RuntimeError("partial activation administrative recovery did not qualify")
 
 
+def _resume_pending_accepted_merge_recovery(
+    *,
+    accepted: ApplicationDecisionRecord,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+) -> bool:
+    """Finish an interrupted recovery comment -> routing handoff, never MERGED."""
+
+    if (
+        accepted.disposition != "ACCEPTED"
+        or accepted.result_kind != "merged"
+        or accepted.role != "executor"
+        or accepted.action not in {"merge-implementation-pr", "merge-archive-pr"}
+    ):
+        return False
+    comments = _paged_github_list(
+        repository, token, f"issues/{accepted.issue_number}/comments?sort=created"
+    )
+    recovery_candidates = [
+        comment
+        for comment in comments
+        if is_github_actions_comment(comment)
+        and isinstance(comment.get("body"), str)
+        and cast(str, comment["body"]).startswith(_RECOVERY_MARKER + "\n")
+        and _field(cast(str, comment["body"]), "Reason") == "accepted-merge-precondition-rejected"
+        and _field(cast(str, comment["body"]), "Request-Comment-ID")
+        == str(accepted.request_comment_id)
+    ]
+    if not recovery_candidates:
+        return False
+    if len(recovery_candidates) != 1:
+        raise RuntimeError("accepted merge recovery evidence is duplicated")
+    issue = _as_mapping(_github_json(repository, token, f"issues/{accepted.issue_number}"))
+    observation = None if issue is None else normalize_github_issue(issue)
+    if (
+        issue is None
+        or observation is None
+        or not observation.authoritative
+        or observation.state != "open"
+        or observation.change != accepted.change
+    ):
+        raise RuntimeError("accepted merge recovery current Issue is unavailable")
+    timeline = _paged_github_list(repository, token, f"issues/{accepted.issue_number}/timeline")
+    recovery_body = cast(str, recovery_candidates[0]["body"])
+    recovery_revision = _field(recovery_body, "Default-Branch-Revision")
+    revisions = {accepted.authorization_revision, recovery_revision}
+    ancestry: list[tuple[str, str]] = []
+    for revision in revisions:
+        if revision == current_revision:
+            continue
+        if (
+            revision is None
+            or _SHA.fullmatch(revision) is None
+            or not _authorization_revision_is_ancestor(
+                repository, token, revision, current_revision
+            )
+        ):
+            raise RuntimeError("accepted merge recovery ancestry is unqualified")
+        ancestry.append((revision, current_revision))
+    qualified = build_qualification_input(
+        issue_number=accepted.issue_number,
+        change=accepted.change,
+        state=observation.state,
+        current_routing=observation.routing,
+        comments=comments,
+        current_revision=current_revision,
+        lifecycle_events=timeline,
+        authorization_ancestry=tuple(ancestry),
+    )
+    matching = [
+        event
+        for event in qualified.recovery_events
+        if event.valid
+        and event.reason == "accepted-merge-precondition-rejected"
+        and event.request_comment_id == accepted.request_comment_id
+        and event.source == (accepted.role, accepted.action)
+        and event.change == accepted.change
+    ]
+    if len(matching) != 1 or matching[0] != qualified.recovery_events[-1]:
+        raise RuntimeError("accepted merge recovery provenance is not qualified")
+    event = matching[0]
+    target = event.target
+    if target is None or event.pr_number is None or event.pr_head_sha is None:
+        raise RuntimeError("accepted merge recovery target identity is incomplete")
+    pr = _as_mapping(_github_json(repository, token, f"pulls/{event.pr_number}"))
+    pr_head = None if pr is None else _as_mapping(pr.get("head"))
+    if (
+        pr is None
+        or pr.get("state") != "open"
+        or pr.get("merged") is not False
+        or pr_head is None
+        or pr_head.get("sha") != event.pr_head_sha
+        or _fresh_branch_head(repository, token, default_branch) != current_revision
+    ):
+        raise RuntimeError("accepted merge recovery PR or main changed")
+
+    if observation.routing == target:
+        outcome = qualify_current_formal_consequence(qualified)
+        if (
+            not outcome.qualified
+            or outcome.reason != "current-administrative-recovery-route-qualified"
+        ):
+            raise RuntimeError("accepted merge recovery current route is not qualified")
+        fresh_dispatch = classify_dispatch(acquire_current_github_preflight(repository, token))
+        if (
+            fresh_dispatch.disposition != "AUTHORIZE"
+            or fresh_dispatch.selected_issue_id != accepted.issue_number
+            or fresh_dispatch.selected_routing != target
+        ):
+            raise RuntimeError("accepted merge recovery has no freshly dispatchable successor")
+        return True
+    if observation.routing != (accepted.role, accepted.action):
+        raise RuntimeError("accepted merge recovery source routing changed")
+    fresh = _as_mapping(_github_json(repository, token, f"issues/{accepted.issue_number}"))
+    fresh_observation = None if fresh is None else normalize_github_issue(fresh)
+    if (
+        fresh is None
+        or fresh_observation is None
+        or not fresh_observation.authoritative
+        or fresh_observation.routing != observation.routing
+        or fresh.get("body") != issue.get("body")
+        or _fresh_branch_head(repository, token, default_branch) != current_revision
+    ):
+        raise RuntimeError("accepted merge recovery route changed before write")
+    fresh_pr = _as_mapping(_github_json(repository, token, f"pulls/{event.pr_number}"))
+    fresh_pr_head = None if fresh_pr is None else _as_mapping(fresh_pr.get("head"))
+    if (
+        fresh_pr is None
+        or fresh_pr.get("state") != "open"
+        or fresh_pr.get("merged") is not False
+        or fresh_pr_head is None
+        or fresh_pr_head.get("sha") != event.pr_head_sha
+    ):
+        raise RuntimeError("accepted merge recovery PR changed before write")
+    labels = [
+        name for name in _issue_label_names(fresh) if not name.startswith(_ROUTING_LABEL_PREFIXES)
+    ]
+    labels.append(f"action:{target[1]}")
+    _github_json(
+        repository,
+        token,
+        f"issues/{accepted.issue_number}",
+        method="PATCH",
+        payload={"labels": labels},
+    )
+    after = _as_mapping(_github_json(repository, token, f"issues/{accepted.issue_number}"))
+    after_observation = None if after is None else normalize_github_issue(after)
+    if (
+        after is None
+        or after_observation is None
+        or after_observation.routing != target
+        or after_observation.change != accepted.change
+        or after.get("body") != issue.get("body")
+        or sorted(
+            name
+            for name in _issue_label_names(after)
+            if not name.startswith(_ROUTING_LABEL_PREFIXES)
+        )
+        != sorted(
+            name
+            for name in _issue_label_names(issue)
+            if not name.startswith(_ROUTING_LABEL_PREFIXES)
+        )
+    ):
+        raise RuntimeError("accepted merge recovery routing postcondition is absent")
+    fresh_dispatch = classify_dispatch(acquire_current_github_preflight(repository, token))
+    if (
+        fresh_dispatch.disposition != "AUTHORIZE"
+        or fresh_dispatch.selected_issue_id != accepted.issue_number
+        or fresh_dispatch.selected_routing != target
+    ):
+        raise RuntimeError("accepted merge recovery has no freshly dispatchable successor")
+    return True
+
+
+def _recover_deterministic_accepted_merge_failure(
+    *,
+    result: ApplyResult,
+    batch: object,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+    request_comment_id: int,
+) -> bool:
+    """Dispose of a rejected accepted merge without replacing or replaying MERGED.
+
+    This is an application-owned administrative recovery, not a semantic
+    ACTION_RESULT or a second merge attempt. Only a proven zero-write,
+    deterministic integration prerequisite may activate the existing model's
+    lifecycle-violation successor. An unknown write or incomplete Git proof
+    never qualifies.
+    """
+
+    from investment_strategy.scheduled_agent_effects import EffectBatch
+
+    if (
+        source.role != "executor"
+        or source.action not in {"merge-implementation-pr", "merge-archive-pr"}
+        or not isinstance(batch, EffectBatch)
+        or batch.typed_result is None
+        or batch.typed_result.result.kind.value != "merged"
+    ):
+        return False
+    recovery = result.recovery_evidence
+    rejection = None if recovery is None else recovery.rejection
+    if (
+        result.applied
+        or recovery is None
+        or recovery.mutation_status != "not-complete"
+        or recovery.unfinished_boundary != "effect-precondition"
+        or recovery.completed_effect_indexes
+        or recovery.completed_effect_sha256
+        or rejection is None
+        or getattr(rejection.classification, "value", rejection.classification)
+        != "effect-precondition-unsatisfied"
+        or recovery.failed_effect_kind != GITHUB_MUTATION_KIND
+        or recovery.failed_effect_index < 0
+        or recovery.failed_effect_index >= len(batch.effects)
+    ):
+        return False
+    effect = batch.effects[recovery.failed_effect_index]
+    payload = _effect_payload({"payload_json": effect.payload_json})
+    if (
+        effect.kind != GITHUB_MUTATION_KIND
+        or hashlib.sha256(effect.payload_json.encode("utf-8")).hexdigest()
+        != recovery.failed_effect_sha256
+        or payload is None
+        or payload.get("operation") != "pull-request-merge"
+        or not isinstance(payload.get("number"), int)
+        or isinstance(payload.get("number"), bool)
+        or _SHA.fullmatch(str(payload.get("expected_head_sha"))) is None
+    ):
+        return False
+
+    decision = _application_decision_comment_for_request(
+        repository=repository,
+        token=token,
+        issue_number=source.issue_number,
+        request_comment_id=request_comment_id,
+    )
+    if decision is None:
+        return False
+    accepted, accepted_body = decision
+    if (
+        accepted.disposition != "ACCEPTED"
+        or accepted.issue_number != source.issue_number
+        or (accepted.role, accepted.action) != (source.role, source.action)
+        or accepted.result_kind != "merged"
+        or not isinstance(accepted.change, str)
+        or accepted.change == "unset"
+    ):
+        return False
+
+    # A newly observed PR conflict or fully qualified implementation-owned
+    # reconciliation is actionable. Missing evidence, a pending mergeability
+    # computation, or an unexplained mismatch is not deterministic.
+    number = cast(int, payload["number"])
+    head = cast(str, payload["expected_head_sha"])
+    pr = _as_mapping(_github_json(repository, token, f"pulls/{number}"))
+    pr_head = None if pr is None else _as_mapping(pr.get("head"))
+    pr_base = None if pr is None else _as_mapping(pr.get("base"))
+    if (
+        pr is None
+        or pr.get("state") != "open"
+        or pr.get("merged") is not False
+        or pr_head is None
+        or pr_head.get("sha") != head
+        or pr_base is None
+        or pr_base.get("ref") != default_branch
+        or _fresh_branch_head(repository, token, default_branch) != current_revision
+    ):
+        return False
+    deterministic = pr.get("mergeable") is False
+    if source.action == "merge-implementation-pr":
+        carrier = qualify_implementation_carrier(
+            repository=repository,
+            token=token,
+            source=source,
+            change=accepted.change,
+            pr_number=number,
+            current_revision=current_revision,
+        )
+        deterministic = (
+            carrier.disposition == "RECONCILIATION_REQUIRED"
+            and carrier.head_sha == head
+            and carrier.reason
+            in {
+                "carrier-confirmed-git-merge-conflict",
+                "initial-carrier-requires-default-reconciliation",
+                "carrier-pr-base-is-stale",
+                "continuation-carrier-requires-default-reconciliation",
+            }
+        )
+    if not deterministic:
+        return False
+
+    successor = next_action(ModelAction(source.action), TypedResult(ResultKind.LIFECYCLE_VIOLATION))
+    if successor is None:
+        return False
+    target = (role_for(successor).value, successor.value)
+    issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
+    observation = None if issue is None else normalize_github_issue(issue)
+    if (
+        issue is None
+        or observation is None
+        or not observation.authoritative
+        or observation.state != "open"
+        or observation.change != accepted.change
+        or observation.routing != (source.role, source.action)
+    ):
+        return False
+    preflight = acquire_current_github_preflight(repository, token)
+    dispatch = classify_dispatch(preflight)
+    if (
+        dispatch.disposition != "AUTHORIZE"
+        or dispatch.selected_issue_id != source.issue_number
+        or dispatch.selected_routing != (source.role, source.action)
+    ):
+        return False
+
+    decision_sha = hashlib.sha256(accepted_body.encode("utf-8")).hexdigest()
+    failure_sha = _canonical_sha256(_recovery_failure_document(result))
+    body = "\n".join(
+        (
+            _RECOVERY_MARKER,
+            f"Workflow: #{source.issue_number}",
+            f"Change: {accepted.change}",
+            f"Source: {source.role.capitalize()} / {source.action}",
+            f"Target: {target[0].capitalize()} / {target[1]}",
+            f"Default-Branch-Revision: {current_revision}",
+            f"Failed-Authorization-Revision: {accepted.authorization_revision}",
+            f"Request-Comment-ID: {request_comment_id}",
+            f"Accepted-Decision-SHA256: {decision_sha}",
+            f"Failure-Evidence-SHA256: {failure_sha}",
+            f"PR-Number: {number}",
+            f"PR-Head-SHA: {head}",
+            "Reason: accepted-merge-precondition-rejected",
+        )
+    )
+    existing_comments = _paged_github_list(
+        repository, token, f"issues/{source.issue_number}/comments?sort=created"
+    )
+    if any(
+        is_github_actions_comment(comment)
+        and isinstance(comment.get("body"), str)
+        and cast(str, comment["body"]).startswith(_RECOVERY_MARKER + "\n")
+        and _field(cast(str, comment["body"]), "Request-Comment-ID") == str(request_comment_id)
+        and comment.get("body") != body
+        for comment in existing_comments
+    ):
+        return False
+    _persist_recovery_comment(
+        body, repository=repository, token=token, issue_number=source.issue_number
+    )
+
+    # Reconstruct an exact, still-current route and PR before the only label
+    # write. Retain unrelated labels and inspect the postcondition and the
+    # machine dispatch independently, as with partial-activation recovery.
+    fresh = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
+    fresh_observation = None if fresh is None else normalize_github_issue(fresh)
+    if (
+        fresh is None
+        or fresh_observation is None
+        or not fresh_observation.authoritative
+        or fresh_observation.state != "open"
+        or fresh_observation.change != accepted.change
+        or fresh_observation.routing != (source.role, source.action)
+        or fresh.get("body") != issue.get("body")
+        or _fresh_branch_head(repository, token, default_branch) != current_revision
+    ):
+        raise RuntimeError("accepted merge recovery target changed before routing")
+    fresh_pr = _as_mapping(_github_json(repository, token, f"pulls/{number}"))
+    fresh_pr_head = None if fresh_pr is None else _as_mapping(fresh_pr.get("head"))
+    if (
+        fresh_pr is None
+        or fresh_pr.get("state") != "open"
+        or fresh_pr.get("merged") is not False
+        or fresh_pr_head is None
+        or fresh_pr_head.get("sha") != head
+    ):
+        raise RuntimeError("accepted merge recovery PR changed before routing")
+    labels = [
+        name for name in _issue_label_names(fresh) if not name.startswith(_ROUTING_LABEL_PREFIXES)
+    ]
+    labels.append(f"action:{successor.value}")
+    _github_json(
+        repository,
+        token,
+        f"issues/{source.issue_number}",
+        method="PATCH",
+        payload={"labels": labels},
+    )
+    after = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
+    after_observation = None if after is None else normalize_github_issue(after)
+    if (
+        after is None
+        or after_observation is None
+        or not after_observation.authoritative
+        or after_observation.state != "open"
+        or after_observation.change != accepted.change
+        or after_observation.routing != target
+        or after.get("body") != issue.get("body")
+        or sorted(
+            name
+            for name in _issue_label_names(after)
+            if not name.startswith(_ROUTING_LABEL_PREFIXES)
+        )
+        != sorted(
+            name
+            for name in _issue_label_names(issue)
+            if not name.startswith(_ROUTING_LABEL_PREFIXES)
+        )
+    ):
+        raise RuntimeError("accepted merge recovery routing postcondition not observed")
+    dispatched = classify_dispatch(acquire_current_github_preflight(repository, token))
+    if (
+        dispatched.disposition != "AUTHORIZE"
+        or dispatched.selected_issue_id != source.issue_number
+        or dispatched.selected_routing != target
+    ):
+        raise RuntimeError("accepted merge recovery fresh dispatch not qualified")
+    return True
+
+
 def _write_validation_outputs(target: ValidationResourceTarget | None) -> None:
     output_path = os.environ.get("GITHUB_OUTPUT")
     if not output_path:
@@ -4108,6 +4548,51 @@ def _write_validation_outputs(target: ValidationResourceTarget | None) -> None:
         )
     with Path(output_path).open("a", encoding="utf-8") as output:
         output.write("\n".join(lines) + "\n")
+
+
+def _rejected_merge_result_from_checkpoint(
+    predecessor: ApplicationRecoveryArtifact,
+) -> ApplyResult | None:
+    """Rehydrate only a verified zero-write failure; never reconstruct a merge write."""
+
+    failure = predecessor.document.get("failure_evidence")
+    if not isinstance(failure, Mapping):
+        return None
+    rejection_doc = failure.get("rejection")
+    if not isinstance(rejection_doc, Mapping):
+        return None
+    try:
+        kind = ApplicationRejectionKind(cast(str, rejection_doc["classification"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if (
+        kind is not ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED
+        or failure.get("mutation_status") != "not-complete"
+        or failure.get("unfinished_boundary") != "effect-precondition"
+        or failure.get("completed_effect_indexes") != []
+        or failure.get("completed_effect_sha256") != []
+        or type(failure.get("failed_effect_index")) is not int
+        or not isinstance(failure.get("failed_effect_kind"), str)
+        or not isinstance(failure.get("failed_effect_sha256"), str)
+        or not isinstance(rejection_doc.get("expected"), str)
+        or not isinstance(rejection_doc.get("observed"), str)
+    ):
+        return None
+    recovery = EffectRecoveryEvidence(
+        failed_effect_index=cast(int, failure["failed_effect_index"]),
+        failed_effect_kind=cast(str, failure["failed_effect_kind"]),
+        failed_effect_sha256=cast(str, failure["failed_effect_sha256"]),
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status="not-complete",
+        unfinished_boundary="effect-precondition",
+        rejection=ApplicationRejection(
+            kind,
+            cast(str, rejection_doc["expected"]),
+            cast(str, rejection_doc["observed"]),
+        ),
+    )
+    return ApplyResult(False, "effect precondition rejected", recovery_evidence=recovery)
 
 
 def _write_carrier_outputs(result: ApplyResult) -> None:
@@ -4521,6 +5006,36 @@ def _public_failure_diagnostics(result: ApplyResult) -> dict[str, object] | None
             }
         ):
             summary["guard_reason"] = observed["reason"]
+        # Merge acceptance itself constructs this bounded envelope. Expose only
+        # known predicate names, never the PR/comment/payload or raw transport
+        # response. It distinguishes a durable gate failure from API failure.
+        merge_predicates = frozenset(
+            {
+                "complete",
+                "current_carrier",
+                "exact_head",
+                "exact_review",
+                "required_checks",
+                "non_closing_linkage",
+                "native_closing_preflight",
+                "no_contradiction",
+                "human_freshness",
+            }
+        )
+        if (
+            isinstance(expected, Mapping)
+            and set(expected) == {"issue", "change", "pr", "head", "failed_predicates"}
+            and expected.get("failed_predicates") == []
+            and isinstance(observed, Mapping)
+            and set(observed) == {"failed_predicates", "snapshot"}
+            and isinstance(observed.get("failed_predicates"), list)
+            and bool(observed["failed_predicates"])
+            and all(
+                isinstance(item, str) and item in merge_predicates
+                for item in observed["failed_predicates"]
+            )
+        ):
+            summary["merge_failed_predicates"] = sorted(set(observed["failed_predicates"]))
     return summary
 
 
@@ -4582,11 +5097,11 @@ def _write_application_recovery_evidence(
     run_attempt: int,
     continuation: ApplicationContinuationRequest | None,
     predecessor: ApplicationRecoveryArtifact | None,
-) -> None:
+) -> bool:
     """Persist a bounded, content-addressed application boundary for later reads."""
 
     if path is None:
-        return
+        return False
     try:
         decision = _application_decision_comment_for_request(
             repository=repository,
@@ -4595,9 +5110,9 @@ def _write_application_recovery_evidence(
             request_comment_id=request_comment_id,
         )
     except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
-        return
+        return False
     if decision is None:
-        return
+        return False
     accepted_record, accepted_body = decision
     if (
         accepted_record.disposition != "ACCEPTED"
@@ -4605,16 +5120,16 @@ def _write_application_recovery_evidence(
         or accepted_record.role != source.role
         or accepted_record.action != source.action
     ):
-        return
+        return False
     accepted_sha256 = hashlib.sha256(accepted_body.encode("utf-8")).hexdigest()
     if continuation is not None and continuation.accepted_decision_sha256 != accepted_sha256:
-        return
+        return False
     try:
         run_id = int(os.environ.get("GITHUB_RUN_ID", ""))
     except ValueError:
-        return
+        return False
     if _strict_positive_int(run_id) is None or _strict_positive_int(run_attempt) is None:
-        return
+        return False
 
     failure_evidence = _recovery_failure_document(result)
     failure_evidence_sha256 = _canonical_sha256(failure_evidence)
@@ -4665,6 +5180,10 @@ def _write_application_recovery_evidence(
         and not recovery.completed_effect_indexes
         and not recovery.completed_effect_sha256
     )
+    # A rejected merge can resume only through the dedicated application-owned
+    # administrative recovery entry; the original MERGED effect is never
+    # passed to the mutation carrier again. The exact artifact is a bounded
+    # checkpoint, not permission to replay the accepted semantic result.
     continuation_eligible = result.carrier_plan is not None or safe_precondition_rejection
     document = {
         "schema": _APPLICATION_RECOVERY_SCHEMA,
@@ -4693,11 +5212,12 @@ def _write_application_recovery_evidence(
             encoding="utf-8",
         )
     except OSError:
-        return
+        return False
     output_path = os.environ.get("GITHUB_OUTPUT")
     if output_path:
         with Path(output_path).open("a", encoding="utf-8") as output:
             output.write(f"recovery_evidence_path={path}\n")
+    return bool(output_path)
 
 
 def _record_application_exception(context: ApplicationExceptionContext, exc: Exception) -> None:
@@ -5009,6 +5529,26 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             authorization_revision=accepted_intent.authorization_revision,
             raw_worker_result=accepted_raw_worker_result,
         )
+        if _resume_pending_accepted_merge_recovery(
+            accepted=accepted_intent,
+            repository=repository,
+            token=token,
+            current_revision=args.revision,
+            default_branch=args.default_branch,
+        ):
+            _write_carrier_outputs(ApplyResult(True, "accepted-merge-recovery-already-durable"))
+            _write_validation_outputs(None)
+            print(
+                json.dumps(
+                    {
+                        "applied": True,
+                        "reason": "accepted-merge-recovery-already-durable",
+                        "effects": 0,
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 0
     if accepted_intent is not None and accepted_intent.disposition == "REJECTED":
         _write_carrier_outputs(ApplyResult(False, "application-rejected"))
         _write_validation_outputs(None)
@@ -5317,6 +5857,42 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             authorized_change=plan.change,
         )
 
+    if (
+        continuation is not None
+        and predecessor_evidence is not None
+        and plan.source.action in {"merge-implementation-pr", "merge-archive-pr"}
+    ):
+        # A continuation after an accepted zero-write merge rejection has
+        # *no* path through the original MERGED effect batch. It may only
+        # complete the application-owned administrative handoff, or exit with
+        # a concrete non-retryable stop condition.
+        reconstructed = _rejected_merge_result_from_checkpoint(predecessor_evidence)
+        batch = parse_effect_batch(
+            application_worker_result,
+            plan.source,
+            authorized_change=plan.change,
+        )
+        if reconstructed is None or not _recover_deterministic_accepted_merge_failure(
+            result=reconstructed,
+            batch=batch,
+            source=plan.source,
+            repository=repository,
+            token=token,
+            current_revision=args.revision,
+            default_branch=args.default_branch,
+            request_comment_id=plan.request_comment_id,
+        ):
+            raise RuntimeError("accepted merge recovery cannot establish a safe durable handoff")
+        _write_carrier_outputs(ApplyResult(True, "accepted-merge-recovery-handoff"))
+        _write_validation_outputs(None)
+        print(
+            json.dumps(
+                {"applied": True, "reason": "accepted-merge-recovery-handoff", "effects": 0},
+                sort_keys=True,
+            )
+        )
+        return 0
+
     context.stage = "application-effect-and-postcondition"
     context.mutation_attempted = True
     try:
@@ -5420,6 +5996,55 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         )
         return 0
 
+    # A zero-write rejection may need an administrative comment and routing
+    # write. Its recoverable predecessor artifact must be available to the
+    # existing normal-dispatch APPLICATION_CONTINUATION channel *before*
+    # either GitHub write, including if the process fails after the comment.
+    recovery_evidence_written = False
+    if (
+        not result.applied
+        and result.carrier_plan is None
+        and plan.source.action in {"merge-implementation-pr", "merge-archive-pr"}
+    ):
+        recovery_evidence_written = _write_application_recovery_evidence(
+            args.recovery_evidence_path,
+            result=result,
+            repository=repository,
+            token=token,
+            source=plan.source,
+            request_comment_id=plan.request_comment_id,
+            trigger_comment_id=event_comment_id or plan.request_comment_id,
+            authorization_revision=request.authorization_revision,
+            current_revision=args.revision,
+            run_attempt=args.run_attempt,
+            continuation=continuation,
+            predecessor=predecessor_evidence,
+        )
+    if recovery_evidence_written and _recover_deterministic_accepted_merge_failure(
+        result=result,
+        batch=batch,
+        source=plan.source,
+        repository=repository,
+        token=token,
+        current_revision=args.revision,
+        default_branch=args.default_branch,
+        request_comment_id=plan.request_comment_id,
+    ):
+        _write_carrier_outputs(ApplyResult(True, "accepted-merge-recovery-handoff"))
+        _write_validation_outputs(None)
+        print(
+            json.dumps(
+                {
+                    "applied": True,
+                    "reason": "accepted-merge-recovery-handoff",
+                    "effects": 0,
+                    "replayed_merge": False,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+
     if result.carrier_plan is not None:
         # Keep compatibility with an adapter that returns the existing carrier
         # result surface while enforcing the same invocation boundary.
@@ -5472,20 +6097,21 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         target = None
     _write_carrier_outputs(result)
     _write_validation_outputs(target)
-    _write_application_recovery_evidence(
-        args.recovery_evidence_path,
-        result=result,
-        repository=repository,
-        token=token,
-        source=plan.source,
-        request_comment_id=plan.request_comment_id,
-        trigger_comment_id=event_comment_id or plan.request_comment_id,
-        authorization_revision=request.authorization_revision,
-        current_revision=args.revision,
-        run_attempt=args.run_attempt,
-        continuation=continuation,
-        predecessor=predecessor_evidence,
-    )
+    if not recovery_evidence_written:
+        _write_application_recovery_evidence(
+            args.recovery_evidence_path,
+            result=result,
+            repository=repository,
+            token=token,
+            source=plan.source,
+            request_comment_id=plan.request_comment_id,
+            trigger_comment_id=event_comment_id or plan.request_comment_id,
+            authorization_revision=request.authorization_revision,
+            current_revision=args.revision,
+            run_attempt=args.run_attempt,
+            continuation=continuation,
+            predecessor=predecessor_evidence,
+        )
     print(
         json.dumps(
             {

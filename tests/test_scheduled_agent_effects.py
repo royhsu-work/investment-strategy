@@ -3108,6 +3108,8 @@ def test_stale_continuation_base_is_only_admissible_to_update_handoff(
             return {"status": "ahead", "behind_by": 0}
         if api_path == f"compare/{default_sha}...{head_sha}":
             return {"status": "diverged", "behind_by": 1}
+        if api_path == f"compare/{head_sha}...{default_sha}":
+            return {"status": "diverged", "behind_by": 1}
         if api_path == f"git/ref/heads/{branch}":
             return {"object": {"sha": head_sha}}
         raise AssertionError(f"unexpected GitHub read: {api_path}")
@@ -3120,13 +3122,15 @@ def test_stale_continuation_base_is_only_admissible_to_update_handoff(
         authorized_change=change,
     )
 
+    # The observed divergence has neither current mergeability nor complete
+    # merge-base proof. It is INDETERMINATE, not a proven correction target.
     assert (
         adapter._source_pull_request(
             236,
             require_open=True,
             allow_reconciliation=True,
         )
-        == current_pr
+        is None
     )
     assert adapter._source_pull_request(236, require_open=True) is None
 

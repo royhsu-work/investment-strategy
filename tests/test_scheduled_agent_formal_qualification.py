@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
+
+import pytest
 
 from investment_strategy.scheduled_agent_formal_qualification import (
     QualificationDecision,
@@ -1223,6 +1226,173 @@ def test_administrative_recovery_rejects_unbound_current_change_formal_shape() -
     decision = qualify_current_formal_consequence(qualification_input)
     assert decision.provenance is ObservationProvenance.INDETERMINATE
     assert decision.reason == "administrative-recovery-competing-formal-evidence"
+
+
+@pytest.mark.parametrize("prior_blocked", [False, True])
+@pytest.mark.parametrize("unrelated_invalid_recovery", [False, True])
+def test_accepted_merge_application_recovery_binds_successor_and_later_lead_work(
+    prior_blocked: bool,
+    unrelated_invalid_recovery: bool,
+) -> None:
+    """An immutable ACCEPTED MERGED intent is not republished as LIFECYCLE_VIOLATION."""
+
+    review = _comment(
+        100,
+        action="review-implementation",
+        role="reviewer",
+        result="pass",
+        successor="Executor / merge-implementation-pr",
+        request_id=50,
+    )
+    accepted_body = "\n".join(
+        (
+            "APPLICATION_DECISION",
+            "Request-Comment: 51",
+            "Disposition: ACCEPTED",
+            "Result-Kind: merged",
+            "Issue: 229",
+            "Role: executor",
+            "Action: merge-implementation-pr",
+            f"Change: {_CHANGE}",
+        )
+    )
+    accepted = {
+        "id": 101,
+        "body": accepted_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    recovery = {
+        "id": 102,
+        "body": "\n".join(
+            (
+                "APPLICATION_RECOVERY",
+                "Workflow: #229",
+                f"Change: {_CHANGE}",
+                "Source: Executor / merge-implementation-pr",
+                "Target: Lead / resolve-question",
+                f"Default-Branch-Revision: {_REVISION}",
+                f"Failed-Authorization-Revision: {_REVISION}",
+                "Request-Comment-ID: 51",
+                "Accepted-Decision-SHA256: " + hashlib.sha256(accepted_body.encode()).hexdigest(),
+                "Failure-Evidence-SHA256: " + "f" * 64,
+                "PR-Number: 418",
+                "PR-Head-SHA: " + _REVISION,
+                "Reason: accepted-merge-precondition-rejected",
+            )
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    timeline: list[dict[str, object]] = [
+        {"id": 100, "event": "commented", "created_at": "2026-09-16T01:00:00Z"},
+        {
+            "id": 201,
+            "event": "labeled",
+            "created_at": "2026-09-16T01:00:01Z",
+            "label": {"name": "action:merge-implementation-pr"},
+        },
+        {"id": 101, "event": "commented", "created_at": "2026-09-16T01:00:02Z"},
+        {"id": 102, "event": "commented", "created_at": "2026-09-16T01:00:03Z"},
+        {
+            "id": 202,
+            "event": "unlabeled",
+            "created_at": "2026-09-16T01:00:04Z",
+            "label": {"name": "action:merge-implementation-pr"},
+        },
+        {
+            "id": 203,
+            "event": "labeled",
+            "created_at": "2026-09-16T01:00:04Z",
+            "label": {"name": "action:resolve-question"},
+        },
+    ]
+    comments = [review, accepted, recovery]
+    if unrelated_invalid_recovery:
+        # A malformed, older recovery from another episode is historical
+        # context, not a current gate that can permanently stall the latest
+        # independently proven merge handoff.
+        comments.insert(
+            0,
+            {
+                "id": 98,
+                "body": "APPLICATION_RECOVERY\nReason: partial-first-activation",
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+            },
+        )
+        timeline.insert(
+            0,
+            {"id": 98, "event": "commented", "created_at": "2026-09-16T00:59:59Z"},
+        )
+    if prior_blocked:
+        comments.insert(
+            1,
+            _comment(
+                300,
+                action="merge-implementation-pr",
+                role="executor",
+                result="blocked",
+                successor="Executor / merge-implementation-pr",
+                request_id=49,
+            ),
+        )
+        timeline.insert(
+            2,
+            {"id": 300, "event": "commented", "created_at": "2026-09-16T01:00:01Z"},
+        )
+    qualified = qualify_current_formal_consequence(
+        build_qualification_input(
+            issue_number=229,
+            change=_CHANGE,
+            state="open",
+            current_routing=("lead", "resolve-question"),
+            comments=comments,
+            current_revision=_REVISION,
+            lifecycle_events=timeline,
+        )
+    )
+    assert qualified.provenance is ObservationProvenance.QUALIFIED, qualified.reason
+    assert qualified.reason == "current-administrative-recovery-route-qualified"
+
+    lead = _comment(
+        103,
+        action="resolve-question",
+        role="lead",
+        result="ready",
+        successor="Executor / implement-change",
+        request_id=52,
+    )
+    timeline.extend(
+        [
+            {"id": 103, "event": "commented", "created_at": "2026-09-16T01:00:05Z"},
+            {
+                "id": 204,
+                "event": "unlabeled",
+                "created_at": "2026-09-16T01:00:06Z",
+                "label": {"name": "action:resolve-question"},
+            },
+            {
+                "id": 205,
+                "event": "labeled",
+                "created_at": "2026-09-16T01:00:06Z",
+                "label": {"name": "action:implement-change"},
+            },
+        ]
+    )
+    continued = qualify_current_formal_consequence(
+        build_qualification_input(
+            issue_number=229,
+            change=_CHANGE,
+            state="open",
+            current_routing=("executor", "implement-change"),
+            comments=[*comments, lead],
+            current_revision=_REVISION,
+            lifecycle_events=timeline,
+        )
+    )
+    assert continued.provenance is ObservationProvenance.QUALIFIED, continued.reason
+    assert continued.reason == "current-formal-route-qualified"
 
 
 def test_application_owned_lowercase_successor_is_reconciled() -> None:

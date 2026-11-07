@@ -34,6 +34,8 @@ CarrierDisposition = Literal[
     "HISTORICAL_MERGED",
     "INDETERMINATE",
 ]
+RecoveryClassification = Literal["RECOVERABLE", "INDETERMINATE", "UNSAFE"]
+DivergenceEvidence = Literal["SAFE", "NEEDS_RECONCILIATION", "INDETERMINATE"]
 GitHubReader = Callable[..., object | None]
 
 _CHANGE_CARRIER_SOURCES = frozenset(
@@ -90,6 +92,22 @@ class ImplementationCarrierQualification:
             "RECONCILIATION_REQUIRED",
             "HISTORICAL_MERGED",
         }
+
+    @property
+    def recovery_classification(self) -> RecoveryClassification:
+        """Diagnostic only; never a new routing or acceptance authority."""
+
+        if self.recognized:
+            return "RECOVERABLE"
+        if self.reason in {
+            "carrier-competing-open-carrier",
+            "carrier-pr-ref-head-mismatch",
+            "carrier-merged-pr-is-not-approved-history",
+            "carrier-pr-identity-incoherent",
+            "carrier-competing-active-change",
+        }:
+            return "UNSAFE"
+        return "INDETERMINATE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -427,6 +445,12 @@ def _changed_paths(
     )
     if comparison is None:
         return None
+    if (
+        comparison.get("status") not in {"ahead", "identical"}
+        or comparison.get("behind_by") != 0
+        or comparison.get("too_large") is True
+    ):
+        return None
     files = comparison.get("files")
     if not isinstance(files, list) or len(files) >= 300:
         return None
@@ -437,66 +461,93 @@ def _changed_paths(
         if not isinstance(filename, str) or not filename:
             return None
         paths.add(filename)
+        if file is not None and "previous_filename" in file:
+            previous = file["previous_filename"]
+            if not isinstance(previous, str) or not previous:
+                return None
+            paths.add(previous)
     return frozenset(paths)
 
 
-def _pr_changed_paths(
-    repository: str,
-    token: str,
-    *,
-    pr_number: int,
-    read: GitHubReader,
-) -> frozenset[str] | None:
-    files = _paged_list(repository, token, f"pulls/{pr_number}/files?", read=read)
-    if not files:
-        return None
-    paths: set[str] = set()
-    for file in files:
-        filename = file.get("filename")
-        if not isinstance(filename, str) or not filename:
-            return None
-        paths.add(filename)
-    return frozenset(paths)
-
-
-def _initial_carrier_base_advance_is_disjoint(
+def _divergence_evidence(
     repository: str,
     token: str,
     *,
     pr: Mapping[str, object],
-    pr_number: int,
+    head_sha: str,
+    default_revision: str,
+    read: GitHubReader,
+) -> DivergenceEvidence:
+    """Prove an open PR can integrate an advanced main without moving its HEAD.
+
+    GitHub's current mergeability is necessary but not sufficient: the exact
+    merge base and both complete changed-path sets must also be established.
+    Overlap, conflict, unknown mergeability, or truncated comparison evidence
+    never silently acquires the existing exact-head review's authority.
+    """
+
+    # A PR head already contained in main is an observed integration relation,
+    # not an unknown GitHub mergeability calculation. The branch can be
+    # reconciled by its owner without treating this as a current merge PASS.
+    if _compare_is_ancestor(
+        repository, token, ancestor=head_sha, descendant=default_revision, read=read
+    ):
+        return "NEEDS_RECONCILIATION"
+    if pr.get("mergeable") is False:
+        return "NEEDS_RECONCILIATION"
+    if pr.get("mergeable") is not True:
+        return "INDETERMINATE"
+    comparison = _as_mapping(read(repository, token, f"compare/{head_sha}...{default_revision}"))
+    merge_base = None if comparison is None else _as_mapping(comparison.get("merge_base_commit"))
+    ancestor = None if merge_base is None else merge_base.get("sha")
+    if (
+        comparison is None
+        or comparison.get("status") != "diverged"
+        or not _valid_sha(ancestor)
+        or not _compare_is_ancestor(
+            repository, token, ancestor=cast(str, ancestor), descendant=head_sha, read=read
+        )
+        or not _compare_is_ancestor(
+            repository,
+            token,
+            ancestor=cast(str, ancestor),
+            descendant=default_revision,
+            read=read,
+        )
+    ):
+        return "INDETERMINATE"
+    main_paths = _changed_paths(
+        repository, token, ancestor=cast(str, ancestor), descendant=default_revision, read=read
+    )
+    carrier_paths = _changed_paths(
+        repository, token, ancestor=cast(str, ancestor), descendant=head_sha, read=read
+    )
+    if main_paths is None or carrier_paths is None or not carrier_paths:
+        return "INDETERMINATE"
+    return "SAFE" if main_paths.isdisjoint(carrier_paths) else "NEEDS_RECONCILIATION"
+
+
+def _disjoint_divergence_is_mergeable(
+    repository: str,
+    token: str,
+    *,
+    pr: Mapping[str, object],
+    head_sha: str,
     default_revision: str,
     read: GitHubReader,
 ) -> bool:
-    base = _as_mapping(pr.get("base"))
-    base_sha = None if base is None else base.get("sha")
-    if not _valid_sha(base_sha) or cast(str, base_sha) == default_revision:
-        return False
-    if not _compare_is_ancestor(
-        repository,
-        token,
-        ancestor=cast(str, base_sha),
-        descendant=default_revision,
-        read=read,
-    ):
-        return False
-    default_paths = _changed_paths(
-        repository,
-        token,
-        ancestor=cast(str, base_sha),
-        descendant=default_revision,
-        read=read,
-    )
-    carrier_paths = _pr_changed_paths(
-        repository,
-        token,
-        pr_number=pr_number,
-        read=read,
-    )
+    """Compatibility predicate; application qualification retains unknown evidence."""
+
     return (
-        default_paths is not None
-        and carrier_paths is not None
-        and default_paths.isdisjoint(carrier_paths)
+        _divergence_evidence(
+            repository,
+            token,
+            pr=pr,
+            head_sha=head_sha,
+            default_revision=default_revision,
+            read=read,
+        )
+        == "SAFE"
     )
 
 
@@ -691,49 +742,68 @@ def _historical_carriers(
             if not retired_numbers:
                 return tuple(result)
             retired_number = retired_numbers[0]
-            supersession_branch = deterministic_supersession_branch(change, retired_number)
-            if supersession_branch is None or not _formally_superseded_closed_carrier(
-                repository,
-                token,
-                issue_number=issue_number,
-                change=change,
-                default_branch=default_branch,
-                historical_pr_number=result[-1][0] if result else None,
-                retired_number=retired_number,
-                read=read,
-            ):
-                return tuple(result)
-            replacement_query = urlencode(
-                {
-                    "state": "closed",
-                    "head": f"{owner}:{supersession_branch}",
-                    "base": default_branch,
-                }
-            )
-            replacements = _paged_list(repository, token, f"pulls?{replacement_query}&", read=read)
-            merged_replacements: list[tuple[int, Mapping[str, object]]] = []
-            for summary in replacements:
-                number = summary.get("number")
-                if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
-                    continue
-                replacement = _as_mapping(read(repository, token, f"pulls/{number}"))
-                if replacement is None:
+            retired_seen: set[int] = set()
+            while True:
+                if retired_number in retired_seen:
+                    return None
+                retired_seen.add(retired_number)
+                if not _formally_superseded_closed_carrier(
+                    repository,
+                    token,
+                    issue_number=issue_number,
+                    change=change,
+                    default_branch=default_branch,
+                    historical_pr_number=result[-1][0] if result else None,
+                    retired_number=retired_number,
+                    read=read,
+                ):
+                    return tuple(result)
+                supersession_branch = deterministic_supersession_branch(change, retired_number)
+                replacement_query = urlencode(
+                    {
+                        "state": "closed",
+                        "head": f"{owner}:{supersession_branch}",
+                        "base": default_branch,
+                    }
+                )
+                replacements = _paged_list(
+                    repository, token, f"pulls?{replacement_query}&", read=read
+                )
+                if len(replacements) > 1:
+                    return None
+                if not replacements:
+                    return tuple(result)
+                number = replacements[0].get("number")
+                if (
+                    not isinstance(number, int)
+                    or isinstance(number, bool)
+                    or number <= retired_number
+                    or number in seen_numbers
+                ):
+                    return None
+                pr = _as_mapping(read(repository, token, f"pulls/{number}"))
+                if pr is None:
                     raise RuntimeError("supersession historical PR evidence is incomplete")
                 identity = _pr_identity_is_coherent(
-                    replacement,
+                    pr,
                     repository=repository,
                     issue_number=issue_number,
                     default_branch=default_branch,
                 )
-                merge_sha = replacement.get("merge_commit_sha")
+                if identity is None or identity[0] != supersession_branch:
+                    return None
+                if pr.get("state") == "closed" and pr.get("merged") is False:
+                    if pr.get("merged_at") is not None:
+                        return None
+                    retired_number = number
+                    continue
+                merge_sha = pr.get("merge_commit_sha")
                 active_changes, _has_code = _pr_active_changes(repository, token, number, read=read)
                 if (
-                    identity is not None
-                    and identity[0] == supersession_branch
-                    and _is_merged_pr(replacement)
-                    and not any(active != change for active in active_changes)
-                    and _valid_sha(merge_sha)
-                    and _compare_is_ancestor(
+                    not _is_merged_pr(pr)
+                    or any(active != change for active in active_changes)
+                    or not _valid_sha(merge_sha)
+                    or not _compare_is_ancestor(
                         repository,
                         token,
                         ancestor=cast(str, merge_sha),
@@ -741,12 +811,8 @@ def _historical_carriers(
                         read=read,
                     )
                 ):
-                    merged_replacements.append((number, replacement))
-            if len(merged_replacements) > 1:
-                return None
-            if not merged_replacements:
-                return tuple(result)
-            number, pr = merged_replacements[0]
+                    return None
+                break
             if number in seen_numbers:
                 return None
             seen_numbers.add(number)
@@ -1000,6 +1066,7 @@ def _formally_superseded_closed_carrier(
     historical_pr_number: int | None,
     retired_number: int,
     read: GitHubReader,
+    visited: frozenset[int] = frozenset(),
 ) -> bool:
     """Prove retirement without giving a closed PR or prose any routing authority.
 
@@ -1008,6 +1075,11 @@ def _formally_superseded_closed_carrier(
     CI, or old branch head is transferred to the replacement.
     """
 
+    # Every generation is independently retired. A newer supersession is not
+    # authorized merely because its own predecessor had once been retired.
+    if retired_number in visited:
+        return False
+    visited = visited | {retired_number}
     retired = _as_mapping(read(repository, token, f"pulls/{retired_number}"))
     if retired is None or retired.get("number") != retired_number:
         return False
@@ -1022,6 +1094,31 @@ def _formally_superseded_closed_carrier(
         if historical_pr_number is None
         else deterministic_continuation_branch(change, historical_pr_number)
     )
+    if identity is not None and identity[0] != expected_branch:
+        canonical = canonical_implementation_branch(change)
+        replacement = (
+            None
+            if canonical is None
+            else re.fullmatch(rf"{re.escape(canonical)}-supersedes-([1-9][0-9]*)", identity[0])
+        )
+        predecessor = None if replacement is None else int(replacement.group(1))
+        if (
+            predecessor is None
+            or predecessor >= retired_number
+            or not _formally_superseded_closed_carrier(
+                repository,
+                token,
+                issue_number=issue_number,
+                change=change,
+                default_branch=default_branch,
+                historical_pr_number=historical_pr_number,
+                retired_number=predecessor,
+                read=read,
+                visited=visited,
+            )
+        ):
+            return False
+        expected_branch = identity[0]
     closed_at = _timestamp(retired.get("closed_at"))
     if (
         identity is None
@@ -1265,10 +1362,12 @@ def qualify_change_carrier(
 ) -> ImplementationCarrierQualification:
     """Freshly qualify one exact canonical or deterministic same-Change carrier.
 
-    `RECONCILIATION_REQUIRED` means identity is repository-approved but the
-    current default branch is not yet an ancestor of the carrier head. Only
-    application/materialization may use that disposition to construct a
-    reconciliation. Validation/checkpoint/merge consumers require `QUALIFIED`.
+    `RECONCILIATION_REQUIRED` means identity is repository-approved but safe
+    integration has not been proven. A diverged PR can remain `QUALIFIED` when
+    current mergeability and complete, disjoint Git changes prove integration
+    without rewriting the reviewed HEAD. Otherwise only application-owned
+    implementation reconciliation can advance the branch; merge consumers
+    require `QUALIFIED` and their separate exact review/CI/Human gates.
 
     `read` replaces transport only. The qualifier still acquires every piece
     of evidence and owns the complete semantic decision.
@@ -1635,67 +1734,69 @@ def qualify_change_carrier(
         descendant=head_sha,
         read=reader,
     )
+    divergence_evidence: DivergenceEvidence = "NEEDS_RECONCILIATION"
+    if not default_is_ancestor:
+        divergence_evidence = _divergence_evidence(
+            repository,
+            token,
+            pr=pr,
+            head_sha=head_sha,
+            default_revision=default_revision,
+            read=reader,
+        )
 
     disposition: CarrierDisposition
     reason: str
-    if not base_is_current:
+    if divergence_evidence == "INDETERMINATE":
+        return _indeterminate(
+            repository=repository,
+            source=source,
+            change=change,
+            pr_number=pr_number,
+            reason="carrier-current-integration-evidence-unavailable",
+            branch=branch,
+            head_sha=head_sha,
+            default_branch=default_branch,
+            default_revision=default_revision,
+            historical_pr_number=historical_pr_number,
+        )
+    if divergence_evidence == "SAFE":
+        disposition = "QUALIFIED"
+        reason = "carrier-qualified-after-disjoint-mergeable-default-advance"
+    elif not base_is_current:
         if historical_pr_number is None:
-            if not _initial_carrier_base_advance_is_disjoint(
+            base = _as_mapping(pr.get("base"))
+            base_sha = None if base is None else base.get("sha")
+            if not _valid_sha(base_sha) or not _compare_is_ancestor(
                 repository,
                 token,
-                pr=pr,
-                pr_number=pr_number,
-                default_revision=default_revision,
+                ancestor=cast(str, base_sha),
+                descendant=default_revision,
                 read=reader,
             ):
-                base = _as_mapping(pr.get("base"))
-                base_sha = None if base is None else base.get("sha")
-                if not _valid_sha(base_sha) or not _compare_is_ancestor(
-                    repository,
-                    token,
-                    ancestor=cast(str, base_sha),
-                    descendant=default_revision,
-                    read=reader,
-                ):
-                    return _indeterminate(
-                        repository=repository,
-                        source=source,
-                        change=change,
-                        pr_number=pr_number,
-                        reason="carrier-pr-base-is-stale",
-                        branch=branch,
-                        head_sha=head_sha,
-                        default_branch=default_branch,
-                        default_revision=default_revision,
-                        historical_pr_number=historical_pr_number,
-                    )
-                disposition = "RECONCILIATION_REQUIRED"
-                reason = "initial-carrier-requires-default-reconciliation"
-            else:
-                disposition = "QUALIFIED"
-                reason = "initial-carrier-qualified-after-disjoint-default-advance"
-        else:
-            if not default_is_ancestor:
-                return ImplementationCarrierQualification(
-                    disposition="RECONCILIATION_REQUIRED",
-                    reason="carrier-pr-base-is-stale",
+                return _indeterminate(
                     repository=repository,
-                    issue_number=source.issue_number,
+                    source=source,
                     change=change,
-                    action=source.action,
                     pr_number=pr_number,
+                    reason="carrier-pr-base-is-stale",
                     branch=branch,
                     head_sha=head_sha,
                     default_branch=default_branch,
                     default_revision=default_revision,
                     historical_pr_number=historical_pr_number,
                 )
-            # GitHub keeps an open PR's recorded base SHA at the old base commit
-            # after the application creates the explicit reconciliation commit.
-            # The branch ancestry is the authoritative postcondition; retaining
-            # the stale base field must not cause a second reconciliation forever.
-            disposition = "QUALIFIED"
-            reason = "continuation-carrier-qualified-after-reconciliation"
+            disposition = "RECONCILIATION_REQUIRED"
+            reason = "initial-carrier-requires-default-reconciliation"
+        else:
+            if not default_is_ancestor:
+                disposition = "RECONCILIATION_REQUIRED"
+                reason = "carrier-pr-base-is-stale"
+            else:
+                # GitHub may retain a recorded old base even after reconciliation.
+                # Proven ancestry is the postcondition, not the incidental SHA.
+                disposition = "QUALIFIED"
+                reason = "continuation-carrier-qualified-after-reconciliation"
     elif default_is_ancestor:
         disposition = "QUALIFIED"
         reason = (
@@ -1706,6 +1807,9 @@ def qualify_change_carrier(
     else:
         disposition = "RECONCILIATION_REQUIRED"
         reason = "continuation-carrier-requires-default-reconciliation"
+
+    if disposition == "RECONCILIATION_REQUIRED" and pr.get("mergeable") is False:
+        reason = "carrier-confirmed-git-merge-conflict"
 
     return ImplementationCarrierQualification(
         disposition=disposition,
