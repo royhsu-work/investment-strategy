@@ -1315,7 +1315,8 @@ def apply_effect_batch(
 
     # A Lead retirement is one exact, irreversible carrier effect.  Do not
     # normalize away additional requested writes and then claim that only the
-    # closure was accepted.  This is also enforced on accepted-intent recovery.
+    # closure was accepted. The Application's one derived formal ACTION_RESULT
+    # is not another semantic request. Enforce this on accepted-intent recovery.
     if (
         batch.typed_result is not None
         and (batch.source.role, batch.source.action) == ("lead", "resolve-question")
@@ -1326,7 +1327,21 @@ def apply_effect_batch(
             and (_effect_payload(effect) or {}).get("fields") == {"state": "closed"}
             for effect in batch.effects
         )
-        and (len(batch.effects) != 1 or batch.effects[0].kind != GITHUB_MUTATION_KIND)
+        and (
+            len(batch.effects) not in {1, 2}
+            or batch.effects[0].kind != GITHUB_MUTATION_KIND
+            or (
+                len(batch.effects) == 2
+                and not (
+                    batch.effects[1].kind == "issue-comment"
+                    and isinstance((_effect_payload(batch.effects[1]) or {}).get("body"), str)
+                    and cast(str, (_effect_payload(batch.effects[1]) or {})["body"]).splitlines()[
+                        :1
+                    ]
+                    == ["ACTION_RESULT"]
+                )
+            )
+        )
     ):
         return ApplyResult(False, "typed application rejected:retirement-effect-cardinality")
 

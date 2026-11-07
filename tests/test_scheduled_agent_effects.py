@@ -5142,6 +5142,52 @@ def test_lead_retirement_with_extra_effects_cannot_commit_formal_success() -> No
     assert writes == []
 
 
+def test_lead_retirement_applies_before_application_owned_formal_result() -> None:
+    from investment_strategy.scheduled_agent_application_bridge import (
+        _application_owned_worker_result,
+    )
+
+    source = WorkerRequest(138, "lead", "resolve-question")
+    close = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-update",
+                "number": 418,
+                "expected_head_sha": "b" * 40,
+                "fields": {"state": "closed"},
+            }
+        ),
+    }
+    raw = _raw(
+        role="lead",
+        action="resolve-question",
+        result_kind="ready",
+        requested_effects=[close],
+    )
+    application_owned = _application_owned_worker_result(
+        raw, source=source, change=_CHANGE, current_revision=_REVISION
+    )
+    batch = parse_effect_batch(application_owned, source)
+    writes: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: _preflight(action="resolve-question"),
+        effect_guard=lambda _effect: True,
+        apply_effect=writes.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+    )
+    assert result.applied, result.reason
+    assert [effect.kind for effect in writes] == [
+        "github-mutation",
+        "issue-comment",
+        "routing-transition",
+    ]
+    assert json.loads(writes[1].payload_json)["body"].startswith("ACTION_RESULT\n")
+
+
 def test_effect_precondition_rejection_records_recovery_boundary() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     effect = StagedEffect(
