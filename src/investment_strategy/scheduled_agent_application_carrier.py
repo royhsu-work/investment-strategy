@@ -714,8 +714,8 @@ def _historical_carriers(
         if not matches:
             # An unmerged retired carrier is not a merged ancestor. It may,
             # however, identify exactly one later merged supersession when
-            # Application FINDINGS and the routing transition are independently
-            # proven before its closure. This is historical lineage discovery,
+            # application-accepted retirement evidence is independently proven.
+            # This is historical lineage discovery,
             # never permission to use the retired HEAD as an implementation.
             retired_numbers = []
             for summary in candidates:
@@ -917,6 +917,7 @@ def _accepted_formal_result_is_proven(
     change: str,
     retired_number: int,
     retired_branch: str,
+    retired_head: str | None = None,
     event: object,
     comments: tuple[Mapping[str, object], ...],
     read: GitHubReader,
@@ -1053,7 +1054,87 @@ def _accepted_formal_result_is_proven(
             retired_branch,
         ):
             return False
+    if (role, action, result) == ("lead", "resolve-question", "ready"):
+        # A Lead resolution can retire an already-reviewed carrier without
+        # manufacturing a Reviewer FINDINGS.  The intent, not PR closure alone,
+        # must name one exact existing PR/head and request only its closure.
+        effects = intent.get("requested_effects")
+        if not isinstance(effects, list) or len(effects) != 1 or retired_head is None:
+            return False
+        effect = effects[0]
+        if not isinstance(effect, Mapping) or effect.get("kind") != "github-mutation":
+            return False
+        raw = effect.get("payload_json")
+        try:
+            payload = json.loads(raw) if isinstance(raw, str) else None
+        except ValueError:
+            return False
+        if not isinstance(payload, Mapping) or (
+            payload.get("issue_number"),
+            payload.get("operation"),
+            payload.get("number"),
+            payload.get("expected_head_sha"),
+            payload.get("fields"),
+        ) != (
+            issue_number,
+            "pull-request-update",
+            retired_number,
+            retired_head,
+            {"state": "closed"},
+        ):
+            return False
     return True
+
+
+def _accepted_lead_retirement(
+    repository: str,
+    token: str,
+    *,
+    issue_number: int,
+    change: str,
+    retired_number: int,
+    retired_branch: str,
+    retired_head: str,
+    closed_at: datetime,
+    comments: tuple[Mapping[str, object], ...],
+    read: GitHubReader,
+) -> bool:
+    """Prove one application-owned closure, independent of older review outcome.
+
+    Exact PR/head, typed Lead READY, accepted close intent, and observed
+    closed-unmerged state establish retirement.  No old PASS or FINDINGS is
+    transferred to the successor; its fresh gates remain mandatory.
+    """
+
+    matching = []
+    for comment in comments:
+        event = parse_formal_result(comment, current_revision=None)
+        if (
+            event is None
+            or not event.valid
+            or (event.issue_number, event.change, event.role, event.action)
+            != (issue_number, change, "lead", "resolve-question")
+            or event.result_kind != "ready"
+            or event.successor != ("executor", "implement-change")
+        ):
+            continue
+        occurred = _timestamp(comment.get("created_at"))
+        if occurred is None or occurred < closed_at:
+            continue
+        if _accepted_formal_result_is_proven(
+            repository,
+            token,
+            issue_number=issue_number,
+            change=change,
+            retired_number=retired_number,
+            retired_branch=retired_branch,
+            retired_head=retired_head,
+            event=event,
+            comments=comments,
+            read=read,
+        ):
+            matching.append(event)
+    return len(matching) == 1
 
 
 def _formally_superseded_closed_carrier(
@@ -1070,9 +1151,9 @@ def _formally_superseded_closed_carrier(
 ) -> bool:
     """Prove retirement without giving a closed PR or prose any routing authority.
 
-    The existing application-owned READY -> Reviewer FINDINGS -> implement-change
-    transition must precede the closed-unmerged PR event. No past READY, PASS,
-    CI, or old branch head is transferred to the replacement.
+    Either the existing accepted READY -> Reviewer FINDINGS transition or one
+    accepted Lead READY exact-head closure effect must justify retirement.
+    No past READY, PASS, CI, or old branch head is transferred to replacement.
     """
 
     # Every generation is independently retired. A newer supersession is not
@@ -1148,6 +1229,19 @@ def _formally_superseded_closed_carrier(
         f"issues/{issue_number}/comments?sort=created&direction=asc",
         read=read,
     )
+    if _accepted_lead_retirement(
+        repository,
+        token,
+        issue_number=issue_number,
+        change=change,
+        retired_number=retired_number,
+        retired_branch=expected_branch,
+        retired_head=identity[1],
+        closed_at=closed_at,
+        comments=comments,
+        read=read,
+    ):
+        return True
     relevant: list[tuple[object, datetime]] = []
     for comment in comments:
         formal = parse_formal_result(comment, current_revision=None)
@@ -1251,8 +1345,9 @@ def qualify_supersession_branch(
     """Read-only permission for the sole branch derived from retired GitHub truth.
 
     This cannot close a PR, move a ref, select an Action, or create a result.
-    A real application-owned FINDINGS transition and later PR closure supply
-    the supersession evidence. The new work product must independently qualify.
+    A real application-owned FINDINGS transition or exact-head Lead retirement
+    effect plus observed closure supplies the supersession evidence. The new
+    work product must independently qualify.
     """
 
     reader = _github_json if read is None else read

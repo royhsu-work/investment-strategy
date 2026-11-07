@@ -4951,6 +4951,197 @@ def test_other_actions_do_not_retain_implementation_checkpoint(role: str, action
     assert retained["requested_effects"] == []
 
 
+@pytest.mark.parametrize(
+    ("role", "action", "result_kind", "expected"),
+    [
+        ("lead", "resolve-question", "ready", True),
+        ("lead", "resolve-question", "blocked", False),
+        ("executor", "implement-change", "ready", False),
+        ("reviewer", "review-implementation", "pass", False),
+    ],
+)
+def test_exact_lead_retirement_survives_accepted_intent_normalization(
+    role: str, action: str, result_kind: str, expected: bool
+) -> None:
+    close = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps(
+            {
+                "operation": "pull-request-update",
+                "number": 418,
+                "expected_head_sha": "e" * 40,
+                "fields": {"state": "closed"},
+            }
+        ),
+    }
+    ordinary_update = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps(
+            {
+                "operation": "pull-request-update",
+                "number": 418,
+                "expected_head_sha": "e" * 40,
+                "fields": {"title": "changed"},
+            }
+        ),
+    }
+    raw = json.loads(
+        _raw(
+            role=role,
+            action=action,
+            result_kind=result_kind,
+            requested_effects=[ordinary_update, close],
+        )
+    )
+    raw["_semantic_intent_version"] = 2
+    retained = json.loads(effects.semantic_intent_payload(json.dumps(raw)))
+    assert retained["requested_effects"] == ([close] if expected else [])
+
+
+def test_exact_lead_retirement_uses_carrier_and_never_replays_closed_pr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    head_sha = "b" * 40
+    pr: dict[str, object] = {
+        "number": 418,
+        "state": "open",
+        "merged": False,
+        "draft": False,
+        "body": "Implementation\n\nRefs #138\n",
+        "closed_at": None,
+        "merged_at": None,
+        "head": {
+            "ref": f"agent/{_CHANGE}-supersedes-408",
+            "sha": head_sha,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": _REVISION,
+            "repo": {"full_name": repository},
+        },
+    }
+    observed: list[str] = []
+
+    def read(_repository: str, _token: str, path: str, **kwargs: object) -> object:
+        assert not kwargs or kwargs == {"method": "GET"}
+        observed.append(path)
+        assert path == "pulls/418"
+        return pr
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    monkeypatch.setattr(
+        effects,
+        "qualify_change_carrier",
+        lambda **_kwargs: SimpleNamespace(
+            disposition="RECONCILIATION_REQUIRED",
+            branch=f"agent/{_CHANGE}-supersedes-408",
+            head_sha=head_sha,
+        ),
+    )
+    adapter = GitHubEffectAdapter(
+        repository,
+        _TEST_TOKEN,
+        WorkerRequest(138, "lead", "resolve-question"),
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="ready",
+        accepted_intent=True,
+    )
+    monkeypatch.setattr(adapter, "_source_still_current", lambda: True)
+    monkeypatch.setattr(adapter, "_default_branch_still_current", lambda: True)
+    monkeypatch.setattr(
+        adapter, "_authorized_issue_observation", lambda *_args: SimpleNamespace(change=_CHANGE)
+    )
+    monkeypatch.setattr(adapter, "_default_branch", lambda: "main")
+    monkeypatch.setattr(adapter, "_default_branch_revision", lambda _branch: _REVISION)
+
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-update",
+                "number": 418,
+                "expected_head_sha": head_sha,
+                "fields": {"state": "closed"},
+            }
+        ),
+    )
+    assert adapter.guard(effect)
+    plan = adapter.carrier_plan_if_required(effect)
+    assert plan is not None
+    assert plan.operation == "pull-request-update"
+    assert plan.requested["fields"] == {"state": "closed"}
+    with pytest.raises(CarrierRequired):
+        adapter.apply(effect)
+
+    # The write-capable carrier reports an already-observed durable outcome.
+    # A lost Application response must not issue another PATCH or carrier plan.
+    pr.update(state="closed", closed_at="2026-11-07T00:00:00Z")
+    for _ in range(2):
+        assert adapter.guard(effect)
+        assert adapter.carrier_plan_if_required(effect) is None
+        adapter.apply(effect)
+        assert adapter.observe_postcondition(effect)
+    assert observed and set(observed) == {"pulls/418"}
+
+    # Exact-head and unmerged requirements persist even in accepted recovery.
+    cast(dict[str, object], pr["head"])["sha"] = "c" * 40
+    assert not adapter.guard(effect)
+    cast(dict[str, object], pr["head"])["sha"] = head_sha
+    pr.update(merged=True, merged_at="2026-11-07T00:01:00Z")
+    assert not adapter.guard(effect)
+
+
+def test_lead_retirement_with_extra_effects_cannot_commit_formal_success() -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    close = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-update",
+                "number": 418,
+                "expected_head_sha": "b" * 40,
+                "fields": {"state": "closed"},
+            }
+        ),
+    }
+    update = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "issue-update",
+                "fields": {"title": "unexpected"},
+            }
+        ),
+    }
+    batch = parse_effect_batch(
+        _raw(
+            role="lead",
+            action="resolve-question",
+            result_kind="ready",
+            requested_effects=[close, update],
+        ),
+        source,
+    )
+    writes: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: _preflight(action="resolve-question"),
+        effect_guard=lambda _effect: True,
+        apply_effect=writes.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+    )
+    assert not result.applied
+    assert result.reason == "typed application rejected:retirement-effect-cardinality"
+    assert writes == []
+
+
 def test_effect_precondition_rejection_records_recovery_boundary() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     effect = StagedEffect(

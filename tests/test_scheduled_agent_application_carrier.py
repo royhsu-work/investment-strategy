@@ -637,6 +637,182 @@ def _accepted_supersession_comments(
     return formal, requests
 
 
+def _accepted_lead_retirement_comments(
+    old_head: str,
+    *,
+    retired_number: int = 236,
+    request_id: int = 1060,
+    close_fields: dict[str, str] | None = None,
+    decision_at: str = "2026-11-03T02:59:00Z",
+) -> tuple[list[dict[str, object]], dict[int, dict[str, object]]]:
+    """One exact accepted Lead READY close, without inventing Reviewer FINDINGS."""
+
+    from investment_strategy.scheduled_agent_application_bridge import (
+        ApplicationRequest,
+        dispatch_correlation_for,
+        render_application_request,
+    )
+
+    result = {
+        "_semantic_intent_version": 2,
+        "issue_number": 229,
+        "role": "lead",
+        "action": "resolve-question",
+        "change": CHANGE,
+        "result_kind": "ready",
+        "requested_effects": [
+            {
+                "kind": "github-mutation",
+                "payload_json": json.dumps(
+                    {
+                        "issue_number": 229,
+                        "operation": "pull-request-update",
+                        "number": retired_number,
+                        "expected_head_sha": old_head,
+                        "fields": {"state": "closed"} if close_fields is None else close_fields,
+                    }
+                ),
+            }
+        ],
+    }
+    raw = json.dumps(result, sort_keys=True, separators=(",", ":"))
+    request_body = render_application_request(
+        ApplicationRequest(
+            authorization_revision=MAIN,
+            raw_worker_result=raw,
+            dispatch_correlation=dispatch_correlation_for(
+                REPOSITORY, WorkerRequest(229, "lead", "resolve-question"), MAIN
+            ),
+        )
+    )
+
+    def digest(value: str) -> str:
+        return hashlib.sha256(value.encode()).hexdigest()
+
+    decision = {
+        "id": request_id + 100,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+        "created_at": decision_at,
+        "body": "\n".join(
+            (
+                "APPLICATION_DECISION",
+                f"Request-Comment: {request_id}",
+                f"Request-Body-SHA256: {digest(request_body)}",
+                f"Authorization-Revision: {MAIN}",
+                "Issue: 229",
+                "Role: lead",
+                "Action: resolve-question",
+                f"Change: {CHANGE}",
+                "Result-Kind: ready",
+                "Disposition: ACCEPTED",
+                f"Worker-Result-SHA256: {digest(raw)}",
+                f"Application-Intent-B64: {base64.b64encode(raw.encode()).decode()}",
+                "Reason: accepted",
+            )
+        ),
+    }
+    formal = {
+        "id": request_id + 200,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+        "created_at": "2026-11-03T04:00:00Z",
+        "body": "\n".join(
+            (
+                "ACTION_RESULT",
+                "Workflow: #229",
+                f"Change: {CHANGE}",
+                "Role: lead",
+                "Action: resolve-question",
+                "Result: READY",
+                f"Revision: {MAIN}",
+                f"Default-Branch-Revision: {MAIN}",
+                "Application-Correlation: "
+                f"application:{request_id}:229:{CHANGE}:lead:resolve-question:ready:{MAIN}",
+                "Repository-derived successor: Executor / implement-change",
+            )
+        ),
+    }
+    return [decision, formal], {
+        request_id: {
+            "id": request_id,
+            "body": request_body,
+            "user": {"login": "royhsu-work"},
+            "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+        }
+    }
+
+
+@pytest.mark.parametrize("wrong_fields", [False, True])
+def test_lead_accepted_retirement_can_supersede_pass_carrier(
+    monkeypatch: pytest.MonkeyPatch, wrong_fields: bool
+) -> None:
+    retired = _continuation_pr(head_sha="5" * 40)
+    retired.update(state="closed", closed_at="2026-11-03T03:00:00Z")
+    replacement = _continuation_pr(number=237, branch=f"agent/{CHANGE}-supersedes-236")
+    formal, requests = _accepted_lead_retirement_comments(
+        "5" * 40, close_fields={"state": "open"} if wrong_fields else None
+    )
+    github = _fake_github(
+        current_pr=replacement,
+        merged_continuations=[retired],
+        open_prs=[replacement],
+        formal_comments=formal,
+        request_comments=requests,
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    assert (
+        carrier.qualify_supersession_branch(
+            repository=REPOSITORY,
+            token=TEST_VALUE,
+            issue_number=229,
+            change=CHANGE,
+            branch=f"agent/{CHANGE}-supersedes-236",
+            current_revision=MAIN,
+        )
+        is not wrong_fields
+    )
+
+
+def test_lead_retirement_preserves_second_generation_supersession(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PASS-reviewed supersession can itself be retired without false FINDINGS."""
+
+    first_retired = _continuation_pr(head_sha="5" * 40)
+    first_retired.update(state="closed", merged=False, closed_at="2026-11-03T03:00:00Z")
+    second_retired = _continuation_pr(
+        number=237, branch=f"agent/{CHANGE}-supersedes-236", head_sha="6" * 40
+    )
+    second_retired.update(state="closed", merged=False, closed_at="2026-11-03T03:45:00Z")
+    replacement = _continuation_pr(number=238, branch=f"agent/{CHANGE}-supersedes-237")
+    first_formal, first_requests = _accepted_supersession_comments("5" * 40)
+    second_formal, second_requests = _accepted_lead_retirement_comments(
+        "6" * 40,
+        retired_number=237,
+        request_id=1090,
+        decision_at="2026-11-03T03:40:00Z",
+    )
+    github = _fake_github(
+        current_pr=replacement,
+        merged_continuations=[first_retired, second_retired],
+        open_prs=[replacement],
+        formal_comments=first_formal + second_formal,
+        routing_timeline=_supersession_routing_timeline(),
+        request_comments=first_requests | second_requests,
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    decision = carrier.qualify_implementation_carrier(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        source=_source(),
+        change=CHANGE,
+        pr_number=238,
+        current_revision=MAIN,
+    )
+    assert decision.disposition == "QUALIFIED", decision.reason
+
+
 @pytest.mark.parametrize("replacement_merged", [False, True])
 def test_supersession_can_retire_an_already_superseding_carrier(
     monkeypatch: pytest.MonkeyPatch,

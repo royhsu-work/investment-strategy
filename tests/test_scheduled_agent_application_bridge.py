@@ -71,6 +71,62 @@ _TEST_FAILURE_EVIDENCE_SHA256 = "2" * 64
 _TEST_RECOVERY_EPISODE_SHA256 = "3" * 64
 
 
+@pytest.mark.parametrize("head_matches", [False, True])
+def test_lead_retirement_rebinding_preserves_original_exact_head(
+    monkeypatch: pytest.MonkeyPatch, head_matches: bool
+) -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    current_head = "b" * 40
+    proposed_head = current_head if head_matches else "c" * 40
+    monkeypatch.setattr(
+        bridge,
+        "_github_json",
+        lambda _repo, _token, path: (
+            {
+                "number": 418,
+                "head": {"sha": current_head},
+            }
+            if path == "pulls/418"
+            else pytest.fail(f"unexpected GitHub request: {path}")
+        ),
+    )
+    effect = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-update",
+                "number": 418,
+                "expected_head_sha": proposed_head,
+                "fields": {"state": "closed"},
+            }
+        ),
+    }
+
+    def invocation() -> object:
+        return bridge._fresh_control_effect(
+            raw_effect=effect,
+            source=source,
+            change=_CHANGE,
+            repository=_REPOSITORY,
+            token="test-token",  # noqa: S106
+            current_revision=_REVISION,
+            default_branch="main",
+        )
+
+    if head_matches:
+        assert invocation() == {
+            "issue_number": 138,
+            "operation": "pull-request-update",
+            "number": 418,
+            "expected_head_sha": current_head,
+            "fields": {"state": "closed"},
+        }
+    else:
+        with pytest.raises(RuntimeError, match="retirement expected HEAD is stale"):
+            invocation()
+
+
 @pytest.mark.parametrize("method", ["GET", "POST", "PATCH"])
 def test_application_read_retry_does_not_repeat_write_after_gateway_timeout(
     monkeypatch: pytest.MonkeyPatch, method: str

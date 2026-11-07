@@ -21,12 +21,13 @@ manifest. Executor does not create the tree/commit/ref through worker prose; rep
 does so after fresh reauthorization and observes all postconditions. A material semantic change is a
 Lead correction and requires a new independent review-openspec gate.
 
-When a previous implementation PR was closed without merge following an application-accepted
-Reviewer FINDINGS transition back to `implement-change`, Executor may request one bounded
+When a previous implementation PR was closed without merge following either an application-accepted
+Reviewer FINDINGS transition back to `implement-change` or an application-accepted Lead
+`resolve-question / READY` with an exact-head PR retirement effect, Executor may request one bounded
 `application-materialize` first slice for the deterministic supersession branch. That request has
 no PR number, must start at the current default HEAD, and must omit workflow-file changes until
 the repository application has created and qualified the new PR. Application must independently
-prove the original formal results, routing, old PR retirement, unique branch identity, exact
+prove the applicable formal results and their accepted effects, routing, old PR retirement, unique branch identity, exact
 blobs and current-base preimages. The worker never creates a ref or selects a different Action;
 subsequent slices use the qualified new PR and the existing PR-head carrier actuator.
 
