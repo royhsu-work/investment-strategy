@@ -1009,8 +1009,15 @@ def _accepted_formal_result_is_proven(
         if ingress is None:
             return False
         source = WorkerRequest(issue_number, cast(str, role), cast(str, action))
+        ingress_result = json.loads(ingress.raw_worker_result)
+        if not isinstance(ingress_result, dict):
+            return False
+        # The worker's real EFFECT_REQUEST is versionless. The Application
+        # adds this owned projection marker when accepting the same semantic
+        # result; the raw request body/hash above remains untouched.
+        ingress_result.setdefault("_semantic_intent_version", 2)
         ingress_intent = _canonical_intent_effect_json(
-            semantic_intent_payload(ingress.raw_worker_result)
+            semantic_intent_payload(json.dumps(ingress_result))
         )
         accepted_intent = _canonical_intent_effect_json(decision.raw_worker_result)
         if (
@@ -1454,6 +1461,7 @@ def qualify_change_carrier(
     pr_number: int,
     current_revision: str,
     read: GitHubReader | None = None,
+    implementation_retirement: bool = False,
 ) -> ImplementationCarrierQualification:
     """Freshly qualify one exact canonical or deterministic same-Change carrier.
 
@@ -1476,6 +1484,10 @@ def qualify_change_carrier(
         or isinstance(pr_number, bool)
         or pr_number <= 0
         or not _valid_sha(current_revision)
+        or (
+            implementation_retirement
+            and (source.role, source.action) != ("lead", "resolve-question")
+        )
     ):
         return _indeterminate(
             repository=repository,
@@ -1609,7 +1621,11 @@ def qualify_change_carrier(
         pr_number,
         read=reader,
     )
-    if (source.role, source.action) in _OPENSPEC_CARRIER_SOURCES and active_changes != {change}:
+    if (
+        (source.role, source.action) in _OPENSPEC_CARRIER_SOURCES
+        and not implementation_retirement
+        and active_changes != {change}
+    ):
         return _indeterminate(
             repository=repository,
             source=source,

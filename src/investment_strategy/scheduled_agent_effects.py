@@ -2183,6 +2183,9 @@ class GitHubEffectAdapter:
             pr_number=number,
             current_revision=cast(str, current_revision),
             read=_github_json,
+            # Lead remains the authorized Action owner; this query only
+            # classifies the PR as an implementation carrier for retirement.
+            implementation_retirement=True,
         )
         return (
             pr
