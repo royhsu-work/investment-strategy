@@ -333,12 +333,19 @@ Terminal disposition of the old ingress SHALL never retry, replay, accept, or
 mutate it; only a later independently authorized fresh dispatch may proceed.
 
 The repository-defined dispatch and application request formatters SHALL
-round-trip through the actual production request parsers before publishing.
-The application-request formatter SHALL also preflight the embedded typed
-worker result with the actual production validator. One canonical terminal
-newline is permitted; extra blank lines, duplicate/unknown fields and invalid
-evidence references SHALL be rejected. An external producer cannot create
-acceptance or completion authority by claiming formatter conformance.
+round-trip through the actual production request parsers whenever they
+construct a canonical envelope. The repository-owned application entrypoint
+SHALL invoke its formatter/parser and SHALL preflight the embedded typed
+worker result with the actual production validator before the internally
+constructed envelope is admitted to Phase A. The separately external
+`DISPATCH_REQUEST` publisher SHALL conform to the production dispatch parser's
+wire contract; its real connector-side publication and native run correlation
+SHALL be established at the post-deployment native production-evidence gate,
+not inferred from repository-only fixture tests or required for Executor
+implementation task completion. One canonical terminal newline is permitted;
+extra blank lines, duplicate/unknown fields and invalid evidence references
+SHALL be rejected. An external producer cannot create acceptance or
+completion authority by claiming formatter conformance.
 
 For new pre-ACCEPT semantic work, the external worker SHALL provide only the
 raw typed-result JSON in a minimally framed `WORKER_RESULT` comment on the
