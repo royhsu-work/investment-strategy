@@ -10,6 +10,30 @@ import re
 from collections.abc import Mapping
 
 
+def archive_tree_evidence_complete(payload: object) -> bool:
+    """Separate malformed or truncated Git evidence from a proven stale snapshot."""
+
+    if not isinstance(payload, Mapping) or payload.get("truncated") is not False:
+        return False
+    items = payload.get("tree")
+    if not isinstance(items, list):
+        return False
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, Mapping):
+            return False
+        path = item.get("path")
+        if not isinstance(path, str) or path in seen:
+            return False
+        seen.add(path)
+        if item.get("type") == "blob" and (
+            not isinstance(item.get("sha"), str)
+            or re.fullmatch(r"[0-9a-f]{40}", item["sha"]) is None
+        ):
+            return False
+    return True
+
+
 def archive_tree_matches_change(source_tree: object, archive_tree: object, change: str) -> bool:
     """Require a complete, byte-identical archived copy of the source Change.
 
@@ -19,9 +43,11 @@ def archive_tree_matches_change(source_tree: object, archive_tree: object, chang
 
     if re.fullmatch(r"[a-z0-9][a-z0-9-]*", change) is None:
         return False
-    if not isinstance(source_tree, Mapping) or not isinstance(archive_tree, Mapping):
+    if not archive_tree_evidence_complete(source_tree) or not archive_tree_evidence_complete(
+        archive_tree
+    ):
         return False
-    if source_tree.get("truncated") is not False or archive_tree.get("truncated") is not False:
+    if not isinstance(source_tree, Mapping) or not isinstance(archive_tree, Mapping):
         return False
 
     def blobs(payload: Mapping[str, object]) -> dict[str, str] | None:

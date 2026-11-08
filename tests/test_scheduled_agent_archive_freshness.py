@@ -113,22 +113,27 @@ def test_archive_tree_allows_only_canonicalized_change_capabilities() -> None:
 
 
 @pytest.mark.parametrize(
-    ("variant", "expected"),
+    ("variant", "expected_status"),
     [
-        ("exact", True),
-        ("diverged", False),
-        ("stale-tasks", False),
-        ("truncated", False),
+        ("exact", "FRESH"),
+        ("diverged", "STALE"),
+        ("stale-tasks", "STALE"),
+        ("truncated", "INDETERMINATE"),
+        ("missing-comparison", "INDETERMINATE"),
+        ("incomplete-commit", "INDETERMINATE"),
+        ("missing-active-source", "INDETERMINATE"),
     ],
 )
 def test_archive_source_proof_is_required_before_pr_lookup(
-    monkeypatch: pytest.MonkeyPatch, variant: str, expected: bool
+    monkeypatch: pytest.MonkeyPatch, variant: str, expected_status: str
 ) -> None:
     calls: list[str] = []
 
     def read(_repo: str, _token: str, path: str, **_kwargs: object) -> object:
         calls.append(path)
         if path == f"compare/{_SOURCE}...{_BRANCH}":
+            if variant == "missing-comparison":
+                return None
             return {
                 "status": "diverged" if variant == "diverged" else "ahead",
                 "behind_by": 0,
@@ -138,9 +143,11 @@ def test_archive_source_proof_is_required_before_pr_lookup(
         if path == f"git/commits/{_SOURCE}":
             return {"tree": {"sha": _SOURCE_TREE_SHA}}
         if path == f"git/commits/{_BRANCH}":
+            if variant == "incomplete-commit":
+                return {}
             return {"tree": {"sha": _ARCHIVE_TREE_SHA}}
         if path == f"git/trees/{_SOURCE_TREE_SHA}?recursive=1":
-            return _tree(archived=False)
+            return _tree(archived=variant == "missing-active-source")
         if path == f"git/trees/{_ARCHIVE_TREE_SHA}?recursive=1":
             tree = _tree(
                 archived=True,
@@ -152,34 +159,41 @@ def test_archive_source_proof_is_required_before_pr_lookup(
         raise AssertionError(f"unexpected API path: {path}")
 
     monkeypatch.setattr(effects, "_github_json", read)
-    assert (
-        effects.archive_branch_matches_current_source(
-            repository="owner/repo",
-            token="fixture",  # noqa: S106
-            change=_CHANGE,
-            source_sha=_SOURCE,
-            branch_sha=_BRANCH,
-        )
-        is expected
+    status = effects.archive_branch_source_status(
+        repository="owner/repo",
+        token="fixture",  # noqa: S106
+        change=_CHANGE,
+        source_sha=_SOURCE,
+        branch_sha=_BRANCH,
     )
+    assert status == expected_status
+    assert effects.archive_branch_matches_current_source(
+        repository="owner/repo",
+        token="fixture",  # noqa: S106
+        change=_CHANGE,
+        source_sha=_SOURCE,
+        branch_sha=_BRANCH,
+    ) is (expected_status == "FRESH")
     assert not any("pulls" in path for path in calls)
 
 
-def test_stale_branch_does_not_become_missing_archive_pr_plan(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("status", ["STALE", "INDETERMINATE"])
+def test_stale_or_unknown_branch_never_becomes_missing_archive_pr_plan(
+    monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
     branch = f"agent/archive-{_CHANGE}"
     monkeypatch.setattr(bridge, "_fresh_branch_head", lambda *_args: _BRANCH)
     monkeypatch.setattr(
         bridge,
-        "archive_branch_matches_current_source",
-        lambda **_kwargs: False,
+        "archive_branch_source_status",
+        lambda **_kwargs: status,
     )
     monkeypatch.setattr(
         bridge,
         "_fresh_pull_requests",
         lambda *_args, **_kwargs: pytest.fail("stale source cannot reach Archive PR lookup"),
     )
+    expected = "stale-branch" if status == "STALE" else "indeterminate-branch"
     assert bridge._fresh_archive_state(
         "owner/repo",
         "fixture",
@@ -187,7 +201,7 @@ def test_stale_branch_does_not_become_missing_archive_pr_plan(
         change=_CHANGE,
         current_revision=_SOURCE,
         default_branch="main",
-    ) == ("stale-branch", branch, _BRANCH)
+    ) == (expected, branch, _BRANCH)
 
 
 def test_historical_task_checkpoint_does_not_authorize_new_source_manifest(

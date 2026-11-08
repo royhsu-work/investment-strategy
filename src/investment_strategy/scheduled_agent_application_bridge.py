@@ -67,6 +67,7 @@ from investment_strategy.scheduled_agent_effects import (
     _references_issue,
     _source_branch,
     archive_branch_matches_current_source,
+    archive_branch_source_status,
     consequence_postconditions_complete,
     formal_application_correlation,
     merged_pr_readiness_complete,
@@ -2212,13 +2213,16 @@ def _fresh_archive_state(
     branch_sha = _fresh_branch_head(repository, token, branch)
     if branch_sha is None:
         return "missing-branch", branch, None
-    if not archive_branch_matches_current_source(
+    provenance = archive_branch_source_status(
         repository=repository,
         token=token,
         change=change,
         source_sha=current_revision,
         branch_sha=branch_sha,
-    ):
+    )
+    if provenance == "INDETERMINATE":
+        return "indeterminate-branch", branch, branch_sha
+    if provenance == "STALE":
         return "stale-branch", branch, branch_sha
     candidates = _fresh_pull_requests(
         repository,
@@ -2789,8 +2793,8 @@ def _fresh_application_worker_result(
                     ),
                 )
             )
-        elif state == "conflict":
-            raise RuntimeError("archive pull-request consequence is contradictory")
+        elif state in {"conflict", "indeterminate-branch"}:
+            raise RuntimeError("archive pull-request/source consequence is indeterminate")
         else:
             semantic_effects.extend(
                 _fresh_non_control_effects(

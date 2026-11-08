@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
-from typing import cast
+from typing import Literal, cast
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -51,7 +51,10 @@ from investment_strategy.scheduled_agent_application_materialization import (
     observe_materialization_target,
     prove_materialization,
 )
-from investment_strategy.scheduled_agent_archive_freshness import archive_tree_matches_change
+from investment_strategy.scheduled_agent_archive_freshness import (
+    archive_tree_evidence_complete,
+    archive_tree_matches_change,
+)
 from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
     CarrierRequired,
@@ -958,9 +961,9 @@ def _references_issue(body: object, issue_number: int) -> bool:
     )
 
 
-def archive_branch_matches_current_source(
+def archive_branch_source_status(
     *, repository: str, token: str, change: str, source_sha: str, branch_sha: str
-) -> bool:
+) -> Literal["FRESH", "STALE", "INDETERMINATE"]:
     """Prove source ancestry and exact active-Change bytes, even without a PR.
 
     Reject an obsolete archive branch independently of its PR state.  Each
@@ -969,22 +972,36 @@ def archive_branch_matches_current_source(
     """
 
     if not _valid_sha(source_sha) or not _valid_sha(branch_sha):
-        return False
-    comparison = _github_json(repository, token, f"compare/{source_sha}...{branch_sha}")
+        return "INDETERMINATE"
+    try:
+        comparison = _github_json(repository, token, f"compare/{source_sha}...{branch_sha}")
+    except (HTTPError, OSError, ValueError, json.JSONDecodeError):
+        return "INDETERMINATE"
     base = comparison.get("base_commit") if isinstance(comparison, Mapping) else None
     if (
         not isinstance(comparison, Mapping)
-        or comparison.get("status") != "ahead"
-        or comparison.get("behind_by") != 0
+        or comparison.get("status") not in {"ahead", "behind", "diverged", "identical"}
+        or not isinstance(comparison.get("behind_by"), int)
         or not isinstance(comparison.get("ahead_by"), int)
-        or cast(int, comparison["ahead_by"]) < 1
+        or cast(int, comparison["ahead_by"]) < 0
+        or cast(int, comparison["behind_by"]) < 0
         or not isinstance(base, Mapping)
-        or base.get("sha") != source_sha
+        or not _valid_sha(base.get("sha"))
         or comparison.get("too_large") is True
     ):
-        return False
-    source_commit = _github_json(repository, token, f"git/commits/{source_sha}")
-    archive_commit = _github_json(repository, token, f"git/commits/{branch_sha}")
+        return "INDETERMINATE"
+    if (
+        comparison.get("status") != "ahead"
+        or comparison.get("behind_by") != 0
+        or cast(int, comparison["ahead_by"]) < 1
+        or base.get("sha") != source_sha
+    ):
+        return "STALE"
+    try:
+        source_commit = _github_json(repository, token, f"git/commits/{source_sha}")
+        archive_commit = _github_json(repository, token, f"git/commits/{branch_sha}")
+    except (HTTPError, OSError, ValueError, json.JSONDecodeError):
+        return "INDETERMINATE"
     source_tree_ref = source_commit.get("tree") if isinstance(source_commit, Mapping) else None
     archive_tree_ref = archive_commit.get("tree") if isinstance(archive_commit, Mapping) else None
     source_tree_sha = source_tree_ref.get("sha") if isinstance(source_tree_ref, Mapping) else None
@@ -992,10 +1009,44 @@ def archive_branch_matches_current_source(
         archive_tree_ref.get("sha") if isinstance(archive_tree_ref, Mapping) else None
     )
     if not _valid_sha(source_tree_sha) or not _valid_sha(archive_tree_sha):
-        return False
-    source_tree = _github_json(repository, token, f"git/trees/{source_tree_sha}?recursive=1")
-    archive_tree = _github_json(repository, token, f"git/trees/{archive_tree_sha}?recursive=1")
-    return archive_tree_matches_change(source_tree, archive_tree, change)
+        return "INDETERMINATE"
+    try:
+        source_tree = _github_json(repository, token, f"git/trees/{source_tree_sha}?recursive=1")
+        archive_tree = _github_json(repository, token, f"git/trees/{archive_tree_sha}?recursive=1")
+    except (HTTPError, OSError, ValueError, json.JSONDecodeError):
+        return "INDETERMINATE"
+    if not archive_tree_evidence_complete(source_tree) or not archive_tree_evidence_complete(
+        archive_tree
+    ):
+        return "INDETERMINATE"
+    source_entries = source_tree.get("tree") if isinstance(source_tree, Mapping) else None
+    if not isinstance(source_entries, list) or not any(
+        isinstance(entry, Mapping)
+        and entry.get("path") == f"openspec/changes/{change}/tasks.md"
+        and entry.get("type") == "blob"
+        for entry in source_entries
+    ):
+        # An archived or missing current Change cannot authorize producing a
+        # replacement Archive branch, even if the old branch is still present.
+        return "INDETERMINATE"
+    return "FRESH" if archive_tree_matches_change(source_tree, archive_tree, change) else "STALE"
+
+
+def archive_branch_matches_current_source(
+    *, repository: str, token: str, change: str, source_sha: str, branch_sha: str
+) -> bool:
+    """Boolean guard used only where UNKNOWN and STALE both forbid writes."""
+
+    return (
+        archive_branch_source_status(
+            repository=repository,
+            token=token,
+            change=change,
+            source_sha=source_sha,
+            branch_sha=branch_sha,
+        )
+        == "FRESH"
+    )
 
 
 def archive_pr_readiness_complete(
