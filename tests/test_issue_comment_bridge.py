@@ -363,6 +363,16 @@ def test_request_and_run_name_parsers_require_exact_identity() -> None:
         assert bridge.parse_dispatch_request(body) is None
 
 
+def test_dispatch_request_wire_round_trip_accepts_one_terminal_newline_only() -> None:
+    request = bridge.parse_dispatch_request(REQUEST_BODY)
+    assert request is not None
+    rendered = bridge.render_dispatch_request(request)
+    assert bridge.parse_dispatch_request(rendered) == request
+    assert bridge.parse_dispatch_request(rendered + "\n") == request
+    assert bridge.parse_dispatch_request(rendered + "\n\n") is None
+    assert bridge.parse_dispatch_request(rendered + "\nUnknown: value") is None
+
+
 def test_dispatch_result_document_round_trips_one_machine_decision() -> None:
     decision = _decision(
         "AUTHORIZE",
@@ -1854,6 +1864,174 @@ def test_preaccept_exception_blocks_unchanged_code_but_recovers_after_applicatio
     )
     assert (completion.state, completion.reason) == (expected_state, expected_reason)
     assert completion.request_comment_id == 654
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("malformed", "TERMINAL_NO_ACCEPT"),
+        ("valid-worker", "NEEDS_REPAIR"),
+        ("wrong-head", "NEEDS_REPAIR"),
+        ("missing-stage", "NEEDS_REPAIR"),
+        ("wrong-result", "NEEDS_REPAIR"),
+        ("wrong-change", "NEEDS_REPAIR"),
+        ("missing-correlation", "NEEDS_REPAIR"),
+        ("missing-attempt", "NEEDS_REPAIR"),
+        ("write-unknown", "INVALID"),
+        ("already-accepted", "ACCEPTED"),
+    ],
+)
+def test_native_malformed_worker_preaccept_exception_retires_without_main_advance(
+    case: str, expected: str
+) -> None:
+    """The #322-style invalid typed result is terminal before ACCEPT, not a code retry."""
+
+    source = bridge.WorkerRequest(322, "executor", "implement-change")
+    revision = "90a8d36202e6c7422fe3a0f937769ed0574807e8"
+    request = _effect_request_comment(
+        comment_id=6710179912,
+        created_at="2026-11-07T16:51:32Z",
+        action=source.action,
+        role=source.role,
+        result_kind="ready",
+        issue_number=source.issue_number,
+        change="restore-no-work-idle-discovery",
+        authorization_revision=revision,
+    )
+    body = cast(str, request["body"])
+    encoded = body.split("\n")[-1].removeprefix("Worker-Result-B64: ")
+    worker = json.loads(base64.b64decode(encoded))
+    worker["evidence_ref"] = (
+        "pr#429@head"
+        if case == "valid-worker"
+        else "PR #429 source-and-tests blob manifest, nine exact file preimages"
+    )
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    request["body"] = body.replace(encoded, base64.b64encode(raw.encode()).decode())
+    correlation_line = (
+        "Dispatch-Correlation: "
+        + bridge.dispatch_correlation_for("owner/repo", source, revision)
+        + "\n"
+    )
+    request["body"] = cast(str, request["body"]).replace(
+        f"Authorization-Revision: {revision}\n",
+        f"Authorization-Revision: {revision}\n" + correlation_line,
+    )
+    if case == "missing-correlation":
+        request["body"] = cast(str, request["body"]).replace(
+            correlation_line,
+            "",
+        )
+    ingress = bridge.parse_application_request(cast(str, request["body"]))
+    assert ingress is not None
+    exception = {
+        "id": 6710189306,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+        "body": "\n".join(
+            (
+                "EXECUTION_EXCEPTION",
+                "Workflow: #322",
+                "Change: restore-no-work-idle-discovery",
+                "Action: implement-change",
+                "Role: executor",
+                "Result: execution-exception",
+                f"Revision: {revision}",
+                "Request-Comment-ID: 6710179912",
+                "Run-ID: 42393397526",
+                "Run-Attempt: 1",
+                "Exception-Correlation: application:42393397526:1:6710179912",
+                "Attempted-Operation: pre-accept-worker-result-qualification",
+                "Raw-Error: result evidence reference is invalid",
+                "Mutation-Outcome: NO_APPLICATION_WRITE_ATTEMPTED",
+                "Unfinished-Work: pre-accept-worker-result-qualification",
+                "Classification: UNCLASSIFIED_EXECUTION_EXCEPTION",
+            )
+        ),
+    }
+    if case == "missing-stage":
+        exception["body"] = cast(str, exception["body"]).replace(
+            "Attempted-Operation: pre-accept-worker-result-qualification",
+            "Attempted-Operation: later-effect-application",
+        )
+    if case == "wrong-result":
+        exception["body"] = cast(str, exception["body"]).replace(
+            "Result: execution-exception", "Result: success"
+        )
+    if case == "wrong-change":
+        exception["body"] = cast(str, exception["body"]).replace(
+            "Change: restore-no-work-idle-discovery", "Change: another-change"
+        )
+    if case == "write-unknown":
+        exception["body"] = cast(str, exception["body"]).replace(
+            "Mutation-Outcome: NO_APPLICATION_WRITE_ATTEMPTED", "Mutation-Outcome: UNKNOWN"
+        )
+
+    current_issue: dict[str, object] = {
+        "number": 322,
+        "state": "open",
+        "created_at": "2026-08-01T00:00:00Z",
+        "closed_at": None,
+        "body": "Change: restore-no-work-idle-discovery",
+        "labels": [{"name": "action:implement-change"}],
+    }
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 42393397526,
+                        "display_title": "Scheduled Agent Application 6710179912",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "run_attempt": 2 if case == "missing-attempt" else 1,
+                        "head_sha": "f" * 40 if case == "wrong-head" else revision,
+                    }
+                ]
+            }
+        if path == "actions/runs/42393397526/jobs":
+            return {
+                "jobs": [{"id": 1, "name": "apply", "status": "completed", "conclusion": "failure"}]
+            }
+        if path == "issues/322":
+            return current_issue
+        raise AssertionError(path)
+
+    candidate = bridge._IngressCandidate(
+        6710179912,
+        cast(str, request["body"]),
+        "2026-11-07T16:51:32Z",
+        revision,
+        ingress,
+    )
+    decisions = (
+        {
+            6710179912: (
+                replace(
+                    _accepted_carrier_record(),
+                    request_comment_id=6710179912,
+                    authorization_revision=revision,
+                ),
+            )
+        }
+        if case == "already-accepted"
+        else {}
+    )
+    assert (
+        bridge._classify_ingress_candidate(
+            repository="owner/repo",
+            token="token",  # noqa: S106 - fixture-only test credential
+            source=source,
+            candidate=candidate,
+            decisions_by_request=decisions,
+            issue_comments=(exception,),
+            current_revision=revision,
+            read=read,
+            current_issue=current_issue,
+        )
+        == expected
+    )
 
 
 @pytest.mark.parametrize(

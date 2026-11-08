@@ -41,6 +41,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     parse_application_request,
     read_application_recovery_artifact,
     render_application_continuation_request,
+    typed_request_lines,
 )
 from investment_strategy.scheduled_agent_application_bridge import (
     _github_json as _application_github_json,
@@ -1734,7 +1735,7 @@ def _valid_reason(value: object) -> bool:
 
 
 def parse_dispatch_request(body: str) -> DispatchRequest | None:
-    lines = body.split("\n")
+    lines = typed_request_lines(body)
     if len(lines) != 2 or lines[0] != REQUEST_MARKER:
         return None
     if not lines[1].startswith(REQUESTED_AT_PREFIX):
@@ -1742,9 +1743,19 @@ def parse_dispatch_request(body: str) -> DispatchRequest | None:
     requested_at = lines[1][len(REQUESTED_AT_PREFIX) :]
     if not requested_at or requested_at != requested_at.strip():
         return None
-    if body != f"{REQUEST_MARKER}\n{REQUESTED_AT_PREFIX}{requested_at}":
+    canonical = f"{REQUEST_MARKER}\n{REQUESTED_AT_PREFIX}{requested_at}"
+    if body not in {canonical, canonical + "\n"}:
         return None
     return DispatchRequest(requested_at=requested_at)
+
+
+def render_dispatch_request(request: DispatchRequest) -> str:
+    """Emit the two-field dispatch wire accepted by its production parser."""
+
+    body = f"{REQUEST_MARKER}\n{REQUESTED_AT_PREFIX}{request.requested_at}"
+    if parse_dispatch_request(body) != request:
+        raise ValueError("dispatch request renderer/parser contract mismatch")
+    return body
 
 
 def render_dispatch_run_name(request_comment_id: int) -> str:
@@ -3875,7 +3886,9 @@ def _preaccept_exception_repair_status(
     issue_comments: tuple[Mapping[str, object], ...],
     current_revision: str,
     read: GitHubReader,
-) -> Literal["NONE", "BLOCKED", "REPAIRED", "INVALID"]:
+    candidate: _IngressCandidate | None = None,
+    current_issue: Mapping[str, object] | None = None,
+) -> Literal["NONE", "BLOCKED", "REPAIRED", "TERMINAL_INVALID_INPUT", "INVALID"]:
     """Bound an observed execution defect to a material application-code advance.
 
     This consumes the existing EXECUTION_EXCEPTION evidence surface, not a
@@ -3945,6 +3958,60 @@ def _preaccept_exception_repair_status(
     ):
         return "INVALID"
     _recorded_run_id, original_revision = attempts[max(attempts)]
+
+    # A deterministic typed-input rejection is terminal even on unchanged
+    # application code.  This is narrower than repairing a valid worker result:
+    # it needs the original immutable request, the current authoritative source,
+    # every native attempt's pre-ACCEPT/zero-write evidence and the same parser
+    # that rejected the payload.  The caller has already ruled out ACCEPTED.
+    if candidate is not None and current_issue is not None:
+        request = candidate.request
+        body = candidate.body
+        observed = normalize_github_issue(current_issue)
+        if (
+            request is not None
+            and body is not None
+            and candidate.request_comment_id == request_comment_id
+            and request.authorization_revision == original_revision
+            and run.get("head_sha") == original_revision
+            and observed is not None
+            and observed.authoritative
+            and observed.state == "open"
+            and observed.issue_number == source.issue_number
+            and observed.routing == (source.role, source.action)
+            and isinstance(observed.change, str)
+            and observed.change not in {"", "unset"}
+            and request.dispatch_correlation
+            == dispatch_correlation_for(repository, source, original_revision)
+            and set(attempts) == set(range(1, latest_attempt + 1))
+        ):
+            try:
+                original_request = parse_application_request(body)
+            except ValueError:
+                original_request = None
+            if original_request == request and all(
+                one(cast(str, comment["body"]), "Revision: ") == original_revision
+                and one(cast(str, comment["body"]), "Result: ") == "execution-exception"
+                and one(cast(str, comment["body"]), "Change: ") == observed.change
+                and one(cast(str, comment["body"]), "Attempted-Operation: ")
+                == "pre-accept-worker-result-qualification"
+                and one(cast(str, comment["body"]), "Unfinished-Work: ")
+                == "pre-accept-worker-result-qualification"
+                for comment in matches
+            ):
+                try:
+                    parse_worker_result(
+                        request.raw_worker_result,
+                        source,
+                        authorized_change=observed.change,
+                    )
+                except ValueError as exc:
+                    if all(
+                        one(cast(str, comment["body"]), "Raw-Error: ") == str(exc)
+                        for comment in matches
+                    ):
+                        return "TERMINAL_INVALID_INPUT"
+
     if original_revision == current_revision:
         return "BLOCKED"
     try:
@@ -3991,6 +4058,7 @@ def _classify_ingress_candidate(
     issue_comments: tuple[Mapping[str, object], ...],
     current_revision: str,
     read: GitHubReader,
+    current_issue: Mapping[str, object] | None = None,
 ) -> PreacceptClassification:
     """Classify one current-frontier ingress before reducing the set."""
 
@@ -4026,11 +4094,15 @@ def _classify_ingress_candidate(
         issue_comments=issue_comments,
         current_revision=current_revision,
         read=read,
+        candidate=candidate,
+        current_issue=current_issue,
     )
     if exception_status == "INVALID":
         return "INVALID"
     if exception_status == "BLOCKED":
         return "NEEDS_REPAIR"
+    if exception_status == "TERMINAL_INVALID_INPUT":
+        return "TERMINAL_NO_ACCEPT"
 
     # Historical pre-protocol requests require an independent inertness proof;
     # current protocol terminal failures already carry the application-owned
@@ -5164,6 +5236,7 @@ def qualify_application_completion(
             issue_comments=issue_comments,
             current_revision=current_revision,
             read=read,
+            current_issue=cast(Mapping[str, object], issue),
         )
     for request_id in current_invalid_request_ids:
         if request_id > 0 and request_id not in accepted_request_ids:

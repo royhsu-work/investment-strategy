@@ -66,6 +66,7 @@ from investment_strategy.scheduled_agent_effects import (
     _archive_ref,
     _references_issue,
     _source_branch,
+    archive_branch_matches_current_source,
     consequence_postconditions_complete,
     formal_application_correlation,
     merged_pr_readiness_complete,
@@ -408,10 +409,21 @@ def _trusted_connector_comment(comment: Mapping[str, object], repository_owner: 
     )
 
 
+def typed_request_lines(body: str) -> list[str]:
+    """Share the exact request line-termination contract across both wire parsers.
+
+    One terminal newline is framing, not an extra field.  A second terminal
+    newline remains a blank field and must fail each parser's field contract.
+    """
+
+    lines = body.split("\n")
+    return lines[:-1] if lines and lines[-1] == "" else lines
+
+
 def parse_application_request(body: str) -> ApplicationRequest | None:
     """Parse the bounded effect ingress and optional machine correlation."""
 
-    lines = body.split("\n")
+    lines = typed_request_lines(body)
     if not lines or lines[0] != APPLICATION_REQUEST_MARKER:
         return None
     if len(lines) not in {3, 4}:
@@ -460,8 +472,43 @@ def parse_application_request(body: str) -> ApplicationRequest | None:
     )
 
 
-def render_application_request(request: ApplicationRequest) -> str:
-    """Reconstruct the immutable transport envelope for an accepted intent."""
+def render_application_request(
+    request: ApplicationRequest,
+    *,
+    source: WorkerRequest | None = None,
+    authorized_change: str | None = None,
+) -> str:
+    """Preflight typed worker input and round-trip the canonical request wire.
+
+    Production callers provide the machine-owned source/Change.  Legacy fully
+    identified results can supply a syntactic fallback to validate the wire,
+    never to grant repository authorization or accepted-intent authority.
+    """
+
+    if source is None:
+        source = _claimed_source(request.raw_worker_result)
+    if source is None:
+        raise ValueError("application request source is required for typed preflight")
+    if authorized_change is None:
+        try:
+            decoded = json.loads(request.raw_worker_result)
+        except json.JSONDecodeError as exc:
+            raise ValueError("application request worker result is invalid JSON") from exc
+        if not isinstance(decoded, Mapping) or not isinstance(decoded.get("change"), str):
+            raise ValueError("application request authorized Change is required")
+        authorized_change = cast(str, decoded["change"])
+    parse_worker_result(request.raw_worker_result, source, authorized_change=authorized_change)
+
+    return _render_accepted_application_wire(request)
+
+
+def _render_accepted_application_wire(request: ApplicationRequest) -> str:
+    """Only reconstruct already ACCEPTED immutable intent transport without preflight.
+
+    Accepted semantic intent is not itself a fresh untrusted typed worker
+    result; it is covered by its earlier qualified application decision. The
+    initial emitter must always call the strict public renderer instead.
+    """
 
     encoded = base64.b64encode(request.raw_worker_result.encode("utf-8")).decode("ascii")
     lines = [
@@ -473,7 +520,10 @@ def render_application_request(request: ApplicationRequest) -> str:
             raise ValueError("application request dispatch correlation is invalid")
         lines.append(f"{DISPATCH_CORRELATION_PREFIX}{request.dispatch_correlation}")
     lines.append(f"{WORKER_RESULT_B64_PREFIX}{encoded}")
-    return "\n".join(lines)
+    body = "\n".join(lines)
+    if parse_application_request(body) != request:
+        raise ValueError("application request renderer/parser contract mismatch")
+    return body
 
 
 def dispatch_correlation_for(
@@ -2154,7 +2204,7 @@ def _fresh_archive_state(
     current_revision: str,
     default_branch: str,
 ) -> tuple[str, str | None, str | None]:
-    """Return ``missing-branch``, ``missing-pr``, ``ready`` or ``conflict``."""
+    """Return the current Archive consequence, including stale-source evidence."""
 
     branch = _archive_branch(change)
     if branch is None:
@@ -2162,6 +2212,14 @@ def _fresh_archive_state(
     branch_sha = _fresh_branch_head(repository, token, branch)
     if branch_sha is None:
         return "missing-branch", branch, None
+    if not archive_branch_matches_current_source(
+        repository=repository,
+        token=token,
+        change=change,
+        source_sha=current_revision,
+        branch_sha=branch_sha,
+    ):
+        return "stale-branch", branch, branch_sha
     candidates = _fresh_pull_requests(
         repository,
         token,
@@ -2363,6 +2421,14 @@ def _fresh_control_effect(
                 return None
             raise RuntimeError("existing pull-request carrier is a material conflict")
         if archive:
+            if not archive_branch_matches_current_source(
+                repository=repository,
+                token=token,
+                change=change,
+                source_sha=current_revision,
+                branch_sha=branch_sha,
+            ):
+                raise RuntimeError("archive branch is not derived from current Change")
             return _archive_pr_create_payload(
                 issue_number=source.issue_number,
                 change=change,
@@ -2696,7 +2762,7 @@ def _fresh_application_worker_result(
             current_revision=current_revision,
             default_branch=default_branch,
         )
-        if state == "missing-branch":
+        if state in {"missing-branch", "stale-branch"}:
             semantic_effects.append(
                 _effect_document(
                     GITHUB_MUTATION_KIND,
@@ -5662,11 +5728,11 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     application_request_body = (
         body
         if accepted_intent is None
-        else render_application_request(
+        else _render_accepted_application_wire(
             ApplicationRequest(
                 authorization_revision=accepted_intent.authorization_revision,
                 raw_worker_result=accepted_intent.raw_worker_result,
-            )
+            ),
         )
     )
     worker_result = parse_worker_result(

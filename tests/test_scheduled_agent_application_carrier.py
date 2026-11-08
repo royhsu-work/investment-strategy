@@ -575,8 +575,8 @@ def _accepted_supersession_comments(
 
     from investment_strategy.scheduled_agent_application_bridge import (
         ApplicationRequest,
+        _render_accepted_application_wire,
         dispatch_correlation_for,
-        render_application_request,
     )
 
     formal = _supersession_formal_comments(
@@ -617,7 +617,7 @@ def _accepted_supersession_comments(
             sort_keys=True,
             separators=(",", ":"),
         )
-        request_body = render_application_request(
+        request_body = _render_accepted_application_wire(
             ApplicationRequest(
                 authorization_revision=MAIN,
                 raw_worker_result=raw_result,

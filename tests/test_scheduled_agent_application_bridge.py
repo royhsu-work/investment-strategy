@@ -2015,6 +2015,34 @@ def test_parse_application_request_decodes_revision_bound_worker_result() -> Non
     assert json.loads(request.raw_worker_result) == _worker_result()
 
 
+def test_application_wire_accepts_one_terminal_newline_but_not_extra_fields() -> None:
+    body = _effect_request()
+    parsed = parse_application_request(body)
+    assert parsed is not None
+    assert parse_application_request(body + "\n") == parsed
+    with pytest.raises(ValueError):
+        parse_application_request(body + "\n\n")
+    with pytest.raises(ValueError):
+        parse_application_request(body + "\nUnknown: extra")
+
+
+def test_application_formatter_preflights_canonical_typed_worker_fields() -> None:
+    raw = json.dumps(
+        {
+            "issue_number": 138,
+            "role": "lead",
+            "action": "explore-change",
+            "change": _CHANGE,
+            "result_kind": "proposal-ready",
+            "evidence_ref": "not a valid reference",
+            "result_content": "evidence",
+            "requested_effects": [],
+        }
+    )
+    with pytest.raises(ValueError, match="evidence reference is invalid"):
+        bridge.render_application_request(ApplicationRequest(_REVISION, raw))
+
+
 def test_parse_application_request_rejects_old_correlation_shape() -> None:
     with pytest.raises(ValueError, match="exactly three lines"):
         parse_application_request("\n".join((APPLICATION_REQUEST_MARKER, "old", "old", "old")))
@@ -2261,9 +2289,20 @@ def test_application_request_round_trips_one_opaque_dispatch_correlation() -> No
     raw = json.dumps({"result_kind": "blocked", "result_content": "evidence"})
     request = bridge.ApplicationRequest(_REVISION, raw, correlation)
 
-    parsed = parse_application_request(bridge.render_application_request(request))
+    # An externally supplied opaque payload still parses as transport, but is
+    # forbidden to pass the production emitter's typed-result preflight.
+    encoded = base64.b64encode(raw.encode("utf-8")).decode("ascii")
+    body = (
+        f"{APPLICATION_REQUEST_MARKER}\n"
+        f"{AUTHORIZATION_REVISION_PREFIX}{_REVISION}\n"
+        f"{bridge.DISPATCH_CORRELATION_PREFIX}{correlation}\n"
+        f"{bridge.WORKER_RESULT_B64_PREFIX}{encoded}"
+    )
+    parsed = parse_application_request(body)
 
     assert parsed == request
+    with pytest.raises(ValueError, match="source is required"):
+        bridge.render_application_request(request)
 
 
 def test_plan_application_rejects_untrusted_or_stale_ingress() -> None:
