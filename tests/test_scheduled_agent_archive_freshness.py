@@ -43,6 +43,8 @@ def _tree(*, archived: bool, tasks_sha: str = "1" * 40) -> dict[str, object]:
         ("extra-archived-file", False),
         ("two-archive-dirs", False),
         ("active-still-present", False),
+        ("unrelated-branch-write", False),
+        ("unapproved-canonical-write", False),
     ],
 )
 def test_archive_tree_requires_byte_identical_current_change(variant: str, expected: bool) -> None:
@@ -75,7 +77,39 @@ def test_archive_tree_requires_byte_identical_current_change(variant: str, expec
                 "sha": "1" * 40,
             }
         )
+    elif variant == "unrelated-branch-write":
+        entries[-1]["sha"] = "5" * 40
+    elif variant == "unapproved-canonical-write":
+        entries.append(
+            {
+                "path": "openspec/specs/unapproved/spec.md",
+                "type": "blob",
+                "sha": "6" * 40,
+            }
+        )
     assert archive_tree_matches_change(source, archive, _CHANGE) is expected
+
+
+def test_archive_tree_allows_only_canonicalized_change_capabilities() -> None:
+    source, archive = _tree(archived=False), _tree(archived=True)
+    cast(list[dict[str, object]], source["tree"]).append(
+        {
+            "path": f"openspec/changes/{_CHANGE}/specs/approved/spec.md",
+            "type": "blob",
+            "sha": "4" * 40,
+        }
+    )
+    cast(list[dict[str, object]], archive["tree"]).append(
+        {
+            "path": f"openspec/changes/archive/2026-11-08-{_CHANGE}/specs/approved/spec.md",
+            "type": "blob",
+            "sha": "4" * 40,
+        }
+    )
+    cast(list[dict[str, object]], archive["tree"]).append(
+        {"path": "openspec/specs/approved/spec.md", "type": "blob", "sha": "7" * 40}
+    )
+    assert archive_tree_matches_change(source, archive, _CHANGE)
 
 
 @pytest.mark.parametrize(

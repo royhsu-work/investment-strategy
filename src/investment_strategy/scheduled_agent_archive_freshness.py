@@ -59,6 +59,7 @@ def archive_tree_matches_change(source_tree: object, archive_tree: object, chang
         return False
     archive_prefix = "openspec/changes/archive/"
     archive_paths: dict[str, dict[str, str]] = {}
+    archive_file_paths: set[str] = set()
     for path, sha in archived_files.items():
         if not path.startswith(archive_prefix):
             continue
@@ -66,4 +67,26 @@ def archive_tree_matches_change(source_tree: object, archive_tree: object, chang
         directory, separator, filename = rest.partition("/")
         if separator and directory.endswith(f"-{change}"):
             archive_paths.setdefault(directory, {})[filename] = sha
-    return len(archive_paths) == 1 and next(iter(archive_paths.values())) == active
+            archive_file_paths.add(path)
+    if len(archive_paths) != 1 or next(iter(archive_paths.values())) != active:
+        return False
+
+    # Archive may remove its active source, add its exact historical snapshot,
+    # and update canonical specs named by this approved Change.  Any other
+    # blob mutation is not an OpenSpec archive consequence, even if its PR is
+    # absent or its branch happens to be descended from current main.
+    approved_canonical = {
+        f"openspec/specs/{parts[1]}/spec.md"
+        for relative in active
+        if (parts := relative.split("/"))[:1] == ["specs"]
+        and len(parts) == 3
+        and parts[2] == "spec.md"
+    }
+    changed_paths = {
+        path
+        for path in set(source_files) | set(archived_files)
+        if source_files.get(path) != archived_files.get(path)
+    }
+    return changed_paths <= (
+        {source_prefix + relative for relative in active} | archive_file_paths | approved_canonical
+    )
