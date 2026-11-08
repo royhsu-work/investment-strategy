@@ -340,6 +340,29 @@ newline is permitted; extra blank lines, duplicate/unknown fields and invalid
 evidence references SHALL be rejected. An external producer cannot create
 acceptance or completion authority by claiming formatter conformance.
 
+For new pre-ACCEPT semantic work, the external worker SHALL provide only the
+raw typed-result JSON in a minimally framed `WORKER_RESULT` comment on the
+existing runtime shard (exact first line `WORKER_RESULT`, then a newline and
+one JSON object in the remainder, tolerating ordinary JSON whitespace and
+one terminal newline); it SHALL NOT author the canonical `EFFECT_REQUEST`
+envelope itself. The existing GitHub Actions application ingress SHALL
+fresh-qualify the original external comment and authoritative machine source,
+then use the repository's production application formatter and parser to
+construct and validate the canonical envelope **in-process** before the same
+Phase-A authorization/acceptance boundary. The original comment id, bytes,
+actor, Issue, revision and correlation SHALL remain the provenance of the
+application; the internally formatted envelope SHALL NOT be mistaken for an
+independently published GitHub comment or an authorization source. Neither
+the formatter nor the external transport may choose routing, source, Change,
+successor or acceptance. Malformed/unqualified worker input SHALL cause zero
+application ACCEPT/effects, with existing bounded rejection/exception evidence.
+This mechanism SHALL NOT depend on an Actions-bot comment triggering a second
+workflow. Historical or already accepted `EFFECT_REQUEST` ingress SHALL retain
+its immutable original identities, legacy qualification and no-replay recovery;
+the new raw input path SHALL activate only prospectively at the default-branch
+merge boundary. The separate external dispatch emitter still requires proof
+of actual producer-side contract use; unit-test-only renderers do not qualify.
+
 For first-carrier materialization, the apply-side already-complete check, immediate postcondition, and later fresh observer SHALL use one canonical durable-consequence proof for exact Issue, Change, branch, head, PR, manifest/content identity, lineage, and non-conflict. A pending continuation MAY remain valid after default-branch advancement only when the same proof classifies the consequence `INCOMPLETE` rather than complete or contradictory and the immutable original base is its ancestor with all carrier paths disjoint from intervening changes. Existing stale, overlap, identity, cardinality, and ambiguity guards remain mandatory. When an exact accepted intent has the verified branch ref and content but no matching PR, recovery SHALL emit only the missing application-owned PR consequence against fresh current main after the canonical proof plus ancestry, disjointness, exact branch/head/content, and complete all-head PR cardinality checks. It SHALL NOT rerun semantic work, recreate the branch, move the ref, or blindly create a duplicate PR.
 
 A fresh process SHALL reconstruct materialized-consequence completion from the existing `ConsequenceSpec.evidence_target` through the same canonical durable-consequence proof owner. It MUST NOT require invocation-local `_materialization_targets` to recognize an already durable consequence. Implementation-carrier qualification remains in its existing owner except where that owner supplies materialization proof primitives; it MUST NOT become a competing positive definition for the same materialized consequence. If an uncorrelated legacy result invalidates formal-frontier qualification while the exact source route remains current, recovery MAY resume only one accepted intent and its unique request-bound run/job after exact Issue/Change/Role/Action checks. For a completed request-bound run, `run_attempt` is GitHub-owned invocation evidence and is not the recovery budget. `run_attempt > 1` alone SHALL NOT permanently block recovery or authorize a rerun of that same run/job. A safe continuation MAY use the existing `APPLICATION_CONTINUATION` transport to start one fresh, separately identified run only after exact failure evidence, unique accepted intent/run/job, current authorization, and the bounded-recovery requirement below qualify it. Changed identity/routing, duplicate intent/run/job, or incomplete evidence SHALL fail closed. Existing correlation, formal qualification, source/frontier, carrier, validation, review, successor, and terminal gates remain in force.
@@ -383,8 +406,25 @@ After a lost or ambiguous write response, recovery SHALL observe/reconcile the e
 - GIVEN a dispatch or application request is constructed for an authorized source
 - WHEN its canonical renderer packages the exact request bytes
 - THEN the corresponding production parser accepts the emitted bytes and typed fields
-- AND the application emitter validates the embedded worker result before any request comment is published
+- AND the application emitter validates the embedded worker result before any canonical application envelope is admitted into Phase A
 - AND malformed evidence, duplicate terminal blank lines and unknown or repeated fields fail preflight
+
+#### Scenario: Actions owns production envelope construction for an external raw result
+
+- GIVEN a newly created, uniquely source-qualified external `WORKER_RESULT` comment on the current runtime shard
+- AND a current repository dispatch authorizes its Issue, Role, Action and Change
+- WHEN the existing application Actions job processes that immutable comment
+- THEN its production Python entrypoint validates the raw typed result and invokes the canonical renderer/parser before the existing Phase A
+- AND the original comment remains the unique provenance and correlation without a second comment or workflow event
+- AND only the existing Application may persist ACCEPT and subsequent effects
+
+#### Scenario: Invalid raw input cannot publish a canonical application intent
+
+- GIVEN an external raw-result comment has an invalid evidence reference, malformed JSON, wrong claimed source, changed provenance or incomplete current dispatch evidence
+- WHEN the same production Actions job attempts to form the application request
+- THEN the canonical typed preflight rejects it before ACCEPT or any consequential effect
+- AND it never posts a synthetic `EFFECT_REQUEST`, retries an accepted intent or manufactures a successor
+- AND a later fresh wake is governed solely by the existing terminal/unknown evidence reducer
 
 #### Scenario: Recovery evidence remains named and replaceable
 
