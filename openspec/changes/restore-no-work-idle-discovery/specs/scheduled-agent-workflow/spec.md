@@ -360,6 +360,32 @@ Normal `CarrierRequired` SHALL remain an application invocation exit and normal 
 
 After a lost or ambiguous write response, recovery SHALL observe/reconcile the exact target before any further write and SHALL fail closed when unique identity or completion cannot be proven. When reporting itself fails, the invocation SHALL retain the observable platform/run error and its evidence limits wherever a legal path remains, without claiming an absent GitHub record. A later wake SHALL recover solely from actual durable truth; uncatchable termination SHALL not produce fabricated prior observations. Exceptions SHALL obey existing disposition and unchanged-denial retry rules. No fixed numerical ceiling applies to new substantive recovery transitions; each later attempt SHALL require a new exact evidence digest, one uniquely linked predecessor, fresh authorization, and current canonical proof. An unchanged refusal or repeated evidence digest SHALL NOT be retried.
 
+#### Scenario: Invalid typed worker input terminates a zero-write pre-ACCEPT failure
+
+- GIVEN an exact source-bound native application run terminated before ACCEPT
+- AND bot-authored evidence uniquely proves the same request and every attempt's typed worker-result qualification stage with zero application writes
+- AND the immutable input deterministically fails the canonical worker parser
+- WHEN a later wake reads the same current `main` and the complete original evidence
+- THEN the existing ingress reducer classifies the failed request as `TERMINAL_NO_ACCEPT`
+- AND the next authorized semantic Action is eligible only in a separate fresh wake
+- AND neither the failed request nor its effects are replayed
+
+#### Scenario: Ambiguous failure cannot become terminal through parser inference
+
+- GIVEN a failed application request whose native run, source, revision, attempt, correlation, HEAD, stage, zero-write, ACCEPT absence, or complete evidence cannot be positively established
+- OR the original worker input remains valid under the canonical parser
+- WHEN the completion owner evaluates the current frontier
+- THEN it does not infer deterministic malformed-input termination
+- AND it retains existing fail-closed or Lead/code-repair disposition without mutation
+
+#### Scenario: Request emitter and consumer share the typed wire contract
+
+- GIVEN a dispatch or application request is constructed for an authorized source
+- WHEN its canonical renderer packages the exact request bytes
+- THEN the corresponding production parser accepts the emitted bytes and typed fields
+- AND the application emitter validates the embedded worker result before any request comment is published
+- AND malformed evidence, duplicate terminal blank lines and unknown or repeated fields fail preflight
+
 #### Scenario: Recovery evidence remains named and replaceable
 
 
@@ -607,32 +633,6 @@ After a lost or ambiguous write response, recovery SHALL observe/reconcile the e
 - AND after accepted desired content is proven at a qualified witness, the obsolete preimage need not remain current
 
 ## ADDED Requirements
-
-#### Scenario: Invalid typed worker input terminates a zero-write pre-ACCEPT failure
-
-- GIVEN an exact source-bound native application run terminated before ACCEPT
-- AND bot-authored evidence uniquely proves the same request and every attempt's typed worker-result qualification stage with zero application writes
-- AND the immutable input deterministically fails the canonical worker parser
-- WHEN a later wake reads the same current `main` and the complete original evidence
-- THEN the existing ingress reducer classifies the failed request as `TERMINAL_NO_ACCEPT`
-- AND the next authorized semantic Action is eligible only in a separate fresh wake
-- AND neither the failed request nor its effects are replayed
-
-#### Scenario: Ambiguous failure cannot become terminal through parser inference
-
-- GIVEN a failed application request whose native run, source, revision, attempt, correlation, HEAD, stage, zero-write, ACCEPT absence, or complete evidence cannot be positively established
-- OR the original worker input remains valid under the canonical parser
-- WHEN the completion owner evaluates the current frontier
-- THEN it does not infer deterministic malformed-input termination
-- AND it retains existing fail-closed or Lead/code-repair disposition without mutation
-
-#### Scenario: Request emitter and consumer share the typed wire contract
-
-- GIVEN a dispatch or application request is constructed for an authorized source
-- WHEN its canonical renderer packages the exact request bytes
-- THEN the corresponding production parser accepts the emitted bytes and typed fields
-- AND the application emitter validates the embedded worker result before any request comment is published
-- AND malformed evidence, duplicate terminal blank lines and unknown or repeated fields fail preflight
 
 ### Requirement: NO_WORK idle admission is typed, fresh, and bounded
 
