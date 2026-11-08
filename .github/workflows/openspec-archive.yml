@@ -259,6 +259,9 @@ jobs:
             if [[ "$mode" == "reconcile" ]]; then
               # Record the exact old head as a parent without importing stale
               # archive bytes. The result can only be pushed by fast-forward.
+              # Even --no-commit requires a committer identity on Actions hosts.
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
               git merge -s ours --no-ff --no-commit "$existing_ref"
             fi
           fi

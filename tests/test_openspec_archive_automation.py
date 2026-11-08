@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -472,6 +475,66 @@ def test_archive_workflow_keeps_reviewed_lifecycle_guards() -> None:
     assert '--issue-number "$REQUEST_ISSUE"' not in workflow
     assert '"$issue_number" != "$REQUEST_ISSUE"' in workflow
     assert "printf 'issue_number=%s\\n' \"$REQUEST_ISSUE\"" in workflow
+
+
+def test_archive_reconciliation_configures_identity_before_first_merge(tmp_path: Path) -> None:
+    """An unconfigured Actions checkout must execute the real reconciliation ordering."""
+
+    workflow = (ROOT / ".github/workflows/openspec-archive.yml").read_text(encoding="utf-8")
+    prepare = workflow.split("      - name: Prepare or reuse archive branch\n", 1)[1].split(
+        "      - name: Archive change with OpenSpec CLI\n", 1
+    )[0]
+    merge_command = 'git merge -s ours --no-ff --no-commit "$existing_ref"'
+    assert merge_command in prepare
+    name = 'git config user.name "github-actions[bot]"'
+    email = 'git config user.email "41898282+github-actions[bot]@users.noreply.github.com"'
+    assert prepare.index(name) < prepare.index(merge_command)
+    assert prepare.index(email) < prepare.index(merge_command)
+
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    repo = tmp_path / "no-committer-identity"
+    repo.mkdir()
+    git_executable = shutil.which("git")
+    assert git_executable is not None
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603 - fixed Git executable, isolated test repository
+            [git_executable, *args],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+
+    assert git("init", "-b", "main").returncode == 0
+    (repo / "base.txt").write_text("base", encoding="utf-8")
+    assert git("add", "base.txt").returncode == 0
+    commit = ("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test")
+    assert git(*commit, "commit", "-m", "base").returncode == 0
+    assert git("branch", "archive-old").returncode == 0
+    (repo / "current.txt").write_text("current", encoding="utf-8")
+    assert git("add", "current.txt").returncode == 0
+    assert git(*commit, "commit", "-m", "new main").returncode == 0
+    assert git("switch", "archive-old").returncode == 0
+    (repo / "historical.txt").write_text("historical", encoding="utf-8")
+    assert git("add", "historical.txt").returncode == 0
+    assert git(*commit, "commit", "-m", "stale branch").returncode == 0
+    assert git("switch", "main").returncode == 0
+
+    assert git("config", "user.name").returncode != 0
+    assert git("config", "user.email").returncode != 0
+    negative = git("merge", "-s", "ours", "--no-ff", "--no-commit", "archive-old")
+    assert negative.returncode != 0
+    assert "Committer identity unknown" in negative.stderr
+    assert not (repo / ".git" / "MERGE_HEAD").exists()
+
+    # Run the identity setup in the exact order printed in the production step.
+    for command in (name, email):
+        assert git(*shlex.split(command)[1:]).returncode == 0
+    reconciled = git("merge", "-s", "ours", "--no-ff", "--no-commit", "archive-old")
+    assert reconciled.returncode == 0, reconciled.stderr
+    assert (repo / ".git" / "MERGE_HEAD").is_file()
 
 
 def test_readme_documents_state_driven_archive_contract() -> None:
