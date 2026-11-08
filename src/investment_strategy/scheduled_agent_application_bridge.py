@@ -14,6 +14,7 @@ import time
 import traceback
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Literal, cast
 from urllib.error import HTTPError
@@ -50,7 +51,13 @@ from investment_strategy.scheduled_agent_carrier import (
     github_repository_api_url,
     read_github_artifact_bytes,
 )
-from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
+from investment_strategy.scheduled_agent_checkin import (
+    CheckinDisposition,
+    checkin_title,
+    is_runtime_checkin_issue,
+    select_current_shard,
+    taipei_day,
+)
 from investment_strategy.scheduled_agent_effect_contract import (
     EvidenceTarget,
     consequence_spec_for,
@@ -863,6 +870,7 @@ def plan_application(
     accepted_intent: ApplicationDecisionRecord | None = None,
     accepted_request_comment_id: int | None = None,
     allow_raw_result_transport: bool = False,
+    raw_shard_qualified: bool = False,
 ) -> ApplicationPlan:
     """Freshly derive the only legal source Issue/Action/Role from the repository."""
 
@@ -893,6 +901,8 @@ def plan_application(
         and body.startswith("WORKER_RESULT\n")
         and body[len("WORKER_RESULT\n") :].removesuffix("\n") == request.raw_worker_result
     )
+    if raw_matches and not raw_shard_qualified:
+        raise ValueError("new WORKER_RESULT has no verified current-shard source")
     if not isinstance(body, str) or (
         not allow_accepted_request_mutation
         and not raw_matches
@@ -1311,6 +1321,70 @@ def _accepted_worker_result_for_continuation(
     return json.dumps(recovered, sort_keys=True, separators=(",", ":"))
 
 
+def _github_timestamp(value: object) -> datetime:
+    """Require a complete, timezone-aware GitHub creation timestamp."""
+
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise ValueError("new WORKER_RESULT source timestamp is unavailable")
+    try:
+        observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("new WORKER_RESULT source timestamp is malformed") from exc
+    if observed.tzinfo is None:
+        raise ValueError("new WORKER_RESULT source timestamp has no timezone")
+    return observed
+
+
+def _qualify_new_raw_result_shard(
+    *,
+    event_issue: Mapping[str, object],
+    event_comment: Mapping[str, object],
+    observed_comment: Mapping[str, object],
+    observed_issue: Mapping[str, object],
+    repository: str,
+    token: str,
+) -> None:
+    """Authorize a *new* raw result only on its unique creation-day shard.
+
+    Historical closed/open transport remains valid for an already ACCEPTED
+    intent, which never calls this new-ingress qualifier on continuation.
+    """
+
+    created_at = observed_comment.get("created_at")
+    if created_at != event_comment.get("created_at"):
+        raise ValueError("new WORKER_RESULT creation timestamp changed")
+    created = _github_timestamp(created_at)
+    shard_created = _github_timestamp(observed_issue.get("created_at"))
+    day = taipei_day(created)
+    issue_number = _positive_int(observed_issue.get("number"))
+    if (
+        issue_number is None
+        or shard_created > created
+        or event_issue.get("state") != "open"
+        or event_issue.get("number") != issue_number
+        or event_issue.get("created_at") != observed_issue.get("created_at")
+        or event_issue.get("title") != observed_issue.get("title")
+        or observed_issue.get("state") != "open"
+        or observed_issue.get("title") != checkin_title(day)
+    ):
+        raise ValueError("new WORKER_RESULT was not created on its current-day shard")
+
+    # This must be an all-state list. Open-only discovery would miss a duplicate
+    # closed shard and could turn an ambiguous date into source authorization.
+    issues = _paged_github_list(repository, token, "issues?state=all")
+    selected = select_current_shard(issues, day)
+    matches = [issue for issue in issues if issue.get("number") == issue_number]
+    if (
+        selected.disposition != CheckinDisposition.SELECTED
+        or selected.issue_number != issue_number
+        or len(matches) != 1
+        or matches[0].get("state") != observed_issue.get("state")
+        or matches[0].get("title") != observed_issue.get("title")
+        or matches[0].get("created_at") != observed_issue.get("created_at")
+    ):
+        raise ValueError("new WORKER_RESULT creation-day shard is not uniquely qualified")
+
+
 def _fresh_event_observation(
     event: Mapping[str, object],
     body: str,
@@ -1350,6 +1424,15 @@ def _fresh_event_observation(
         or not is_runtime_checkin_issue(observed_issue)
     ):
         raise ValueError("application request current shard observation is invalid")
+    if body.startswith("WORKER_RESULT\n"):
+        _qualify_new_raw_result_shard(
+            event_issue=issue,
+            event_comment=comment,
+            observed_comment=observed_comment,
+            observed_issue=observed_issue,
+            repository=repository,
+            token=token,
+        )
     return body_mutated
 
 
@@ -5770,6 +5853,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             None if continuation is None else continuation.original_request_comment_id
         ),
         allow_raw_result_transport=raw_transport,
+        raw_shard_qualified=raw_transport and not fresh_raw_mutated,
     )
     if not plan.should_apply:
         _write_validation_outputs(None)
@@ -6083,6 +6167,14 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         return 0
 
     context.stage = "application-effect-and-postcondition"
+    # A new raw comment cannot become an accepted intent from a source
+    # that lost qualification while Phase A prepared its effects.
+    if (
+        raw_transport
+        and accepted_intent is None
+        and _fresh_event_observation(event, body, repository, token)
+    ):
+        raise ValueError("WORKER_RESULT comment changed before Phase-A ACCEPT")
     context.mutation_attempted = True
     try:
         if first_activation and args.validation_passed:

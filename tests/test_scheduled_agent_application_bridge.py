@@ -2046,9 +2046,123 @@ def test_raw_worker_result_transport_canonicalizes_from_current_machine_source()
         repository=_REPOSITORY,
         current_revision=_REVISION,
         allow_raw_result_transport=True,
+        raw_shard_qualified=True,
     )
     assert plan.should_apply
     assert plan.request_comment_id == 102
+
+
+def test_raw_worker_result_cannot_enter_phase_a_without_creation_shard_proof() -> None:
+    source = WorkerRequest(138, "lead", "explore-change")
+    raw = json.dumps(_worker_result(), sort_keys=True)
+    body = f"WORKER_RESULT\n{raw}\n"
+    request = bridge.canonicalize_raw_worker_result(
+        body=body,
+        source=source,
+        authorized_change="unset",
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+    )
+    with pytest.raises(ValueError, match="no verified current-shard source"):
+        plan_application(
+            event=_event(body),
+            request=request,
+            preflight=_preflight(),
+            repository=_REPOSITORY,
+            current_revision=_REVISION,
+            allow_raw_result_transport=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("variant", "accepted"),
+    [
+        ("current", True),
+        ("historical-closed", False),
+        ("historical-open", False),
+        ("wrong-date", False),
+        ("duplicate-current-day", False),
+        ("duplicate-closed-current-day", False),
+        ("closed-at-comment-then-reopened", False),
+        ("changed-timestamp", False),
+        ("missing-timestamp", False),
+        ("future-shard", False),
+    ],
+)
+def test_new_raw_transport_requires_unique_creation_day_shard(
+    monkeypatch: pytest.MonkeyPatch, variant: str, accepted: bool
+) -> None:
+    body = "WORKER_RESULT\n" + json.dumps(_worker_result(), sort_keys=True) + "\n"
+    event = _event(body)
+    event_comment = cast(dict[str, object], event["comment"])
+    event_comment["created_at"] = "2026-09-03T03:00:00Z"  # Asia/Taipei 11:00
+    event_issue = cast(dict[str, object], event["issue"])
+    event_issue["created_at"] = "2026-09-02T17:00:00Z"
+    current = dict(event_issue)
+    if variant.startswith("historical") or variant == "wrong-date":
+        current["title"] = checkin_title(date(2026, 9, 2))
+    if variant == "historical-closed":
+        current["state"] = "closed"
+    if variant == "closed-at-comment-then-reopened":
+        event_issue["state"] = "closed"
+    if variant == "future-shard":
+        current["created_at"] = "2026-09-03T04:00:00Z"
+    observed_comment = dict(event_comment)
+    if variant == "changed-timestamp":
+        observed_comment["created_at"] = "2026-09-03T03:01:00Z"
+    if variant == "missing-timestamp":
+        observed_comment.pop("created_at")
+        event_comment.pop("created_at")
+
+    issues = [current]
+    if variant.startswith("duplicate"):
+        duplicate = dict(current)
+        duplicate["number"] = 200
+        if variant == "duplicate-closed-current-day":
+            duplicate["state"] = "closed"
+        issues.append(duplicate)
+
+    def read(_repository: str, _token: str, api_path: str) -> object:
+        if api_path == "issues/comments/102":
+            return observed_comment
+        if api_path == "issues/142":
+            return current
+        if api_path == "issues?state=all&per_page=100&page=1":
+            return issues
+        pytest.fail(f"unexpected GitHub read: {api_path}")
+
+    monkeypatch.setattr(bridge, "_github_json", read)
+    if accepted:
+        assert bridge._fresh_event_observation(event, body, _REPOSITORY, "token") is False
+    else:
+        with pytest.raises(ValueError, match="WORKER_RESULT"):
+            bridge._fresh_event_observation(event, body, _REPOSITORY, "token")
+
+
+def test_accepted_raw_result_continues_after_midnight_on_retired_shard() -> None:
+    source = WorkerRequest(138, "lead", "explore-change")
+    raw = json.dumps(_worker_result(), sort_keys=True)
+    body = f"WORKER_RESULT\n{raw}\n"
+    event = _event(body)
+    event_issue = cast(dict[str, object], event["issue"])
+    event_issue["state"] = "closed"  # A previously accepted shard has since rolled over.
+    request = bridge.ApplicationRequest(authorization_revision=_REVISION, raw_worker_result=raw)
+    accepted = _accepted_record(
+        raw, body, source=source, change="unset", result_kind="proposal-ready"
+    )
+    plan = plan_application(
+        event=event,
+        request=request,
+        preflight=_preflight(),
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+        accepted_intent=accepted,
+        accepted_request_comment_id=102,
+        allow_accepted_request_mutation=True,
+    )
+    assert plan.should_apply
+    assert plan.request_comment_id == 102
+    assert plan.source == source
 
 
 @pytest.mark.parametrize(
