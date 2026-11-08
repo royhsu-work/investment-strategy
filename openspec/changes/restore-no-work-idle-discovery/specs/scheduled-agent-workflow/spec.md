@@ -318,6 +318,28 @@ formal result, and derive routing/terminal projection. Failure before ACCEPT
 has zero authoritative repository consequence; failure after ACCEPT resumes
 the same intent and semantic replay count remains zero.
 
+When an exact GitHub Actions run terminates before ACCEPT and every relevant
+native `EXECUTION_EXCEPTION` attempt proves `NO_APPLICATION_WRITE_ATTEMPTED`,
+the existing ingress qualifier MAY classify the original request as
+`TERMINAL_NO_ACCEPT` without waiting for application code on `main` to change,
+but only if the exact source/Change/request comment/revision/run/head/attempt/
+exception correlation and the typed pre-accept worker-result validation stage
+are uniquely and completely qualified, no accepted intent exists, and the
+original immutable payload is deterministically invalid under the same
+canonical typed worker-result parser. A valid worker payload with an execution
+defect, unknown or contradictory evidence, another failure stage, a possible
+write, or an accepted intent SHALL NOT receive this terminal-input exception.
+Terminal disposition of the old ingress SHALL never retry, replay, accept, or
+mutate it; only a later independently authorized fresh dispatch may proceed.
+
+The repository-defined dispatch and application request formatters SHALL
+round-trip through the actual production request parsers before publishing.
+The application-request formatter SHALL also preflight the embedded typed
+worker result with the actual production validator. One canonical terminal
+newline is permitted; extra blank lines, duplicate/unknown fields and invalid
+evidence references SHALL be rejected. An external producer cannot create
+acceptance or completion authority by claiming formatter conformance.
+
 For first-carrier materialization, the apply-side already-complete check, immediate postcondition, and later fresh observer SHALL use one canonical durable-consequence proof for exact Issue, Change, branch, head, PR, manifest/content identity, lineage, and non-conflict. A pending continuation MAY remain valid after default-branch advancement only when the same proof classifies the consequence `INCOMPLETE` rather than complete or contradictory and the immutable original base is its ancestor with all carrier paths disjoint from intervening changes. Existing stale, overlap, identity, cardinality, and ambiguity guards remain mandatory. When an exact accepted intent has the verified branch ref and content but no matching PR, recovery SHALL emit only the missing application-owned PR consequence against fresh current main after the canonical proof plus ancestry, disjointness, exact branch/head/content, and complete all-head PR cardinality checks. It SHALL NOT rerun semantic work, recreate the branch, move the ref, or blindly create a duplicate PR.
 
 A fresh process SHALL reconstruct materialized-consequence completion from the existing `ConsequenceSpec.evidence_target` through the same canonical durable-consequence proof owner. It MUST NOT require invocation-local `_materialization_targets` to recognize an already durable consequence. Implementation-carrier qualification remains in its existing owner except where that owner supplies materialization proof primitives; it MUST NOT become a competing positive definition for the same materialized consequence. If an uncorrelated legacy result invalidates formal-frontier qualification while the exact source route remains current, recovery MAY resume only one accepted intent and its unique request-bound run/job after exact Issue/Change/Role/Action checks. For a completed request-bound run, `run_attempt` is GitHub-owned invocation evidence and is not the recovery budget. `run_attempt > 1` alone SHALL NOT permanently block recovery or authorize a rerun of that same run/job. A safe continuation MAY use the existing `APPLICATION_CONTINUATION` transport to start one fresh, separately identified run only after exact failure evidence, unique accepted intent/run/job, current authorization, and the bounded-recovery requirement below qualify it. Changed identity/routing, duplicate intent/run/job, or incomplete evidence SHALL fail closed. Existing correlation, formal qualification, source/frontier, carrier, validation, review, successor, and terminal gates remain in force.
@@ -585,6 +607,32 @@ After a lost or ambiguous write response, recovery SHALL observe/reconcile the e
 - AND after accepted desired content is proven at a qualified witness, the obsolete preimage need not remain current
 
 ## ADDED Requirements
+
+#### Scenario: Invalid typed worker input terminates a zero-write pre-ACCEPT failure
+
+- GIVEN an exact source-bound native application run terminated before ACCEPT
+- AND bot-authored evidence uniquely proves the same request and every attempt's typed worker-result qualification stage with zero application writes
+- AND the immutable input deterministically fails the canonical worker parser
+- WHEN a later wake reads the same current `main` and the complete original evidence
+- THEN the existing ingress reducer classifies the failed request as `TERMINAL_NO_ACCEPT`
+- AND the next authorized semantic Action is eligible only in a separate fresh wake
+- AND neither the failed request nor its effects are replayed
+
+#### Scenario: Ambiguous failure cannot become terminal through parser inference
+
+- GIVEN a failed application request whose native run, source, revision, attempt, correlation, HEAD, stage, zero-write, ACCEPT absence, or complete evidence cannot be positively established
+- OR the original worker input remains valid under the canonical parser
+- WHEN the completion owner evaluates the current frontier
+- THEN it does not infer deterministic malformed-input termination
+- AND it retains existing fail-closed or Lead/code-repair disposition without mutation
+
+#### Scenario: Request emitter and consumer share the typed wire contract
+
+- GIVEN a dispatch or application request is constructed for an authorized source
+- WHEN its canonical renderer packages the exact request bytes
+- THEN the corresponding production parser accepts the emitted bytes and typed fields
+- AND the application emitter validates the embedded worker result before any request comment is published
+- AND malformed evidence, duplicate terminal blank lines and unknown or repeated fields fail preflight
 
 ### Requirement: NO_WORK idle admission is typed, fresh, and bounded
 
