@@ -2015,6 +2015,139 @@ def test_parse_application_request_decodes_revision_bound_worker_result() -> Non
     assert json.loads(request.raw_worker_result) == _worker_result()
 
 
+def test_raw_worker_result_transport_canonicalizes_from_current_machine_source() -> None:
+    source = WorkerRequest(138, "lead", "explore-change")
+    worker = _worker_result()
+    worker["change"] = _CHANGE
+    raw = json.dumps(worker, sort_keys=True)
+    body = f"WORKER_RESULT\n{raw}\n"
+    request = bridge.canonicalize_raw_worker_result(
+        body=body,
+        source=source,
+        authorized_change=_CHANGE,
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+    )
+    assert request is not None
+    assert request.raw_worker_result == raw
+    assert request.dispatch_correlation == bridge.dispatch_correlation_for(
+        _REPOSITORY, source, _REVISION
+    )
+    assert (
+        bridge.parse_application_request(
+            bridge.render_application_request(request, source=source, authorized_change=_CHANGE)
+        )
+        == request
+    )
+    plan = plan_application(
+        event=_event(body),
+        request=request,
+        preflight=_preflight(),
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+        allow_raw_result_transport=True,
+    )
+    assert plan.should_apply
+    assert plan.request_comment_id == 102
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "WORKER_RESULT\nnot-json",
+        "WORKER_RESULT\n{}\n\n",
+        "WORKER_RESULT\n{}\nunknown: extra",
+        "WORKER_RESULT\n[]",
+        "WORKER_RESULT\n{}{}",
+        'WORKER_RESULT\n{"result_kind":"blocked","unexpected":1}',
+        'WORKER_RESULT\n{"result_kind":"blocked","result_kind":"blocked"}',
+    ],
+)
+def test_raw_worker_result_transport_rejects_malformed_framing(payload: str) -> None:
+    with pytest.raises(ValueError):
+        bridge.canonicalize_raw_worker_result(
+            body=payload,
+            source=WorkerRequest(138, "lead", "explore-change"),
+            authorized_change=_CHANGE,
+            repository=_REPOSITORY,
+            current_revision=_REVISION,
+        )
+
+
+@pytest.mark.parametrize("invalid", [None, "evidence", "changed", "claimed-source"])
+def test_main_raw_worker_result_enters_existing_phase_a_without_second_comment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    invalid: str | None,
+) -> None:
+    worker = _worker_result()
+    if invalid == "evidence":
+        worker["evidence_ref"] = "not a valid reference"
+    if invalid == "claimed-source":
+        worker["issue_number"] = 999
+    body = "WORKER_RESULT\n" + json.dumps(worker, sort_keys=True) + "\n"
+    event = _event(body)
+    event_path = tmp_path / "raw-result-event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", _REVISION)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled_agent_application_bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+        ],
+    )
+    seen: list[tuple[object, object]] = []
+
+    def observe_raw_event(observed_event: object, observed_body: object, *_args: object) -> bool:
+        seen.append((observed_event, observed_body))
+        return invalid == "changed"
+
+    monkeypatch.setattr(
+        bridge,
+        "_fresh_event_observation",
+        observe_raw_event,
+    )
+    monkeypatch.setattr(bridge, "acquire_current_github_preflight", lambda *_args: _preflight())
+    monkeypatch.setattr(
+        bridge, "_find_application_decision_from_current_frontier", lambda **_kwargs: None
+    )
+
+    def phase_a(**kwargs: object) -> object:
+        request = cast(bridge.ApplicationRequest, kwargs["request"])
+        assert kwargs["allow_raw_result_transport"] is True
+        assert kwargs["event"] == event
+        assert request.authorization_revision == _REVISION
+        assert json.loads(request.raw_worker_result) == worker
+        assert request.dispatch_correlation == bridge.dispatch_correlation_for(
+            _REPOSITORY, WorkerRequest(138, "lead", "explore-change"), _REVISION
+        )
+        return bridge.ApplicationPlan(False)
+
+    monkeypatch.setattr(bridge, "plan_application", phase_a)
+    if invalid is None:
+        assert bridge.main() == 0
+    else:
+        with pytest.raises(ValueError):
+            bridge.main()
+    assert seen == [(event, body)]
+
+
+def test_application_actions_real_job_dispatches_raw_results_into_same_entrypoint() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/scheduled-agent-application.yml"
+    ).read_text(encoding="utf-8")
+    assert "startsWith(github.event.comment.body, 'WORKER_RESULT')" in workflow
+    assert "uv run python -m investment_strategy.scheduled_agent_application_bridge" in workflow
+
+
 def test_application_wire_accepts_one_terminal_newline_but_not_extra_fields() -> None:
     body = _effect_request()
     parsed = parse_application_request(body)

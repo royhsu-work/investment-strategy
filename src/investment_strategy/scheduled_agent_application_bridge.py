@@ -503,6 +503,78 @@ def render_application_request(
     return _render_accepted_application_wire(request)
 
 
+def canonicalize_raw_worker_result(
+    *,
+    body: str,
+    source: WorkerRequest,
+    authorized_change: str,
+    repository: str,
+    current_revision: str,
+) -> ApplicationRequest:
+    """Construct a typed internal envelope from one external raw comment.
+
+    Caller must separately qualify the original immutable GitHub event, its
+    actor and the complete current machine dispatch. The generated wire is
+    never a second GitHub comment or an independently authorized request.
+    """
+
+    marker = "WORKER_RESULT\n"
+    if not body.startswith(marker):
+        raise ValueError("WORKER_RESULT marker or newline is invalid")
+    raw = body[len(marker) :]
+    if not raw.strip():
+        raise ValueError("WORKER_RESULT JSON body is empty")
+
+    def unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        fields: dict[str, object] = {}
+        for key, value in pairs:
+            if key in fields:
+                raise ValueError("WORKER_RESULT contains duplicate JSON fields")
+            fields[key] = value
+        return fields
+
+    try:
+        decoder = json.JSONDecoder(object_pairs_hook=unique_fields)
+        stripped = raw.lstrip()
+        parsed, end = decoder.raw_decode(stripped)
+    except json.JSONDecodeError as exc:
+        raise ValueError("WORKER_RESULT body is invalid JSON") from exc
+    suffix = stripped[end:]
+    if (
+        not isinstance(parsed, Mapping)
+        or any(character not in " \t\r\n" for character in suffix)
+        or suffix.count("\n") > 1
+    ):
+        raise ValueError("WORKER_RESULT must contain exactly one JSON object")
+    allowed_fields = {
+        "issue_number",
+        "role",
+        "action",
+        "change",
+        "result_kind",
+        "evidence_ref",
+        "result_content",
+        "requested_effects",
+    }
+    if set(parsed) - allowed_fields:
+        raise ValueError("WORKER_RESULT contains unknown JSON fields")
+    raw = raw[:-1] if raw.endswith("\n") else raw
+    request = ApplicationRequest(
+        authorization_revision=current_revision,
+        raw_worker_result=raw,
+        dispatch_correlation=dispatch_correlation_for(repository, source, current_revision),
+    )
+    envelope = render_application_request(
+        request,
+        source=source,
+        authorized_change=authorized_change,
+    )
+    parsed_request = parse_application_request(envelope)
+    if parsed_request != request:
+        raise ValueError("WORKER_RESULT application envelope round-trip failed")
+    return parsed_request
+
+
 def _render_accepted_application_wire(request: ApplicationRequest) -> str:
     """Only reconstruct already ACCEPTED immutable intent transport without preflight.
 
@@ -790,6 +862,7 @@ def plan_application(
     allow_accepted_request_mutation: bool = False,
     accepted_intent: ApplicationDecisionRecord | None = None,
     accepted_request_comment_id: int | None = None,
+    allow_raw_result_transport: bool = False,
 ) -> ApplicationPlan:
     """Freshly derive the only legal source Issue/Action/Role from the repository."""
 
@@ -814,8 +887,16 @@ def plan_application(
         return ApplicationPlan(False)
 
     body = event_comment.get("body")
+    raw_matches = (
+        allow_raw_result_transport
+        and isinstance(body, str)
+        and body.startswith("WORKER_RESULT\n")
+        and body[len("WORKER_RESULT\n") :].removesuffix("\n") == request.raw_worker_result
+    )
     if not isinstance(body, str) or (
-        not allow_accepted_request_mutation and parse_application_request(body) != request
+        not allow_accepted_request_mutation
+        and not raw_matches
+        and parse_application_request(body) != request
     ):
         raise ValueError("EFFECT_REQUEST event body does not match parsed request")
     repository_owner = repository.split("/", 1)[0]
@@ -5627,6 +5708,37 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         _write_carrier_outputs(ApplyResult(False, "application-rejected"))
         _write_validation_outputs(None)
         return 0
+    raw_transport = False
+    fresh_raw_mutated = False
+    if accepted_intent is None and body.startswith("WORKER_RESULT"):
+        # The real issue_comment.created Actions entrypoint owns this
+        # canonicalization, before Phase A. Its original event is retained as
+        # the only durable request/comment identity.
+        fresh_raw_mutated = _fresh_event_observation(event, body, repository, token)
+        if fresh_raw_mutated:
+            raise ValueError("WORKER_RESULT current comment was mutated before ACCEPT")
+        if preflight is None:
+            preflight = acquire_current_github_preflight(repository, token)
+        decision = classify_dispatch(preflight)
+        if (
+            decision.disposition != "AUTHORIZE"
+            or decision.selected_issue_id is None
+            or decision.selected_routing is None
+        ):
+            raise ValueError("WORKER_RESULT has no qualified current AUTHORIZE dispatch")
+        selected_role, selected_action = decision.selected_routing
+        source = WorkerRequest(decision.selected_issue_id, selected_role, selected_action)
+        change = _preflight_change(preflight, source)
+        if change is None:
+            raise ValueError("WORKER_RESULT authoritative Change is unavailable")
+        request = canonicalize_raw_worker_result(
+            body=body,
+            source=source,
+            authorized_change=change,
+            repository=repository,
+            current_revision=args.revision,
+        )
+        raw_transport = True
     if request is None:
         if accepted_intent is None:
             return 0
@@ -5638,6 +5750,8 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     body_mutated = (
         False
         if accepted_intent is not None
+        else fresh_raw_mutated
+        if raw_transport
         else _fresh_event_observation(event, body, repository, token)
     )
     if preflight is None:
@@ -5655,6 +5769,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         accepted_request_comment_id=(
             None if continuation is None else continuation.original_request_comment_id
         ),
+        allow_raw_result_transport=raw_transport,
     )
     if not plan.should_apply:
         _write_validation_outputs(None)
