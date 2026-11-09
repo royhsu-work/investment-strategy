@@ -258,6 +258,7 @@ def test_archive_snapshot_derives_only_missing_archive_pr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     branch = f"agent/archive-{_CHANGE}"
+    monkeypatch.setattr(bridge, "archive_branch_source_status", lambda **_kwargs: "FRESH")
 
     def fake_read(
         _repository: str,
@@ -305,6 +306,7 @@ def test_recovered_semantic_intent_rebuilds_formal_after_pr_carrier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     branch = f"agent/archive-{_CHANGE}"
+    monkeypatch.setattr(bridge, "archive_branch_source_status", lambda **_kwargs: "FRESH")
     full_pr = {
         "number": 301,
         "state": "open",
@@ -378,6 +380,7 @@ def test_recovered_semantic_intent_rebuilds_formal_after_pr_carrier(
 def test_archive_ready_requires_current_non_draft_exact_pr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(effects, "archive_branch_matches_current_source", lambda **_kwargs: True)
     branch = f"agent/archive-{_CHANGE}"
     full_pr = {
         "number": 301,

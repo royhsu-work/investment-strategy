@@ -3549,6 +3549,7 @@ def test_issue_comment_recovery_rejects_unrelated_malformed_page_identities(
 def test_archive_pull_request_create_binds_exact_branch_head(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(effects, "archive_branch_matches_current_source", lambda **_kwargs: True)
     repository = "owner/repo"
     source = WorkerRequest(138, "lead", "finalize-change")
     base_revision = "c" * 40
@@ -3653,6 +3654,7 @@ def test_archive_pull_request_create_binds_exact_branch_head(
 def test_archive_pull_request_create_reuses_exact_existing_carrier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(effects, "archive_branch_matches_current_source", lambda **_kwargs: True)
     repository = "owner/repo"
     source = WorkerRequest(138, "lead", "finalize-change")
     base_revision = "c" * 40

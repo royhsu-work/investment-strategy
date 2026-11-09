@@ -14,6 +14,7 @@ import time
 import traceback
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Literal, cast
 from urllib.error import HTTPError
@@ -50,7 +51,12 @@ from investment_strategy.scheduled_agent_carrier import (
     github_repository_api_url,
     read_github_artifact_bytes,
 )
-from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
+from investment_strategy.scheduled_agent_checkin import (
+    checkin_title,
+    is_runtime_checkin_issue,
+    parse_checkin_day,
+    taipei_day,
+)
 from investment_strategy.scheduled_agent_effect_contract import (
     EvidenceTarget,
     consequence_spec_for,
@@ -66,6 +72,8 @@ from investment_strategy.scheduled_agent_effects import (
     _archive_ref,
     _references_issue,
     _source_branch,
+    archive_branch_matches_current_source,
+    archive_branch_source_status,
     consequence_postconditions_complete,
     formal_application_correlation,
     merged_pr_readiness_complete,
@@ -408,10 +416,21 @@ def _trusted_connector_comment(comment: Mapping[str, object], repository_owner: 
     )
 
 
+def typed_request_lines(body: str) -> list[str]:
+    """Share the exact request line-termination contract across both wire parsers.
+
+    One terminal newline is framing, not an extra field.  A second terminal
+    newline remains a blank field and must fail each parser's field contract.
+    """
+
+    lines = body.split("\n")
+    return lines[:-1] if lines and lines[-1] == "" else lines
+
+
 def parse_application_request(body: str) -> ApplicationRequest | None:
     """Parse the bounded effect ingress and optional machine correlation."""
 
-    lines = body.split("\n")
+    lines = typed_request_lines(body)
     if not lines or lines[0] != APPLICATION_REQUEST_MARKER:
         return None
     if len(lines) not in {3, 4}:
@@ -460,8 +479,115 @@ def parse_application_request(body: str) -> ApplicationRequest | None:
     )
 
 
-def render_application_request(request: ApplicationRequest) -> str:
-    """Reconstruct the immutable transport envelope for an accepted intent."""
+def render_application_request(
+    request: ApplicationRequest,
+    *,
+    source: WorkerRequest | None = None,
+    authorized_change: str | None = None,
+) -> str:
+    """Preflight typed worker input and round-trip the canonical request wire.
+
+    Production callers provide the machine-owned source/Change.  Legacy fully
+    identified results can supply a syntactic fallback to validate the wire,
+    never to grant repository authorization or accepted-intent authority.
+    """
+
+    if source is None:
+        source = _claimed_source(request.raw_worker_result)
+    if source is None:
+        raise ValueError("application request source is required for typed preflight")
+    if authorized_change is None:
+        try:
+            decoded = json.loads(request.raw_worker_result)
+        except json.JSONDecodeError as exc:
+            raise ValueError("application request worker result is invalid JSON") from exc
+        if not isinstance(decoded, Mapping) or not isinstance(decoded.get("change"), str):
+            raise ValueError("application request authorized Change is required")
+        authorized_change = cast(str, decoded["change"])
+    parse_worker_result(request.raw_worker_result, source, authorized_change=authorized_change)
+
+    return _render_accepted_application_wire(request)
+
+
+def canonicalize_raw_worker_result(
+    *,
+    body: str,
+    source: WorkerRequest,
+    authorized_change: str,
+    repository: str,
+    current_revision: str,
+) -> ApplicationRequest:
+    """Construct a typed internal envelope from one external raw comment.
+
+    Caller must separately qualify the original immutable GitHub event, its
+    actor and the complete current machine dispatch. The generated wire is
+    never a second GitHub comment or an independently authorized request.
+    """
+
+    marker = "WORKER_RESULT\n"
+    if not body.startswith(marker):
+        raise ValueError("WORKER_RESULT marker or newline is invalid")
+    raw = body[len(marker) :]
+    if not raw.strip():
+        raise ValueError("WORKER_RESULT JSON body is empty")
+
+    def unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        fields: dict[str, object] = {}
+        for key, value in pairs:
+            if key in fields:
+                raise ValueError("WORKER_RESULT contains duplicate JSON fields")
+            fields[key] = value
+        return fields
+
+    try:
+        decoder = json.JSONDecoder(object_pairs_hook=unique_fields)
+        stripped = raw.lstrip()
+        parsed, end = decoder.raw_decode(stripped)
+    except json.JSONDecodeError as exc:
+        raise ValueError("WORKER_RESULT body is invalid JSON") from exc
+    suffix = stripped[end:]
+    if (
+        not isinstance(parsed, Mapping)
+        or any(character not in " \t\r\n" for character in suffix)
+        or suffix.count("\n") > 1
+    ):
+        raise ValueError("WORKER_RESULT must contain exactly one JSON object")
+    allowed_fields = {
+        "issue_number",
+        "role",
+        "action",
+        "change",
+        "result_kind",
+        "evidence_ref",
+        "result_content",
+        "requested_effects",
+    }
+    if set(parsed) - allowed_fields:
+        raise ValueError("WORKER_RESULT contains unknown JSON fields")
+    raw = raw[:-1] if raw.endswith("\n") else raw
+    request = ApplicationRequest(
+        authorization_revision=current_revision,
+        raw_worker_result=raw,
+        dispatch_correlation=dispatch_correlation_for(repository, source, current_revision),
+    )
+    envelope = render_application_request(
+        request,
+        source=source,
+        authorized_change=authorized_change,
+    )
+    parsed_request = parse_application_request(envelope)
+    if parsed_request != request:
+        raise ValueError("WORKER_RESULT application envelope round-trip failed")
+    return parsed_request
+
+
+def _render_accepted_application_wire(request: ApplicationRequest) -> str:
+    """Only reconstruct already ACCEPTED immutable intent transport without preflight.
+
+    Accepted semantic intent is not itself a fresh untrusted typed worker
+    result; it is covered by its earlier qualified application decision. The
+    initial emitter must always call the strict public renderer instead.
+    """
 
     encoded = base64.b64encode(request.raw_worker_result.encode("utf-8")).decode("ascii")
     lines = [
@@ -473,7 +599,10 @@ def render_application_request(request: ApplicationRequest) -> str:
             raise ValueError("application request dispatch correlation is invalid")
         lines.append(f"{DISPATCH_CORRELATION_PREFIX}{request.dispatch_correlation}")
     lines.append(f"{WORKER_RESULT_B64_PREFIX}{encoded}")
-    return "\n".join(lines)
+    body = "\n".join(lines)
+    if parse_application_request(body) != request:
+        raise ValueError("application request renderer/parser contract mismatch")
+    return body
 
 
 def dispatch_correlation_for(
@@ -739,6 +868,8 @@ def plan_application(
     allow_accepted_request_mutation: bool = False,
     accepted_intent: ApplicationDecisionRecord | None = None,
     accepted_request_comment_id: int | None = None,
+    allow_raw_result_transport: bool = False,
+    raw_shard_qualified: bool = False,
 ) -> ApplicationPlan:
     """Freshly derive the only legal source Issue/Action/Role from the repository."""
 
@@ -763,8 +894,18 @@ def plan_application(
         return ApplicationPlan(False)
 
     body = event_comment.get("body")
+    raw_matches = (
+        allow_raw_result_transport
+        and isinstance(body, str)
+        and body.startswith("WORKER_RESULT\n")
+        and body[len("WORKER_RESULT\n") :].removesuffix("\n") == request.raw_worker_result
+    )
+    if raw_matches and not raw_shard_qualified:
+        raise ValueError("new WORKER_RESULT has no verified current-shard source")
     if not isinstance(body, str) or (
-        not allow_accepted_request_mutation and parse_application_request(body) != request
+        not allow_accepted_request_mutation
+        and not raw_matches
+        and parse_application_request(body) != request
     ):
         raise ValueError("EFFECT_REQUEST event body does not match parsed request")
     repository_owner = repository.split("/", 1)[0]
@@ -1179,6 +1320,92 @@ def _accepted_worker_result_for_continuation(
     return json.dumps(recovered, sort_keys=True, separators=(",", ":"))
 
 
+def _github_timestamp(value: object) -> datetime:
+    """Require a complete, timezone-aware GitHub creation timestamp."""
+
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise ValueError("new WORKER_RESULT source timestamp is unavailable")
+    try:
+        observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("new WORKER_RESULT source timestamp is malformed") from exc
+    if observed.tzinfo is None:
+        raise ValueError("new WORKER_RESULT source timestamp has no timezone")
+    return observed
+
+
+def _shard_was_open_at_comment_creation(
+    observed_issue: Mapping[str, object], created: datetime
+) -> bool:
+    """Permit rollover only when fresh closure evidence follows the source comment.
+
+    The immutable issue_comment.created event proves the shard was OPEN when
+    the comment was posted. A later GET/list can see CLOSED after rollover;
+    requiring it to remain OPEN would strand a legitimate in-flight request.
+    """
+
+    state = observed_issue.get("state")
+    if state == "open":
+        return True
+    if state != "closed":
+        return False
+    try:
+        return _github_timestamp(observed_issue.get("closed_at")) > created
+    except ValueError:
+        return False
+
+
+def _qualify_new_raw_result_shard(
+    *,
+    event_issue: Mapping[str, object],
+    event_comment: Mapping[str, object],
+    observed_comment: Mapping[str, object],
+    observed_issue: Mapping[str, object],
+    repository: str,
+    token: str,
+) -> None:
+    """Authorize a *new* raw result only on its unique creation-day shard.
+
+    Historical closed/open transport remains valid for an already ACCEPTED
+    intent, which never calls this new-ingress qualifier on continuation.
+    """
+
+    created_at = observed_comment.get("created_at")
+    if created_at != event_comment.get("created_at"):
+        raise ValueError("new WORKER_RESULT creation timestamp changed")
+    created = _github_timestamp(created_at)
+    shard_created = _github_timestamp(observed_issue.get("created_at"))
+    day = taipei_day(created)
+    issue_number = _positive_int(observed_issue.get("number"))
+    if (
+        issue_number is None
+        or shard_created > created
+        or event_issue.get("state") != "open"
+        or event_issue.get("number") != issue_number
+        or event_issue.get("created_at") != observed_issue.get("created_at")
+        or event_issue.get("title") != observed_issue.get("title")
+        or not _shard_was_open_at_comment_creation(observed_issue, created)
+        or observed_issue.get("title") != checkin_title(day)
+    ):
+        raise ValueError("new WORKER_RESULT was not created on its current-day shard")
+
+    # This must be an all-state list. Open-only discovery would miss a duplicate
+    # closed shard and could turn an ambiguous date into source authorization.
+    issues = _paged_github_list(repository, token, "issues?state=all")
+    day_shards = [issue for issue in issues if issue.get("title") == checkin_title(day)]
+    matches = [issue for issue in issues if issue.get("number") == issue_number]
+    if (
+        len(day_shards) != 1
+        or parse_checkin_day(day_shards[0]) != day
+        or day_shards[0].get("number") != issue_number
+        or len(matches) != 1
+        or not _shard_was_open_at_comment_creation(matches[0], created)
+        or matches[0].get("title") != observed_issue.get("title")
+        or matches[0].get("created_at") != observed_issue.get("created_at")
+    ):
+        raise ValueError("new WORKER_RESULT creation-day shard is not uniquely qualified")
+
+
 def _fresh_event_observation(
     event: Mapping[str, object],
     body: str,
@@ -1218,6 +1445,15 @@ def _fresh_event_observation(
         or not is_runtime_checkin_issue(observed_issue)
     ):
         raise ValueError("application request current shard observation is invalid")
+    if body.startswith("WORKER_RESULT\n"):
+        _qualify_new_raw_result_shard(
+            event_issue=issue,
+            event_comment=comment,
+            observed_comment=observed_comment,
+            observed_issue=observed_issue,
+            repository=repository,
+            token=token,
+        )
     return body_mutated
 
 
@@ -2154,7 +2390,7 @@ def _fresh_archive_state(
     current_revision: str,
     default_branch: str,
 ) -> tuple[str, str | None, str | None]:
-    """Return ``missing-branch``, ``missing-pr``, ``ready`` or ``conflict``."""
+    """Return the current Archive consequence, including stale-source evidence."""
 
     branch = _archive_branch(change)
     if branch is None:
@@ -2162,6 +2398,17 @@ def _fresh_archive_state(
     branch_sha = _fresh_branch_head(repository, token, branch)
     if branch_sha is None:
         return "missing-branch", branch, None
+    provenance = archive_branch_source_status(
+        repository=repository,
+        token=token,
+        change=change,
+        source_sha=current_revision,
+        branch_sha=branch_sha,
+    )
+    if provenance == "INDETERMINATE":
+        return "indeterminate-branch", branch, branch_sha
+    if provenance == "STALE":
+        return "stale-branch", branch, branch_sha
     candidates = _fresh_pull_requests(
         repository,
         token,
@@ -2363,6 +2610,14 @@ def _fresh_control_effect(
                 return None
             raise RuntimeError("existing pull-request carrier is a material conflict")
         if archive:
+            if not archive_branch_matches_current_source(
+                repository=repository,
+                token=token,
+                change=change,
+                source_sha=current_revision,
+                branch_sha=branch_sha,
+            ):
+                raise RuntimeError("archive branch is not derived from current Change")
             return _archive_pr_create_payload(
                 issue_number=source.issue_number,
                 change=change,
@@ -2696,7 +2951,7 @@ def _fresh_application_worker_result(
             current_revision=current_revision,
             default_branch=default_branch,
         )
-        if state == "missing-branch":
+        if state in {"missing-branch", "stale-branch"}:
             semantic_effects.append(
                 _effect_document(
                     GITHUB_MUTATION_KIND,
@@ -2723,8 +2978,8 @@ def _fresh_application_worker_result(
                     ),
                 )
             )
-        elif state == "conflict":
-            raise RuntimeError("archive pull-request consequence is contradictory")
+        elif state in {"conflict", "indeterminate-branch"}:
+            raise RuntimeError("archive pull-request/source consequence is indeterminate")
         else:
             semantic_effects.extend(
                 _fresh_non_control_effects(
@@ -5557,6 +5812,37 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         _write_carrier_outputs(ApplyResult(False, "application-rejected"))
         _write_validation_outputs(None)
         return 0
+    raw_transport = False
+    fresh_raw_mutated = False
+    if accepted_intent is None and body.startswith("WORKER_RESULT"):
+        # The real issue_comment.created Actions entrypoint owns this
+        # canonicalization, before Phase A. Its original event is retained as
+        # the only durable request/comment identity.
+        fresh_raw_mutated = _fresh_event_observation(event, body, repository, token)
+        if fresh_raw_mutated:
+            raise ValueError("WORKER_RESULT current comment was mutated before ACCEPT")
+        if preflight is None:
+            preflight = acquire_current_github_preflight(repository, token)
+        decision = classify_dispatch(preflight)
+        if (
+            decision.disposition != "AUTHORIZE"
+            or decision.selected_issue_id is None
+            or decision.selected_routing is None
+        ):
+            raise ValueError("WORKER_RESULT has no qualified current AUTHORIZE dispatch")
+        selected_role, selected_action = decision.selected_routing
+        source = WorkerRequest(decision.selected_issue_id, selected_role, selected_action)
+        change = _preflight_change(preflight, source)
+        if change is None:
+            raise ValueError("WORKER_RESULT authoritative Change is unavailable")
+        request = canonicalize_raw_worker_result(
+            body=body,
+            source=source,
+            authorized_change=change,
+            repository=repository,
+            current_revision=args.revision,
+        )
+        raw_transport = True
     if request is None:
         if accepted_intent is None:
             return 0
@@ -5568,6 +5854,8 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     body_mutated = (
         False
         if accepted_intent is not None
+        else fresh_raw_mutated
+        if raw_transport
         else _fresh_event_observation(event, body, repository, token)
     )
     if preflight is None:
@@ -5585,6 +5873,8 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         accepted_request_comment_id=(
             None if continuation is None else continuation.original_request_comment_id
         ),
+        allow_raw_result_transport=raw_transport,
+        raw_shard_qualified=raw_transport and not fresh_raw_mutated,
     )
     if not plan.should_apply:
         _write_validation_outputs(None)
@@ -5662,11 +5952,11 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     application_request_body = (
         body
         if accepted_intent is None
-        else render_application_request(
+        else _render_accepted_application_wire(
             ApplicationRequest(
                 authorization_revision=accepted_intent.authorization_revision,
                 raw_worker_result=accepted_intent.raw_worker_result,
-            )
+            ),
         )
     )
     worker_result = parse_worker_result(
@@ -5898,6 +6188,14 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         return 0
 
     context.stage = "application-effect-and-postcondition"
+    # A new raw comment cannot become an accepted intent from a source
+    # that lost qualification while Phase A prepared its effects.
+    if (
+        raw_transport
+        and accepted_intent is None
+        and _fresh_event_observation(event, body, repository, token)
+    ):
+        raise ValueError("WORKER_RESULT comment changed before Phase-A ACCEPT")
     context.mutation_attempted = True
     try:
         if first_activation and args.validation_passed:

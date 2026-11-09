@@ -2015,6 +2015,341 @@ def test_parse_application_request_decodes_revision_bound_worker_result() -> Non
     assert json.loads(request.raw_worker_result) == _worker_result()
 
 
+def test_raw_worker_result_transport_canonicalizes_from_current_machine_source() -> None:
+    source = WorkerRequest(138, "lead", "explore-change")
+    worker = _worker_result()
+    worker["change"] = _CHANGE
+    raw = json.dumps(worker, sort_keys=True)
+    body = f"WORKER_RESULT\n{raw}\n"
+    request = bridge.canonicalize_raw_worker_result(
+        body=body,
+        source=source,
+        authorized_change=_CHANGE,
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+    )
+    assert request is not None
+    assert request.raw_worker_result == raw
+    assert request.dispatch_correlation == bridge.dispatch_correlation_for(
+        _REPOSITORY, source, _REVISION
+    )
+    assert (
+        bridge.parse_application_request(
+            bridge.render_application_request(request, source=source, authorized_change=_CHANGE)
+        )
+        == request
+    )
+    plan = plan_application(
+        event=_event(body),
+        request=request,
+        preflight=_preflight(),
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+        allow_raw_result_transport=True,
+        raw_shard_qualified=True,
+    )
+    assert plan.should_apply
+    assert plan.request_comment_id == 102
+
+
+def test_raw_worker_result_cannot_enter_phase_a_without_creation_shard_proof() -> None:
+    source = WorkerRequest(138, "lead", "explore-change")
+    raw = json.dumps(_worker_result(), sort_keys=True)
+    body = f"WORKER_RESULT\n{raw}\n"
+    request = bridge.canonicalize_raw_worker_result(
+        body=body,
+        source=source,
+        authorized_change="unset",
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+    )
+    with pytest.raises(ValueError, match="no verified current-shard source"):
+        plan_application(
+            event=_event(body),
+            request=request,
+            preflight=_preflight(),
+            repository=_REPOSITORY,
+            current_revision=_REVISION,
+            allow_raw_result_transport=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("variant", "accepted"),
+    [
+        ("current", True),
+        ("closed-after-comment", True),
+        ("cross-midnight-rollover", True),
+        ("closed-get-open-list", True),
+        ("open-get-closed-list", True),
+        ("closed-before-comment", False),
+        ("closed-without-closure-time", False),
+        ("event-closed-before-comment", False),
+        ("historical-closed", False),
+        ("historical-open", False),
+        ("wrong-date", False),
+        ("duplicate-current-day", False),
+        ("duplicate-closed-current-day", False),
+        ("closed-at-comment-then-reopened", False),
+        ("changed-timestamp", False),
+        ("missing-timestamp", False),
+        ("future-shard", False),
+    ],
+)
+def test_new_raw_transport_requires_unique_creation_day_shard(
+    monkeypatch: pytest.MonkeyPatch, variant: str, accepted: bool
+) -> None:
+    body = "WORKER_RESULT\n" + json.dumps(_worker_result(), sort_keys=True) + "\n"
+    event = _event(body)
+    event_comment = cast(dict[str, object], event["comment"])
+    event_comment["created_at"] = "2026-09-03T03:00:00Z"  # Asia/Taipei 11:00
+    event_issue = cast(dict[str, object], event["issue"])
+    event_issue["created_at"] = "2026-09-02T17:00:00Z"
+    current = dict(event_issue)
+    if variant.startswith("historical") or variant == "wrong-date":
+        current["title"] = checkin_title(date(2026, 9, 2))
+    if variant == "historical-closed":
+        current["state"] = "closed"
+    if variant in {"closed-after-comment", "closed-get-open-list"}:
+        current["state"] = "closed"
+        current["closed_at"] = "2026-09-03T03:05:00Z"
+    if variant == "cross-midnight-rollover":
+        event_comment["created_at"] = "2026-09-03T15:59:59Z"  # Taipei 23:59:59
+        current["state"] = "closed"
+        current["closed_at"] = "2026-09-03T16:05:00Z"  # Taipei next day 00:05
+    if variant == "closed-before-comment":
+        current["state"] = "closed"
+        current["closed_at"] = "2026-09-03T02:59:59Z"
+    if variant == "closed-without-closure-time":
+        current["state"] = "closed"
+    if variant == "event-closed-before-comment":
+        event_issue["state"] = "closed"
+        current["state"] = "closed"
+        current["closed_at"] = "2026-09-03T02:59:59Z"
+    if variant == "closed-at-comment-then-reopened":
+        event_issue["state"] = "closed"
+    if variant == "future-shard":
+        current["created_at"] = "2026-09-03T04:00:00Z"
+    observed_comment = dict(event_comment)
+    if variant == "changed-timestamp":
+        observed_comment["created_at"] = "2026-09-03T03:01:00Z"
+    if variant == "missing-timestamp":
+        observed_comment.pop("created_at")
+        event_comment.pop("created_at")
+
+    list_issue = dict(current)
+    if variant == "closed-get-open-list":
+        list_issue["state"] = "open"
+        list_issue["closed_at"] = None
+    if variant == "open-get-closed-list":
+        list_issue["state"] = "closed"
+        list_issue["closed_at"] = "2026-09-03T03:05:00Z"
+    issues = [list_issue]
+    if variant.startswith("duplicate"):
+        duplicate = dict(current)
+        duplicate["number"] = 200
+        if variant == "duplicate-closed-current-day":
+            duplicate["state"] = "closed"
+        issues.append(duplicate)
+
+    def read(_repository: str, _token: str, api_path: str) -> object:
+        if api_path == "issues/comments/102":
+            return observed_comment
+        if api_path == "issues/142":
+            return current
+        if api_path == "issues?state=all&per_page=100&page=1":
+            return issues
+        pytest.fail(f"unexpected GitHub read: {api_path}")
+
+    monkeypatch.setattr(bridge, "_github_json", read)
+    if accepted:
+        assert bridge._fresh_event_observation(event, body, _REPOSITORY, "token") is False
+    else:
+        with pytest.raises(ValueError, match="WORKER_RESULT"):
+            bridge._fresh_event_observation(event, body, _REPOSITORY, "token")
+
+
+def test_new_raw_transport_survives_rollover_between_pre_accept_observations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Phase-A recheck must not reject an event accepted before rollover."""
+
+    body = "WORKER_RESULT\n" + json.dumps(_worker_result(), sort_keys=True) + "\n"
+    event = _event(body)
+    event_comment = cast(dict[str, object], event["comment"])
+    event_comment["created_at"] = "2026-09-03T15:59:59Z"  # Taipei 23:59:59
+    event_issue = cast(dict[str, object], event["issue"])
+    event_issue["created_at"] = "2026-09-02T17:00:00Z"
+    before_rollover = dict(event_issue)
+    after_rollover = {**before_rollover, "state": "closed", "closed_at": "2026-09-03T16:05:00Z"}
+    current = [before_rollover]
+
+    def read(_repository: str, _token: str, api_path: str) -> object:
+        if api_path == "issues/comments/102":
+            return event_comment
+        if api_path == "issues/142":
+            return current[0]
+        if api_path == "issues?state=all&per_page=100&page=1":
+            return [current[0]]
+        pytest.fail(f"unexpected GitHub read: {api_path}")
+
+    monkeypatch.setattr(bridge, "_github_json", read)
+    assert bridge._fresh_event_observation(event, body, _REPOSITORY, "token") is False
+    current[0] = after_rollover
+    assert bridge._fresh_event_observation(event, body, _REPOSITORY, "token") is False
+
+
+def test_accepted_raw_result_continues_after_midnight_on_retired_shard() -> None:
+    source = WorkerRequest(138, "lead", "explore-change")
+    raw = json.dumps(_worker_result(), sort_keys=True)
+    body = f"WORKER_RESULT\n{raw}\n"
+    event = _event(body)
+    event_issue = cast(dict[str, object], event["issue"])
+    event_issue["state"] = "closed"  # A previously accepted shard has since rolled over.
+    request = bridge.ApplicationRequest(authorization_revision=_REVISION, raw_worker_result=raw)
+    accepted = _accepted_record(
+        raw, body, source=source, change="unset", result_kind="proposal-ready"
+    )
+    plan = plan_application(
+        event=event,
+        request=request,
+        preflight=_preflight(),
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+        accepted_intent=accepted,
+        accepted_request_comment_id=102,
+        allow_accepted_request_mutation=True,
+    )
+    assert plan.should_apply
+    assert plan.request_comment_id == 102
+    assert plan.source == source
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "WORKER_RESULT\nnot-json",
+        "WORKER_RESULT\n{}\n\n",
+        "WORKER_RESULT\n{}\nunknown: extra",
+        "WORKER_RESULT\n[]",
+        "WORKER_RESULT\n{}{}",
+        'WORKER_RESULT\n{"result_kind":"blocked","unexpected":1}',
+        'WORKER_RESULT\n{"result_kind":"blocked","result_kind":"blocked"}',
+    ],
+)
+def test_raw_worker_result_transport_rejects_malformed_framing(payload: str) -> None:
+    with pytest.raises(ValueError):
+        bridge.canonicalize_raw_worker_result(
+            body=payload,
+            source=WorkerRequest(138, "lead", "explore-change"),
+            authorized_change=_CHANGE,
+            repository=_REPOSITORY,
+            current_revision=_REVISION,
+        )
+
+
+@pytest.mark.parametrize("invalid", [None, "evidence", "changed", "claimed-source"])
+def test_main_raw_worker_result_enters_existing_phase_a_without_second_comment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    invalid: str | None,
+) -> None:
+    worker = _worker_result()
+    if invalid == "evidence":
+        worker["evidence_ref"] = "not a valid reference"
+    if invalid == "claimed-source":
+        worker["issue_number"] = 999
+    body = "WORKER_RESULT\n" + json.dumps(worker, sort_keys=True) + "\n"
+    event = _event(body)
+    event_path = tmp_path / "raw-result-event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", _REVISION)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled_agent_application_bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+        ],
+    )
+    seen: list[tuple[object, object]] = []
+
+    def observe_raw_event(observed_event: object, observed_body: object, *_args: object) -> bool:
+        seen.append((observed_event, observed_body))
+        return invalid == "changed"
+
+    monkeypatch.setattr(
+        bridge,
+        "_fresh_event_observation",
+        observe_raw_event,
+    )
+    monkeypatch.setattr(bridge, "acquire_current_github_preflight", lambda *_args: _preflight())
+    monkeypatch.setattr(
+        bridge, "_find_application_decision_from_current_frontier", lambda **_kwargs: None
+    )
+
+    def phase_a(**kwargs: object) -> object:
+        request = cast(bridge.ApplicationRequest, kwargs["request"])
+        assert kwargs["allow_raw_result_transport"] is True
+        assert kwargs["event"] == event
+        assert request.authorization_revision == _REVISION
+        assert json.loads(request.raw_worker_result) == worker
+        assert request.dispatch_correlation == bridge.dispatch_correlation_for(
+            _REPOSITORY, WorkerRequest(138, "lead", "explore-change"), _REVISION
+        )
+        return bridge.ApplicationPlan(False)
+
+    monkeypatch.setattr(bridge, "plan_application", phase_a)
+    if invalid is None:
+        assert bridge.main() == 0
+    else:
+        with pytest.raises(ValueError):
+            bridge.main()
+    assert seen == [(event, body)]
+
+
+def test_application_actions_real_job_dispatches_raw_results_into_same_entrypoint() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/scheduled-agent-application.yml"
+    ).read_text(encoding="utf-8")
+    assert "startsWith(github.event.comment.body, 'WORKER_RESULT')" in workflow
+    assert "uv run python -m investment_strategy.scheduled_agent_application_bridge" in workflow
+
+
+def test_application_wire_accepts_one_terminal_newline_but_not_extra_fields() -> None:
+    body = _effect_request()
+    parsed = parse_application_request(body)
+    assert parsed is not None
+    assert parse_application_request(body + "\n") == parsed
+    with pytest.raises(ValueError):
+        parse_application_request(body + "\n\n")
+    with pytest.raises(ValueError):
+        parse_application_request(body + "\nUnknown: extra")
+
+
+def test_application_formatter_preflights_canonical_typed_worker_fields() -> None:
+    raw = json.dumps(
+        {
+            "issue_number": 138,
+            "role": "lead",
+            "action": "explore-change",
+            "change": _CHANGE,
+            "result_kind": "proposal-ready",
+            "evidence_ref": "not a valid reference",
+            "result_content": "evidence",
+            "requested_effects": [],
+        }
+    )
+    with pytest.raises(ValueError, match="evidence reference is invalid"):
+        bridge.render_application_request(ApplicationRequest(_REVISION, raw))
+
+
 def test_parse_application_request_rejects_old_correlation_shape() -> None:
     with pytest.raises(ValueError, match="exactly three lines"):
         parse_application_request("\n".join((APPLICATION_REQUEST_MARKER, "old", "old", "old")))
@@ -2261,9 +2596,20 @@ def test_application_request_round_trips_one_opaque_dispatch_correlation() -> No
     raw = json.dumps({"result_kind": "blocked", "result_content": "evidence"})
     request = bridge.ApplicationRequest(_REVISION, raw, correlation)
 
-    parsed = parse_application_request(bridge.render_application_request(request))
+    # An externally supplied opaque payload still parses as transport, but is
+    # forbidden to pass the production emitter's typed-result preflight.
+    encoded = base64.b64encode(raw.encode("utf-8")).decode("ascii")
+    body = (
+        f"{APPLICATION_REQUEST_MARKER}\n"
+        f"{AUTHORIZATION_REVISION_PREFIX}{_REVISION}\n"
+        f"{bridge.DISPATCH_CORRELATION_PREFIX}{correlation}\n"
+        f"{bridge.WORKER_RESULT_B64_PREFIX}{encoded}"
+    )
+    parsed = parse_application_request(body)
 
     assert parsed == request
+    with pytest.raises(ValueError, match="source is required"):
+        bridge.render_application_request(request)
 
 
 def test_plan_application_rejects_untrusted_or_stale_ingress() -> None:

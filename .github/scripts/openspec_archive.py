@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 from typing import NoReturn
@@ -15,6 +17,140 @@ GENERATED_PURPOSE = re.compile(
 
 ARCHIVE_REQUEST_ACTION = "finalize-change"
 _ARCHIVE_REVISION = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _git(*args: str) -> str:
+    executable = shutil.which("git")
+    if executable is None:
+        _fail("Git is unavailable for archive source verification")
+    result = subprocess.run(  # noqa: S603 - fixed git executable, validated local refs
+        [executable, *args], capture_output=True, text=True, check=False
+    )
+    if result.returncode != 0:
+        _fail(f"Archive git observation failed: {' '.join(args)}: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def _tracked_blobs(revision: str) -> dict[str, str]:
+    records = _git("ls-tree", "-r", "--full-tree", revision).splitlines()
+    result: dict[str, str] = {}
+    for record in records:
+        metadata, separator, path = record.partition("\t")
+        fields = metadata.split(" ")
+        if separator != "\t" or len(fields) != 3 or fields[1] != "blob" or path in result:
+            _fail("Archive source tree contains an unsupported path or object")
+        if _ARCHIVE_REVISION.fullmatch(fields[2]) is None:
+            _fail("Archive source tree contains an invalid blob")
+        result[path] = fields[2]
+    return result
+
+
+def _active_change_blobs(source: dict[str, str], change: str) -> dict[str, str]:
+    prefix = f"openspec/changes/{change}/"
+    blobs = {
+        path.removeprefix(prefix): sha for path, sha in source.items() if path.startswith(prefix)
+    }
+    if "tasks.md" not in blobs:
+        _fail("Archive source Change lacks its current tasks.md")
+    return blobs
+
+
+def _archived_change_blobs(archived: dict[str, str], change: str) -> dict[str, str] | None:
+    prefix = "openspec/changes/archive/"
+    groups: dict[str, dict[str, str]] = {}
+    for path, sha in archived.items():
+        if not path.startswith(prefix):
+            continue
+        directory, separator, tail = path.removeprefix(prefix).partition("/")
+        if separator and directory.endswith(f"-{change}"):
+            groups.setdefault(directory, {})[tail] = sha
+    return next(iter(groups.values())) if len(groups) == 1 else None
+
+
+def _archive_branch_plan(args: argparse.Namespace) -> None:
+    """Read-only branch reconciliation proof; workflow performs guarded git writes."""
+
+    change = _validate_change_name(args.change)
+    source = args.source_revision
+    if _ARCHIVE_REVISION.fullmatch(source) is None or _git("rev-parse", "HEAD") != source:
+        _fail("Archive source must be the exact current checked-out main")
+    active = _active_change_blobs(_tracked_blobs(source), change)
+    existing_ref = args.existing_ref
+    if not existing_ref:
+        _emit(mode="new", source_revision=source)
+        return
+    branch_sha = _git("rev-parse", "--verify", existing_ref)
+    if _ARCHIVE_REVISION.fullmatch(branch_sha) is None:
+        _fail("Archive branch revision is invalid")
+    base = _git("merge-base", source, branch_sha)
+    old_blobs = _tracked_blobs(branch_sha)
+    old_archive = _archived_change_blobs(old_blobs, change)
+    if old_archive is None:
+        _fail("Existing Archive branch has no unique historical Change snapshot")
+    current_capabilities = {
+        path.split("/")[1]
+        for path in active
+        if path.startswith("specs/") and len(path.split("/")) >= 3
+    }
+    old_capabilities = {
+        path.split("/")[1]
+        for path in old_archive
+        if path.startswith("specs/") and len(path.split("/")) >= 3
+    }
+    if not old_capabilities <= current_capabilities:
+        _fail("Historical Archive branch contains removed canonical capability changes")
+    changed = _git("diff", "--name-only", "--no-renames", base, branch_sha).splitlines()
+    for path in changed:
+        is_change = path.startswith(f"openspec/changes/{change}/")
+        archive_parts = path.removeprefix("openspec/changes/archive/").split("/", 1)
+        is_archive = (
+            path.startswith("openspec/changes/archive/")
+            and len(archive_parts) == 2
+            and archive_parts[0].endswith(f"-{change}")
+        )
+        parts = path.split("/")
+        is_spec = (
+            len(parts) == 4
+            and parts[:2] == ["openspec", "specs"]
+            and parts[2] in current_capabilities
+            and parts[3] == "spec.md"
+        )
+        if not (is_change or is_archive or is_spec):
+            _fail(f"Archive branch changes unrelated or conflicting path: {path}")
+    executable = shutil.which("git")
+    if executable is None:
+        _fail("Git is unavailable for archive ancestry verification")
+    ancestry = subprocess.run(  # noqa: S603 - fixed Git executable and validated revisions
+        [executable, "merge-base", "--is-ancestor", source, branch_sha], check=False
+    )
+    if ancestry.returncode not in {0, 1}:
+        _fail("Archive branch ancestry is indeterminate")
+    mode = "reuse" if ancestry.returncode == 0 and old_archive == active else "reconcile"
+    _emit(mode=mode, source_revision=source, existing_head=branch_sha)
+
+
+def _verify_archive_source(args: argparse.Namespace) -> None:
+    """Verify current working archive files are byte-identical to source blobs."""
+
+    change = _validate_change_name(args.change)
+    source = args.source_revision
+    if _ARCHIVE_REVISION.fullmatch(source) is None:
+        _fail("Archive source revision is invalid")
+    active = _active_change_blobs(_tracked_blobs(source), change)
+    archive_root = Path("openspec/changes/archive")
+    directories = sorted(archive_root.glob(f"*-{change}"))
+    if len(directories) != 1 or not directories[0].is_dir():
+        _fail("Archive output does not contain exactly one current Change directory")
+    root = directories[0]
+    observed: dict[str, str] = {}
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            _fail("Archive output contains a symlink")
+        if path.is_file():
+            relative = path.relative_to(root).as_posix()
+            observed[relative] = _git("hash-object", "--", str(path))
+    if observed != active:
+        _fail("Archive Change bytes differ from current default-branch source")
 
 
 def _archive_request_key(issue_number: str, revision: str) -> str:
@@ -466,6 +602,17 @@ def _parser() -> argparse.ArgumentParser:
     completion.add_argument("--change", required=True)
     completion.add_argument("--list-file", required=True)
     completion.set_defaults(handler=_completion)
+
+    branch_plan = subparsers.add_parser("branch-plan")
+    branch_plan.add_argument("--change", required=True)
+    branch_plan.add_argument("--source-revision", required=True)
+    branch_plan.add_argument("--existing-ref", default="")
+    branch_plan.set_defaults(handler=_archive_branch_plan)
+
+    verify_source = subparsers.add_parser("verify-source")
+    verify_source.add_argument("--change", required=True)
+    verify_source.add_argument("--source-revision", required=True)
+    verify_source.set_defaults(handler=_verify_archive_source)
 
     purpose_snapshot = subparsers.add_parser("purpose-snapshot")
     purpose_snapshot.add_argument("--change", required=True)

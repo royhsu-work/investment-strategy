@@ -83,6 +83,7 @@ jobs:
     if: >-
       (github.event_name == 'issue_comment' &&
       (startsWith(github.event.comment.body, 'EFFECT_REQUEST') ||
+      startsWith(github.event.comment.body, 'WORKER_RESULT') ||
       startsWith(github.event.comment.body, 'APPLICATION_CONTINUATION') ||
       (github.event.issue.number == 322 &&
       (github.event.comment.body == 'RECOVERY_EXIT_REQUEST 6019133874' ||
