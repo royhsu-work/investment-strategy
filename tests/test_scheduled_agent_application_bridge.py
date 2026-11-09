@@ -2955,6 +2955,7 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
         authorization_revision: str | None = None,
         authorized_change: str | None = None,
         accepted_intent: bool = False,
+        uncertain_effect_index: int | None = None,
     ) -> tuple[EffectBatch, bridge.ApplyResult]:
         assert source == expected_source
         assert request_comment_id == 102
@@ -2964,6 +2965,7 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
         assert authorization_revision == _REVISION
         assert authorized_change == _CHANGE
         assert accepted_intent is (len(calls) > 0)
+        assert uncertain_effect_index is None
         adapter = GitHubEffectAdapter(
             repository,
             token,

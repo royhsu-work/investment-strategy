@@ -721,6 +721,30 @@ def _pending_continuation_is_eligible(
     )
 
 
+def derived_transition_effect(
+    *, issue_number: int, change: str, successor: ModelAction | None
+) -> StagedEffect:
+    """One Action-model-derived routing/terminal effect identity."""
+
+    if successor is not None:
+        return StagedEffect(
+            kind="routing-transition",
+            payload_json=json.dumps(
+                {"issue_number": issue_number, "action": successor.value},
+                sort_keys=True,
+            ),
+            derived=True,
+        )
+    return StagedEffect(
+        kind="terminal-transition",
+        payload_json=json.dumps(
+            {"issue_number": issue_number, "expected_change": change},
+            sort_keys=True,
+        ),
+        derived=True,
+    )
+
+
 def _typed_application_plan(
     batch: EffectBatch,
     preflight: DispatchPreflight,
@@ -852,32 +876,15 @@ def _typed_application_plan(
             ),
         )
 
-    if decision.successor is not None:
-        successor_effect = StagedEffect(
-            kind="routing-transition",
-            payload_json=json.dumps(
-                {
-                    "issue_number": source.issue_number,
-                    "action": decision.successor.value,
-                },
-                sort_keys=True,
-            ),
-            derived=True,
-        )
-        return decision, successor_effect, None
-
-    terminal_effect = StagedEffect(
-        kind="terminal-transition",
-        payload_json=json.dumps(
-            {
-                "issue_number": source.issue_number,
-                "expected_change": source.change,
-            },
-            sort_keys=True,
+    return (
+        decision,
+        derived_transition_effect(
+            issue_number=source.issue_number,
+            change=source.change,
+            successor=decision.successor,
         ),
-        derived=True,
+        None,
     )
-    return decision, terminal_effect, None
 
 
 _ALLOWED_ISSUE_FIELDS = frozenset({"title", "body"})
@@ -1380,6 +1387,7 @@ def apply_effect_batch(
     effect_rejection: EffectRejectionProvider | None = None,
     accepted_intent: bool = False,
     reconcile_only: bool = False,
+    uncertain_effect_index: int | None = None,
     durable_checkpoint_revision: str | None = None,
     persist_application_decision: (
         Callable[[ActionApplicationDecision, str, str], bool] | None
@@ -1516,23 +1524,15 @@ def apply_effect_batch(
         for index, effect in enumerate(effects_to_apply)
         if accepted_intent and observe_postcondition(effect)
     }
-    # An indeterminate predecessor is not permission to repeat a write.
-    # A later invocation may still *observe* that every requested effect
-    # completed and repair only the Action-model-derived handoff. If even
-    # one effect is unproven, leave all repository state unchanged.
-    if reconcile_only and (not accepted_intent or len(completed_before) != len(effects_to_apply)):
-        missing = next(
-            (index for index in range(len(effects_to_apply)) if index not in completed_before),
-            None,
+
+    def unproven_effect(missing: int | None) -> ApplyResult:
+        failed_effect = effects_to_apply[missing] if missing is not None else derived_effect
+        failed_index = (
+            indexed_effects_to_apply[missing][0] if missing is not None else len(batch.effects)
         )
-        if missing is None:
-            return ApplyResult(False, "indeterminate accepted effects require reconciliation")
-        failed_effect = effects_to_apply[missing]
-        # A read-only wake records the verified effect frontier, so the
-        # existing evidence chain can distinguish progress from no change.
         observed_complete = tuple(sorted(completed_before))
         recovery = EffectRecoveryEvidence(
-            failed_effect_index=indexed_effects_to_apply[missing][0],
+            failed_effect_index=failed_index,
             failed_effect_kind=failed_effect.kind,
             failed_effect_sha256=hashlib.sha256(failed_effect.payload_json.encode()).hexdigest(),
             completed_effect_indexes=tuple(
@@ -1551,6 +1551,44 @@ def apply_effect_batch(
             "indeterminate accepted effects require reconciliation",
             recovery_evidence=recovery,
         )
+
+    # A recorded unknown write establishes an exact *attempted* boundary.
+    # Only effects at/before it must be proved complete without a new write.
+    # A strictly later effect was never attempted by the sequential engine;
+    # after the uncertain prefix is proved complete its ordinary fresh guard
+    # may apply it (notably the original formal result and legal successor).
+    # An absent boundary retains the older, more restrictive read-only mode.
+    if reconcile_only:
+        if not accepted_intent or (
+            uncertain_effect_index is not None
+            and (
+                type(uncertain_effect_index) is not int
+                or uncertain_effect_index < 0
+                or uncertain_effect_index > len(batch.effects)
+            )
+        ):
+            return ApplyResult(False, "indeterminate accepted effects require reconciliation")
+        observed_through = (
+            len(batch.effects) if uncertain_effect_index is None else uncertain_effect_index
+        )
+        missing = next(
+            (
+                index
+                for index, (original_index, _effect) in enumerate(indexed_effects_to_apply)
+                if original_index <= observed_through and index not in completed_before
+            ),
+            None,
+        )
+        if missing is not None:
+            return unproven_effect(missing)
+        if (
+            apply_derived
+            and uncertain_effect_index == len(batch.effects)
+            and not observe_postcondition(derived_effect)
+        ):
+            # An ambiguous derived routing/terminal write is no safer to
+            # replay than an ambiguous worker-requested effect.
+            return unproven_effect(None)
     for index, effect in enumerate(effects_to_apply):
         if index in completed_before:
             continue

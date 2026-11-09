@@ -75,6 +75,7 @@ from investment_strategy.scheduled_agent_effects import (
     archive_branch_matches_current_source,
     archive_branch_source_status,
     consequence_postconditions_complete,
+    derived_transition_effect,
     formal_application_correlation,
     merged_pr_readiness_complete,
     parse_application_decision,
@@ -5396,6 +5397,117 @@ def _accepted_predecessor_disposition(
     return "INDETERMINATE"
 
 
+def accepted_read_only_effects_complete(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    recovery_evidence: Mapping[str, object],
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+) -> bool:
+    """Freshly observe *only* the effects of one immutable ACCEPTED intent.
+
+    This is a read-only projection of the same GitHubEffectAdapter postcondition
+    owner that the actual Application uses. Dispatch may use the observation to
+    decide whether another read-only continuation is useful; it must not apply
+    an effect, persist a result, or authorize a successor on this predicate.
+    The Application independently requalifies everything before any mutation.
+    """
+
+    if (
+        record.disposition != "ACCEPTED"
+        or record.issue_number != source.issue_number
+        or record.role != source.role
+        or record.action != source.action
+        or _accepted_recovery_boundary(recovery_evidence) != "READ_ONLY"
+        or _SHA.fullmatch(current_revision) is None
+        or not default_branch
+    ):
+        return False
+    try:
+        # Reuse the accepted-intent projection used by the actual Application,
+        # including current, application-owned control effects. Never treat an
+        # empty/missing projection as vacuous proof of an old unknown write.
+        raw = _fresh_application_worker_result(
+            record.raw_worker_result,
+            source=source,
+            change=record.change,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            request_comment_id=record.request_comment_id,
+        )
+        batch = parse_effect_batch(raw, source, authorized_change=record.change)
+        if batch.typed_result is None or not batch.effects:
+            return False
+        failed_index = recovery_evidence.get("failed_effect_index")
+        completed_indexes = recovery_evidence.get("completed_effect_indexes")
+        if (
+            type(failed_index) is not int
+            or failed_index > len(batch.effects)
+            or not isinstance(completed_indexes, list)
+            or any(
+                type(index) is not int or index >= len(batch.effects) for index in completed_indexes
+            )
+        ):
+            return False
+        completed_hashes = recovery_evidence.get("completed_effect_sha256")
+        if not isinstance(completed_hashes, list) or len(completed_hashes) != len(
+            completed_indexes
+        ):
+            return False
+        if any(
+            hashlib.sha256(batch.effects[index].payload_json.encode()).hexdigest() != digest
+            for index, digest in zip(completed_indexes, completed_hashes, strict=True)
+        ):
+            return False
+        failed_effect = (
+            batch.effects[failed_index]
+            if failed_index < len(batch.effects)
+            else derived_transition_effect(
+                issue_number=source.issue_number,
+                change=record.change,
+                successor=next_action(batch.typed_result.action, batch.typed_result.result),
+            )
+        )
+        if (
+            recovery_evidence.get("failed_effect_kind") != failed_effect.kind
+            or recovery_evidence.get("failed_effect_sha256")
+            != hashlib.sha256(failed_effect.payload_json.encode()).hexdigest()
+        ):
+            return False
+        adapter = GitHubEffectAdapter(
+            repository,
+            token,
+            source,
+            authorized_change=record.change,
+            current_revision=current_revision,
+            expected_result_kind=batch.typed_result.result.kind.value,
+            request_comment_id=record.request_comment_id,
+            authorization_revision=record.authorization_revision,
+            allow_pending_continuation=True,
+            accepted_intent=True,
+        )
+        # Only the attempted prefix is uncertain. Effects after the failure
+        # could not yet have been written by the sequential Application; their
+        # missing formal result must NOT prevent a safe continuation.
+        if not all(
+            adapter.observe_postcondition(effect)
+            for index, effect in enumerate(batch.effects)
+            if index <= failed_index
+        ):
+            return False
+        if failed_index == len(batch.effects):
+            return adapter.observe_postcondition(failed_effect)
+        return True
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        # An unavailable or contradictory observation cannot grant a retry.
+        return False
+
+
 def _write_application_recovery_evidence(
     path: str | None,
     *,
@@ -5480,25 +5592,10 @@ def _write_application_recovery_evidence(
     # unknown/partial outcome; only carrier and proven zero-write branches
     # can reach the existing ordinary/correction mutation paths.
     continuation_eligible = _accepted_recovery_boundary(failure_evidence) != "NONE"
-    if (
-        predecessor is not None
-        and failure_evidence.get("unfinished_boundary") == "effect-reconciliation"
-    ):
-        previous_evidence = predecessor.document.get("failure_evidence")
-        previous_completed = (
-            previous_evidence.get("completed_effect_indexes")
-            if isinstance(previous_evidence, Mapping)
-            else None
-        )
-        current_completed = failure_evidence.get("completed_effect_indexes")
-        # Different run IDs or reason strings do not make an unchanged
-        # observation eligible for another identical reconciliation wake.
-        continuation_eligible = bool(
-            continuation_eligible
-            and isinstance(previous_completed, list)
-            and isinstance(current_completed, list)
-            and set(previous_completed) < set(current_completed)
-        )
+    # An inconclusive read-only observation must not erase the legal ability
+    # to observe later external truth. The dispatcher gates a *new* continuation
+    # on a freshly proved COMPLETE result, rather than treating a repeated
+    # observed index frontier as a permanent terminal failure.
     document = {
         "schema": _APPLICATION_RECOVERY_SCHEMA,
         "repository": repository,
@@ -6211,6 +6308,13 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         if predecessor_evidence is None
         else _accepted_predecessor_disposition(predecessor_evidence)
     )
+    uncertain_effect_index = None
+    if predecessor_disposition == "INDETERMINATE" and predecessor_evidence is not None:
+        failure = predecessor_evidence.document.get("failure_evidence")
+        if isinstance(failure, Mapping) and _accepted_recovery_boundary(failure) == "READ_ONLY":
+            candidate_index = failure.get("failed_effect_index")
+            if type(candidate_index) is int:
+                uncertain_effect_index = candidate_index
     if continuation is not None and predecessor_disposition == "ZERO_WRITE_REJECTION":
         # Only a *proven* deterministic zero-write rejection takes the
         # administrative correction route. CarrierRequired (even for merge)
@@ -6277,6 +6381,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 authorized_change=plan.change,
                 **({"accepted_intent": True} if accepted_intent is not None else {}),
                 **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
+                uncertain_effect_index=uncertain_effect_index,
             )
             if result.applied:
                 if materialization is None or target is None:
@@ -6321,6 +6426,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 authorized_change=plan.change,
                 **({"accepted_intent": True} if accepted_intent is not None else {}),
                 **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
+                uncertain_effect_index=uncertain_effect_index,
             )
     except CarrierRequired as exc:
         # CarrierRequired is the hard invocation-exit boundary. Persist only

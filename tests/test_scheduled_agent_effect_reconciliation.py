@@ -212,6 +212,208 @@ def test_indeterminate_write_reconciles_only_confirmed_effects(
         assert writes == []
 
 
+@pytest.mark.parametrize("effect_kind", ["issue-comment", "github-mutation"])
+def test_unknown_attempted_prefix_allows_only_unattempted_formal_result_and_successor(
+    monkeypatch: pytest.MonkeyPatch,
+    effect_kind: str,
+) -> None:
+    """A lost effect response can complete without replaying its write.
+
+    The formal ACTION_RESULT is a *later* Effect in the same original batch.
+    It was never reached when the first Effect's response was lost and must be
+    allowed to persist after the original effect has been freshly proved.
+    """
+    import investment_strategy.scheduled_agent_effects as effects
+
+    batch, _ = _batch()
+    batch = replace(
+        batch,
+        effects=(
+            StagedEffect(effect_kind, json.dumps({"effect_identity": "accepted"})),
+            StagedEffect("issue-comment", json.dumps({"body": "ACTION_RESULT\naccepted"})),
+        ),
+    )
+    monkeypatch.setattr(
+        effects,
+        "_typed_application_plan",
+        lambda *_args: (
+            _decision(),
+            StagedEffect(
+                "routing-transition",
+                json.dumps({"issue_number": 138, "action": "implement-change"}),
+                derived=True,
+            ),
+            None,
+        ),
+    )
+    state = {"first": False, "formal": False, "route": False}
+    writes: list[str] = []
+
+    def observed(effect: StagedEffect) -> bool:
+        if effect.kind == effect_kind and effect.payload_json == batch.effects[0].payload_json:
+            return state["first"]
+        return state["route"] if effect.kind == "routing-transition" else state["formal"]
+
+    def apply(effect: StagedEffect) -> None:
+        if effect == batch.effects[0]:
+            pytest.fail("unproven original Effect was replayed")
+        if effect.kind == "routing-transition":
+            state["route"] = True
+            writes.append("route")
+        else:
+            state["formal"] = True
+            writes.append("formal")
+
+    def reconcile() -> effects.ApplyResult:
+        return apply_effect_batch(
+            batch,
+            fresh_preflight=lambda: cast(DispatchPreflight, None),
+            effect_guard=lambda _effect: True,
+            apply_effect=apply,
+            observe_postcondition=observed,
+            current_revision=REVISION,
+            accepted_intent=True,
+            reconcile_only=True,
+            uncertain_effect_index=0,
+        )
+
+    assert not reconcile().applied
+    assert writes == []
+    state["first"] = True  # Later fresh GitHub GET proves the lost write.
+    assert reconcile().applied
+    assert writes == ["formal", "route"]
+    assert reconcile().applied
+    assert writes == ["formal", "route"]
+
+
+def test_unknown_derived_effect_is_never_replayed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import investment_strategy.scheduled_agent_effects as effects
+
+    batch, _ = _batch()
+    monkeypatch.setattr(
+        effects,
+        "_typed_application_plan",
+        lambda *_args: (
+            _decision(),
+            StagedEffect(
+                "routing-transition",
+                json.dumps({"issue_number": 138, "action": "implement-change"}),
+                True,
+            ),
+            None,
+        ),
+    )
+    writes: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: cast(DispatchPreflight, None),
+        effect_guard=lambda _effect: True,
+        apply_effect=writes.append,
+        observe_postcondition=lambda effect: effect.kind != "routing-transition",
+        current_revision=REVISION,
+        accepted_intent=True,
+        reconcile_only=True,
+        uncertain_effect_index=len(batch.effects),
+    )
+    assert not result.applied and not writes
+    assert result.recovery_evidence is not None
+    assert result.recovery_evidence.unfinished_boundary == "effect-reconciliation"
+    assert result.recovery_evidence.failed_effect_index == len(batch.effects)
+
+
+@pytest.mark.parametrize("first_kind", ["issue-comment", "github-mutation"])
+def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_formal(
+    monkeypatch: pytest.MonkeyPatch,
+    first_kind: str,
+) -> None:
+    """Dispatch and Application reuse one postcondition owner, without writes."""
+    batch, source = _batch()
+    raw = json.dumps(
+        {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "already accepted",
+            "requested_effects": [
+                {"kind": first_kind, "payload_json": batch.effects[0].payload_json},
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps({"body": "ACTION_RESULT\npending"}),
+                },
+            ],
+        }
+    )
+    decision = render_application_decision_body(
+        request_comment_id=91,
+        request_body="effect-request-identity",
+        authorization_revision=REVISION,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    record = parse_application_decision(decision)
+    assert record is not None
+    monkeypatch.setattr(application, "_fresh_application_worker_result", lambda raw, **_kw: raw)
+    state = {"original": False, "formal": False}
+    observations: list[str] = []
+
+    class ReadOnlyAdapter:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            observations.append(effect.kind)
+            return (
+                state["original"]
+                if effect.payload_json == batch.effects[0].payload_json
+                else state["formal"]
+            )
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", ReadOnlyAdapter)
+    evidence: dict[str, object] = {
+        "reason": "indeterminate accepted effects require reconciliation",
+        "mutation_status": "unknown",
+        "unfinished_boundary": "effect-reconciliation",
+        "failed_effect_index": 0,
+        "failed_effect_kind": first_kind,
+        "failed_effect_sha256": hashlib.sha256(batch.effects[0].payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+        "rejection": None,
+    }
+
+    def observe() -> bool:
+        return application.accepted_read_only_effects_complete(
+            record=record,
+            source=source,
+            recovery_evidence=evidence,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+        )
+
+    assert not observe()
+    state["original"] = True
+    assert observe()  # The later formal write is not a prerequisite.
+    assert observations == [first_kind, first_kind]
+
+    evidence["failed_effect_index"] = 1
+    evidence["failed_effect_kind"] = "issue-comment"
+    evidence["failed_effect_sha256"] = hashlib.sha256(
+        json.loads(raw)["requested_effects"][1]["payload_json"].encode()
+    ).hexdigest()
+    assert not observe()  # But when the formal write itself was unknown, observe it.
+    state["formal"] = True
+    assert observe()
+
+
 @pytest.mark.parametrize("partially_complete", [False, True])
 def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
     monkeypatch: pytest.MonkeyPatch,
@@ -237,6 +439,16 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
                 ),
             }
         )
+    # The application-owned formal result is strictly later than the failed
+    # write, and therefore cannot be required as a recovery precondition.
+    requested_effects.append(
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps(
+                {"issue_number": source.issue_number, "body": "ACTION_RESULT\naccepted"}
+            ),
+        }
+    )
     raw = json.dumps(
         {
             "issue_number": source.issue_number,
@@ -419,6 +631,202 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
     assert verified is not None
     assert application._accepted_predecessor_disposition(verified) == "INDETERMINATE"
 
+    # A first read-only Application continuation can observe the exact same
+    # unfinished frontier. That observation creates a new *qualified* artifact
+    # but must not permanently disable later reads or spawn identical writes.
+    unknown = EffectRecoveryEvidence(
+        failed_effect_index=status.failed_effect_index,
+        failed_effect_kind=status.failed_effect_kind,
+        failed_effect_sha256=status.failed_effect_sha256,
+        completed_effect_indexes=status.completed_effect_indexes,
+        completed_effect_sha256=status.completed_effect_sha256,
+        mutation_status="unknown",
+        unfinished_boundary="effect-reconciliation",
+        rejection=None,
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "7004")
+    second_path = tmp_path / "repeated-read-only.json"
+    application._write_application_recovery_evidence(
+        str(second_path),
+        result=application.ApplyResult(
+            False,
+            "indeterminate accepted effects require reconciliation",
+            recovery_evidence=unknown,
+        ),
+        repository="owner/repo",
+        token=REVISION,
+        source=source,
+        request_comment_id=91,
+        trigger_comment_id=1000,
+        authorization_revision=REVISION,
+        current_revision=REVISION,
+        run_attempt=1,
+        continuation=continuation,
+        predecessor=verified,
+    )
+    assert second_path.is_file()
+    repeated = json.loads(second_path.read_text(encoding="utf-8"))
+    assert repeated["continuation_eligible"] is True
+    repeated_bytes = second_path.read_bytes()
+    second_run = {**run, "id": 7004, "display_title": "Scheduled Agent Application 1000"}
+    second_job = {**job, "id": 7005}
+
+    def read_later(_repo: str, _token: str, path: str) -> object:
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "actions/runs/7004":
+            return second_run
+        if path == "actions/runs/7004/jobs":
+            return {"jobs": [second_job]}
+        if path == "actions/runs/7004/artifacts?per_page=100":
+            return {
+                "artifacts": [
+                    {
+                        "id": 7006,
+                        "name": "application-recovery-evidence",
+                        "digest": "sha256:" + hashlib.sha256(repeated_bytes).hexdigest(),
+                        "expired": False,
+                        "workflow_run": {"id": 7004, "head_sha": REVISION},
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected read-only observation: {path}")
+
+    def later_bytes(_repo: str, _token: str, path: str) -> bytes:
+        assert path == "actions/artifacts/7006/zip"
+        return repeated_bytes
+
+    second_qualified = application.read_application_recovery_artifact(
+        "owner/repo",
+        REVISION,
+        run_id=7004,
+        run_attempt=1,
+        job_id=7005,
+        request_comment_id=91,
+        accepted_decision_sha256=decision_digest,
+        read=read_later,
+        artifact_reader=later_bytes,
+        strict_read=True,
+    )
+    assert second_qualified is not None and second_qualified.continuation_eligible
+    monkeypatch.setattr(dispatch, "_application_runs", lambda *_args, **_kw: (second_run,))
+    monkeypatch.setattr(dispatch, "read_github_artifact_bytes", later_bytes)
+    real_batch = parse_effect_batch(raw, source, authorized_change=CHANGE)
+    effect_ids = [(effect.kind, effect.payload_json) for effect in real_batch.effects]
+    effect_state = [bool(partially_complete)] + [False] * (len(effect_ids) - 1)
+    monkeypatch.setattr(application, "_fresh_application_worker_result", lambda raw, **_kw: raw)
+
+    class ReadOnlyAdapter:
+        def __init__(self, *_args: object, **_kw: object) -> None:
+            pass
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            return effect_state[effect_ids.index((effect.kind, effect.payload_json))]
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", ReadOnlyAdapter)
+
+    def classify_again() -> dispatch.ApplicationCompletion:
+        return dispatch._application_job(
+            "owner/repo",
+            REVISION,
+            91,
+            read=read_later,
+            record=record,
+            accepted_decision_sha256=decision_digest,
+            current_revision=REVISION,
+        )
+
+    first_read = classify_again()
+    assert first_read.reason == "application-completion-read-only-observing"
+    assert first_read.state == "RESUMABLE"
+    # An unchanged observation is not an executable new continuation.
+    effect_state[status.failed_effect_index] = True
+    later_read = classify_again()
+    assert later_read.state == "RESUMABLE"
+    assert later_read.reason == "application-completion-continuation-required"
+    assert later_read.recovery_artifact is not None
+    resumed_body = dispatch._application_continuation_body(
+        repository="owner/repo",
+        token=REVISION,
+        source=source,
+        request_comment_id=91,
+        predecessor_evidence=later_read.recovery_artifact,
+    )
+    assert resumed_body is not None
+    resumed_request = application.parse_application_continuation_request(resumed_body)
+    assert resumed_request is not None
+    second_request_comment = {**request_comment, "id": 1001, "body": resumed_body}
+    monkeypatch.setattr(
+        application,
+        "_paged_github_list",
+        lambda _repo, _token, path: (
+            (accepted_comment,) if path.startswith("issues/138/") else (second_request_comment,)
+        ),
+    )
+    resumed_predecessor = application.qualify_application_continuation_predecessor(
+        "owner/repo",
+        REVISION,
+        resumed_request,
+        current_comment_id=1001,
+        transport_issue_number=500,
+        read=read_later,
+        artifact_reader=later_bytes,
+    )
+    assert resumed_predecessor is not None
+
+    # The shared Effect engine then persists only the never-attempted formal
+    # result and model-derived successor, never either previously attempted
+    # effect. A repeated successful continuation is idempotent.
+    import investment_strategy.scheduled_agent_effects as effects
+
+    monkeypatch.setattr(
+        effects,
+        "_typed_application_plan",
+        lambda *_args: (
+            _decision(),
+            StagedEffect(
+                "routing-transition",
+                json.dumps({"issue_number": 138, "action": "implement-change"}),
+                derived=True,
+            ),
+            None,
+        ),
+    )
+    effect_state_route = {"routed": False}
+    writes: list[str] = []
+
+    def observed(effect: StagedEffect) -> bool:
+        if effect.kind == "routing-transition":
+            return effect_state_route["routed"]
+        return effect_state[effect_ids.index((effect.kind, effect.payload_json))]
+
+    def apply(effect: StagedEffect) -> None:
+        if effect.kind == "routing-transition":
+            effect_state_route["routed"] = True
+            writes.append("successor")
+            return
+        index = effect_ids.index((effect.kind, effect.payload_json))
+        assert index == len(effect_ids) - 1  # Only the never-attempted formal comment.
+        effect_state[index] = True
+        writes.append("formal-result")
+
+    def finish() -> effects.ApplyResult:
+        return apply_effect_batch(
+            real_batch,
+            fresh_preflight=lambda: cast(DispatchPreflight, None),
+            effect_guard=lambda _effect: True,
+            apply_effect=apply,
+            observe_postcondition=observed,
+            current_revision=REVISION,
+            accepted_intent=True,
+            reconcile_only=True,
+            uncertain_effect_index=unknown.failed_effect_index,
+        )
+
+    assert finish().applied
+    assert finish().applied
+    assert writes == ["formal-result", "successor"]
+
 
 @pytest.mark.parametrize("new_completed_frontier", [False, True])
 def test_read_only_recovery_of_recovery_is_evidence_bounded(
@@ -544,4 +952,6 @@ def test_read_only_recovery_of_recovery_is_evidence_bounded(
     assert second_document["prior_failure_evidence_sha256"] == [
         first_document["failure_evidence_sha256"]
     ]
-    assert second_document["continuation_eligible"] is new_completed_frontier
+    # A stable read-only observation must retain the ability to observe a
+    # *later* authoritative GitHub postcondition, without replaying the write.
+    assert second_document["continuation_eligible"] is True
