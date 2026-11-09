@@ -65,6 +65,7 @@ from investment_strategy.scheduled_agent_effects import (
     GITHUB_MUTATION_KIND,
     ApplicationDecisionRecord,
     ApplyResult,
+    EffectBatch,
     EffectRecoveryEvidence,
     GitHubEffectAdapter,
     StagedEffect,
@@ -5321,6 +5322,109 @@ def _recovery_failure_document(result: ApplyResult) -> dict[str, object]:
     }
 
 
+def _attempted_effect_checkpoint(
+    batch: EffectBatch,
+    recovery: EffectRecoveryEvidence,
+) -> list[dict[str, object]] | None:
+    """Snapshot the exact attempted prefix, never a later state-dependent projection.
+
+    This is part of the existing content-addressed recovery artifact, not a
+    separate registry. The hashes already emitted by the Effect engine must
+    match the snapshot before it can qualify a read-only observation.
+    """
+
+    index = recovery.failed_effect_index
+    if index < 0 or index > len(batch.effects) or batch.typed_result is None:
+        return None
+    attempted = list(batch.effects[: min(index + 1, len(batch.effects))])
+    if index == len(batch.effects):
+        attempted.append(
+            derived_transition_effect(
+                issue_number=batch.source.issue_number,
+                change=batch.typed_result.change,
+                successor=next_action(batch.typed_result.action, batch.typed_result.result),
+            )
+        )
+    if (
+        not attempted
+        or attempted[-1].kind != recovery.failed_effect_kind
+        or hashlib.sha256(attempted[-1].payload_json.encode()).hexdigest()
+        != recovery.failed_effect_sha256
+        or any(
+            position >= len(batch.effects)
+            or hashlib.sha256(batch.effects[position].payload_json.encode()).hexdigest() != digest
+            for position, digest in zip(
+                recovery.completed_effect_indexes,
+                recovery.completed_effect_sha256,
+                strict=True,
+            )
+        )
+    ):
+        return None
+    return [
+        {"kind": effect.kind, "payload_json": effect.payload_json, "derived": effect.derived}
+        for effect in attempted
+    ]
+
+
+def _verified_attempted_effect_checkpoint(
+    failure: Mapping[str, object],
+    *,
+    source: WorkerRequest,
+) -> tuple[StagedEffect, ...] | None:
+    """Validate stored write identity before invoking the shared observer."""
+
+    snapshot = failure.get("attempted_effects")
+    index = failure.get("failed_effect_index")
+    completed = failure.get("completed_effect_indexes")
+    hashes = failure.get("completed_effect_sha256")
+    if (
+        not isinstance(snapshot, list)
+        or type(index) is not int
+        or index < 0
+        or len(snapshot) != index + 1
+        or not isinstance(completed, list)
+        or not isinstance(hashes, list)
+        or len(completed) != len(hashes)
+        or len(snapshot) > 256
+    ):
+        return None
+    attempted: list[StagedEffect] = []
+    for position, entry in enumerate(snapshot):
+        if (
+            not isinstance(entry, Mapping)
+            or set(entry) != {"kind", "payload_json", "derived"}
+            or not isinstance(entry.get("kind"), str)
+            or not isinstance(entry.get("payload_json"), str)
+            or not isinstance(entry.get("derived"), bool)
+            or (position < index and entry["derived"])
+        ):
+            return None
+        effect = StagedEffect(
+            kind=cast(str, entry["kind"]),
+            payload_json=cast(str, entry["payload_json"]),
+            derived=cast(bool, entry["derived"]),
+        )
+        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
+        if payload is None or payload.get("issue_number") != source.issue_number:
+            return None
+        attempted.append(effect)
+    if (
+        attempted[-1].kind != failure.get("failed_effect_kind")
+        or hashlib.sha256(attempted[-1].payload_json.encode()).hexdigest()
+        != failure.get("failed_effect_sha256")
+        or any(
+            type(position) is not int
+            or position < 0
+            or position >= index
+            or hashlib.sha256(attempted[position].payload_json.encode()).hexdigest() != digest
+            for position, digest in zip(completed, hashes, strict=True)
+        )
+    ):
+        return None
+    return tuple(attempted)
+
+
 def _accepted_recovery_boundary(
     evidence: Mapping[str, object],
 ) -> Literal["CARRIER", "ZERO_WRITE_REJECTION", "READ_ONLY", "NONE"]:
@@ -5427,6 +5531,40 @@ def accepted_read_only_effects_complete(
     ):
         return False
     try:
+        # Prefer the immutable attempted prefix emitted by the actual
+        # Application run. A fresh projection may legitimately switch from
+        # workflow-dispatch to PR-create, or merge to ref-delete, and must
+        # never become the identity of the *previously attempted* write.
+        if "attempted_effects" in recovery_evidence:
+            attempted = _verified_attempted_effect_checkpoint(recovery_evidence, source=source)
+            if attempted is None:
+                return False
+            attempted_revision = recovery_evidence.get("attempt_revision")
+            if (
+                not isinstance(attempted_revision, str)
+                or _SHA.fullmatch(attempted_revision) is None
+            ):
+                return False
+            adapter = GitHubEffectAdapter(
+                repository,
+                token,
+                source,
+                authorized_change=record.change,
+                current_revision=current_revision,
+                expected_result_kind=record.result_kind,
+                request_comment_id=record.request_comment_id,
+                authorization_revision=record.authorization_revision,
+                allow_pending_continuation=True,
+                accepted_intent=True,
+                pending_application_correlation=formal_application_correlation(
+                    source,
+                    change=record.change,
+                    result_kind=record.result_kind,
+                    current_revision=attempted_revision,
+                    request_comment_id=record.request_comment_id,
+                ),
+            )
+            return all(adapter.observe_postcondition(effect) for effect in attempted)
         # Reuse the accepted-intent projection used by the actual Application,
         # including current, application-owned control effects. Never treat an
         # empty/missing projection as vacuous proof of an old unknown write.
@@ -5522,6 +5660,7 @@ def _write_application_recovery_evidence(
     run_attempt: int,
     continuation: ApplicationContinuationRequest | None,
     predecessor: ApplicationRecoveryArtifact | None,
+    effect_batch: EffectBatch | None = None,
 ) -> bool:
     """Persist a bounded, content-addressed application boundary for later reads."""
 
@@ -5557,6 +5696,56 @@ def _write_application_recovery_evidence(
         return False
 
     failure_evidence = _recovery_failure_document(result)
+    recovery = result.recovery_evidence
+    if (
+        recovery is not None
+        and recovery.mutation_status == "unknown"
+        and _accepted_recovery_boundary(failure_evidence) == "READ_ONLY"
+    ):
+        predecessor_failure = (
+            None if predecessor is None else predecessor.document.get("failure_evidence")
+        )
+        inherited = (
+            _verified_attempted_effect_checkpoint(predecessor_failure, source=source)
+            if isinstance(predecessor_failure, Mapping)
+            and predecessor_failure.get("failed_effect_sha256") == recovery.failed_effect_sha256
+            and predecessor_failure.get("failed_effect_kind") == recovery.failed_effect_kind
+            and predecessor_failure.get("failed_effect_index") == recovery.failed_effect_index
+            and "attempted_effects" in predecessor_failure
+            else None
+        )
+        attempted = (
+            [
+                {
+                    "kind": effect.kind,
+                    "payload_json": effect.payload_json,
+                    "derived": effect.derived,
+                }
+                for effect in inherited
+            ]
+            if inherited is not None
+            else (
+                None
+                if effect_batch is None
+                else _attempted_effect_checkpoint(effect_batch, recovery)
+            )
+        )
+        if attempted is None:
+            if effect_batch is not None or (
+                isinstance(predecessor_failure, Mapping)
+                and "attempted_effects" in predecessor_failure
+            ):
+                return False
+        else:
+            failure_evidence["attempted_effects"] = attempted
+            attempt_revision = (
+                predecessor_failure.get("attempt_revision")
+                if inherited is not None and isinstance(predecessor_failure, Mapping)
+                else current_revision
+            )
+            if not isinstance(attempt_revision, str) or _SHA.fullmatch(attempt_revision) is None:
+                return False
+            failure_evidence["attempt_revision"] = attempt_revision
     failure_evidence_sha256 = _canonical_sha256(failure_evidence)
     if predecessor is None:
         episode_sha256 = _canonical_sha256(
@@ -6315,6 +6504,66 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             candidate_index = failure.get("failed_effect_index")
             if type(candidate_index) is int:
                 uncertain_effect_index = candidate_index
+            if "attempted_effects" in failure:
+                if accepted_intent is None:
+                    raise RuntimeError("read-only continuation lost its accepted intent")
+                exact_source = WorkerRequest(
+                    accepted_intent.issue_number, accepted_intent.role, accepted_intent.action
+                )
+                if not accepted_read_only_effects_complete(
+                    record=accepted_intent,
+                    source=exact_source,
+                    recovery_evidence=failure,
+                    repository=repository,
+                    token=token,
+                    current_revision=args.revision,
+                    default_branch=args.default_branch,
+                ):
+                    # A dispatch-time proof may disappear before Application
+                    # reauthorization. Persist only a read-only boundary with
+                    # the SAME attempted identity, and never apply a newly
+                    # projected Effect on this invocation.
+                    previous = cast(Mapping[str, object], failure)
+                    deferred = ApplyResult(
+                        False,
+                        "accepted original effect not currently proven complete",
+                        recovery_evidence=EffectRecoveryEvidence(
+                            failed_effect_index=cast(int, previous["failed_effect_index"]),
+                            failed_effect_kind=cast(str, previous["failed_effect_kind"]),
+                            failed_effect_sha256=cast(str, previous["failed_effect_sha256"]),
+                            completed_effect_indexes=tuple(
+                                cast(list[int], previous["completed_effect_indexes"])
+                            ),
+                            completed_effect_sha256=tuple(
+                                cast(list[str], previous["completed_effect_sha256"])
+                            ),
+                            mutation_status="unknown",
+                            unfinished_boundary="effect-reconciliation",
+                        ),
+                    )
+                    if not _write_application_recovery_evidence(
+                        args.recovery_evidence_path,
+                        result=deferred,
+                        repository=repository,
+                        token=token,
+                        source=plan.source,
+                        request_comment_id=plan.request_comment_id,
+                        trigger_comment_id=event_comment_id or plan.request_comment_id,
+                        authorization_revision=request.authorization_revision,
+                        current_revision=args.revision,
+                        run_attempt=args.run_attempt,
+                        continuation=continuation,
+                        predecessor=predecessor_evidence,
+                    ):
+                        raise RuntimeError("read-only attempted-effect checkpoint was not durable")
+                    _write_carrier_outputs(deferred)
+                    _write_validation_outputs(None)
+                    return 0
+                # The exact historical write has been independently proven
+                # complete. The next fresh projection is *new*, not the
+                # originally uncertain Effect at its former array index.
+                predecessor_disposition = "RECONCILE_EFFECTS"
+                uncertain_effect_index = None
     if continuation is not None and predecessor_disposition == "ZERO_WRITE_REJECTION":
         # Only a *proven* deterministic zero-write rejection takes the
         # administrative correction route. CarrierRequired (even for merge)
@@ -6489,6 +6738,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             run_attempt=args.run_attempt,
             continuation=continuation,
             predecessor=predecessor_evidence,
+            effect_batch=batch,
         )
     if recovery_evidence_written and _recover_deterministic_accepted_merge_failure(
         result=result,
@@ -6533,6 +6783,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             run_attempt=args.run_attempt,
             continuation=continuation,
             predecessor=predecessor_evidence,
+            effect_batch=batch,
         )
         print(
             json.dumps(
@@ -6581,6 +6832,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             run_attempt=args.run_attempt,
             continuation=continuation,
             predecessor=predecessor_evidence,
+            effect_batch=batch,
         )
     print(
         json.dumps(

@@ -414,6 +414,328 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
     assert observe()
 
 
+def test_archive_phase_drift_observes_original_dispatch_before_writing_new_pr(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Real Application projection changes shape without rebinding an unknown write."""
+    import investment_strategy.scheduled_agent_effects as effects
+
+    source = WorkerRequest(138, "lead", "finalize-change")
+    raw = json.dumps(
+        {
+            "issue_number": 138,
+            "role": "lead",
+            "action": "finalize-change",
+            "change": CHANGE,
+            "result_kind": "archive-ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "original immutable accepted intent",
+            "requested_effects": [],
+        }
+    )
+    decision_body = render_application_decision_body(
+        request_comment_id=91,
+        request_body="original request",
+        authorization_revision=REVISION,
+        decision=ActionApplicationDecision(
+            ApplicationDisposition.ACCEPT,
+            ActionSource(138, CHANGE, Action.FINALIZE_CHANGE, REVISION),
+            BoundedActionResult(
+                138,
+                CHANGE,
+                Action.FINALIZE_CHANGE,
+                TypedResult(ResultKind.ARCHIVE_READY, "issuecomment-138-qualified"),
+            ),
+            Action.REVIEW_ARCHIVE,
+            role_for(Action.REVIEW_ARCHIVE),
+        ),
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    record = parse_application_decision(decision_body)
+    assert record is not None
+    stage = {"value": "missing-branch", "original_completed": False}
+    monkeypatch.setattr(application, "_machine_result_revision", lambda *_a, **_kw: REVISION)
+    monkeypatch.setattr(
+        application,
+        "_fresh_archive_state",
+        lambda *_a, **_kw: (
+            stage["value"],
+            None if stage["value"] == "missing-branch" else "agent/archive-deterministic-recovery",
+            None if stage["value"] == "missing-branch" else "b" * 40,
+        ),
+    )
+    monkeypatch.setattr(application, "_fresh_non_control_effects", lambda *_a, **_kw: [])
+    monkeypatch.setattr(
+        application, "_formal_body_for_worker", lambda *_a, **_kw: "ACTION_RESULT\nproof"
+    )
+
+    def project(revision: str) -> EffectBatch:
+        projected = application._fresh_application_worker_result(
+            raw,
+            source=source,
+            change=CHANGE,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=revision,
+            default_branch="main",
+            request_comment_id=91,
+        )
+        return parse_effect_batch(projected, source, authorized_change=CHANGE)
+
+    original_batch = project(REVISION)
+    old = original_batch.effects[0]
+    assert json.loads(old.payload_json)["operation"] == "workflow-dispatch"
+    unknown = EffectRecoveryEvidence(
+        failed_effect_index=0,
+        failed_effect_kind=old.kind,
+        failed_effect_sha256=hashlib.sha256(old.payload_json.encode()).hexdigest(),
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status="unknown",
+        unfinished_boundary="effect-postcondition",
+    )
+    assert application._attempted_effect_checkpoint(original_batch, unknown) is not None
+    assert record.action == source.action
+    assert record.role == source.role
+    assert record.issue_number == source.issue_number
+    assert record.disposition == "ACCEPTED"
+    monkeypatch.setattr(
+        application,
+        "_application_decision_comment_for_request",
+        lambda **_kw: (record, decision_body),
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "7001")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "github-output"))
+    artifact = tmp_path / "effect-checkpoint.json"
+    assert application._write_application_recovery_evidence(
+        str(artifact),
+        result=application.ApplyResult(False, "unknown", recovery_evidence=unknown),
+        repository="owner/repo",
+        token=REVISION,
+        source=source,
+        request_comment_id=91,
+        trigger_comment_id=91,
+        authorization_revision=REVISION,
+        current_revision=REVISION,
+        run_attempt=1,
+        continuation=None,
+        predecessor=None,
+        effect_batch=original_batch,
+    )
+    failure = json.loads(artifact.read_text())["failure_evidence"]
+    assert failure["attempted_effects"][0]["payload_json"] == old.payload_json
+    stage["value"] = "missing-pr"
+    advanced_revision = "c" * 40
+    advanced_batch = project(advanced_revision)
+    assert json.loads(advanced_batch.effects[0].payload_json)["operation"] == "pull-request-create"
+    assert advanced_batch.effects[0].payload_json != old.payload_json
+    adapter_context: list[dict[str, object]] = []
+
+    class Observer:
+        def __init__(self, *_a: object, **_kw: object) -> None:
+            adapter_context.append(_kw)
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            assert effect == old  # Never observe the freshly projected PR as the old write.
+            return bool(stage["original_completed"])
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
+
+    def original_complete() -> bool:
+        return application.accepted_read_only_effects_complete(
+            record=record,
+            source=source,
+            recovery_evidence=failure,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=advanced_revision,
+            default_branch="main",
+        )
+
+    assert not original_complete()
+    stage["original_completed"] = True
+    assert original_complete()
+    expected_correlation = effects.formal_application_correlation(
+        source,
+        change=CHANGE,
+        result_kind="archive-ready",
+        current_revision=REVISION,
+        request_comment_id=91,
+    )
+    assert all(
+        item["pending_application_correlation"] == expected_correlation
+        and item["current_revision"] == advanced_revision
+        for item in adapter_context
+    )
+    # The missing PR is a *new* carrier-owned write. Its exact carrier
+    # postcondition advances the next real Application projection to the
+    # formal-result phase; the old dispatch is never issued again.
+    writes: list[str] = ["github-mutation"]  # fresh, qualified PR-create carrier
+    stage["value"] = "ready"
+    formal_batch = project(advanced_revision)
+    assert [effect.kind for effect in formal_batch.effects] == ["issue-comment"]
+    monkeypatch.setattr(
+        effects,
+        "_typed_application_plan",
+        lambda *_args: (
+            _decision(),
+            StagedEffect(
+                "routing-transition",
+                json.dumps({"issue_number": 138, "action": "implement-change"}),
+                derived=True,
+            ),
+            None,
+        ),
+    )
+    done: set[str] = set()
+
+    def execute(effect: StagedEffect) -> None:
+        if effect == old:
+            pytest.fail("original dispatch replayed")
+        writes.append(effect.kind)
+        done.add(effect.payload_json)
+
+    def finish() -> effects.ApplyResult:
+        return apply_effect_batch(
+            formal_batch,
+            fresh_preflight=lambda: cast(DispatchPreflight, None),
+            effect_guard=lambda _effect: True,
+            apply_effect=execute,
+            observe_postcondition=lambda effect: effect.payload_json in done,
+            current_revision=advanced_revision,
+            accepted_intent=True,
+        )
+
+    assert finish().applied
+    assert finish().applied
+    assert writes == ["github-mutation", "issue-comment", "routing-transition"]
+
+
+def test_merge_phase_drift_preserves_original_merge_before_ref_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Merge observation is never replaced by the next projected ref-delete."""
+    source = WorkerRequest(138, "executor", "merge-archive-pr")
+    raw = json.dumps(
+        {
+            "issue_number": 138,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "merged",
+            "evidence_ref": "issuecomment-138-reviewed",
+            "result_content": "immutable merge acceptance",
+            "requested_effects": [],
+        }
+    )
+    carrier = {
+        "number": 432,
+        "state": "open",
+        "merged": False,
+        "head": {"ref": "agent/archive-deterministic-recovery", "sha": "b" * 40},
+        "base": {"ref": "main", "sha": REVISION},
+    }
+    monkeypatch.setattr(application, "_machine_result_revision", lambda *_a, **_kw: REVISION)
+    monkeypatch.setattr(application, "_fresh_merge_carrier", lambda **_kw: carrier)
+    monkeypatch.setattr(application, "_fresh_pull_requests", lambda *_a, **_kw: (carrier,))
+    monkeypatch.setattr(application, "_fresh_non_control_effects", lambda *_a, **_kw: [])
+    monkeypatch.setattr(
+        application, "_formal_body_for_worker", lambda *_a, **_kw: "MERGE_RESULT\nproof"
+    )
+    monkeypatch.setattr(application, "_github_json", lambda *_a, **_kw: carrier)
+    monkeypatch.setattr(application, "_merged_carrier_is_in_current_default", lambda *_a: True)
+    monkeypatch.setattr(application, "_fresh_branch_head", lambda *_a: "b" * 40)
+
+    def project(revision: str) -> EffectBatch:
+        projected = application._fresh_application_worker_result(
+            raw,
+            source=source,
+            change=CHANGE,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=revision,
+            default_branch="main",
+            request_comment_id=91,
+        )
+        return parse_effect_batch(projected, source, authorized_change=CHANGE)
+
+    original = project(REVISION)
+    merge = original.effects[0]
+    assert json.loads(merge.payload_json)["operation"] == "pull-request-merge"
+    checkpoint = EffectRecoveryEvidence(
+        failed_effect_index=0,
+        failed_effect_kind=merge.kind,
+        failed_effect_sha256=hashlib.sha256(merge.payload_json.encode()).hexdigest(),
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status="unknown",
+        unfinished_boundary="effect-postcondition",
+    )
+    attempted = application._attempted_effect_checkpoint(original, checkpoint)
+    assert attempted is not None
+    carrier.update(
+        state="closed",
+        merged=True,
+        merged_at="2026-11-09T09:00:00Z",
+        merge_commit_sha="c" * 40,
+    )
+    next_batch = project("d" * 40)
+    cleanup = next_batch.effects[0]
+    assert json.loads(cleanup.payload_json)["operation"] == "ref-delete"
+    assert cleanup.payload_json != merge.payload_json
+    failure = {
+        "reason": "postcondition was unknown",
+        "failed_effect_index": 0,
+        "failed_effect_kind": merge.kind,
+        "failed_effect_sha256": checkpoint.failed_effect_sha256,
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+        "mutation_status": "unknown",
+        "unfinished_boundary": "effect-postcondition",
+        "rejection": None,
+        "attempted_effects": attempted,
+        "attempt_revision": REVISION,
+    }
+    record = application.ApplicationDecisionRecord(
+        issue_number=source.issue_number,
+        role=source.role,
+        action=source.action,
+        change=CHANGE,
+        result_kind="merged",
+        authorization_revision=REVISION,
+        request_comment_id=91,
+        request_body_sha256=hashlib.sha256(b"original request").hexdigest(),
+        disposition="ACCEPTED",
+        worker_result_sha256=hashlib.sha256(raw.encode()).hexdigest(),
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    observed: list[StagedEffect] = []
+
+    class Reader:
+        def __init__(self, *_a: object, **_kw: object) -> None:
+            pass
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            observed.append(effect)
+            return effect == merge
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", Reader)
+    assert application.accepted_read_only_effects_complete(
+        record=record,
+        source=source,
+        recovery_evidence=failure,
+        repository="owner/repo",
+        token=REVISION,
+        current_revision="d" * 40,
+        default_branch="main",
+    )
+    assert observed == [merge]  # No ref-delete observation or replay.
+
+
 @pytest.mark.parametrize("partially_complete", [False, True])
 def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
     monkeypatch: pytest.MonkeyPatch,
@@ -514,9 +836,11 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
         run_attempt=1,
         continuation=None,
         predecessor=None,
+        effect_batch=parse_effect_batch(raw, source, authorized_change=CHANGE),
     )
     document = json.loads(recovery_path.read_text(encoding="utf-8"))
     assert document["continuation_eligible"] is True
+    assert len(document["failure_evidence"]["attempted_effects"]) == status.failed_effect_index + 1
     raw_artifact = recovery_path.read_bytes()
     artifact_digest = "sha256:" + hashlib.sha256(raw_artifact).hexdigest()
     run = {
