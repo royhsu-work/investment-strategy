@@ -32,6 +32,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     ApplicationContinuationRequest,
     ApplicationRecoveryArtifact,
     ApplicationRequest,
+    _accepted_recovery_boundary,
     _application_owned_worker_result,
     _materialization_effects,
     _worker_semantic_projection,
@@ -2945,9 +2946,17 @@ def _application_job(
             )
 
     if not recovery_artifact.continuation_eligible:
+        failed = recovery_artifact.document.get("failure_evidence")
+        stable_read_only_blocker = (
+            isinstance(failed, Mapping)
+            and _accepted_recovery_boundary(failed) == "READ_ONLY"
+            and failed.get("unfinished_boundary") == "effect-reconciliation"
+        )
         return ApplicationCompletion(
             "INVALID",
-            "application-completion-recovery-boundary-unsafe",
+            "application-completion-reconciliation-awaits-new-proof-or-governed-correction"
+            if stable_read_only_blocker
+            else "application-completion-recovery-boundary-unsafe",
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
         )

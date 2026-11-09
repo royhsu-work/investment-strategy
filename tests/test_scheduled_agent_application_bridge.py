@@ -91,6 +91,7 @@ _TEST_RECOVERY_EPISODE_SHA256 = "3" * 64
                 "unfinished_boundary": "effect-precondition",
                 "mutation_status": "not-complete",
                 "failed_effect_index": 0,
+                "failed_effect_kind": "github-mutation",
                 "failed_effect_sha256": "a" * 64,
                 "completed_effect_indexes": [],
                 "completed_effect_sha256": [],
@@ -1407,8 +1408,8 @@ def test_recovery_evidence_continues_only_for_unwritten_precondition_rejection(
     )
 
     assert safe["continuation_eligible"] is True
-    assert partial["continuation_eligible"] is False
-    assert unknown_postcondition["continuation_eligible"] is False
+    assert partial["continuation_eligible"] is True  # read-only, never retry the failed write
+    assert unknown_postcondition["continuation_eligible"] is True  # read-only reconciliation
     assert unknown_source["continuation_eligible"] is False
     failure = cast(dict[str, object], unknown_source["failure_evidence"])
     rejected = cast(dict[str, object], failure["rejection"])
@@ -1423,12 +1424,14 @@ def test_recovery_evidence_continues_only_for_unwritten_precondition_rejection(
         ("executor", "merge-implementation-pr", "merged"),
     ],
 )
+@pytest.mark.parametrize("boundary", ["carrier", "unknown", "partial"])
 def test_main_accepts_only_a_fresh_continuation_transport(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     role: str,
     action: str,
     result_kind: str,
+    boundary: str,
 ) -> None:
     source = WorkerRequest(138, role, action)
     worker = _worker_result(
@@ -1463,6 +1466,30 @@ def test_main_accepts_only_a_fresh_continuation_transport(
     )
     continuation = parse_application_continuation_request(continuation_body)
     assert continuation is not None
+    failure_evidence: dict[str, object] = {
+        "reason": "carrier_required",
+        "unfinished_boundary": "carrier-required",
+        "mutation_status": "not-complete",
+        "carrier_plan_id": "original-carrier",
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+    }
+    if boundary in {"unknown", "partial"}:
+        failure_evidence = {
+            "reason": "durable postcondition not observed",
+            "unfinished_boundary": "effect-postcondition"
+            if boundary == "unknown"
+            else "effect-precondition",
+            "mutation_status": "unknown" if boundary == "unknown" else "not-complete",
+            "failed_effect_index": 1 if boundary == "partial" else 0,
+            "failed_effect_kind": "issue-comment",
+            "failed_effect_sha256": "a" * 64,
+            "completed_effect_indexes": [0] if boundary == "partial" else [],
+            "completed_effect_sha256": ["b" * 64] if boundary == "partial" else [],
+            "rejection": {"classification": "effect-precondition-unsatisfied"}
+            if boundary == "partial"
+            else None,
+        }
     predecessor = bridge.ApplicationRecoveryArtifact(
         run_id=continuation.predecessor_run_id,
         run_attempt=continuation.predecessor_run_attempt,
@@ -1477,14 +1504,7 @@ def test_main_accepts_only_a_fresh_continuation_transport(
         continuation_eligible=True,
         document={
             "prior_failure_evidence_sha256": [],
-            "failure_evidence": {
-                "reason": "carrier_required",
-                "unfinished_boundary": "carrier-required",
-                "mutation_status": "not-complete",
-                "carrier_plan_id": "original-carrier",
-                "completed_effect_indexes": [],
-                "completed_effect_sha256": [],
-            },
+            "failure_evidence": failure_evidence,
         },
     )
     event_path = tmp_path / "continuation-event.json"
@@ -1562,6 +1582,7 @@ def test_main_accepts_only_a_fresh_continuation_transport(
         seen["raw"] = raw_result
         seen["source"] = kwargs["source"]
         seen["request_comment_id"] = kwargs["request_comment_id"]
+        seen["read_only"] = kwargs.get("reconcile_only", False)
         return (
             EffectBatch(
                 source=cast(WorkerRequest, kwargs["source"]),
@@ -1574,7 +1595,12 @@ def test_main_accepts_only_a_fresh_continuation_transport(
     monkeypatch.setattr(bridge, "run_guarded_effect_application", fake_apply)
 
     assert bridge.main() == 0
-    assert seen == {"raw": raw, "source": source, "request_comment_id": 102}
+    assert seen == {
+        "raw": raw,
+        "source": source,
+        "request_comment_id": 102,
+        "read_only": boundary != "carrier",
+    }
 
 
 def test_main_resumes_live_322_effect_through_the_same_application_owner(
@@ -4700,7 +4726,14 @@ def test_recovery_reader_binds_rerun_checkout_to_immutable_original_run_head(
     run_id, job_id, artifact_id, request_comment_id = 7001, 7002, 7003, 91
     original_head, checkout = "4" * 40, "5" * 40
     accepted_sha = "a" * 64
-    failure = {"reason": "carrier_required", "mutation_status": "not-complete"}
+    failure = {
+        "reason": "carrier_required",
+        "mutation_status": "not-complete",
+        "unfinished_boundary": "carrier-required",
+        "carrier_plan_id": "qualified-plan",
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+    }
     document = {
         "schema": "scheduled-agent-application-recovery/v1",
         "repository": _REPOSITORY,

@@ -1521,7 +1521,36 @@ def apply_effect_batch(
     # completed and repair only the Action-model-derived handoff. If even
     # one effect is unproven, leave all repository state unchanged.
     if reconcile_only and (not accepted_intent or len(completed_before) != len(effects_to_apply)):
-        return ApplyResult(False, "indeterminate accepted effects require reconciliation")
+        missing = next(
+            (index for index in range(len(effects_to_apply)) if index not in completed_before),
+            None,
+        )
+        if missing is None:
+            return ApplyResult(False, "indeterminate accepted effects require reconciliation")
+        failed_effect = effects_to_apply[missing]
+        # A read-only wake records the verified effect frontier, so the
+        # existing evidence chain can distinguish progress from no change.
+        observed_complete = tuple(sorted(completed_before))
+        recovery = EffectRecoveryEvidence(
+            failed_effect_index=indexed_effects_to_apply[missing][0],
+            failed_effect_kind=failed_effect.kind,
+            failed_effect_sha256=hashlib.sha256(failed_effect.payload_json.encode()).hexdigest(),
+            completed_effect_indexes=tuple(
+                indexed_effects_to_apply[index][0] for index in observed_complete
+            ),
+            completed_effect_sha256=tuple(
+                hashlib.sha256(effects_to_apply[index].payload_json.encode()).hexdigest()
+                for index in observed_complete
+            ),
+            mutation_status="unknown",
+            unfinished_boundary="effect-reconciliation",
+            rejection=None,
+        )
+        return ApplyResult(
+            False,
+            "indeterminate accepted effects require reconciliation",
+            recovery_evidence=recovery,
+        )
     for index, effect in enumerate(effects_to_apply):
         if index in completed_before:
             continue

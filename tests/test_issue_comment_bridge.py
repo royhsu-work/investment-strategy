@@ -4229,6 +4229,59 @@ def test_completed_application_consumes_only_exact_complete_carrier_outcome(
     assert completion.recovery_artifact == recovery
 
 
+def test_read_only_reconciliation_without_new_proof_has_concrete_blocker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repeated, unchanged unknown does not generate another Action run."""
+    recovery = replace(
+        _qualified_recovery_fixture(continuation_eligible=False),
+        document={
+            "prior_failure_evidence_sha256": ["a" * 64],
+            "failure_evidence": {
+                "reason": "indeterminate accepted effects require reconciliation",
+                "mutation_status": "unknown",
+                "unfinished_boundary": "effect-reconciliation",
+                "failed_effect_index": 1,
+                "failed_effect_kind": "issue-comment",
+                "failed_effect_sha256": "b" * 64,
+                "completed_effect_indexes": [0],
+                "completed_effect_sha256": ["c" * 64],
+                "rejection": None,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_runs",
+        lambda *_a, **_kw: (
+            {"id": 777, "run_attempt": 1, "status": "completed", "head_sha": REVISION},
+        ),
+    )
+    monkeypatch.setattr(
+        bridge, "_qualified_unapplied_terminal_carrier_effect", lambda *_a, **_kw: False
+    )
+    monkeypatch.setattr(bridge, "_qualified_carrier_for_application_run", lambda *_a, **_kw: None)
+    monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_kw: recovery)
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        assert path == "actions/runs/777/jobs"
+        return {"jobs": [{"id": 888, "name": "apply"}]}
+
+    completion = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=fake_read,
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+    )
+    assert completion.state == "INVALID"
+    assert (
+        completion.reason
+        == "application-completion-reconciliation-awaits-new-proof-or-governed-correction"
+    )
+
+
 def test_completed_application_blocks_a_previous_unreported_carrier_handoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -5038,6 +5038,10 @@ def read_application_recovery_artifact(
         or run.get("display_title") != f"Scheduled Agent Application {trigger_comment_id}"
     ):
         return unavailable()
+    if cast(bool, document["continuation_eligible"]) and (
+        _accepted_recovery_boundary(cast(Mapping[str, object], failure_evidence)) == "NONE"
+    ):
+        return unavailable()
     predecessor = document.get("predecessor")
     if recovery_attempt == 1:
         if predecessor is not None or prior_failures:
@@ -5316,45 +5320,78 @@ def _recovery_failure_document(result: ApplyResult) -> dict[str, object]:
     }
 
 
-def _accepted_predecessor_disposition(
-    predecessor: ApplicationRecoveryArtifact,
-) -> Literal["RECONCILE_EFFECTS", "ZERO_WRITE_REJECTION", "INDETERMINATE"]:
-    """Classify a *qualified* predecessor's exact durable interruption boundary.
+def _accepted_recovery_boundary(
+    evidence: Mapping[str, object],
+) -> Literal["CARRIER", "ZERO_WRITE_REJECTION", "READ_ONLY", "NONE"]:
+    """One structural eligibility contract for producer and artifact reader.
 
-    A carrier handoff is not an effect rejection.  Its next Application must
-    fresh-observe the carrier and apply only missing consequences of the same
-    accepted intent.  The administrative failure handoff is reserved for a
-    proven deterministic pre-write rejection. Unknown/partial writes never
-    become a retry permission through this classifier.
+    Eligibility starts a *read*, not a retry permission. UNKNOWN and partial
+    effects can advance only through the shared read-only Effect observer.
+    Neither the artifact's claimed boolean nor natural-language failure text
+    can upgrade an unsupported boundary into a write-authorized continuation.
     """
 
-    evidence = predecessor.document.get("failure_evidence")
-    if not predecessor.continuation_eligible or not isinstance(evidence, Mapping):
-        return "INDETERMINATE"
     if (
         evidence.get("unfinished_boundary") == "carrier-required"
         and evidence.get("mutation_status") == "not-complete"
-        and evidence.get("reason") == "carrier_required"
+        and evidence.get("reason") in {"carrier_required", "carrier-required"}
         and isinstance(evidence.get("carrier_plan_id"), str)
         and bool(evidence["carrier_plan_id"])
         and evidence.get("completed_effect_indexes") == []
         and evidence.get("completed_effect_sha256") == []
     ):
-        return "RECONCILE_EFFECTS"
+        return "CARRIER"
     rejection = evidence.get("rejection")
-    if (
+    known_rejection = (
         evidence.get("unfinished_boundary") == "effect-precondition"
         and evidence.get("mutation_status") == "not-complete"
-        and evidence.get("completed_effect_indexes") == []
-        and evidence.get("completed_effect_sha256") == []
         and isinstance(rejection, Mapping)
         and rejection.get("classification") == "effect-precondition-unsatisfied"
-        and isinstance(evidence.get("failed_effect_index"), int)
-        and not isinstance(evidence.get("failed_effect_index"), bool)
+    )
+    indexes = evidence.get("completed_effect_indexes")
+    hashes = evidence.get("completed_effect_sha256")
+    exact_frontier = (
+        isinstance(indexes, list)
+        and isinstance(hashes, list)
+        and len(indexes) == len(hashes)
+        and all(type(index) is int and index >= 0 for index in indexes)
+        and indexes == sorted(set(indexes))
+        and all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in hashes)
+    )
+    exact_failure = (
+        type(evidence.get("failed_effect_index")) is int
         and cast(int, evidence["failed_effect_index"]) >= 0
+        and isinstance(evidence.get("failed_effect_kind"), str)
+        and bool(evidence["failed_effect_kind"])
         and isinstance(evidence.get("failed_effect_sha256"), str)
         and re.fullmatch(r"[0-9a-f]{64}", cast(str, evidence["failed_effect_sha256"])) is not None
-    ):
+    )
+    if known_rejection and exact_frontier and exact_failure and not indexes:
+        return "ZERO_WRITE_REJECTION"
+    if exact_frontier and exact_failure:
+        if known_rejection and indexes:
+            return "READ_ONLY"
+        if evidence.get("mutation_status") == "unknown" and evidence.get("unfinished_boundary") in {
+            "effect-postcondition",
+            "derived-effect-postcondition",
+            "effect-reconciliation",
+        }:
+            return "READ_ONLY"
+    return "NONE"
+
+
+def _accepted_predecessor_disposition(
+    predecessor: ApplicationRecoveryArtifact,
+) -> Literal["RECONCILE_EFFECTS", "ZERO_WRITE_REJECTION", "INDETERMINATE"]:
+    """Preserve the original accepted intent and select only lawful next work."""
+
+    evidence = predecessor.document.get("failure_evidence")
+    if not predecessor.continuation_eligible or not isinstance(evidence, Mapping):
+        return "INDETERMINATE"
+    boundary = _accepted_recovery_boundary(evidence)
+    if boundary == "CARRIER":
+        return "RECONCILE_EFFECTS"
+    if boundary == "ZERO_WRITE_REJECTION":
         return "ZERO_WRITE_REJECTION"
     return "INDETERMINATE"
 
@@ -5438,29 +5475,30 @@ def _write_application_recovery_evidence(
             "failure_evidence_sha256": predecessor.failure_evidence_sha256,
             "recovery_attempt": predecessor.recovery_attempt,
         }
-    recovery = result.recovery_evidence
-    rejection = None if recovery is None else recovery.rejection
-    rejection_classification = (
-        None
-        if rejection is None
-        else getattr(rejection.classification, "value", rejection.classification)
-    )
-    # Only a freshly observed, exact precondition rejection before any write is
-    # eligible for a fresh run. Partial writes and unknown postconditions need
-    # reconciliation at their owning effect boundary before continuation.
-    safe_precondition_rejection = (
-        recovery is not None
-        and rejection_classification == "effect-precondition-unsatisfied"
-        and recovery.mutation_status == "not-complete"
-        and recovery.unfinished_boundary == "effect-precondition"
-        and not recovery.completed_effect_indexes
-        and not recovery.completed_effect_sha256
-    )
-    # A rejected merge can resume only through the dedicated application-owned
-    # administrative recovery entry; the original MERGED effect is never
-    # passed to the mutation carrier again. The exact artifact is a bounded
-    # checkpoint, not permission to replay the accepted semantic result.
-    continuation_eligible = result.carrier_plan is not None or safe_precondition_rejection
+    # The artifact's exact structural boundary is used both here and by its
+    # independent reader. It permits READ_ONLY continuation for a genuinely
+    # unknown/partial outcome; only carrier and proven zero-write branches
+    # can reach the existing ordinary/correction mutation paths.
+    continuation_eligible = _accepted_recovery_boundary(failure_evidence) != "NONE"
+    if (
+        predecessor is not None
+        and failure_evidence.get("unfinished_boundary") == "effect-reconciliation"
+    ):
+        previous_evidence = predecessor.document.get("failure_evidence")
+        previous_completed = (
+            previous_evidence.get("completed_effect_indexes")
+            if isinstance(previous_evidence, Mapping)
+            else None
+        )
+        current_completed = failure_evidence.get("completed_effect_indexes")
+        # Different run IDs or reason strings do not make an unchanged
+        # observation eligible for another identical reconciliation wake.
+        continuation_eligible = bool(
+            continuation_eligible
+            and isinstance(previous_completed, list)
+            and isinstance(current_completed, list)
+            and set(previous_completed) < set(current_completed)
+        )
     document = {
         "schema": _APPLICATION_RECOVERY_SCHEMA,
         "repository": repository,
