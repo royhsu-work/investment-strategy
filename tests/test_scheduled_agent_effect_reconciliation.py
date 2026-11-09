@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -31,8 +32,12 @@ from investment_strategy.scheduled_agent_effects import (
     parse_effect_batch,
     render_application_decision_body,
 )
-from investment_strategy.scheduled_agent_runtime import WorkerRequest
-from investment_strategy.workflow_dispatch import DispatchPreflight
+from investment_strategy.scheduled_agent_runtime import (
+    GitHubIssueObservation,
+    WorkerRequest,
+    acquire_dispatch_preflight,
+)
+from investment_strategy.workflow_dispatch import DispatchPreflight, ObservationProvenance
 
 REVISION = "a" * 40
 CHANGE = "deterministic-recovery"
@@ -734,6 +739,420 @@ def test_merge_phase_drift_preserves_original_merge_before_ref_cleanup(
         default_branch="main",
     )
     assert observed == [merge]  # No ref-delete observation or replay.
+
+
+@pytest.mark.parametrize(
+    ("role", "action", "kind", "successor", "marker"),
+    [
+        ("lead", "resolve-question", "ready", Action.IMPLEMENT_CHANGE, "ACTION_RESULT"),
+        (
+            "reviewer",
+            "review-implementation",
+            "pass",
+            Action.MERGE_IMPLEMENTATION_PR,
+            "REVIEW_RESULT",
+        ),
+        ("executor", "merge-archive-pr", "merged", Action.FINALIZE_ARCHIVE, "MERGE_RESULT"),
+    ],
+)
+@pytest.mark.parametrize("current_gate_valid", [True, False])
+def test_original_formal_post_at_r1_is_never_reissued_at_descendant_r2(
+    monkeypatch: pytest.MonkeyPatch,
+    role: str,
+    action: str,
+    kind: str,
+    successor: Action,
+    marker: str,
+    current_gate_valid: bool,
+) -> None:
+    """Real formal producer -> immutable checkpoint -> R2 plan -> one successor.
+
+    The old GitHub POST was durable even though its immediate confirmation was
+    lost. A descendant default HEAD is never permission to mint a new formal
+    comment or reinterpret the original review at the new revision.
+    """
+    import investment_strategy.scheduled_agent_effects as effects
+
+    source = WorkerRequest(138, role, action)
+    old_revision, new_revision = REVISION, "c" * 40
+    raw = json.dumps(
+        {
+            "issue_number": 138,
+            "role": role,
+            "action": action,
+            "change": CHANGE,
+            "result_kind": kind,
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "original accepted semantic result",
+            "requested_effects": [],
+        }
+    )
+    old_projection = application._application_owned_worker_result(
+        raw,
+        source=source,
+        change=CHANGE,
+        current_revision=old_revision,
+        result_revision=old_revision,
+        request_comment_id=91,
+    )
+    new_projection = application._application_owned_worker_result(
+        raw,
+        source=source,
+        change=CHANGE,
+        current_revision=new_revision,
+        result_revision=old_revision,
+        request_comment_id=91,
+    )
+    original_batch = parse_effect_batch(old_projection, source, authorized_change=CHANGE)
+    old_formal = original_batch.effects[0]
+    assert json.loads(old_formal.payload_json)["body"].startswith(marker + "\n")
+    rewritten_batch = parse_effect_batch(new_projection, source, authorized_change=CHANGE)
+    assert rewritten_batch.effects[0] != old_formal  # The exact replay bug.
+    failure_status = EffectRecoveryEvidence(
+        failed_effect_index=0,
+        failed_effect_kind="issue-comment",
+        failed_effect_sha256=hashlib.sha256(old_formal.payload_json.encode()).hexdigest(),
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status="unknown",
+        unfinished_boundary="effect-postcondition",
+    )
+    snapshot = application._attempted_effect_checkpoint(original_batch, failure_status)
+    assert snapshot is not None
+    failure = {
+        "failed_effect_index": 0,
+        "failed_effect_kind": "issue-comment",
+        "failed_effect_sha256": failure_status.failed_effect_sha256,
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+        "attempted_effects": snapshot,
+        "attempt_revision": old_revision,
+    }
+    restored = application._retain_completed_accepted_formal_effect(
+        new_projection,
+        failure=failure,
+        source=source,
+        change=CHANGE,
+        result_kind=kind,
+        request_comment_id=91,
+    )
+    assert restored is not None
+    restored_raw, original_correlation = restored
+    restored_batch = parse_effect_batch(restored_raw, source, authorized_change=CHANGE)
+    assert restored_batch.effects[0] == old_formal
+    assert original_correlation == effects.formal_application_correlation(
+        source,
+        change=CHANGE,
+        result_kind=kind,
+        current_revision=old_revision,
+        request_comment_id=91,
+    )
+    model_action = Action(action)
+    decision = ActionApplicationDecision(
+        ApplicationDisposition.ACCEPT,
+        ActionSource(138, CHANGE, model_action, new_revision),
+        BoundedActionResult(
+            138, CHANGE, model_action, TypedResult(ResultKind(kind), "issuecomment-138-qualified")
+        ),
+        successor,
+        role_for(successor),
+    )
+    derived = effects.derived_transition_effect(
+        issue_number=138, change=CHANGE, successor=successor
+    )
+    monkeypatch.setattr(effects, "_typed_application_plan", lambda *_a: (decision, derived, None))
+    writes: list[str] = []
+    routed = False
+
+    def observe(effect: StagedEffect) -> bool:
+        return effect == old_formal or (effect == derived and routed)
+
+    def guard(effect: StagedEffect) -> bool:
+        if effect == old_formal:
+            pytest.fail("already committed formal result reached a write guard")
+        return current_gate_valid
+
+    def apply(effect: StagedEffect) -> None:
+        nonlocal routed
+        if effect != derived:
+            pytest.fail("formal result replayed under R2 correlation")
+        writes.append("successor")
+        routed = True
+
+    result = apply_effect_batch(
+        restored_batch,
+        fresh_preflight=lambda: cast(DispatchPreflight, None),
+        effect_guard=guard,
+        apply_effect=apply,
+        observe_postcondition=observe,
+        current_revision=new_revision,
+        accepted_intent=True,
+    )
+    assert result.applied is current_gate_valid
+    assert writes == (["successor"] if current_gate_valid else [])
+
+
+def test_application_continuation_at_r2_preserves_durable_r1_formal_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Exercise the real Application entrypoint, not only the restore helper.
+
+    The original formal POST succeeded but its response was lost. The R2
+    continuation must hand the exact R1 formal effect and correlation to the
+    shared executor; only the current, qualified successor may be written.
+    """
+    import investment_strategy.scheduled_agent_effects as effects
+
+    source = WorkerRequest(138, "lead", "resolve-question")
+    r1, r2 = REVISION, "c" * 40
+    request_id, continuation_id = 91, 1000
+    raw = json.dumps(
+        {
+            "_semantic_intent_version": 2,
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "accepted semantic decision",
+            "requested_effects": [],
+        },
+        sort_keys=True,
+    )
+    old_projection = application._application_owned_worker_result(
+        raw,
+        source=source,
+        change=CHANGE,
+        current_revision=r1,
+        result_revision=r1,
+        request_comment_id=request_id,
+    )
+    original_batch = parse_effect_batch(old_projection, source, authorized_change=CHANGE)
+    original_formal = original_batch.effects[0]
+    original_body = json.loads(original_formal.payload_json)["body"]
+    assert original_body.startswith("ACTION_RESULT\n")
+    status = EffectRecoveryEvidence(
+        failed_effect_index=0,
+        failed_effect_kind="issue-comment",
+        failed_effect_sha256=hashlib.sha256(original_formal.payload_json.encode()).hexdigest(),
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status="unknown",
+        unfinished_boundary="effect-postcondition",
+    )
+    snapshot = application._attempted_effect_checkpoint(original_batch, status)
+    assert snapshot is not None
+    failure = {
+        "reason": "effect response lost",
+        "failed_effect_index": 0,
+        "failed_effect_kind": status.failed_effect_kind,
+        "failed_effect_sha256": status.failed_effect_sha256,
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+        "mutation_status": "unknown",
+        "unfinished_boundary": "effect-postcondition",
+        "rejection": None,
+        "attempted_effects": snapshot,
+        "attempt_revision": r1,
+    }
+    request_body = application.render_application_request(application.ApplicationRequest(r1, raw))
+    decision_body = render_application_decision_body(
+        request_comment_id=request_id,
+        request_body=request_body,
+        authorization_revision=r1,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    record = parse_application_decision(decision_body)
+    assert record is not None
+    digest = hashlib.sha256(decision_body.encode()).hexdigest()
+    continuation_body = application.render_application_continuation_request(
+        repository="royhsu-work/investment-strategy",
+        issue_number=source.issue_number,
+        original_request_comment_id=request_id,
+        accepted_decision_sha256=digest,
+        predecessor_run_id=7001,
+        predecessor_run_attempt=1,
+        predecessor_job_id=7002,
+        predecessor_artifact_id=7003,
+        predecessor_artifact_digest="sha256:" + "d" * 64,
+        failure_evidence_sha256="e" * 64,
+        recovery_episode_sha256="f" * 64,
+    )
+    event = {
+        "action": "created",
+        "issue": {
+            "number": 142,
+            "title": "[Agent Runtime] 2026-09-03",
+            "state": "open",
+            "labels": [],
+        },
+        "comment": {
+            "id": continuation_id,
+            "body": continuation_body,
+            "user": {"login": "royhsu-work"},
+            "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+        },
+    }
+    event_path = tmp_path / "continuation-event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    continuation = application.parse_application_continuation_request(continuation_body)
+    assert continuation is not None
+    predecessor = application.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "d" * 64,
+        request_comment_id=request_id,
+        accepted_decision_sha256=digest,
+        failure_evidence_sha256="e" * 64,
+        recovery_episode_sha256="f" * 64,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={"failure_evidence": failure},
+    )
+
+    def r2_projection(_raw: str, **kwargs: object) -> str:
+        assert _raw == raw
+        assert kwargs["current_revision"] == r2
+        return application._application_owned_worker_result(
+            raw,
+            source=source,
+            change=CHANGE,
+            current_revision=r2,
+            result_revision=r1,
+            request_comment_id=request_id,
+        )
+
+    monkeypatch.setattr(application, "_fresh_application_worker_result", r2_projection)
+    monkeypatch.setattr(application, "_fresh_event_observation", lambda *_a: False)
+    preflight = acquire_dispatch_preflight(
+        observations=(
+            GitHubIssueObservation(
+                issue_number=source.issue_number,
+                change=CHANGE,
+                routing=("lead", "resolve-question"),
+                state="open",
+                created_order=1,
+                authoritative=True,
+                current_state_provenance=ObservationProvenance.QUALIFIED,
+            ),
+        ),
+        source_total_count=1,
+        incomplete_results=False,
+        exhausted=True,
+        human_authorized=True,
+    )
+    monkeypatch.setattr(application, "acquire_current_github_preflight", lambda *_a: preflight)
+    monkeypatch.setattr(
+        application,
+        "_find_application_decision_from_current_frontier",
+        lambda **_kw: record,
+    )
+    monkeypatch.setattr(
+        application,
+        "_application_decision_comment_for_request",
+        lambda **_kw: (record, decision_body),
+    )
+    monkeypatch.setattr(
+        application, "qualify_application_continuation_predecessor", lambda *_a, **_kw: predecessor
+    )
+    monkeypatch.setattr(application, "_authorization_revision_is_ancestor", lambda *_a: True)
+
+    class DurableReader:
+        def __init__(self, *_a: object, **kwargs: object) -> None:
+            assert kwargs[
+                "pending_application_correlation"
+            ] == effects.formal_application_correlation(
+                source,
+                change=CHANGE,
+                result_kind="ready",
+                current_revision=r1,
+                request_comment_id=request_id,
+            )
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            assert effect == original_formal
+            return True
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", DurableReader)
+    monkeypatch.setattr(application, "_write_carrier_outputs", lambda *_a: None)
+    monkeypatch.setattr(application, "_write_validation_outputs", lambda *_a: None)
+    monkeypatch.setattr(
+        application, "_write_application_recovery_evidence", lambda *_a, **_kw: True
+    )
+
+    effects_written: list[StagedEffect] = []
+    model_decision = ActionApplicationDecision(
+        ApplicationDisposition.ACCEPT,
+        ActionSource(138, CHANGE, Action.RESOLVE_QUESTION, r2),
+        BoundedActionResult(
+            138,
+            CHANGE,
+            Action.RESOLVE_QUESTION,
+            TypedResult(ResultKind.READY, "issuecomment-138-qualified"),
+        ),
+        Action.IMPLEMENT_CHANGE,
+        role_for(Action.IMPLEMENT_CHANGE),
+    )
+    successor = effects.derived_transition_effect(
+        issue_number=138, change=CHANGE, successor=Action.IMPLEMENT_CHANGE
+    )
+    monkeypatch.setattr(
+        effects, "_typed_application_plan", lambda *_a: (model_decision, successor, None)
+    )
+
+    def execute(
+        raw_worker_result: str, **kwargs: object
+    ) -> tuple[EffectBatch, effects.ApplyResult]:
+        assert kwargs["source"] == source
+        assert kwargs["current_revision"] == r2
+        assert kwargs["accepted_intent"] is True
+        assert kwargs["pending_application_correlation"] == effects.formal_application_correlation(
+            source,
+            change=CHANGE,
+            result_kind="ready",
+            current_revision=r1,
+            request_comment_id=request_id,
+        )
+        batch = parse_effect_batch(raw_worker_result, source, authorized_change=CHANGE)
+        assert batch.effects == (original_formal,)
+        result = apply_effect_batch(
+            batch,
+            fresh_preflight=lambda: cast(DispatchPreflight, None),
+            effect_guard=lambda effect: effect == successor,
+            apply_effect=effects_written.append,
+            observe_postcondition=lambda effect: (
+                effect == original_formal or effect in effects_written
+            ),
+            current_revision=r2,
+            accepted_intent=True,
+        )
+        return batch, result
+
+    monkeypatch.setattr(application, "run_guarded_effect_application", execute)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "royhsu-work/investment-strategy")
+    monkeypatch.setenv("GITHUB_TOKEN", "test")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "application-bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            r2,
+            "--default-branch",
+            "main",
+        ],
+    )
+    assert application._main_unprotected(application.ApplicationExceptionContext()) == 0
+    assert effects_written == [successor]
 
 
 @pytest.mark.parametrize("partially_complete", [False, True])

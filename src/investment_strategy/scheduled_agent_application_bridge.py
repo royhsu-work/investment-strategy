@@ -5425,6 +5425,101 @@ def _verified_attempted_effect_checkpoint(
     return tuple(attempted)
 
 
+def _retain_completed_accepted_formal_effect(
+    raw_projection: str,
+    *,
+    failure: Mapping[str, object],
+    source: WorkerRequest,
+    change: str,
+    result_kind: str,
+    request_comment_id: int,
+) -> tuple[str, str] | None:
+    """Reuse the *original* durable formal Effect, never synthesize a R2 copy.
+
+    The fresh worker projection remains the source for new unattempted Effects
+    and the Action model remains the sole successor authority. Only an exact
+    formal comment from the verified attempted prefix may replace its newly
+    rendered counterpart; other current consequences are not rewritten.
+    """
+
+    attempted = _verified_attempted_effect_checkpoint(failure, source=source)
+    if attempted is None:
+        return None
+    formal: list[StagedEffect] = []
+    for effect in attempted:
+        if effect.kind != "issue-comment":
+            continue
+        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
+        body = None if payload is None else payload.get("body")
+        if isinstance(body, str) and _marker(body) in _FORMAL_RESULT_MARKERS:
+            formal.append(effect)
+    if not formal:
+        return None
+    if len(formal) != 1:
+        raise RuntimeError("accepted attempted prefix has ambiguous formal result")
+    original = formal[0]
+    payload = _effect_payload({"kind": original.kind, "payload_json": original.payload_json})
+    original_body = None if payload is None else payload.get("body")
+    attempt_revision = failure.get("attempt_revision")
+    if (
+        not isinstance(original_body, str)
+        or _marker(original_body) != _expected_formal_marker(source)
+        or not isinstance(attempt_revision, str)
+        or _SHA.fullmatch(attempt_revision) is None
+        or _field(original_body, "Workflow") != f"#{source.issue_number}"
+        or _field(original_body, "Change") != change
+        or _field(original_body, "Action") != source.action
+        or _field(original_body, "Role") != source.role
+        or _field(original_body, "Result") != result_kind.upper().replace("-", "_")
+        or _field(original_body, "Default-Branch-Revision") != attempt_revision
+    ):
+        raise RuntimeError("accepted attempted formal identity is invalid")
+    original_correlation = formal_application_correlation(
+        source,
+        change=change,
+        result_kind=result_kind,
+        current_revision=attempt_revision,
+        request_comment_id=request_comment_id,
+    )
+    if _field(original_body, "Application-Correlation") != original_correlation:
+        raise RuntimeError("accepted attempted formal correlation is invalid")
+    decoded = json.loads(raw_projection)
+    if not isinstance(decoded, dict):
+        raise RuntimeError("current formal projection is unavailable")
+    requested = decoded.get("requested_effects")
+    if not isinstance(requested, list):
+        raise RuntimeError("current requested effects are unavailable")
+    formal_indexes: list[int] = []
+    for index, raw_effect in enumerate(requested):
+        if not isinstance(raw_effect, Mapping):
+            raise RuntimeError("current projected effect is invalid")
+        payload = _effect_payload(raw_effect)
+        body = None if payload is None else payload.get("body")
+        if (
+            raw_effect.get("kind") == "issue-comment"
+            and isinstance(body, str)
+            and _marker(body) in _FORMAL_RESULT_MARKERS
+        ):
+            formal_indexes.append(index)
+    if len(formal_indexes) != 1:
+        # A previously committed formal result cannot authorize an unrelated
+        # phase to be reopened or a new control write inserted ahead of it.
+        raise RuntimeError("completed formal result has no unique current projection")
+    if any(
+        isinstance(effect, Mapping) and effect.get("kind") == GITHUB_MUTATION_KIND
+        for effect in requested
+    ):
+        raise RuntimeError("completed formal result conflicts with a new control phase")
+    updated = list(requested)
+    updated[formal_indexes[0]] = {
+        "kind": original.kind,
+        "payload_json": original.payload_json,
+    }
+    decoded["requested_effects"] = updated
+    decoded["result_content"] = original_body
+    return json.dumps(decoded, sort_keys=True, separators=(",", ":")), original_correlation
+
+
 def _accepted_recovery_boundary(
     evidence: Mapping[str, object],
 ) -> Literal["CARRIER", "ZERO_WRITE_REJECTION", "READ_ONLY", "NONE"]:
@@ -6492,6 +6587,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             authorized_change=plan.change,
         )
 
+    retained_formal_correlation = plan.pending_application_correlation
     predecessor_disposition = (
         None
         if predecessor_evidence is None
@@ -6564,6 +6660,21 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 # originally uncertain Effect at its former array index.
                 predecessor_disposition = "RECONCILE_EFFECTS"
                 uncertain_effect_index = None
+                restored_formal = _retain_completed_accepted_formal_effect(
+                    application_worker_result,
+                    failure=failure,
+                    source=plan.source,
+                    change=accepted_intent.change,
+                    result_kind=accepted_intent.result_kind,
+                    request_comment_id=plan.request_comment_id,
+                )
+                if restored_formal is not None:
+                    application_worker_result, retained_formal_correlation = restored_formal
+                    worker_result = parse_worker_result(
+                        application_worker_result,
+                        plan.source,
+                        authorized_change=plan.change,
+                    )
     if continuation is not None and predecessor_disposition == "ZERO_WRITE_REJECTION":
         # Only a *proven* deterministic zero-write rejection takes the
         # administrative correction route. CarrierRequired (even for merge)
@@ -6624,7 +6735,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 request_comment_id=plan.request_comment_id,
                 defer_issue_comments=first_activation,
                 allow_pending_continuation=pending_continuation,
-                pending_application_correlation=plan.pending_application_correlation,
+                pending_application_correlation=retained_formal_correlation,
                 application_request_body=application_request_body,
                 authorization_revision=request.authorization_revision,
                 authorized_change=plan.change,
@@ -6669,7 +6780,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 defer_issue_comments=(requires_validation and not args.validation_passed)
                 or defer_accepted_checkpoint,
                 allow_pending_continuation=pending_continuation,
-                pending_application_correlation=plan.pending_application_correlation,
+                pending_application_correlation=retained_formal_correlation,
                 application_request_body=application_request_body,
                 authorization_revision=request.authorization_revision,
                 authorized_change=plan.change,
