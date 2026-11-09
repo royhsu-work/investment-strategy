@@ -65,6 +65,7 @@ from investment_strategy.scheduled_agent_effects import (
     GITHUB_MUTATION_KIND,
     ApplicationDecisionRecord,
     ApplyResult,
+    EffectBatch,
     EffectRecoveryEvidence,
     GitHubEffectAdapter,
     StagedEffect,
@@ -75,6 +76,7 @@ from investment_strategy.scheduled_agent_effects import (
     archive_branch_matches_current_source,
     archive_branch_source_status,
     consequence_postconditions_complete,
+    derived_transition_effect,
     formal_application_correlation,
     merged_pr_readiness_complete,
     parse_application_decision,
@@ -96,6 +98,11 @@ from investment_strategy.scheduled_agent_runtime import (
     normalize_github_issue,
 )
 from investment_strategy.scheduled_agent_validation_resource import ValidationResourceTarget
+from investment_strategy.scheduled_agent_wire import (
+    APPLICATION_CONTINUATION_WIRE,
+    EFFECT_REQUEST_WIRE,
+    MACHINE_EFFECT_REQUEST_WIRE,
+)
 from investment_strategy.scheduled_agent_worker import WorkerActionResult, parse_worker_result
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
@@ -283,21 +290,20 @@ def render_application_continuation_request(
         failure_evidence_sha256,
         recovery_episode_sha256,
     )
-    return "\n".join(
-        (
-            APPLICATION_CONTINUATION_MARKER,
-            f"Issue: {issue_number}",
-            f"{ORIGINAL_REQUEST_COMMENT_PREFIX}{original_request_comment_id}",
-            f"{ACCEPTED_DECISION_SHA256_PREFIX}{accepted_decision_sha256}",
-            f"{PREDECESSOR_RUN_ID_PREFIX}{predecessor_run_id}",
-            f"{PREDECESSOR_RUN_ATTEMPT_PREFIX}{predecessor_run_attempt}",
-            f"{PREDECESSOR_JOB_ID_PREFIX}{predecessor_job_id}",
-            f"{PREDECESSOR_ARTIFACT_ID_PREFIX}{predecessor_artifact_id}",
-            f"{PREDECESSOR_ARTIFACT_DIGEST_PREFIX}{predecessor_artifact_digest}",
-            f"{FAILURE_EVIDENCE_SHA256_PREFIX}{failure_evidence_sha256}",
-            f"{RECOVERY_EPISODE_SHA256_PREFIX}{recovery_episode_sha256}",
-            f"{CONTINUATION_CORRELATION_PREFIX}{correlation}",
-        )
+    return APPLICATION_CONTINUATION_WIRE.render(
+        {
+            "Issue": str(issue_number),
+            "Original-Request-Comment": str(original_request_comment_id),
+            "Accepted-Decision-SHA256": accepted_decision_sha256,
+            "Predecessor-Run-ID": str(predecessor_run_id),
+            "Predecessor-Run-Attempt": str(predecessor_run_attempt),
+            "Predecessor-Job-ID": str(predecessor_job_id),
+            "Predecessor-Artifact-ID": str(predecessor_artifact_id),
+            "Predecessor-Artifact-Digest": predecessor_artifact_digest,
+            "Failure-Evidence-SHA256": failure_evidence_sha256,
+            "Recovery-Episode-SHA256": recovery_episode_sha256,
+            "Continuation-Correlation": correlation,
+        }
     )
 
 
@@ -306,48 +312,30 @@ def parse_application_continuation_request(
 ) -> ApplicationContinuationRequest | None:
     """Parse a strict transport bound to one exact recovery evidence transition."""
 
-    lines = body.splitlines()
-    if len(lines) != 12 or lines[0] != APPLICATION_CONTINUATION_MARKER:
+    fields = APPLICATION_CONTINUATION_WIRE.parse(body)
+    if fields is None:
         return None
-    prefixes = (
-        "Issue: ",
-        ORIGINAL_REQUEST_COMMENT_PREFIX,
-        ACCEPTED_DECISION_SHA256_PREFIX,
-        PREDECESSOR_RUN_ID_PREFIX,
-        PREDECESSOR_RUN_ATTEMPT_PREFIX,
-        PREDECESSOR_JOB_ID_PREFIX,
-        PREDECESSOR_ARTIFACT_ID_PREFIX,
-        PREDECESSOR_ARTIFACT_DIGEST_PREFIX,
-        FAILURE_EVIDENCE_SHA256_PREFIX,
-        RECOVERY_EPISODE_SHA256_PREFIX,
-        CONTINUATION_CORRELATION_PREFIX,
-    )
-    values: list[str] = []
-    for line, prefix in zip(lines[1:], prefixes, strict=True):
-        if not line.startswith(prefix):
-            return None
-        values.append(line[len(prefix) :])
     try:
-        issue_number = int(values[0])
-        original_request_comment_id = int(values[1])
-        predecessor_run_id = int(values[3])
-        predecessor_run_attempt = int(values[4])
-        predecessor_job_id = int(values[5])
-        predecessor_artifact_id = int(values[6])
+        issue_number = int(fields["Issue"])
+        original_request_comment_id = int(fields["Original-Request-Comment"])
+        predecessor_run_id = int(fields["Predecessor-Run-ID"])
+        predecessor_run_attempt = int(fields["Predecessor-Run-Attempt"])
+        predecessor_job_id = int(fields["Predecessor-Job-ID"])
+        predecessor_artifact_id = int(fields["Predecessor-Artifact-ID"])
     except ValueError:
         return None
-    accepted_decision_sha256 = values[2]
-    predecessor_artifact_digest = values[7]
-    failure_evidence_sha256 = values[8]
-    recovery_episode_sha256 = values[9]
-    continuation_correlation = values[10]
+    accepted_decision_sha256 = fields["Accepted-Decision-SHA256"]
+    predecessor_artifact_digest = fields["Predecessor-Artifact-Digest"]
+    failure_evidence_sha256 = fields["Failure-Evidence-SHA256"]
+    recovery_episode_sha256 = fields["Recovery-Episode-SHA256"]
+    continuation_correlation = fields["Continuation-Correlation"]
     integer_pairs = (
-        (values[0], issue_number),
-        (values[1], original_request_comment_id),
-        (values[3], predecessor_run_id),
-        (values[4], predecessor_run_attempt),
-        (values[5], predecessor_job_id),
-        (values[6], predecessor_artifact_id),
+        (fields["Issue"], issue_number),
+        (fields["Original-Request-Comment"], original_request_comment_id),
+        (fields["Predecessor-Run-ID"], predecessor_run_id),
+        (fields["Predecessor-Run-Attempt"], predecessor_run_attempt),
+        (fields["Predecessor-Job-ID"], predecessor_job_id),
+        (fields["Predecessor-Artifact-ID"], predecessor_artifact_id),
     )
     if any(_positive_int(value) is None or raw != str(value) for raw, value in integer_pairs):
         return None
@@ -430,35 +418,21 @@ def typed_request_lines(body: str) -> list[str]:
 def parse_application_request(body: str) -> ApplicationRequest | None:
     """Parse the bounded effect ingress and optional machine correlation."""
 
-    lines = typed_request_lines(body)
-    if not lines or lines[0] != APPLICATION_REQUEST_MARKER:
+    if body.split("\n", 1)[0] != APPLICATION_REQUEST_MARKER:
         return None
-    if len(lines) not in {3, 4}:
+    fields = MACHINE_EFFECT_REQUEST_WIRE.parse(body)
+    if fields is None:
+        fields = EFFECT_REQUEST_WIRE.parse(body)
+    if fields is None:
         raise ValueError(
-            "EFFECT_REQUEST must contain exactly three lines or the four-line machine form"
+            "EFFECT_REQUEST must contain exactly three lines or the four-line machine form; "
+            "fields, order, or framing are invalid"
         )
-    if not lines[1].startswith(AUTHORIZATION_REVISION_PREFIX):
-        if len(lines) == 4:
-            raise ValueError(
-                "EFFECT_REQUEST must contain exactly three lines or the four-line machine form"
-            )
-        raise ValueError("EFFECT_REQUEST field order is invalid")
-
-    authorization_revision = lines[1][len(AUTHORIZATION_REVISION_PREFIX) :]
-    dispatch_correlation: str | None = None
-    worker_line = lines[2]
-    if len(lines) == 4:
-        if not lines[2].startswith(DISPATCH_CORRELATION_PREFIX):
-            raise ValueError(
-                "EFFECT_REQUEST must contain exactly three lines or the four-line machine form"
-            )
-        dispatch_correlation = lines[2][len(DISPATCH_CORRELATION_PREFIX) :]
-        if not re.fullmatch(r"[0-9a-f]{64}", dispatch_correlation):
-            raise ValueError("EFFECT_REQUEST dispatch correlation is invalid")
-        worker_line = lines[3]
-    if not worker_line.startswith(WORKER_RESULT_B64_PREFIX):
-        raise ValueError("EFFECT_REQUEST field order is invalid")
-    encoded_result = worker_line[len(WORKER_RESULT_B64_PREFIX) :]
+    authorization_revision = fields["Authorization-Revision"]
+    dispatch_correlation = fields.get("Dispatch-Correlation")
+    if dispatch_correlation is not None and not re.fullmatch(r"[0-9a-f]{64}", dispatch_correlation):
+        raise ValueError("EFFECT_REQUEST dispatch correlation is invalid")
+    encoded_result = fields["Worker-Result-B64"]
     if _SHA.fullmatch(authorization_revision) is None or not encoded_result:
         raise ValueError("EFFECT_REQUEST authorization identity is invalid")
     if encoded_result != encoded_result.strip():
@@ -590,16 +564,18 @@ def _render_accepted_application_wire(request: ApplicationRequest) -> str:
     """
 
     encoded = base64.b64encode(request.raw_worker_result.encode("utf-8")).decode("ascii")
-    lines = [
-        APPLICATION_REQUEST_MARKER,
-        f"{AUTHORIZATION_REVISION_PREFIX}{request.authorization_revision}",
-    ]
+    fields = {
+        "Authorization-Revision": request.authorization_revision,
+        "Worker-Result-B64": encoded,
+    }
     if request.dispatch_correlation is not None:
         if not re.fullmatch(r"[0-9a-f]{64}", request.dispatch_correlation):
             raise ValueError("application request dispatch correlation is invalid")
-        lines.append(f"{DISPATCH_CORRELATION_PREFIX}{request.dispatch_correlation}")
-    lines.append(f"{WORKER_RESULT_B64_PREFIX}{encoded}")
-    body = "\n".join(lines)
+        fields["Dispatch-Correlation"] = request.dispatch_correlation
+        contract = MACHINE_EFFECT_REQUEST_WIRE
+    else:
+        contract = EFFECT_REQUEST_WIRE
+    body = contract.render(fields)
     if parse_application_request(body) != request:
         raise ValueError("application request renderer/parser contract mismatch")
     return body
@@ -5064,6 +5040,10 @@ def read_application_recovery_artifact(
         or run.get("display_title") != f"Scheduled Agent Application {trigger_comment_id}"
     ):
         return unavailable()
+    if cast(bool, document["continuation_eligible"]) and (
+        _accepted_recovery_boundary(cast(Mapping[str, object], failure_evidence)) == "NONE"
+    ):
+        return unavailable()
     predecessor = document.get("predecessor")
     if recovery_attempt == 1:
         if predecessor is not None or prior_failures:
@@ -5342,6 +5322,495 @@ def _recovery_failure_document(result: ApplyResult) -> dict[str, object]:
     }
 
 
+def _attempted_effect_checkpoint(
+    batch: EffectBatch,
+    recovery: EffectRecoveryEvidence,
+) -> list[dict[str, object]] | None:
+    """Snapshot the exact attempted prefix, never a later state-dependent projection.
+
+    This is part of the existing content-addressed recovery artifact, not a
+    separate registry. The hashes already emitted by the Effect engine must
+    match the snapshot before it can qualify a read-only observation.
+    """
+
+    index = recovery.failed_effect_index
+    if index < 0 or index > len(batch.effects) or batch.typed_result is None:
+        return None
+    attempted = list(batch.effects[: min(index + 1, len(batch.effects))])
+    if index == len(batch.effects):
+        attempted.append(
+            derived_transition_effect(
+                issue_number=batch.source.issue_number,
+                change=batch.typed_result.change,
+                successor=next_action(batch.typed_result.action, batch.typed_result.result),
+            )
+        )
+    if (
+        not attempted
+        or attempted[-1].kind != recovery.failed_effect_kind
+        or hashlib.sha256(attempted[-1].payload_json.encode()).hexdigest()
+        != recovery.failed_effect_sha256
+        or any(
+            position >= len(batch.effects)
+            or hashlib.sha256(batch.effects[position].payload_json.encode()).hexdigest() != digest
+            for position, digest in zip(
+                recovery.completed_effect_indexes,
+                recovery.completed_effect_sha256,
+                strict=True,
+            )
+        )
+    ):
+        return None
+    return [
+        {"kind": effect.kind, "payload_json": effect.payload_json, "derived": effect.derived}
+        for effect in attempted
+    ]
+
+
+def _verified_attempted_effect_checkpoint(
+    failure: Mapping[str, object],
+    *,
+    source: WorkerRequest,
+) -> tuple[StagedEffect, ...] | None:
+    """Validate stored write identity before invoking the shared observer."""
+
+    snapshot = failure.get("attempted_effects")
+    index = failure.get("failed_effect_index")
+    completed = failure.get("completed_effect_indexes")
+    hashes = failure.get("completed_effect_sha256")
+    if (
+        not isinstance(snapshot, list)
+        or type(index) is not int
+        or index < 0
+        or len(snapshot) != index + 1
+        or not isinstance(completed, list)
+        or not isinstance(hashes, list)
+        or len(completed) != len(hashes)
+        or len(snapshot) > 256
+    ):
+        return None
+    attempted: list[StagedEffect] = []
+    for position, entry in enumerate(snapshot):
+        if (
+            not isinstance(entry, Mapping)
+            or set(entry) != {"kind", "payload_json", "derived"}
+            or not isinstance(entry.get("kind"), str)
+            or not isinstance(entry.get("payload_json"), str)
+            or not isinstance(entry.get("derived"), bool)
+            or (position < index and entry["derived"])
+        ):
+            return None
+        effect = StagedEffect(
+            kind=cast(str, entry["kind"]),
+            payload_json=cast(str, entry["payload_json"]),
+            derived=cast(bool, entry["derived"]),
+        )
+        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
+        if payload is None or payload.get("issue_number") != source.issue_number:
+            return None
+        attempted.append(effect)
+    if (
+        attempted[-1].kind != failure.get("failed_effect_kind")
+        or hashlib.sha256(attempted[-1].payload_json.encode()).hexdigest()
+        != failure.get("failed_effect_sha256")
+        or any(
+            type(position) is not int
+            or position < 0
+            or position >= index
+            or hashlib.sha256(attempted[position].payload_json.encode()).hexdigest() != digest
+            for position, digest in zip(completed, hashes, strict=True)
+        )
+    ):
+        return None
+    return tuple(attempted)
+
+
+def _attempted_formal_revision(
+    attempted: Sequence[StagedEffect],
+    *,
+    source: WorkerRequest,
+    change: str,
+    result_kind: str,
+    request_comment_id: int,
+) -> str | None:
+    """Read a formal result's original revision from its exact Effect payload.
+
+    A later continuation's default-branch HEAD is not the revision of an
+    already-committed formal comment. This identity must survive *subsequent*
+    interrupted or zero-write-rejected successor attempts as well.
+    """
+
+    formal_bodies: list[str] = []
+    for effect in attempted:
+        if effect.kind != "issue-comment":
+            continue
+        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
+        body = None if payload is None else payload.get("body")
+        if isinstance(body, str) and _marker(body) in _FORMAL_RESULT_MARKERS:
+            formal_bodies.append(body)
+    if not formal_bodies:
+        return None
+    if len(formal_bodies) != 1:
+        raise RuntimeError("accepted attempted prefix has ambiguous formal result")
+    body = formal_bodies[0]
+    revision = _field(body, "Default-Branch-Revision")
+    if (
+        not isinstance(revision, str)
+        or _SHA.fullmatch(revision) is None
+        or _marker(body) != _expected_formal_marker(source)
+        or _field(body, "Workflow") != f"#{source.issue_number}"
+        or _field(body, "Change") != change
+        or _field(body, "Action") != source.action
+        or _field(body, "Role") != source.role
+        or _field(body, "Result") != result_kind.upper().replace("-", "_")
+        or _field(body, "Application-Correlation")
+        != formal_application_correlation(
+            source,
+            change=change,
+            result_kind=result_kind,
+            current_revision=revision,
+            request_comment_id=request_comment_id,
+        )
+    ):
+        raise RuntimeError("accepted attempted formal identity is invalid")
+    return revision
+
+
+def _retain_completed_accepted_formal_effect(
+    raw_projection: str,
+    *,
+    failure: Mapping[str, object],
+    source: WorkerRequest,
+    change: str,
+    result_kind: str,
+    request_comment_id: int,
+) -> tuple[str, str] | None:
+    """Reuse the *original* durable formal Effect, never synthesize a R2 copy.
+
+    The fresh worker projection remains the source for new unattempted Effects
+    and the Action model remains the sole successor authority. Only an exact
+    formal comment from the verified attempted prefix may replace its newly
+    rendered counterpart; other current consequences are not rewritten.
+    """
+
+    attempted = _verified_attempted_effect_checkpoint(failure, source=source)
+    if attempted is None:
+        return None
+    original_revision = _attempted_formal_revision(
+        attempted,
+        source=source,
+        change=change,
+        result_kind=result_kind,
+        request_comment_id=request_comment_id,
+    )
+    if original_revision is None:
+        return None
+    if failure.get("attempt_revision") != original_revision:
+        raise RuntimeError("accepted attempted formal revision is inconsistent")
+    formal: list[StagedEffect] = []
+    for effect in attempted:
+        if effect.kind != "issue-comment":
+            continue
+        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
+        body = None if payload is None else payload.get("body")
+        if isinstance(body, str) and _marker(body) in _FORMAL_RESULT_MARKERS:
+            formal.append(effect)
+    if not formal:
+        return None
+    if len(formal) != 1:
+        raise RuntimeError("accepted attempted prefix has ambiguous formal result")
+    original = formal[0]
+    payload = _effect_payload({"kind": original.kind, "payload_json": original.payload_json})
+    original_body = None if payload is None else payload.get("body")
+    if not isinstance(original_body, str):
+        raise RuntimeError("accepted attempted formal body is invalid")
+    original_correlation = formal_application_correlation(
+        source,
+        change=change,
+        result_kind=result_kind,
+        current_revision=original_revision,
+        request_comment_id=request_comment_id,
+    )
+    decoded = json.loads(raw_projection)
+    if not isinstance(decoded, dict):
+        raise RuntimeError("current formal projection is unavailable")
+    requested = decoded.get("requested_effects")
+    if not isinstance(requested, list):
+        raise RuntimeError("current requested effects are unavailable")
+    formal_indexes: list[int] = []
+    for index, raw_effect in enumerate(requested):
+        if not isinstance(raw_effect, Mapping):
+            raise RuntimeError("current projected effect is invalid")
+        payload = _effect_payload(raw_effect)
+        body = None if payload is None else payload.get("body")
+        if (
+            raw_effect.get("kind") == "issue-comment"
+            and isinstance(body, str)
+            and _marker(body) in _FORMAL_RESULT_MARKERS
+        ):
+            formal_indexes.append(index)
+    if len(formal_indexes) != 1:
+        # A previously committed formal result cannot authorize an unrelated
+        # phase to be reopened or a new control write inserted ahead of it.
+        raise RuntimeError("completed formal result has no unique current projection")
+    if any(
+        isinstance(effect, Mapping) and effect.get("kind") == GITHUB_MUTATION_KIND
+        for effect in requested
+    ):
+        raise RuntimeError("completed formal result conflicts with a new control phase")
+    updated = list(requested)
+    updated[formal_indexes[0]] = {
+        "kind": original.kind,
+        "payload_json": original.payload_json,
+    }
+    decoded["requested_effects"] = updated
+    decoded["result_content"] = original_body
+    return json.dumps(decoded, sort_keys=True, separators=(",", ":")), original_correlation
+
+
+def _accepted_recovery_boundary(
+    evidence: Mapping[str, object],
+) -> Literal["CARRIER", "ZERO_WRITE_REJECTION", "READ_ONLY", "NONE"]:
+    """One structural eligibility contract for producer and artifact reader.
+
+    Eligibility starts a *read*, not a retry permission. Unknown attempted
+    effects and known zero-write-rejected suffixes both require a proven
+    original prefix before normal current guards may authorize later writes.
+    Artifact prose never upgrades an unsupported boundary into permission.
+    """
+
+    if (
+        evidence.get("unfinished_boundary") == "carrier-required"
+        and evidence.get("mutation_status") == "not-complete"
+        and evidence.get("reason") in {"carrier_required", "carrier-required"}
+        and isinstance(evidence.get("carrier_plan_id"), str)
+        and bool(evidence["carrier_plan_id"])
+        and evidence.get("completed_effect_indexes") == []
+        and evidence.get("completed_effect_sha256") == []
+    ):
+        return "CARRIER"
+    rejection = evidence.get("rejection")
+    known_rejection = (
+        evidence.get("unfinished_boundary") == "effect-precondition"
+        and evidence.get("mutation_status") == "not-complete"
+        and isinstance(rejection, Mapping)
+        and rejection.get("classification") == "effect-precondition-unsatisfied"
+    )
+    indexes = evidence.get("completed_effect_indexes")
+    hashes = evidence.get("completed_effect_sha256")
+    exact_frontier = (
+        isinstance(indexes, list)
+        and isinstance(hashes, list)
+        and len(indexes) == len(hashes)
+        and all(type(index) is int and index >= 0 for index in indexes)
+        and indexes == sorted(set(indexes))
+        and all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in hashes)
+    )
+    exact_failure = (
+        type(evidence.get("failed_effect_index")) is int
+        and cast(int, evidence["failed_effect_index"]) >= 0
+        and isinstance(evidence.get("failed_effect_kind"), str)
+        and bool(evidence["failed_effect_kind"])
+        and isinstance(evidence.get("failed_effect_sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", cast(str, evidence["failed_effect_sha256"])) is not None
+    )
+    if known_rejection and exact_frontier and exact_failure and not indexes:
+        return "ZERO_WRITE_REJECTION"
+    if exact_frontier and exact_failure:
+        if known_rejection and indexes:
+            return "READ_ONLY"
+        if evidence.get("mutation_status") == "unknown" and evidence.get("unfinished_boundary") in {
+            "effect-postcondition",
+            "derived-effect-postcondition",
+            "effect-reconciliation",
+        }:
+            return "READ_ONLY"
+    return "NONE"
+
+
+def _accepted_predecessor_disposition(
+    predecessor: ApplicationRecoveryArtifact,
+) -> Literal["RECONCILE_EFFECTS", "ZERO_WRITE_REJECTION", "INDETERMINATE"]:
+    """Preserve the original accepted intent and select only lawful next work."""
+
+    evidence = predecessor.document.get("failure_evidence")
+    if not predecessor.continuation_eligible or not isinstance(evidence, Mapping):
+        return "INDETERMINATE"
+    boundary = _accepted_recovery_boundary(evidence)
+    if boundary == "CARRIER":
+        return "RECONCILE_EFFECTS"
+    if boundary == "ZERO_WRITE_REJECTION":
+        return "ZERO_WRITE_REJECTION"
+    return "INDETERMINATE"
+
+
+def accepted_read_only_effects_complete(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    recovery_evidence: Mapping[str, object],
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+) -> bool:
+    """Freshly observe *only* the effects of one immutable ACCEPTED intent.
+
+    This is a read-only projection of the same GitHubEffectAdapter postcondition
+    owner that the actual Application uses. Dispatch may use the observation to
+    decide whether another read-only continuation is useful; it must not apply
+    an effect, persist a result, or authorize a successor on this predicate.
+    The Application independently requalifies everything before any mutation.
+    """
+
+    if (
+        record.disposition != "ACCEPTED"
+        or record.issue_number != source.issue_number
+        or record.role != source.role
+        or record.action != source.action
+        or _accepted_recovery_boundary(recovery_evidence) != "READ_ONLY"
+        or _SHA.fullmatch(current_revision) is None
+        or not default_branch
+    ):
+        return False
+    try:
+        # Prefer the immutable attempted prefix emitted by the actual
+        # Application run. A fresh projection may legitimately switch from
+        # workflow-dispatch to PR-create, or merge to ref-delete, and must
+        # never become the identity of the *previously attempted* write.
+        if "attempted_effects" in recovery_evidence:
+            attempted = _verified_attempted_effect_checkpoint(recovery_evidence, source=source)
+            if attempted is None:
+                return False
+            attempted_revision = recovery_evidence.get("attempt_revision")
+            if (
+                not isinstance(attempted_revision, str)
+                or _SHA.fullmatch(attempted_revision) is None
+            ):
+                return False
+            adapter = GitHubEffectAdapter(
+                repository,
+                token,
+                source,
+                authorized_change=record.change,
+                current_revision=current_revision,
+                expected_result_kind=record.result_kind,
+                request_comment_id=record.request_comment_id,
+                authorization_revision=record.authorization_revision,
+                allow_pending_continuation=True,
+                accepted_intent=True,
+                pending_application_correlation=formal_application_correlation(
+                    source,
+                    change=record.change,
+                    result_kind=record.result_kind,
+                    current_revision=attempted_revision,
+                    request_comment_id=record.request_comment_id,
+                ),
+            )
+            rejection_document = recovery_evidence.get("rejection")
+            deterministic_suffix_rejection = (
+                recovery_evidence.get("unfinished_boundary") == "effect-precondition"
+                and recovery_evidence.get("mutation_status") == "not-complete"
+                and isinstance(rejection_document, Mapping)
+                and rejection_document.get("classification") == "effect-precondition-unsatisfied"
+            )
+            if deterministic_suffix_rejection:
+                # The failed Effect has not been attempted. Require the exact
+                # ordered completed prefix to be independently observed, then
+                # return to ordinary fresh guards for the missing suffix.
+                # Requiring the failed guard's postcondition would deadlock:
+                # no actor has ever made that write.
+                failed_index = recovery_evidence.get("failed_effect_index")
+                if (
+                    type(failed_index) is not int
+                    or failed_index < 1
+                    or recovery_evidence.get("completed_effect_indexes")
+                    != list(range(failed_index))
+                ):
+                    return False
+                return all(adapter.observe_postcondition(effect) for effect in attempted[:-1])
+            return all(adapter.observe_postcondition(effect) for effect in attempted)
+        # Reuse the accepted-intent projection used by the actual Application,
+        # including current, application-owned control effects. Never treat an
+        # empty/missing projection as vacuous proof of an old unknown write.
+        raw = _fresh_application_worker_result(
+            record.raw_worker_result,
+            source=source,
+            change=record.change,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            request_comment_id=record.request_comment_id,
+        )
+        batch = parse_effect_batch(raw, source, authorized_change=record.change)
+        if batch.typed_result is None or not batch.effects:
+            return False
+        failed_index = recovery_evidence.get("failed_effect_index")
+        completed_indexes = recovery_evidence.get("completed_effect_indexes")
+        if (
+            type(failed_index) is not int
+            or failed_index > len(batch.effects)
+            or not isinstance(completed_indexes, list)
+            or any(
+                type(index) is not int or index >= len(batch.effects) for index in completed_indexes
+            )
+        ):
+            return False
+        completed_hashes = recovery_evidence.get("completed_effect_sha256")
+        if not isinstance(completed_hashes, list) or len(completed_hashes) != len(
+            completed_indexes
+        ):
+            return False
+        if any(
+            hashlib.sha256(batch.effects[index].payload_json.encode()).hexdigest() != digest
+            for index, digest in zip(completed_indexes, completed_hashes, strict=True)
+        ):
+            return False
+        failed_effect = (
+            batch.effects[failed_index]
+            if failed_index < len(batch.effects)
+            else derived_transition_effect(
+                issue_number=source.issue_number,
+                change=record.change,
+                successor=next_action(batch.typed_result.action, batch.typed_result.result),
+            )
+        )
+        if (
+            recovery_evidence.get("failed_effect_kind") != failed_effect.kind
+            or recovery_evidence.get("failed_effect_sha256")
+            != hashlib.sha256(failed_effect.payload_json.encode()).hexdigest()
+        ):
+            return False
+        adapter = GitHubEffectAdapter(
+            repository,
+            token,
+            source,
+            authorized_change=record.change,
+            current_revision=current_revision,
+            expected_result_kind=batch.typed_result.result.kind.value,
+            request_comment_id=record.request_comment_id,
+            authorization_revision=record.authorization_revision,
+            allow_pending_continuation=True,
+            accepted_intent=True,
+        )
+        # Only the attempted prefix is uncertain. Effects after the failure
+        # could not yet have been written by the sequential Application; their
+        # missing formal result must NOT prevent a safe continuation.
+        if not all(
+            adapter.observe_postcondition(effect)
+            for index, effect in enumerate(batch.effects)
+            if index <= failed_index
+        ):
+            return False
+        if failed_index == len(batch.effects):
+            return adapter.observe_postcondition(failed_effect)
+        return True
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        # An unavailable or contradictory observation cannot grant a retry.
+        return False
+
+
 def _write_application_recovery_evidence(
     path: str | None,
     *,
@@ -5356,6 +5825,7 @@ def _write_application_recovery_evidence(
     run_attempt: int,
     continuation: ApplicationContinuationRequest | None,
     predecessor: ApplicationRecoveryArtifact | None,
+    effect_batch: EffectBatch | None = None,
 ) -> bool:
     """Persist a bounded, content-addressed application boundary for later reads."""
 
@@ -5391,6 +5861,81 @@ def _write_application_recovery_evidence(
         return False
 
     failure_evidence = _recovery_failure_document(result)
+    recovery = result.recovery_evidence
+    if recovery is not None and _accepted_recovery_boundary(failure_evidence) == "READ_ONLY":
+        known_unattempted_suffix = (
+            recovery.mutation_status == "not-complete"
+            and recovery.unfinished_boundary == "effect-precondition"
+            and recovery.rejection is not None
+            and recovery.rejection.classification.value == "effect-precondition-unsatisfied"
+            and recovery.completed_effect_indexes == tuple(range(recovery.failed_effect_index))
+        )
+        if recovery.mutation_status != "unknown" and not known_unattempted_suffix:
+            return False
+        predecessor_failure = (
+            None if predecessor is None else predecessor.document.get("failure_evidence")
+        )
+        inherited = (
+            _verified_attempted_effect_checkpoint(predecessor_failure, source=source)
+            if not known_unattempted_suffix
+            and isinstance(predecessor_failure, Mapping)
+            and predecessor_failure.get("failed_effect_sha256") == recovery.failed_effect_sha256
+            and predecessor_failure.get("failed_effect_kind") == recovery.failed_effect_kind
+            and predecessor_failure.get("failed_effect_index") == recovery.failed_effect_index
+            and "attempted_effects" in predecessor_failure
+            else None
+        )
+        attempted = (
+            [
+                {
+                    "kind": effect.kind,
+                    "payload_json": effect.payload_json,
+                    "derived": effect.derived,
+                }
+                for effect in inherited
+            ]
+            if inherited is not None
+            else (
+                None
+                if effect_batch is None
+                else _attempted_effect_checkpoint(effect_batch, recovery)
+            )
+        )
+        if attempted is None:
+            if effect_batch is not None or (
+                isinstance(predecessor_failure, Mapping)
+                and "attempted_effects" in predecessor_failure
+            ):
+                return False
+        else:
+            failure_evidence["attempted_effects"] = attempted
+            try:
+                formal_revision = _attempted_formal_revision(
+                    tuple(
+                        StagedEffect(
+                            kind=cast(str, entry["kind"]),
+                            payload_json=cast(str, entry["payload_json"]),
+                            derived=cast(bool, entry["derived"]),
+                        )
+                        for entry in attempted
+                    ),
+                    source=source,
+                    change=accepted_record.change,
+                    result_kind=accepted_record.result_kind,
+                    request_comment_id=request_comment_id,
+                )
+            except (KeyError, TypeError, RuntimeError):
+                return False
+            attempt_revision = (
+                predecessor_failure.get("attempt_revision")
+                if inherited is not None and isinstance(predecessor_failure, Mapping)
+                else formal_revision or current_revision
+            )
+            if not isinstance(attempt_revision, str) or _SHA.fullmatch(attempt_revision) is None:
+                return False
+            if formal_revision is not None and attempt_revision != formal_revision:
+                return False
+            failure_evidence["attempt_revision"] = attempt_revision
     failure_evidence_sha256 = _canonical_sha256(failure_evidence)
     if predecessor is None:
         episode_sha256 = _canonical_sha256(
@@ -5421,29 +5966,15 @@ def _write_application_recovery_evidence(
             "failure_evidence_sha256": predecessor.failure_evidence_sha256,
             "recovery_attempt": predecessor.recovery_attempt,
         }
-    recovery = result.recovery_evidence
-    rejection = None if recovery is None else recovery.rejection
-    rejection_classification = (
-        None
-        if rejection is None
-        else getattr(rejection.classification, "value", rejection.classification)
-    )
-    # Only a freshly observed, exact precondition rejection before any write is
-    # eligible for a fresh run. Partial writes and unknown postconditions need
-    # reconciliation at their owning effect boundary before continuation.
-    safe_precondition_rejection = (
-        recovery is not None
-        and rejection_classification == "effect-precondition-unsatisfied"
-        and recovery.mutation_status == "not-complete"
-        and recovery.unfinished_boundary == "effect-precondition"
-        and not recovery.completed_effect_indexes
-        and not recovery.completed_effect_sha256
-    )
-    # A rejected merge can resume only through the dedicated application-owned
-    # administrative recovery entry; the original MERGED effect is never
-    # passed to the mutation carrier again. The exact artifact is a bounded
-    # checkpoint, not permission to replay the accepted semantic result.
-    continuation_eligible = result.carrier_plan is not None or safe_precondition_rejection
+    # The structural boundary is shared with the independent reader. READ_ONLY
+    # means prove the immutable attempted/completed prefix before any new
+    # mutation: UNKNOWN must prove its failed effect too, whereas a confirmed
+    # zero-write rejection must *not* require its unattempted suffix to exist.
+    continuation_eligible = _accepted_recovery_boundary(failure_evidence) != "NONE"
+    # An inconclusive read-only observation must not erase the legal ability
+    # to observe later external truth. The dispatcher gates a *new* continuation
+    # on a freshly proved COMPLETE result, rather than treating a repeated
+    # observed index frontier as a permanent terminal failure.
     document = {
         "schema": _APPLICATION_RECOVERY_SCHEMA,
         "repository": repository,
@@ -6151,15 +6682,103 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             authorized_change=plan.change,
         )
 
-    if (
-        continuation is not None
-        and predecessor_evidence is not None
-        and plan.source.action in {"merge-implementation-pr", "merge-archive-pr"}
-    ):
-        # A continuation after an accepted zero-write merge rejection has
-        # *no* path through the original MERGED effect batch. It may only
-        # complete the application-owned administrative handoff, or exit with
-        # a concrete non-retryable stop condition.
+    retained_formal_correlation = plan.pending_application_correlation
+    predecessor_disposition = (
+        None
+        if predecessor_evidence is None
+        else _accepted_predecessor_disposition(predecessor_evidence)
+    )
+    uncertain_effect_index = None
+    if predecessor_disposition == "INDETERMINATE" and predecessor_evidence is not None:
+        failure = predecessor_evidence.document.get("failure_evidence")
+        if isinstance(failure, Mapping) and _accepted_recovery_boundary(failure) == "READ_ONLY":
+            candidate_index = failure.get("failed_effect_index")
+            if type(candidate_index) is int:
+                uncertain_effect_index = candidate_index
+            if "attempted_effects" in failure:
+                if accepted_intent is None:
+                    raise RuntimeError("read-only continuation lost its accepted intent")
+                exact_source = WorkerRequest(
+                    accepted_intent.issue_number, accepted_intent.role, accepted_intent.action
+                )
+                if not accepted_read_only_effects_complete(
+                    record=accepted_intent,
+                    source=exact_source,
+                    recovery_evidence=failure,
+                    repository=repository,
+                    token=token,
+                    current_revision=args.revision,
+                    default_branch=args.default_branch,
+                ):
+                    # A dispatch-time proof may disappear before Application
+                    # reauthorization. Persist only a read-only boundary with
+                    # the SAME attempted identity, and never apply a newly
+                    # projected Effect on this invocation.
+                    previous = cast(Mapping[str, object], failure)
+                    deferred = ApplyResult(
+                        False,
+                        "accepted original effect not currently proven complete",
+                        recovery_evidence=EffectRecoveryEvidence(
+                            failed_effect_index=cast(int, previous["failed_effect_index"]),
+                            failed_effect_kind=cast(str, previous["failed_effect_kind"]),
+                            failed_effect_sha256=cast(str, previous["failed_effect_sha256"]),
+                            completed_effect_indexes=tuple(
+                                cast(list[int], previous["completed_effect_indexes"])
+                            ),
+                            completed_effect_sha256=tuple(
+                                cast(list[str], previous["completed_effect_sha256"])
+                            ),
+                            mutation_status="unknown",
+                            unfinished_boundary="effect-reconciliation",
+                        ),
+                    )
+                    if not _write_application_recovery_evidence(
+                        args.recovery_evidence_path,
+                        result=deferred,
+                        repository=repository,
+                        token=token,
+                        source=plan.source,
+                        request_comment_id=plan.request_comment_id,
+                        trigger_comment_id=event_comment_id or plan.request_comment_id,
+                        authorization_revision=request.authorization_revision,
+                        current_revision=args.revision,
+                        run_attempt=args.run_attempt,
+                        continuation=continuation,
+                        predecessor=predecessor_evidence,
+                    ):
+                        raise RuntimeError("read-only attempted-effect checkpoint was not durable")
+                    _write_carrier_outputs(deferred)
+                    _write_validation_outputs(None)
+                    return 0
+                # The exact historical write has been independently proven
+                # complete. The next fresh projection is *new*, not the
+                # originally uncertain Effect at its former array index.
+                predecessor_disposition = "RECONCILE_EFFECTS"
+                uncertain_effect_index = None
+                restored_formal = _retain_completed_accepted_formal_effect(
+                    application_worker_result,
+                    failure=failure,
+                    source=plan.source,
+                    change=accepted_intent.change,
+                    result_kind=accepted_intent.result_kind,
+                    request_comment_id=plan.request_comment_id,
+                )
+                if restored_formal is not None:
+                    application_worker_result, retained_formal_correlation = restored_formal
+                    worker_result = parse_worker_result(
+                        application_worker_result,
+                        plan.source,
+                        authorized_change=plan.change,
+                    )
+    if continuation is not None and predecessor_disposition == "ZERO_WRITE_REJECTION":
+        # Only a *proven* deterministic zero-write rejection takes the
+        # administrative correction route. CarrierRequired (even for merge)
+        # instead resumes normal fresh effect/postcondition reconciliation.
+        # Neither path changes the original ACCEPTED result.
+        if plan.source.action not in {"merge-implementation-pr", "merge-archive-pr"}:
+            raise RuntimeError("accepted effect rejection has no governed correction handoff")
+        if predecessor_evidence is None:
+            raise RuntimeError("accepted merge recovery predecessor is missing")
         reconstructed = _rejected_merge_result_from_checkpoint(predecessor_evidence)
         batch = parse_effect_batch(
             application_worker_result,
@@ -6211,11 +6830,13 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 request_comment_id=plan.request_comment_id,
                 defer_issue_comments=first_activation,
                 allow_pending_continuation=pending_continuation,
-                pending_application_correlation=plan.pending_application_correlation,
+                pending_application_correlation=retained_formal_correlation,
                 application_request_body=application_request_body,
                 authorization_revision=request.authorization_revision,
                 authorized_change=plan.change,
                 **({"accepted_intent": True} if accepted_intent is not None else {}),
+                **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
+                uncertain_effect_index=uncertain_effect_index,
             )
             if result.applied:
                 if materialization is None or target is None:
@@ -6254,11 +6875,13 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 defer_issue_comments=(requires_validation and not args.validation_passed)
                 or defer_accepted_checkpoint,
                 allow_pending_continuation=pending_continuation,
-                pending_application_correlation=plan.pending_application_correlation,
+                pending_application_correlation=retained_formal_correlation,
                 application_request_body=application_request_body,
                 authorization_revision=request.authorization_revision,
                 authorized_change=plan.change,
                 **({"accepted_intent": True} if accepted_intent is not None else {}),
+                **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
+                uncertain_effect_index=uncertain_effect_index,
             )
     except CarrierRequired as exc:
         # CarrierRequired is the hard invocation-exit boundary. Persist only
@@ -6321,6 +6944,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             run_attempt=args.run_attempt,
             continuation=continuation,
             predecessor=predecessor_evidence,
+            effect_batch=batch,
         )
     if recovery_evidence_written and _recover_deterministic_accepted_merge_failure(
         result=result,
@@ -6365,6 +6989,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             run_attempt=args.run_attempt,
             continuation=continuation,
             predecessor=predecessor_evidence,
+            effect_batch=batch,
         )
         print(
             json.dumps(
@@ -6413,6 +7038,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             run_attempt=args.run_attempt,
             continuation=continuation,
             predecessor=predecessor_evidence,
+            effect_batch=batch,
         )
     print(
         json.dumps(

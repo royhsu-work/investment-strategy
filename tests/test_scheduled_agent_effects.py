@@ -332,11 +332,9 @@ def test_original_322_recovery_projects_only_qualified_formal_and_successor(
     assert not run(recovery=False).applied
     assert applied == []
     assert run(recovery=True).applied
-    assert applied == (
-        ["routing-transition"]
-        if formal_already_persisted
-        else ["issue-comment", "routing-transition"]
-    )
+    # This observer reports every effect already durable. An accepted intent
+    # must not invoke the old apply side effect simply to re-confirm it.
+    assert applied == []
 
 
 @pytest.mark.parametrize(
@@ -739,7 +737,7 @@ def test_application_acceptance_precedes_outcome_and_derived_successor() -> None
 
     assert result.applied
     assert events == ["accepted", "derived"]
-    assert applied[-1].derived
+    assert applied[-1].derived  # New, not-yet-accepted requests still apply the successor.
 
 
 def test_accepted_intent_does_not_reverify_candidate_during_phase_b() -> None:
@@ -772,7 +770,7 @@ def test_accepted_intent_does_not_reverify_candidate_during_phase_b() -> None:
     )
 
     assert result.applied
-    assert applied[-1].derived
+    assert applied == []  # The accepted successor was already observed.
 
 
 def test_accepted_intent_reconciles_after_derived_successor_frontier() -> None:
@@ -796,8 +794,7 @@ def test_accepted_intent_reconciles_after_derived_successor_frontier() -> None:
         accepted_intent=True,
     )
     assert result.applied
-    assert [effect.kind for effect in applied] == ["routing-transition"]
-    assert json.loads(applied[0].payload_json)["action"] == "review-archive"
+    assert applied == []  # Already-routed successor is read-only reconciliation.
 
 
 def test_accepted_intent_never_persists_a_rejection_downgrade() -> None:
@@ -5367,7 +5364,7 @@ def test_accepted_implementation_checkpoint_uses_verified_materialized_revision(
     )
     assert result.applied is expected_applied, result
     if expected_applied:
-        assert len(applied) == 3
+        assert applied == []  # The mocked postconditions are already complete.
     else:
         assert result.reason == "typed application rejected:implementation-checkpoint-incomplete"
         assert applied == []
@@ -5422,8 +5419,7 @@ def test_accepted_checkpoint_can_defer_comments_until_target_is_proven() -> None
         accepted_intent=True,
     )
     assert result.applied, result
-    assert len(applied) == 1
-    assert applied[0].kind == effects.GITHUB_MUTATION_KIND
+    assert applied == []  # An accepted and observed carrier must not replay.
 
 
 def test_issue_comment_recovery_refuses_shifted_history_before_post(

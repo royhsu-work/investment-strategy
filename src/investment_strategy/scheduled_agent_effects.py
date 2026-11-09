@@ -721,6 +721,30 @@ def _pending_continuation_is_eligible(
     )
 
 
+def derived_transition_effect(
+    *, issue_number: int, change: str, successor: ModelAction | None
+) -> StagedEffect:
+    """One Action-model-derived routing/terminal effect identity."""
+
+    if successor is not None:
+        return StagedEffect(
+            kind="routing-transition",
+            payload_json=json.dumps(
+                {"issue_number": issue_number, "action": successor.value},
+                sort_keys=True,
+            ),
+            derived=True,
+        )
+    return StagedEffect(
+        kind="terminal-transition",
+        payload_json=json.dumps(
+            {"issue_number": issue_number, "expected_change": change},
+            sort_keys=True,
+        ),
+        derived=True,
+    )
+
+
 def _typed_application_plan(
     batch: EffectBatch,
     preflight: DispatchPreflight,
@@ -852,32 +876,15 @@ def _typed_application_plan(
             ),
         )
 
-    if decision.successor is not None:
-        successor_effect = StagedEffect(
-            kind="routing-transition",
-            payload_json=json.dumps(
-                {
-                    "issue_number": source.issue_number,
-                    "action": decision.successor.value,
-                },
-                sort_keys=True,
-            ),
-            derived=True,
-        )
-        return decision, successor_effect, None
-
-    terminal_effect = StagedEffect(
-        kind="terminal-transition",
-        payload_json=json.dumps(
-            {
-                "issue_number": source.issue_number,
-                "expected_change": source.change,
-            },
-            sort_keys=True,
+    return (
+        decision,
+        derived_transition_effect(
+            issue_number=source.issue_number,
+            change=source.change,
+            successor=decision.successor,
         ),
-        derived=True,
+        None,
     )
-    return decision, terminal_effect, None
 
 
 _ALLOWED_ISSUE_FIELDS = frozenset({"title", "body"})
@@ -1379,6 +1386,8 @@ def apply_effect_batch(
     carrier_plan_for_effect: CarrierPlanProvider | None = None,
     effect_rejection: EffectRejectionProvider | None = None,
     accepted_intent: bool = False,
+    reconcile_only: bool = False,
+    uncertain_effect_index: int | None = None,
     durable_checkpoint_revision: str | None = None,
     persist_application_decision: (
         Callable[[ActionApplicationDecision, str, str], bool] | None
@@ -1504,7 +1513,85 @@ def apply_effect_batch(
         )
         return ApplyResult(False, reason, rejection=rejection, recovery_evidence=evidence)
 
+    # ACCEPT is the immutable linearization point.  A new process may enter
+    # after any GitHub write (including a write whose HTTP response was lost).
+    # Its exact postcondition is checked *before* any mutation precondition:
+    # the latter normally describes the pre-write state and can no longer
+    # hold once the effect is durable.  Never infer completion from a failed
+    # guard, and never apply this shortcut to an unaccepted worker request.
+    completed_before = {
+        index
+        for index, effect in enumerate(effects_to_apply)
+        if accepted_intent and observe_postcondition(effect)
+    }
+
+    def unproven_effect(missing: int | None) -> ApplyResult:
+        failed_effect = effects_to_apply[missing] if missing is not None else derived_effect
+        failed_index = (
+            indexed_effects_to_apply[missing][0] if missing is not None else len(batch.effects)
+        )
+        observed_complete = tuple(sorted(completed_before))
+        recovery = EffectRecoveryEvidence(
+            failed_effect_index=failed_index,
+            failed_effect_kind=failed_effect.kind,
+            failed_effect_sha256=hashlib.sha256(failed_effect.payload_json.encode()).hexdigest(),
+            completed_effect_indexes=tuple(
+                indexed_effects_to_apply[index][0] for index in observed_complete
+            ),
+            completed_effect_sha256=tuple(
+                hashlib.sha256(effects_to_apply[index].payload_json.encode()).hexdigest()
+                for index in observed_complete
+            ),
+            mutation_status="unknown",
+            unfinished_boundary="effect-reconciliation",
+            rejection=None,
+        )
+        return ApplyResult(
+            False,
+            "indeterminate accepted effects require reconciliation",
+            recovery_evidence=recovery,
+        )
+
+    # A recorded unknown write establishes an exact *attempted* boundary.
+    # Only effects at/before it must be proved complete without a new write.
+    # A strictly later effect was never attempted by the sequential engine;
+    # after the uncertain prefix is proved complete its ordinary fresh guard
+    # may apply it (notably the original formal result and legal successor).
+    # An absent boundary retains the older, more restrictive read-only mode.
+    if reconcile_only:
+        if not accepted_intent or (
+            uncertain_effect_index is not None
+            and (
+                type(uncertain_effect_index) is not int
+                or uncertain_effect_index < 0
+                or uncertain_effect_index > len(batch.effects)
+            )
+        ):
+            return ApplyResult(False, "indeterminate accepted effects require reconciliation")
+        observed_through = (
+            len(batch.effects) if uncertain_effect_index is None else uncertain_effect_index
+        )
+        missing = next(
+            (
+                index
+                for index, (original_index, _effect) in enumerate(indexed_effects_to_apply)
+                if original_index <= observed_through and index not in completed_before
+            ),
+            None,
+        )
+        if missing is not None:
+            return unproven_effect(missing)
+        if (
+            apply_derived
+            and uncertain_effect_index == len(batch.effects)
+            and not observe_postcondition(derived_effect)
+        ):
+            # An ambiguous derived routing/terminal write is no safer to
+            # replay than an ambiguous worker-requested effect.
+            return unproven_effect(None)
     for index, effect in enumerate(effects_to_apply):
+        if index in completed_before:
+            continue
         if not effect_guard(effect):
             return rejected("effect precondition rejected", index)
 
@@ -1521,6 +1608,9 @@ def apply_effect_batch(
 
     completed_indexes: list[int] = []
     for index, effect in enumerate(effects_to_apply):
+        if index in completed_before or (accepted_intent and observe_postcondition(effect)):
+            completed_indexes.append(index)
+            continue
         if not effect_guard(effect):
             return rejected(
                 "effect precondition rejected",
@@ -1542,6 +1632,8 @@ def apply_effect_batch(
         completed_indexes.append(index)
 
     if apply_derived:
+        if accepted_intent and observe_postcondition(derived_effect):
+            return ApplyResult(True, "already-durable")
         if not effect_guard(derived_effect):
             return rejected(
                 "effect precondition rejected",
@@ -3872,7 +3964,21 @@ class GitHubEffectAdapter:
             )
 
         if effect.kind == "routing-transition":
+            # A successor route can be committed just before interruption.
+            # Fresh-process reconciliation does not have the old invocation's
+            # _routing_targets receipt; use only the application-derived,
+            # structurally valid target and a qualified formal consequence.
+            payload = _effect_payload(effect)
             target_action = self._routing_targets.get(effect)
+            if (
+                target_action is None
+                and self.accepted_intent
+                and payload is not None
+                and _routing_transition_structurally_valid(
+                    self.source, payload, derived=effect.derived
+                )
+            ):
+                target_action = cast(str, payload["action"])
             current = self._current_issue()
             observation = None if current is None else normalize_github_issue(current)
             try:
@@ -4436,6 +4542,7 @@ def run_effect_application(
     authorized_change: str | None = None,
     authorization_revision: str | None = None,
     accepted_intent: bool = False,
+    reconcile_only: bool = False,
     original_322_recovery: bool = False,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Freshly reauthorize and apply one typed invocation-local effect batch."""
@@ -4475,6 +4582,7 @@ def run_effect_application(
         carrier_plan_for_effect=adapter.carrier_plan_if_required,
         effect_rejection=adapter.effect_rejection,
         accepted_intent=accepted_intent,
+        reconcile_only=reconcile_only,
         durable_checkpoint_revision=(
             validated_materialization_revision if accepted_intent else None
         ),

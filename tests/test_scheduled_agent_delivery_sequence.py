@@ -398,10 +398,15 @@ class GitHubSequence:
             record = effects.parse_application_decision(decision["body"])
             assert record is not None
             failure_evidence = {
-                "boundary": "fixture-effect-precondition",
+                "reason": "durable postcondition not observed",
+                "unfinished_boundary": "effect-postcondition",
+                "mutation_status": "unknown",
                 "completed_effect_indexes": [],
+                "completed_effect_sha256": [],
                 "failed_effect_index": 0,
-                "reason": "fixture-only qualified predecessor",
+                "failed_effect_kind": "issue-comment",
+                "failed_effect_sha256": hashlib.sha256(b"accepted-formal-result").hexdigest(),
+                "rejection": None,
             }
             failure_evidence_sha256 = hashlib.sha256(
                 json.dumps(

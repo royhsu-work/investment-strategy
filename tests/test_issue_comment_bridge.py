@@ -4229,6 +4229,81 @@ def test_completed_application_consumes_only_exact_complete_carrier_outcome(
     assert completion.recovery_artifact == recovery
 
 
+def test_read_only_reconciliation_reobserves_later_complete_without_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stable unknown is observed again; only new COMPLETE proof dispatches."""
+    recovery = replace(
+        _qualified_recovery_fixture(continuation_eligible=True),
+        document={
+            "prior_failure_evidence_sha256": ["a" * 64],
+            "failure_evidence": {
+                "reason": "indeterminate accepted effects require reconciliation",
+                "mutation_status": "unknown",
+                "unfinished_boundary": "effect-reconciliation",
+                "failed_effect_index": 1,
+                "failed_effect_kind": "issue-comment",
+                "failed_effect_sha256": "b" * 64,
+                "completed_effect_indexes": [0],
+                "completed_effect_sha256": ["c" * 64],
+                "rejection": None,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_runs",
+        lambda *_a, **_kw: (
+            {"id": 777, "run_attempt": 1, "status": "completed", "head_sha": REVISION},
+        ),
+    )
+    monkeypatch.setattr(
+        bridge, "_qualified_unapplied_terminal_carrier_effect", lambda *_a, **_kw: False
+    )
+    monkeypatch.setattr(bridge, "_qualified_carrier_for_application_run", lambda *_a, **_kw: None)
+    monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_kw: recovery)
+    observed = {"complete": False}
+    read_count = [0]
+
+    def observe(**_kwargs: object) -> bool:
+        read_count[0] += 1
+        return observed["complete"]
+
+    monkeypatch.setattr(bridge, "accepted_read_only_effects_complete", observe)
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path == "actions/runs/777/jobs":
+            return {"jobs": [{"id": 888, "name": "apply"}]}
+        if path == "":
+            return {"default_branch": "main"}
+        raise AssertionError(path)
+
+    def classify() -> bridge.ApplicationCompletion:
+        return bridge._application_job(
+            "owner/repo",
+            "token",
+            90,
+            read=fake_read,
+            record=_accepted_carrier_record(),
+            accepted_decision_sha256="a" * 64,
+            current_revision=REVISION,
+        )
+
+    first = classify()
+    second = classify()
+    assert first.state == second.state == "RESUMABLE"
+    assert first.reason == second.reason == "application-completion-read-only-observing"
+    assert read_count[0] == 2
+    # No additional ACTION run is selected while the previous GET was
+    # inconclusive, but later genuine GitHub proof can resume the same intent.
+    observed["complete"] = True
+    third = classify()
+    assert third.state == "RESUMABLE"
+    assert third.reason == "application-completion-continuation-required"
+    assert third.recovery_artifact is recovery
+    assert read_count[0] == 3
+
+
 def test_completed_application_blocks_a_previous_unreported_carrier_handoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

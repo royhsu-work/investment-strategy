@@ -32,16 +32,17 @@ from investment_strategy.scheduled_agent_application_bridge import (
     ApplicationContinuationRequest,
     ApplicationRecoveryArtifact,
     ApplicationRequest,
+    _accepted_recovery_boundary,
     _application_owned_worker_result,
     _materialization_effects,
     _worker_semantic_projection,
+    accepted_read_only_effects_complete,
     application_continuation_correlation,
     dispatch_correlation_for,
     parse_application_continuation_request,
     parse_application_request,
     read_application_recovery_artifact,
     render_application_continuation_request,
-    typed_request_lines,
 )
 from investment_strategy.scheduled_agent_application_bridge import (
     _github_json as _application_github_json,
@@ -1735,24 +1736,18 @@ def _valid_reason(value: object) -> bool:
 
 
 def parse_dispatch_request(body: str) -> DispatchRequest | None:
-    lines = typed_request_lines(body)
-    if len(lines) != 2 or lines[0] != REQUEST_MARKER:
-        return None
-    if not lines[1].startswith(REQUESTED_AT_PREFIX):
-        return None
-    requested_at = lines[1][len(REQUESTED_AT_PREFIX) :]
-    if not requested_at or requested_at != requested_at.strip():
-        return None
-    canonical = f"{REQUEST_MARKER}\n{REQUESTED_AT_PREFIX}{requested_at}"
-    if body not in {canonical, canonical + "\n"}:
-        return None
-    return DispatchRequest(requested_at=requested_at)
+    from investment_strategy.scheduled_agent_wire import DISPATCH_REQUEST_WIRE
+
+    fields = DISPATCH_REQUEST_WIRE.parse(body)
+    return None if fields is None else DispatchRequest(requested_at=fields["Requested-At"])
 
 
 def render_dispatch_request(request: DispatchRequest) -> str:
     """Emit the two-field dispatch wire accepted by its production parser."""
 
-    body = f"{REQUEST_MARKER}\n{REQUESTED_AT_PREFIX}{request.requested_at}"
+    from investment_strategy.scheduled_agent_wire import DISPATCH_REQUEST_WIRE
+
+    body = DISPATCH_REQUEST_WIRE.render({"Requested-At": request.requested_at})
     if parse_dispatch_request(body) != request:
         raise ValueError("dispatch request renderer/parser contract mismatch")
     return body
@@ -2696,6 +2691,7 @@ def _application_job(
     accepted_decision_sha256: str | None = None,
     recent_comments: tuple[Mapping[str, object], ...] = (),
     current_dispatch_request_comment_id: int | None = None,
+    current_revision: str | None = None,
 ) -> ApplicationCompletion:
     """Locate one exact application run and prefer its durable carrier handoff."""
 
@@ -2958,6 +2954,51 @@ def _application_job(
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
         )
+    failure_evidence = recovery_artifact.document.get("failure_evidence")
+    if (
+        isinstance(failure_evidence, Mapping)
+        and _accepted_recovery_boundary(failure_evidence) == "READ_ONLY"
+        and failure_evidence.get("unfinished_boundary") == "effect-reconciliation"
+    ):
+        # The previous read-only invocation obtained no sufficient proof.
+        # Re-observe the *same* immutable accepted effects in each fresh
+        # dispatcher wake, but issue no additional Application continuation
+        # while they remain unproven. This is observation, never a write retry.
+        if record is None or current_revision is None:
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-read-only-observation-context-missing",
+                request_comment_id=request_comment_id,
+                recovery_artifact=recovery_artifact,
+            )
+        try:
+            repo = read(repository, token, "")
+        except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+            repo = None
+        branch = repo.get("default_branch") if isinstance(repo, Mapping) else None
+        if not isinstance(branch, str) or not branch:
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-read-only-default-branch-unavailable",
+                request_comment_id=request_comment_id,
+                recovery_artifact=recovery_artifact,
+            )
+        source = WorkerRequest(record.issue_number, record.role, record.action)
+        if not accepted_read_only_effects_complete(
+            record=record,
+            source=source,
+            recovery_evidence=failure_evidence,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=branch,
+        ):
+            return ApplicationCompletion(
+                "RESUMABLE",
+                "application-completion-read-only-observing",
+                request_comment_id=request_comment_id,
+                recovery_artifact=recovery_artifact,
+            )
     return ApplicationCompletion(
         "RESUMABLE",
         "application-completion-continuation-required",
@@ -3644,6 +3685,7 @@ def _accepted_application_state(
             accepted_decision_sha256=accepted_decision_sha256,
             recent_comments=recent_comments,
             current_dispatch_request_comment_id=current_dispatch_request_comment_id,
+            current_revision=current_revision,
         )
         if resumed.state == "RESUMABLE":
             return resumed
@@ -3715,6 +3757,7 @@ def _accepted_application_state(
             accepted_decision_sha256=accepted_decision_sha256,
             recent_comments=recent_comments,
             current_dispatch_request_comment_id=current_dispatch_request_comment_id,
+            current_revision=current_revision,
         )
     if successor is not None and observation.routing == expected_routing:
         return ApplicationCompletion(
