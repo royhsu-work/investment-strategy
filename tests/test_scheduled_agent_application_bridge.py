@@ -2078,6 +2078,13 @@ def test_raw_worker_result_cannot_enter_phase_a_without_creation_shard_proof() -
     ("variant", "accepted"),
     [
         ("current", True),
+        ("closed-after-comment", True),
+        ("cross-midnight-rollover", True),
+        ("closed-get-open-list", True),
+        ("open-get-closed-list", True),
+        ("closed-before-comment", False),
+        ("closed-without-closure-time", False),
+        ("event-closed-before-comment", False),
         ("historical-closed", False),
         ("historical-open", False),
         ("wrong-date", False),
@@ -2103,6 +2110,22 @@ def test_new_raw_transport_requires_unique_creation_day_shard(
         current["title"] = checkin_title(date(2026, 9, 2))
     if variant == "historical-closed":
         current["state"] = "closed"
+    if variant in {"closed-after-comment", "closed-get-open-list"}:
+        current["state"] = "closed"
+        current["closed_at"] = "2026-09-03T03:05:00Z"
+    if variant == "cross-midnight-rollover":
+        event_comment["created_at"] = "2026-09-03T15:59:59Z"  # Taipei 23:59:59
+        current["state"] = "closed"
+        current["closed_at"] = "2026-09-03T16:05:00Z"  # Taipei next day 00:05
+    if variant == "closed-before-comment":
+        current["state"] = "closed"
+        current["closed_at"] = "2026-09-03T02:59:59Z"
+    if variant == "closed-without-closure-time":
+        current["state"] = "closed"
+    if variant == "event-closed-before-comment":
+        event_issue["state"] = "closed"
+        current["state"] = "closed"
+        current["closed_at"] = "2026-09-03T02:59:59Z"
     if variant == "closed-at-comment-then-reopened":
         event_issue["state"] = "closed"
     if variant == "future-shard":
@@ -2114,7 +2137,14 @@ def test_new_raw_transport_requires_unique_creation_day_shard(
         observed_comment.pop("created_at")
         event_comment.pop("created_at")
 
-    issues = [current]
+    list_issue = dict(current)
+    if variant == "closed-get-open-list":
+        list_issue["state"] = "open"
+        list_issue["closed_at"] = None
+    if variant == "open-get-closed-list":
+        list_issue["state"] = "closed"
+        list_issue["closed_at"] = "2026-09-03T03:05:00Z"
+    issues = [list_issue]
     if variant.startswith("duplicate"):
         duplicate = dict(current)
         duplicate["number"] = 200
@@ -2137,6 +2167,36 @@ def test_new_raw_transport_requires_unique_creation_day_shard(
     else:
         with pytest.raises(ValueError, match="WORKER_RESULT"):
             bridge._fresh_event_observation(event, body, _REPOSITORY, "token")
+
+
+def test_new_raw_transport_survives_rollover_between_pre_accept_observations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Phase-A recheck must not reject an event accepted before rollover."""
+
+    body = "WORKER_RESULT\n" + json.dumps(_worker_result(), sort_keys=True) + "\n"
+    event = _event(body)
+    event_comment = cast(dict[str, object], event["comment"])
+    event_comment["created_at"] = "2026-09-03T15:59:59Z"  # Taipei 23:59:59
+    event_issue = cast(dict[str, object], event["issue"])
+    event_issue["created_at"] = "2026-09-02T17:00:00Z"
+    before_rollover = dict(event_issue)
+    after_rollover = {**before_rollover, "state": "closed", "closed_at": "2026-09-03T16:05:00Z"}
+    current = [before_rollover]
+
+    def read(_repository: str, _token: str, api_path: str) -> object:
+        if api_path == "issues/comments/102":
+            return event_comment
+        if api_path == "issues/142":
+            return current[0]
+        if api_path == "issues?state=all&per_page=100&page=1":
+            return [current[0]]
+        pytest.fail(f"unexpected GitHub read: {api_path}")
+
+    monkeypatch.setattr(bridge, "_github_json", read)
+    assert bridge._fresh_event_observation(event, body, _REPOSITORY, "token") is False
+    current[0] = after_rollover
+    assert bridge._fresh_event_observation(event, body, _REPOSITORY, "token") is False
 
 
 def test_accepted_raw_result_continues_after_midnight_on_retired_shard() -> None:

@@ -52,10 +52,9 @@ from investment_strategy.scheduled_agent_carrier import (
     read_github_artifact_bytes,
 )
 from investment_strategy.scheduled_agent_checkin import (
-    CheckinDisposition,
     checkin_title,
     is_runtime_checkin_issue,
-    select_current_shard,
+    parse_checkin_day,
     taipei_day,
 )
 from investment_strategy.scheduled_agent_effect_contract import (
@@ -1335,6 +1334,27 @@ def _github_timestamp(value: object) -> datetime:
     return observed
 
 
+def _shard_was_open_at_comment_creation(
+    observed_issue: Mapping[str, object], created: datetime
+) -> bool:
+    """Permit rollover only when fresh closure evidence follows the source comment.
+
+    The immutable issue_comment.created event proves the shard was OPEN when
+    the comment was posted. A later GET/list can see CLOSED after rollover;
+    requiring it to remain OPEN would strand a legitimate in-flight request.
+    """
+
+    state = observed_issue.get("state")
+    if state == "open":
+        return True
+    if state != "closed":
+        return False
+    try:
+        return _github_timestamp(observed_issue.get("closed_at")) > created
+    except ValueError:
+        return False
+
+
 def _qualify_new_raw_result_shard(
     *,
     event_issue: Mapping[str, object],
@@ -1364,7 +1384,7 @@ def _qualify_new_raw_result_shard(
         or event_issue.get("number") != issue_number
         or event_issue.get("created_at") != observed_issue.get("created_at")
         or event_issue.get("title") != observed_issue.get("title")
-        or observed_issue.get("state") != "open"
+        or not _shard_was_open_at_comment_creation(observed_issue, created)
         or observed_issue.get("title") != checkin_title(day)
     ):
         raise ValueError("new WORKER_RESULT was not created on its current-day shard")
@@ -1372,13 +1392,14 @@ def _qualify_new_raw_result_shard(
     # This must be an all-state list. Open-only discovery would miss a duplicate
     # closed shard and could turn an ambiguous date into source authorization.
     issues = _paged_github_list(repository, token, "issues?state=all")
-    selected = select_current_shard(issues, day)
+    day_shards = [issue for issue in issues if issue.get("title") == checkin_title(day)]
     matches = [issue for issue in issues if issue.get("number") == issue_number]
     if (
-        selected.disposition != CheckinDisposition.SELECTED
-        or selected.issue_number != issue_number
+        len(day_shards) != 1
+        or parse_checkin_day(day_shards[0]) != day
+        or day_shards[0].get("number") != issue_number
         or len(matches) != 1
-        or matches[0].get("state") != observed_issue.get("state")
+        or not _shard_was_open_at_comment_creation(matches[0], created)
         or matches[0].get("title") != observed_issue.get("title")
         or matches[0].get("created_at") != observed_issue.get("created_at")
     ):
