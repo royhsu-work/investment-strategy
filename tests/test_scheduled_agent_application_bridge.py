@@ -71,6 +71,82 @@ _TEST_FAILURE_EVIDENCE_SHA256 = "2" * 64
 _TEST_RECOVERY_EPISODE_SHA256 = "3" * 64
 
 
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (
+            {
+                "reason": "carrier_required",
+                "unfinished_boundary": "carrier-required",
+                "mutation_status": "not-complete",
+                "carrier_plan_id": "carrier-identity",
+                "completed_effect_indexes": [],
+                "completed_effect_sha256": [],
+            },
+            "RECONCILE_EFFECTS",
+        ),
+        (
+            {
+                "reason": "effect precondition rejected",
+                "unfinished_boundary": "effect-precondition",
+                "mutation_status": "not-complete",
+                "failed_effect_index": 0,
+                "failed_effect_sha256": "a" * 64,
+                "completed_effect_indexes": [],
+                "completed_effect_sha256": [],
+                "rejection": {"classification": "effect-precondition-unsatisfied"},
+            },
+            "ZERO_WRITE_REJECTION",
+        ),
+        (
+            {
+                "reason": "effect precondition rejected",
+                "unfinished_boundary": "effect-precondition",
+                "mutation_status": "unknown",
+                "failed_effect_index": 0,
+                "failed_effect_sha256": "a" * 64,
+                "completed_effect_indexes": [],
+                "completed_effect_sha256": [],
+                "rejection": {"classification": "effect-precondition-unsatisfied"},
+            },
+            "INDETERMINATE",
+        ),
+        (
+            {
+                "reason": "effect precondition rejected",
+                "unfinished_boundary": "effect-precondition",
+                "mutation_status": "not-complete",
+                "failed_effect_index": 0,
+                "failed_effect_sha256": "a" * 64,
+                "completed_effect_indexes": [1],
+                "completed_effect_sha256": ["b" * 64],
+                "rejection": {"classification": "effect-precondition-unsatisfied"},
+            },
+            "INDETERMINATE",
+        ),
+    ],
+)
+def test_continuation_classifies_effect_boundary_before_correction(
+    failure: dict[str, object], expected: str
+) -> None:
+    """Carrier-complete and zero-write rejection must not share a recovery branch."""
+    predecessor = bridge.ApplicationRecoveryArtifact(
+        run_id=1,
+        run_attempt=1,
+        job_id=2,
+        artifact_id=3,
+        artifact_digest="sha256:" + "d" * 64,
+        request_comment_id=4,
+        accepted_decision_sha256="e" * 64,
+        failure_evidence_sha256="f" * 64,
+        recovery_episode_sha256="c" * 64,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={"failure_evidence": failure},
+    )
+    assert bridge._accepted_predecessor_disposition(predecessor) == expected
+
+
 @pytest.mark.parametrize("head_matches", [False, True])
 def test_lead_retirement_rebinding_preserves_original_exact_head(
     monkeypatch: pytest.MonkeyPatch, head_matches: bool
@@ -1339,15 +1415,26 @@ def test_recovery_evidence_continues_only_for_unwritten_precondition_rejection(
     assert rejected["classification"] == "observation-unqualified"
 
 
+@pytest.mark.parametrize(
+    ("role", "action", "result_kind"),
+    [
+        ("lead", "finalize-change", "archive-ready"),
+        ("executor", "merge-archive-pr", "merged"),
+        ("executor", "merge-implementation-pr", "merged"),
+    ],
+)
 def test_main_accepts_only_a_fresh_continuation_transport(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    role: str,
+    action: str,
+    result_kind: str,
 ) -> None:
-    source = WorkerRequest(138, "lead", "finalize-change")
+    source = WorkerRequest(138, role, action)
     worker = _worker_result(
         action=source.action,
         role=source.role,
-        result_kind="archive-ready",
+        result_kind=result_kind,
     )
     worker["change"] = _CHANGE
     raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
@@ -1357,7 +1444,7 @@ def test_main_accepts_only_a_fresh_continuation_transport(
         original_body,
         source=source,
         change=_CHANGE,
-        result_kind="archive-ready",
+        result_kind=result_kind,
         request_comment_id=102,
     )
     decision_body = "accepted-decision-body"
@@ -1388,7 +1475,17 @@ def test_main_accepts_only_a_fresh_continuation_transport(
         recovery_episode_sha256=continuation.recovery_episode_sha256,
         recovery_attempt=1,
         continuation_eligible=True,
-        document={"prior_failure_evidence_sha256": []},
+        document={
+            "prior_failure_evidence_sha256": [],
+            "failure_evidence": {
+                "reason": "carrier_required",
+                "unfinished_boundary": "carrier-required",
+                "mutation_status": "not-complete",
+                "carrier_plan_id": "original-carrier",
+                "completed_effect_indexes": [],
+                "completed_effect_sha256": [],
+            },
+        },
     )
     event_path = tmp_path / "continuation-event.json"
     event_path.write_text(
@@ -1448,6 +1545,12 @@ def test_main_accepts_only_a_fresh_continuation_transport(
         bridge,
         "_accepted_worker_result_for_continuation",
         lambda **_kwargs: raw,
+    )
+    monkeypatch.setattr(bridge, "_resume_pending_accepted_merge_recovery", lambda **_kwargs: False)
+    # This test exercises the real continuation decision, not the separate
+    # per-effect GitHub consequence planner (covered by its own tests).
+    monkeypatch.setattr(
+        bridge, "_fresh_application_worker_result", lambda original, **_kwargs: original
     )
     monkeypatch.setattr(
         bridge,

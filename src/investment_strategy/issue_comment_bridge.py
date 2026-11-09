@@ -41,7 +41,6 @@ from investment_strategy.scheduled_agent_application_bridge import (
     parse_application_request,
     read_application_recovery_artifact,
     render_application_continuation_request,
-    typed_request_lines,
 )
 from investment_strategy.scheduled_agent_application_bridge import (
     _github_json as _application_github_json,
@@ -1735,24 +1734,18 @@ def _valid_reason(value: object) -> bool:
 
 
 def parse_dispatch_request(body: str) -> DispatchRequest | None:
-    lines = typed_request_lines(body)
-    if len(lines) != 2 or lines[0] != REQUEST_MARKER:
-        return None
-    if not lines[1].startswith(REQUESTED_AT_PREFIX):
-        return None
-    requested_at = lines[1][len(REQUESTED_AT_PREFIX) :]
-    if not requested_at or requested_at != requested_at.strip():
-        return None
-    canonical = f"{REQUEST_MARKER}\n{REQUESTED_AT_PREFIX}{requested_at}"
-    if body not in {canonical, canonical + "\n"}:
-        return None
-    return DispatchRequest(requested_at=requested_at)
+    from investment_strategy.scheduled_agent_wire import DISPATCH_REQUEST_WIRE
+
+    fields = DISPATCH_REQUEST_WIRE.parse(body)
+    return None if fields is None else DispatchRequest(requested_at=fields["Requested-At"])
 
 
 def render_dispatch_request(request: DispatchRequest) -> str:
     """Emit the two-field dispatch wire accepted by its production parser."""
 
-    body = f"{REQUEST_MARKER}\n{REQUESTED_AT_PREFIX}{request.requested_at}"
+    from investment_strategy.scheduled_agent_wire import DISPATCH_REQUEST_WIRE
+
+    body = DISPATCH_REQUEST_WIRE.render({"Requested-At": request.requested_at})
     if parse_dispatch_request(body) != request:
         raise ValueError("dispatch request renderer/parser contract mismatch")
     return body

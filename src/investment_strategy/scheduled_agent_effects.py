@@ -1379,6 +1379,7 @@ def apply_effect_batch(
     carrier_plan_for_effect: CarrierPlanProvider | None = None,
     effect_rejection: EffectRejectionProvider | None = None,
     accepted_intent: bool = False,
+    reconcile_only: bool = False,
     durable_checkpoint_revision: str | None = None,
     persist_application_decision: (
         Callable[[ActionApplicationDecision, str, str], bool] | None
@@ -1504,7 +1505,26 @@ def apply_effect_batch(
         )
         return ApplyResult(False, reason, rejection=rejection, recovery_evidence=evidence)
 
+    # ACCEPT is the immutable linearization point.  A new process may enter
+    # after any GitHub write (including a write whose HTTP response was lost).
+    # Its exact postcondition is checked *before* any mutation precondition:
+    # the latter normally describes the pre-write state and can no longer
+    # hold once the effect is durable.  Never infer completion from a failed
+    # guard, and never apply this shortcut to an unaccepted worker request.
+    completed_before = {
+        index
+        for index, effect in enumerate(effects_to_apply)
+        if accepted_intent and observe_postcondition(effect)
+    }
+    # An indeterminate predecessor is not permission to repeat a write.
+    # A later invocation may still *observe* that every requested effect
+    # completed and repair only the Action-model-derived handoff. If even
+    # one effect is unproven, leave all repository state unchanged.
+    if reconcile_only and (not accepted_intent or len(completed_before) != len(effects_to_apply)):
+        return ApplyResult(False, "indeterminate accepted effects require reconciliation")
     for index, effect in enumerate(effects_to_apply):
+        if index in completed_before:
+            continue
         if not effect_guard(effect):
             return rejected("effect precondition rejected", index)
 
@@ -1521,6 +1541,9 @@ def apply_effect_batch(
 
     completed_indexes: list[int] = []
     for index, effect in enumerate(effects_to_apply):
+        if index in completed_before or (accepted_intent and observe_postcondition(effect)):
+            completed_indexes.append(index)
+            continue
         if not effect_guard(effect):
             return rejected(
                 "effect precondition rejected",
@@ -1542,6 +1565,8 @@ def apply_effect_batch(
         completed_indexes.append(index)
 
     if apply_derived:
+        if accepted_intent and observe_postcondition(derived_effect):
+            return ApplyResult(True, "already-durable")
         if not effect_guard(derived_effect):
             return rejected(
                 "effect precondition rejected",
@@ -3872,7 +3897,21 @@ class GitHubEffectAdapter:
             )
 
         if effect.kind == "routing-transition":
+            # A successor route can be committed just before interruption.
+            # Fresh-process reconciliation does not have the old invocation's
+            # _routing_targets receipt; use only the application-derived,
+            # structurally valid target and a qualified formal consequence.
+            payload = _effect_payload(effect)
             target_action = self._routing_targets.get(effect)
+            if (
+                target_action is None
+                and self.accepted_intent
+                and payload is not None
+                and _routing_transition_structurally_valid(
+                    self.source, payload, derived=effect.derived
+                )
+            ):
+                target_action = cast(str, payload["action"])
             current = self._current_issue()
             observation = None if current is None else normalize_github_issue(current)
             try:
@@ -4436,6 +4475,7 @@ def run_effect_application(
     authorized_change: str | None = None,
     authorization_revision: str | None = None,
     accepted_intent: bool = False,
+    reconcile_only: bool = False,
     original_322_recovery: bool = False,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Freshly reauthorize and apply one typed invocation-local effect batch."""
@@ -4475,6 +4515,7 @@ def run_effect_application(
         carrier_plan_for_effect=adapter.carrier_plan_if_required,
         effect_rejection=adapter.effect_rejection,
         accepted_intent=accepted_intent,
+        reconcile_only=reconcile_only,
         durable_checkpoint_revision=(
             validated_materialization_revision if accepted_intent else None
         ),

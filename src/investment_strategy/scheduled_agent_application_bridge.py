@@ -96,6 +96,11 @@ from investment_strategy.scheduled_agent_runtime import (
     normalize_github_issue,
 )
 from investment_strategy.scheduled_agent_validation_resource import ValidationResourceTarget
+from investment_strategy.scheduled_agent_wire import (
+    APPLICATION_CONTINUATION_WIRE,
+    EFFECT_REQUEST_WIRE,
+    MACHINE_EFFECT_REQUEST_WIRE,
+)
 from investment_strategy.scheduled_agent_worker import WorkerActionResult, parse_worker_result
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
@@ -283,21 +288,20 @@ def render_application_continuation_request(
         failure_evidence_sha256,
         recovery_episode_sha256,
     )
-    return "\n".join(
-        (
-            APPLICATION_CONTINUATION_MARKER,
-            f"Issue: {issue_number}",
-            f"{ORIGINAL_REQUEST_COMMENT_PREFIX}{original_request_comment_id}",
-            f"{ACCEPTED_DECISION_SHA256_PREFIX}{accepted_decision_sha256}",
-            f"{PREDECESSOR_RUN_ID_PREFIX}{predecessor_run_id}",
-            f"{PREDECESSOR_RUN_ATTEMPT_PREFIX}{predecessor_run_attempt}",
-            f"{PREDECESSOR_JOB_ID_PREFIX}{predecessor_job_id}",
-            f"{PREDECESSOR_ARTIFACT_ID_PREFIX}{predecessor_artifact_id}",
-            f"{PREDECESSOR_ARTIFACT_DIGEST_PREFIX}{predecessor_artifact_digest}",
-            f"{FAILURE_EVIDENCE_SHA256_PREFIX}{failure_evidence_sha256}",
-            f"{RECOVERY_EPISODE_SHA256_PREFIX}{recovery_episode_sha256}",
-            f"{CONTINUATION_CORRELATION_PREFIX}{correlation}",
-        )
+    return APPLICATION_CONTINUATION_WIRE.render(
+        {
+            "Issue": str(issue_number),
+            "Original-Request-Comment": str(original_request_comment_id),
+            "Accepted-Decision-SHA256": accepted_decision_sha256,
+            "Predecessor-Run-ID": str(predecessor_run_id),
+            "Predecessor-Run-Attempt": str(predecessor_run_attempt),
+            "Predecessor-Job-ID": str(predecessor_job_id),
+            "Predecessor-Artifact-ID": str(predecessor_artifact_id),
+            "Predecessor-Artifact-Digest": predecessor_artifact_digest,
+            "Failure-Evidence-SHA256": failure_evidence_sha256,
+            "Recovery-Episode-SHA256": recovery_episode_sha256,
+            "Continuation-Correlation": correlation,
+        }
     )
 
 
@@ -306,48 +310,30 @@ def parse_application_continuation_request(
 ) -> ApplicationContinuationRequest | None:
     """Parse a strict transport bound to one exact recovery evidence transition."""
 
-    lines = body.splitlines()
-    if len(lines) != 12 or lines[0] != APPLICATION_CONTINUATION_MARKER:
+    fields = APPLICATION_CONTINUATION_WIRE.parse(body)
+    if fields is None:
         return None
-    prefixes = (
-        "Issue: ",
-        ORIGINAL_REQUEST_COMMENT_PREFIX,
-        ACCEPTED_DECISION_SHA256_PREFIX,
-        PREDECESSOR_RUN_ID_PREFIX,
-        PREDECESSOR_RUN_ATTEMPT_PREFIX,
-        PREDECESSOR_JOB_ID_PREFIX,
-        PREDECESSOR_ARTIFACT_ID_PREFIX,
-        PREDECESSOR_ARTIFACT_DIGEST_PREFIX,
-        FAILURE_EVIDENCE_SHA256_PREFIX,
-        RECOVERY_EPISODE_SHA256_PREFIX,
-        CONTINUATION_CORRELATION_PREFIX,
-    )
-    values: list[str] = []
-    for line, prefix in zip(lines[1:], prefixes, strict=True):
-        if not line.startswith(prefix):
-            return None
-        values.append(line[len(prefix) :])
     try:
-        issue_number = int(values[0])
-        original_request_comment_id = int(values[1])
-        predecessor_run_id = int(values[3])
-        predecessor_run_attempt = int(values[4])
-        predecessor_job_id = int(values[5])
-        predecessor_artifact_id = int(values[6])
+        issue_number = int(fields["Issue"])
+        original_request_comment_id = int(fields["Original-Request-Comment"])
+        predecessor_run_id = int(fields["Predecessor-Run-ID"])
+        predecessor_run_attempt = int(fields["Predecessor-Run-Attempt"])
+        predecessor_job_id = int(fields["Predecessor-Job-ID"])
+        predecessor_artifact_id = int(fields["Predecessor-Artifact-ID"])
     except ValueError:
         return None
-    accepted_decision_sha256 = values[2]
-    predecessor_artifact_digest = values[7]
-    failure_evidence_sha256 = values[8]
-    recovery_episode_sha256 = values[9]
-    continuation_correlation = values[10]
+    accepted_decision_sha256 = fields["Accepted-Decision-SHA256"]
+    predecessor_artifact_digest = fields["Predecessor-Artifact-Digest"]
+    failure_evidence_sha256 = fields["Failure-Evidence-SHA256"]
+    recovery_episode_sha256 = fields["Recovery-Episode-SHA256"]
+    continuation_correlation = fields["Continuation-Correlation"]
     integer_pairs = (
-        (values[0], issue_number),
-        (values[1], original_request_comment_id),
-        (values[3], predecessor_run_id),
-        (values[4], predecessor_run_attempt),
-        (values[5], predecessor_job_id),
-        (values[6], predecessor_artifact_id),
+        (fields["Issue"], issue_number),
+        (fields["Original-Request-Comment"], original_request_comment_id),
+        (fields["Predecessor-Run-ID"], predecessor_run_id),
+        (fields["Predecessor-Run-Attempt"], predecessor_run_attempt),
+        (fields["Predecessor-Job-ID"], predecessor_job_id),
+        (fields["Predecessor-Artifact-ID"], predecessor_artifact_id),
     )
     if any(_positive_int(value) is None or raw != str(value) for raw, value in integer_pairs):
         return None
@@ -430,35 +416,21 @@ def typed_request_lines(body: str) -> list[str]:
 def parse_application_request(body: str) -> ApplicationRequest | None:
     """Parse the bounded effect ingress and optional machine correlation."""
 
-    lines = typed_request_lines(body)
-    if not lines or lines[0] != APPLICATION_REQUEST_MARKER:
+    if body.split("\n", 1)[0] != APPLICATION_REQUEST_MARKER:
         return None
-    if len(lines) not in {3, 4}:
+    fields = MACHINE_EFFECT_REQUEST_WIRE.parse(body)
+    if fields is None:
+        fields = EFFECT_REQUEST_WIRE.parse(body)
+    if fields is None:
         raise ValueError(
-            "EFFECT_REQUEST must contain exactly three lines or the four-line machine form"
+            "EFFECT_REQUEST must contain exactly three lines or the four-line machine form; "
+            "fields, order, or framing are invalid"
         )
-    if not lines[1].startswith(AUTHORIZATION_REVISION_PREFIX):
-        if len(lines) == 4:
-            raise ValueError(
-                "EFFECT_REQUEST must contain exactly three lines or the four-line machine form"
-            )
-        raise ValueError("EFFECT_REQUEST field order is invalid")
-
-    authorization_revision = lines[1][len(AUTHORIZATION_REVISION_PREFIX) :]
-    dispatch_correlation: str | None = None
-    worker_line = lines[2]
-    if len(lines) == 4:
-        if not lines[2].startswith(DISPATCH_CORRELATION_PREFIX):
-            raise ValueError(
-                "EFFECT_REQUEST must contain exactly three lines or the four-line machine form"
-            )
-        dispatch_correlation = lines[2][len(DISPATCH_CORRELATION_PREFIX) :]
-        if not re.fullmatch(r"[0-9a-f]{64}", dispatch_correlation):
-            raise ValueError("EFFECT_REQUEST dispatch correlation is invalid")
-        worker_line = lines[3]
-    if not worker_line.startswith(WORKER_RESULT_B64_PREFIX):
-        raise ValueError("EFFECT_REQUEST field order is invalid")
-    encoded_result = worker_line[len(WORKER_RESULT_B64_PREFIX) :]
+    authorization_revision = fields["Authorization-Revision"]
+    dispatch_correlation = fields.get("Dispatch-Correlation")
+    if dispatch_correlation is not None and not re.fullmatch(r"[0-9a-f]{64}", dispatch_correlation):
+        raise ValueError("EFFECT_REQUEST dispatch correlation is invalid")
+    encoded_result = fields["Worker-Result-B64"]
     if _SHA.fullmatch(authorization_revision) is None or not encoded_result:
         raise ValueError("EFFECT_REQUEST authorization identity is invalid")
     if encoded_result != encoded_result.strip():
@@ -590,16 +562,18 @@ def _render_accepted_application_wire(request: ApplicationRequest) -> str:
     """
 
     encoded = base64.b64encode(request.raw_worker_result.encode("utf-8")).decode("ascii")
-    lines = [
-        APPLICATION_REQUEST_MARKER,
-        f"{AUTHORIZATION_REVISION_PREFIX}{request.authorization_revision}",
-    ]
+    fields = {
+        "Authorization-Revision": request.authorization_revision,
+        "Worker-Result-B64": encoded,
+    }
     if request.dispatch_correlation is not None:
         if not re.fullmatch(r"[0-9a-f]{64}", request.dispatch_correlation):
             raise ValueError("application request dispatch correlation is invalid")
-        lines.append(f"{DISPATCH_CORRELATION_PREFIX}{request.dispatch_correlation}")
-    lines.append(f"{WORKER_RESULT_B64_PREFIX}{encoded}")
-    body = "\n".join(lines)
+        fields["Dispatch-Correlation"] = request.dispatch_correlation
+        contract = MACHINE_EFFECT_REQUEST_WIRE
+    else:
+        contract = EFFECT_REQUEST_WIRE
+    body = contract.render(fields)
     if parse_application_request(body) != request:
         raise ValueError("application request renderer/parser contract mismatch")
     return body
@@ -5342,6 +5316,49 @@ def _recovery_failure_document(result: ApplyResult) -> dict[str, object]:
     }
 
 
+def _accepted_predecessor_disposition(
+    predecessor: ApplicationRecoveryArtifact,
+) -> Literal["RECONCILE_EFFECTS", "ZERO_WRITE_REJECTION", "INDETERMINATE"]:
+    """Classify a *qualified* predecessor's exact durable interruption boundary.
+
+    A carrier handoff is not an effect rejection.  Its next Application must
+    fresh-observe the carrier and apply only missing consequences of the same
+    accepted intent.  The administrative failure handoff is reserved for a
+    proven deterministic pre-write rejection. Unknown/partial writes never
+    become a retry permission through this classifier.
+    """
+
+    evidence = predecessor.document.get("failure_evidence")
+    if not predecessor.continuation_eligible or not isinstance(evidence, Mapping):
+        return "INDETERMINATE"
+    if (
+        evidence.get("unfinished_boundary") == "carrier-required"
+        and evidence.get("mutation_status") == "not-complete"
+        and evidence.get("reason") == "carrier_required"
+        and isinstance(evidence.get("carrier_plan_id"), str)
+        and bool(evidence["carrier_plan_id"])
+        and evidence.get("completed_effect_indexes") == []
+        and evidence.get("completed_effect_sha256") == []
+    ):
+        return "RECONCILE_EFFECTS"
+    rejection = evidence.get("rejection")
+    if (
+        evidence.get("unfinished_boundary") == "effect-precondition"
+        and evidence.get("mutation_status") == "not-complete"
+        and evidence.get("completed_effect_indexes") == []
+        and evidence.get("completed_effect_sha256") == []
+        and isinstance(rejection, Mapping)
+        and rejection.get("classification") == "effect-precondition-unsatisfied"
+        and isinstance(evidence.get("failed_effect_index"), int)
+        and not isinstance(evidence.get("failed_effect_index"), bool)
+        and cast(int, evidence["failed_effect_index"]) >= 0
+        and isinstance(evidence.get("failed_effect_sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", cast(str, evidence["failed_effect_sha256"])) is not None
+    ):
+        return "ZERO_WRITE_REJECTION"
+    return "INDETERMINATE"
+
+
 def _write_application_recovery_evidence(
     path: str | None,
     *,
@@ -6151,15 +6168,20 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             authorized_change=plan.change,
         )
 
-    if (
-        continuation is not None
-        and predecessor_evidence is not None
-        and plan.source.action in {"merge-implementation-pr", "merge-archive-pr"}
-    ):
-        # A continuation after an accepted zero-write merge rejection has
-        # *no* path through the original MERGED effect batch. It may only
-        # complete the application-owned administrative handoff, or exit with
-        # a concrete non-retryable stop condition.
+    predecessor_disposition = (
+        None
+        if predecessor_evidence is None
+        else _accepted_predecessor_disposition(predecessor_evidence)
+    )
+    if continuation is not None and predecessor_disposition == "ZERO_WRITE_REJECTION":
+        # Only a *proven* deterministic zero-write rejection takes the
+        # administrative correction route. CarrierRequired (even for merge)
+        # instead resumes normal fresh effect/postcondition reconciliation.
+        # Neither path changes the original ACCEPTED result.
+        if plan.source.action not in {"merge-implementation-pr", "merge-archive-pr"}:
+            raise RuntimeError("accepted effect rejection has no governed correction handoff")
+        if predecessor_evidence is None:
+            raise RuntimeError("accepted merge recovery predecessor is missing")
         reconstructed = _rejected_merge_result_from_checkpoint(predecessor_evidence)
         batch = parse_effect_batch(
             application_worker_result,
@@ -6216,6 +6238,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 authorization_revision=request.authorization_revision,
                 authorized_change=plan.change,
                 **({"accepted_intent": True} if accepted_intent is not None else {}),
+                **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
             )
             if result.applied:
                 if materialization is None or target is None:
@@ -6259,6 +6282,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 authorization_revision=request.authorization_revision,
                 authorized_change=plan.change,
                 **({"accepted_intent": True} if accepted_intent is not None else {}),
+                **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
             )
     except CarrierRequired as exc:
         # CarrierRequired is the hard invocation-exit boundary. Persist only
