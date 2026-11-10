@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from investment_strategy.scheduled_agent_wire import LineWireContract
+
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT_REDIRECT_HOST = re.compile(
@@ -27,6 +29,83 @@ def github_repository_api_url(repository: str, api_path: str) -> str:
     root = f"https://api.github.com/repos/{repository}"
     relative = api_path.lstrip("/")
     return root if not relative else f"{root}/{relative}"
+
+
+def github_read_bytes_with_retry(
+    request: Request,
+    *,
+    open_request: Callable[..., Any],
+    wait: Callable[[float], None],
+) -> bytes:
+    """Retry bounded transient GitHub GET reads, never an unknown write.
+
+    This transport operation cannot authorize a repository effect or a
+    successor Action. Each consumer still qualifies the fresh response.
+    """
+
+    if request.get_method() != "GET":
+        raise ValueError("GitHub transient retry only supports GET")
+    for attempt in range(3):
+        try:
+            with open_request(request, timeout=30) as response:
+                return cast(bytes, response.read())
+        except HTTPError as exc:
+            if exc.code not in {500, 502, 503, 504} or attempt == 2:
+                raise
+            wait(0.25 * (2**attempt))
+    raise RuntimeError("GitHub GET retry exhausted without a response")
+
+
+def github_comment_has_app_provenance(
+    comment: Mapping[str, object], *, actor: str, app_slug: str
+) -> bool:
+    """Qualify GitHub App authorship alone, not Human or workflow authority."""
+
+    user = comment.get("user")
+    app = comment.get("performed_via_github_app")
+    return (
+        isinstance(user, Mapping)
+        and user.get("login") == actor
+        and isinstance(app, Mapping)
+        and app.get("slug") == app_slug
+    )
+
+
+def github_paginated_mappings(
+    repository: str,
+    token: str,
+    api_path: str,
+    *,
+    read: Callable[[str, str, str], object],
+    incomplete_error: str,
+    malformed_error: str,
+) -> tuple[Mapping[str, object], ...]:
+    """Read all mapping pages; an invalid page never yields partial evidence.
+
+    The caller owns the endpoint, credentials and meaning of the returned
+    observations. Page traversal is a reusable transport/shape operation.
+    """
+
+    items: list[Mapping[str, object]] = []
+    page = 1
+    separator = "&" if "?" in api_path else "?"
+    while True:
+        decoded = read(
+            repository,
+            token,
+            f"{api_path}{separator}per_page=100&page={page}",
+        )
+        if not isinstance(decoded, list):
+            raise RuntimeError(incomplete_error)
+        current: list[Mapping[str, object]] = []
+        for item in decoded:
+            if not isinstance(item, Mapping):
+                raise RuntimeError(malformed_error)
+            current.append(cast(Mapping[str, object], item))
+        items.extend(current)
+        if len(current) < 100:
+            return tuple(items)
+        page += 1
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -180,6 +259,9 @@ _CARRIER_OUTCOME_FIELDS = (
     ("Failure-Code", "failure_code"),
     ("Failure-Summary", "failure_summary"),
 )
+_CARRIER_OUTCOME_WIRE = LineWireContract(
+    _CARRIER_OUTCOME_MARKER, tuple(header for header, _ in _CARRIER_OUTCOME_FIELDS)
+)
 
 
 @dataclass(frozen=True)
@@ -222,35 +304,17 @@ def render_carrier_outcome_report(report: CarrierOutcomeReport) -> str:
         .decode("ascii")
         .rstrip("=")
     )
-    body = "\n".join(
-        (
-            _CARRIER_OUTCOME_MARKER,
-            f"Schema: {_CARRIER_OUTCOME_SCHEMA}",
-            f"Repository: {report.repository}",
-            f"Issue: {report.issue_number}",
-            f"Request-Comment: {report.request_comment_id}",
-            f"Accepted-Decision-SHA256: {report.accepted_decision_sha256}",
-            f"Continuation-Correlation: {report.continuation_correlation}",
-            f"Predecessor-Run-ID: {report.predecessor_run_id}",
-            f"Predecessor-Run-Attempt: {report.predecessor_run_attempt}",
-            f"Predecessor-Job-ID: {report.predecessor_job_id}",
-            f"Recovery-Artifact-ID: {report.recovery_artifact_id}",
-            f"Recovery-Artifact-Digest: {report.recovery_artifact_digest}",
-            f"Failure-Evidence-SHA256: {report.failure_evidence_sha256}",
-            f"Recovery-Episode-SHA256: {report.recovery_episode_sha256}",
-            f"Carrier-Artifact-ID: {report.carrier_artifact_id}",
-            f"Carrier-Artifact-Digest: {report.carrier_artifact_digest}",
-            f"Plan-ID: {report.plan_id}",
-            f"Operation: {report.operation}",
-            f"Outcome: {report.outcome}",
-            f"Mutation-Status: {report.mutation_status}",
-            f"Precondition: {report.precondition}",
-            f"Observed-Precondition-JSON-B64: {observed_precondition_b64}",
-            f"Postcondition: {report.postcondition}",
-            f"Unfinished-Boundary: {report.unfinished_boundary}",
-            f"Failure-Code: {report.failure_code}",
-            f"Failure-Summary: {report.failure_summary}",
-        )
+    body = _CARRIER_OUTCOME_WIRE.render(
+        {
+            header: (
+                _CARRIER_OUTCOME_SCHEMA
+                if field == "schema"
+                else observed_precondition_b64
+                if field == "observed_precondition_json_b64"
+                else str(getattr(report, field))
+            )
+            for header, field in _CARRIER_OUTCOME_FIELDS
+        }
     )
     if parse_carrier_outcome_report(body) != report:
         raise ValueError("carrier outcome report identity or status is invalid")
@@ -262,6 +326,8 @@ def parse_carrier_outcome_report(body: object) -> CarrierOutcomeReport | None:
 
     if not isinstance(body, str) or "\r" in body:
         return None
+    # Carrier outcome evidence historically disallowed even one terminal LF.
+    # Keep that stricter parser while sharing producer order and field names.
     lines = body.split("\n")
     if len(lines) != len(_CARRIER_OUTCOME_FIELDS) + 1 or lines[0] != _CARRIER_OUTCOME_MARKER:
         return None

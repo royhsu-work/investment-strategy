@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -19,6 +20,11 @@ from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from investment_strategy.scheduled_agent_carrier import (
+    github_comment_has_app_provenance,
+    github_paginated_mappings,
+    github_read_bytes_with_retry,
+)
 from investment_strategy.scheduled_agent_formal_result import parse_formal_result
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
@@ -297,8 +303,9 @@ def _github_json(
         },
     )
     try:
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-            raw = response.read()
+        raw = github_read_bytes_with_retry(
+            request, open_request=urlopen, wait=time.sleep
+        )
     except HTTPError as exc:
         if allow_not_found and exc.code == 404:
             return None
@@ -316,26 +323,14 @@ def _paged_list(
     read: GitHubReader,
 ) -> tuple[Mapping[str, object], ...]:
     """Exhaust one list endpoint; incomplete/malformed evidence fails closed."""
-
-    items: list[Mapping[str, object]] = []
-    page = 1
-    separator = "&" if "?" in api_path else "?"
-    while True:
-        payload = read(
-            repository,
-            token,
-            f"{api_path}{separator}per_page=100&page={page}",
-        )
-        if not isinstance(payload, list):
-            raise RuntimeError("implementation carrier evidence list is incomplete")
-        for raw in payload:
-            item = _as_mapping(raw)
-            if item is None:
-                raise RuntimeError("implementation carrier evidence list is malformed")
-            items.append(item)
-        if len(payload) < 100:
-            return tuple(items)
-        page += 1
+    return github_paginated_mappings(
+        repository,
+        token,
+        api_path,
+        read=read,
+        incomplete_error="implementation carrier evidence list is incomplete",
+        malformed_error="implementation carrier evidence list is malformed",
+    )
 
 
 def _change_from_issue(payload: Mapping[str, object]) -> str | None:
@@ -958,13 +953,8 @@ def _accepted_formal_result_is_proven(
     request_id = int(parts[1])
     decisions = []
     for comment in comments:
-        user = _as_mapping(comment.get("user"))
-        app = _as_mapping(comment.get("performed_via_github_app"))
-        if (
-            user is None
-            or user.get("login") != "github-actions[bot]"
-            or app is None
-            or app.get("slug") != "github-actions"
+        if not github_comment_has_app_provenance(
+            comment, actor="github-actions[bot]", app_slug="github-actions"
         ):
             continue
         decision = parse_application_decision(comment.get("body"))
@@ -992,14 +982,13 @@ def _accepted_formal_result_is_proven(
     request = _as_mapping(read(repository, token, f"issues/comments/{request_id}"))
     if request is None or request.get("id") != request_id:
         return False
-    user = _as_mapping(request.get("user"))
-    app = _as_mapping(request.get("performed_via_github_app"))
     body = request.get("body")
     if (
-        user is None
-        or user.get("login") != repository.split("/", 1)[0]
-        or app is None
-        or app.get("slug") != "chatgpt-codex-connector"
+        not github_comment_has_app_provenance(
+            request,
+            actor=repository.split("/", 1)[0],
+            app_slug="chatgpt-codex-connector",
+        )
         or not isinstance(body, str)
         or hashlib.sha256(body.encode("utf-8")).hexdigest() != decision.request_body_sha256
     ):

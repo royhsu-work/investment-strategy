@@ -48,6 +48,9 @@ from investment_strategy.scheduled_agent_application_materialization import (
 from investment_strategy.scheduled_agent_carrier import (
     CarrierRequired,
     carrier_plan_document,
+    github_comment_has_app_provenance,
+    github_paginated_mappings,
+    github_read_bytes_with_retry,
     github_repository_api_url,
     read_github_artifact_bytes,
 )
@@ -94,7 +97,6 @@ from investment_strategy.scheduled_agent_merge_acceptance import run_guarded_eff
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_current_github_preflight,
-    github_read_bytes_with_retry,
     is_github_actions_comment,
     normalize_github_issue,
 )
@@ -386,34 +388,10 @@ def _as_mapping(value: object) -> Mapping[str, object] | None:
     return cast(Mapping[str, object], value) if isinstance(value, Mapping) else None
 
 
-def _app_slug(payload: Mapping[str, object]) -> str | None:
-    app = _as_mapping(payload.get("performed_via_github_app"))
-    slug = None if app is None else app.get("slug")
-    return slug if isinstance(slug, str) else None
-
-
-def _actor_login(payload: Mapping[str, object]) -> str | None:
-    user = _as_mapping(payload.get("user"))
-    login = None if user is None else user.get("login")
-    return login if isinstance(login, str) else None
-
-
 def _trusted_connector_comment(comment: Mapping[str, object], repository_owner: str) -> bool:
-    return (
-        _actor_login(comment) == repository_owner
-        and _app_slug(comment) == _CHATGPT_CONNECTOR_APP_SLUG
+    return github_comment_has_app_provenance(
+        comment, actor=repository_owner, app_slug=_CHATGPT_CONNECTOR_APP_SLUG
     )
-
-
-def typed_request_lines(body: str) -> list[str]:
-    """Share the exact request line-termination contract across both wire parsers.
-
-    One terminal newline is framing, not an extra field.  A second terminal
-    newline remains a blank field and must fail each parser's field contract.
-    """
-
-    lines = body.split("\n")
-    return lines[:-1] if lines and lines[-1] == "" else lines
 
 
 def parse_application_request(body: str) -> ApplicationRequest | None:
@@ -1045,26 +1023,14 @@ def _paged_github_list(
     token: str,
     api_path: str,
 ) -> tuple[Mapping[str, object], ...]:
-    items: list[Mapping[str, object]] = []
-    page = 1
-    while True:
-        separator = "&" if "?" in api_path else "?"
-        decoded = _github_json(
-            repository,
-            token,
-            f"{api_path}{separator}per_page=100&page={page}",
-        )
-        if not isinstance(decoded, list):
-            raise RuntimeError("GitHub paginated evidence endpoint returned a non-list response")
-        current: list[Mapping[str, object]] = []
-        for item in decoded:
-            if not isinstance(item, Mapping):
-                raise RuntimeError("GitHub paginated evidence endpoint returned a malformed item")
-            current.append(cast(Mapping[str, object], item))
-        items.extend(current)
-        if len(current) < 100:
-            return tuple(items)
-        page += 1
+    return github_paginated_mappings(
+        repository,
+        token,
+        api_path,
+        read=_github_json,
+        incomplete_error="GitHub paginated evidence endpoint returned a non-list response",
+        malformed_error="GitHub paginated evidence endpoint returned a malformed item",
+    )
 
 
 def _application_decision_for_request(

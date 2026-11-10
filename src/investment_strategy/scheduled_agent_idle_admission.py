@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +26,11 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from investment_strategy.scheduled_agent_carrier import github_repository_api_url
+from investment_strategy.scheduled_agent_carrier import (
+    github_comment_has_app_provenance,
+    github_read_bytes_with_retry,
+    github_repository_api_url,
+)
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_dispatch_result import fetch_dispatch_result
 from investment_strategy.scheduled_agent_runtime import acquire_current_github_preflight
@@ -462,13 +467,8 @@ def parse_idle_admission_request(body: str) -> IdleAdmissionRequest | None:
 
 
 def _trusted_connector_comment(comment: Mapping[str, object], owner: str) -> bool:
-    user = comment.get("user")
-    app = comment.get("performed_via_github_app")
-    return (
-        isinstance(user, Mapping)
-        and user.get("login") == owner
-        and isinstance(app, Mapping)
-        and app.get("slug") == _CHATGPT_CONNECTOR_APP_SLUG
+    return github_comment_has_app_provenance(
+        comment, actor=owner, app_slug=_CHATGPT_CONNECTOR_APP_SLUG
     )
 
 
@@ -551,8 +551,13 @@ def _github_json(
         data=None if payload is None else json.dumps(payload).encode("utf-8"),
     )
     try:
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed GitHub host
-            raw = response.read()
+        if method == "GET":
+            raw = github_read_bytes_with_retry(
+                request, open_request=urlopen, wait=time.sleep
+            )
+        else:
+            with urlopen(request, timeout=30) as response:  # noqa: S310 - trusted API host
+                raw = response.read()
     except HTTPError as exc:
         if method == "GET" and exc.code == 404:
             return None

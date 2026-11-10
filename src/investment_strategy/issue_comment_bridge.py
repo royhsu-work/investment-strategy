@@ -57,6 +57,9 @@ from investment_strategy.scheduled_agent_carrier import (
     CarrierOutcomeReport,
     CarrierPlan,
     QualifiedCarrierPlan,
+    github_comment_has_app_provenance,
+    github_paginated_mappings,
+    github_read_bytes_with_retry,
     github_repository_api_url,
     parse_carrier_outcome_report,
     parse_carrier_plan_document,
@@ -1798,17 +1801,11 @@ def _github_json(repository: str, token: str, api_path: str) -> object | None:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    # Repository observations are GET-only; transient gateway failures are
-    # retryable, whereas an unknown mutation outcome never is.
-    for attempt in range(3):
-        try:
-            with urlopen(request, timeout=30) as response:  # noqa: S310 - trusted API host
-                raw = response.read()
-            break
-        except HTTPError as exc:
-            if exc.code not in {502, 503, 504} or attempt == 2:
-                raise
-            time.sleep(0.25 * (2**attempt))
+    raw = github_read_bytes_with_retry(
+        request,
+        open_request=urlopen,  # noqa: S310 - trusted GitHub API host
+        wait=time.sleep,
+    )
     return None if not raw else json.loads(raw.decode("utf-8"))
 
 
@@ -1819,20 +1816,14 @@ def _paged_list(
     *,
     read: GitHubReader,
 ) -> tuple[Mapping[str, object], ...]:
-    items: list[Mapping[str, object]] = []
-    page = 1
-    separator = "&" if "?" in api_path else "?"
-    while True:
-        payload = read(repository, token, f"{api_path}{separator}per_page=100&page={page}")
-        if not isinstance(payload, list):
-            raise RuntimeError("application completion evidence list is incomplete")
-        for raw in payload:
-            if not isinstance(raw, Mapping):
-                raise RuntimeError("application completion evidence list is malformed")
-            items.append(cast(Mapping[str, object], raw))
-        if len(payload) < 100:
-            return tuple(items)
-        page += 1
+    return github_paginated_mappings(
+        repository,
+        token,
+        api_path,
+        read=read,
+        incomplete_error="application completion evidence list is incomplete",
+        malformed_error="application completion evidence list is malformed",
+    )
 
 
 def _runtime_shard_comments(
@@ -1864,13 +1855,8 @@ def _comment_time(comment: Mapping[str, object]) -> str | None:
 
 
 def _trusted_connector_comment(comment: Mapping[str, object], owner: str) -> bool:
-    user = comment.get("user")
-    app = comment.get("performed_via_github_app")
-    return (
-        isinstance(user, Mapping)
-        and user.get("login") == owner
-        and isinstance(app, Mapping)
-        and app.get("slug") == _CHATGPT_CONNECTOR_APP_SLUG
+    return github_comment_has_app_provenance(
+        comment, actor=owner, app_slug=_CHATGPT_CONNECTOR_APP_SLUG
     )
 
 
@@ -4870,8 +4856,6 @@ def _application_continuation_body(
     }
     if existing_correlations:
         return None
-    if parse_application_continuation_request(body) is None:
-        raise RuntimeError("rendered application continuation is not parseable")
     return body
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib
 import json
 import sys
 from datetime import date
@@ -70,6 +71,137 @@ _TEST_PREDECESSOR_ARTIFACT_ID = 9003
 _TEST_PREDECESSOR_ARTIFACT_DIGEST = "sha256:" + "1" * 64
 _TEST_FAILURE_EVIDENCE_SHA256 = "2" * 64
 _TEST_RECOVERY_EPISODE_SHA256 = "3" * 64
+
+
+@pytest.mark.parametrize(
+    ("module_name", "reader_kind"),
+    [
+        ("scheduled_agent_runtime", "object"),
+        ("scheduled_agent_runtime", "list"),
+        ("scheduled_agent_application_bridge", "json"),
+        ("scheduled_agent_effects", "json"),
+        ("issue_comment_bridge", "json"),
+        ("scheduled_agent_application_carrier", "json"),
+        ("scheduled_agent_dispatch_result", "json"),
+        ("scheduled_agent_validation_resource", "json"),
+        ("scheduled_agent_merge_acceptance", "json"),
+        ("scheduled_agent_checkin", "json"),
+        ("scheduled_agent_idle_admission", "json"),
+        ("native_closing_merge_application", "json"),
+    ],
+)
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_every_standard_github_get_uses_one_bounded_transport_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    module_name: str,
+    reader_kind: str,
+    status: int,
+) -> None:
+    """Prevent another read adapter from silently bypassing the shared retry."""
+
+    module = importlib.import_module(f"investment_strategy.{module_name}")
+    requests: list[str] = []
+    delays: list[float] = []
+
+    def open_request(request: Request, *, timeout: int) -> BytesIO:
+        assert timeout == 30
+        requests.append(request.get_method())
+        assert request.get_method() == "GET"
+        if len(requests) < 3:
+            raise HTTPError(request.full_url, status, "transient", Message(), None)
+        return BytesIO(b"[]" if reader_kind == "list" else b"{}")
+
+    monkeypatch.setattr(module, "urlopen", open_request)
+    monkeypatch.setattr(module.time, "sleep", delays.append)
+    if reader_kind == "object":
+        result = module._github_get_object("https://api.github.com/repos/example/repo", "token")
+    elif reader_kind == "list":
+        result = module._github_get_list_page(
+            "https://api.github.com/repos/example/repo/issues", "token"
+        )
+    else:
+        result = module._github_json(_REPOSITORY, "token", "/issues/9")
+    assert result == (() if reader_kind == "list" else {})
+    assert requests == ["GET", "GET", "GET"]
+    assert delays == [0.25, 0.5]
+
+
+@pytest.mark.parametrize("method", ["POST", "PATCH", "DELETE"])
+def test_shared_github_transport_rejects_non_get_before_network(method: str) -> None:
+    request = Request("https://api.github.com/repos/example/repo", method=method)
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("non-GET attempted through the retryable transport")
+
+    with pytest.raises(ValueError, match="only supports GET"):
+        carrier.github_read_bytes_with_retry(
+            request, open_request=forbidden, wait=forbidden
+        )
+
+
+@pytest.mark.parametrize(
+    ("actor", "slug", "expected"),
+    [
+        ("royhsu-work", "chatgpt-codex-connector", True),
+        ("github-actions[bot]", "github-actions", False),
+        ("royhsu-work", "github-actions", False),
+        ("someone-else", "chatgpt-codex-connector", False),
+    ],
+)
+def test_shared_github_app_provenance_preserves_exact_identity(
+    actor: str, slug: str, expected: bool
+) -> None:
+    comment: dict[str, object] = {
+        "user": {"login": actor},
+        "performed_via_github_app": {"slug": slug},
+    }
+    assert (
+        carrier.github_comment_has_app_provenance(
+            comment, actor="royhsu-work", app_slug="chatgpt-codex-connector"
+        )
+        is expected
+    )
+
+
+def test_shared_github_pager_reads_all_pages_and_keeps_query_identity() -> None:
+    observed: list[str] = []
+
+    def reader(_repo: str, _token: str, path: str) -> object:
+        observed.append(path)
+        if path.endswith("page=1"):
+            return [{"id": index} for index in range(100)]
+        return [{"id": 100}]
+
+    items = carrier.github_paginated_mappings(
+        _REPOSITORY,
+        "token",
+        "issues/55/comments?sort=created",
+        read=reader,
+        incomplete_error="incomplete list",
+        malformed_error="malformed item",
+    )
+    assert len(items) == 101
+    assert items[-1] == {"id": 100}
+    assert observed == [
+        "issues/55/comments?sort=created&per_page=100&page=1",
+        "issues/55/comments?sort=created&per_page=100&page=2",
+    ]
+
+
+@pytest.mark.parametrize("invalid_page", [None, {}, ["not-a-mapping"]])
+def test_shared_github_pager_refuses_partial_evidence(invalid_page: object) -> None:
+    def reader(_repo: str, _token: str, path: str) -> object:
+        return [{"id": index} for index in range(100)] if path.endswith("page=1") else invalid_page
+
+    with pytest.raises(RuntimeError, match="incomplete list|malformed item"):
+        carrier.github_paginated_mappings(
+            _REPOSITORY,
+            "token",
+            "issues/55/comments",
+            read=reader,
+            incomplete_error="incomplete list",
+            malformed_error="malformed item",
+        )
 
 
 @pytest.mark.parametrize(
