@@ -356,7 +356,11 @@ def test_post_effect_result_recovery_requires_exact_accepted_materialization_pro
 
     def prove(payload: dict[str, object], *_args: object, **_kwargs: object) -> object:
         observations.append(payload)
-        return SimpleNamespace(disposition="COMPLETE" if effect_complete else "INCOMPLETE")
+        return SimpleNamespace(
+            disposition="COMPLETE" if effect_complete else "INCOMPLETE",
+            reason=None,
+            application_request=None,
+        )
 
     monkeypatch.setattr(bridge, "_github_json", read)
     monkeypatch.setattr(
@@ -403,8 +407,9 @@ def test_post_effect_result_recovery_rejects_unqualified_shape(invalid: dict[str
     assert bridge._accepted_recovery_boundary(evidence) == "NONE"
 
 
+@pytest.mark.parametrize("post_effect_state", ["COMPLETE", "MISSING_PR"])
 def test_post_effect_result_continuation_uses_original_435_effect_not_formal_projection(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, post_effect_state: str
 ) -> None:
     """Production #435: one accepted Git write plus an Application-owned result.
 
@@ -575,13 +580,46 @@ def test_post_effect_result_continuation_uses_original_435_effect_not_formal_pro
         pass
 
     def reconcile(*_args: object, **_kwargs: object) -> None:
+        if post_effect_state == "MISSING_PR":
+            pytest.fail("an already durable accepted branch may emit only the missing PR carrier")
         assert _kwargs["reconcile_only"] is True
         assert _kwargs["uncertain_effect_index"] == 0
         raise ReachedOriginalEffectReconciliation
 
     monkeypatch.setattr(bridge, "run_guarded_effect_application", reconcile)
-    with pytest.raises(ReachedOriginalEffectReconciliation):
-        bridge._main_unprotected(bridge.ApplicationExceptionContext())
+    missing_pr_plan = make_carrier_plan(
+        repository=_REPOSITORY,
+        issue_number=435,
+        change=change,
+        action="propose-change",
+        authorization_revision=current_revision,
+        operation="pull-request-create",
+        target={"repository": _REPOSITORY, "head_ref": f"agent/{change}", "base_ref": "main"},
+        expected={"head_sha": "c" * 40, "base_sha": current_revision, "existing_pr_count": 0},
+        requested={"head": f"agent/{change}", "base": "main", "head_sha": "c" * 40},
+        expected_postcondition={"head_sha": "c" * 40, "base_sha": current_revision},
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_observe_accepted_post_effect_result",
+        lambda **_kwargs: (
+            bridge.AcceptedPostEffectProof("MISSING_PR", "verified original", missing_pr_plan)
+            if post_effect_state == "MISSING_PR"
+            else bridge.AcceptedPostEffectProof("COMPLETE", "verified original")
+        ),
+    )
+    if post_effect_state == "COMPLETE":
+        with pytest.raises(ReachedOriginalEffectReconciliation):
+            bridge._main_unprotected(bridge.ApplicationExceptionContext())
+    else:
+        outputs: list[bridge.ApplyResult] = []
+        monkeypatch.setattr(bridge, "_write_carrier_outputs", outputs.append)
+        monkeypatch.setattr(bridge, "_write_validation_outputs", lambda *_args: None)
+        monkeypatch.setattr(bridge, "_write_application_recovery_evidence", lambda *_a, **_k: True)
+        assert bridge._main_unprotected(bridge.ApplicationExceptionContext()) == 0
+        assert len(outputs) == 1
+        assert outputs[0].carrier_plan == missing_pr_plan
+        assert outputs[0].reason == "carrier_required"
 
 
 @pytest.mark.parametrize(
@@ -729,7 +767,7 @@ def test_post_effect_result_uses_existing_typed_materialization_proof(
 
     def prove(*_args: object, **kwargs: object) -> object:
         calls.append(str(kwargs["accepted_authorization_revision"]))
-        return SimpleNamespace(disposition=current[0])
+        return SimpleNamespace(disposition=current[0], reason=None, application_request=None)
 
     monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
     monkeypatch.setattr(bridge, "prove_materialization", prove)

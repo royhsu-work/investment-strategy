@@ -717,6 +717,7 @@ def _ensure_new_carrier(
     default_branch: str,
     authorization_revision: str,
     supersession: bool = False,
+    only_missing_pr: bool = False,
     before_write: Callable[[], None] | None = None,
 ) -> tuple[str, int]:
     if supersession:
@@ -738,6 +739,8 @@ def _ensure_new_carrier(
         _verify_new_carrier_base_is_empty(request, repository=repository, token=token)
     revision = _branch_head(repository, token, request.branch)
     if revision is None:
+        if only_missing_pr:
+            raise RuntimeError("accepted missing-PR recovery has no durable branch")
         revision = _create_revision(repository, token, request, before_write=before_write)
         if before_write is not None:
             before_write()
@@ -794,6 +797,7 @@ def _pending_new_carrier(
     token: str,
     default_branch: str,
     current_revision: str,
+    only_missing_pr: bool = False,
     before_write: Callable[[], None] | None = None,
 ) -> tuple[str, int]:
     """Reconcile an existing first carrier after a disjoint default-branch advance."""
@@ -819,6 +823,8 @@ def _pending_new_carrier(
 
     revision = _branch_head(repository, token, request.branch)
     if revision is None:
+        if only_missing_pr:
+            raise RuntimeError("accepted missing-PR recovery has no durable branch")
         return _ensure_new_carrier(
             request,
             source,
@@ -1629,12 +1635,17 @@ def _construct_materialization(
     promote_change: bool = False,
     validated_revision: str | None = None,
     allow_pending_continuation: bool = False,
+    only_missing_pr: bool = False,
     before_write: Callable[[], None] | None = None,
 ) -> ValidationResourceTarget:
     """Freshly authorize and apply one generic carrier/materialization effect."""
 
     if isinstance(request, Mapping):
         request = parse_materialization_payload(request, source)
+    if only_missing_pr and (
+        request.expected_change != "unset" or request.pr_number is not None or promote_change
+    ):
+        raise RuntimeError("missing-PR-only recovery must keep original first-carrier intent")
     if not materialization_message_is_safe(
         request.message,
         repository=repository,
@@ -1679,6 +1690,7 @@ def _construct_materialization(
                 token=token,
                 default_branch=default_branch,
                 current_revision=current_revision,
+                only_missing_pr=only_missing_pr,
                 before_write=before_write,
             )
         else:
@@ -1689,6 +1701,7 @@ def _construct_materialization(
                 token=token,
                 default_branch=default_branch,
                 authorization_revision=current_revision,
+                only_missing_pr=only_missing_pr,
                 before_write=before_write,
             )
         target = _target(
@@ -1767,6 +1780,55 @@ def _construct_materialization(
         allow_pending_continuation=allow_pending_continuation,
         before_write=before_write,
     )
+
+
+def missing_accepted_pr_carrier_plan(
+    proof: MaterializationProof,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+) -> CarrierPlan | None:
+    """Read-only projection of the *existing* first-carrier PR constructor.
+
+    A canonical INCOMPLETE proof alone does not authorize replay. Only an
+    independently observed exact branch permits this narrow PR-only plan.
+    The same constructor rechecks source, base, overlap, branch, manifest and
+    complete PR cardinality, but its missing-PR mode cannot create Git objects.
+    """
+
+    request = proof.application_request
+    if proof.disposition != "INCOMPLETE" or request is None:
+        return None
+    if (
+        source.role != "lead"
+        or source.action != "propose-change"
+        or request.expected_change != "unset"
+        or request.pr_number is not None
+    ):
+        return None
+    if _branch_head(repository, token, request.branch) is None:
+        return None
+    try:
+        _construct_materialization(
+            request,
+            source,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            allow_pending_continuation=True,
+            only_missing_pr=True,
+        )
+    except CarrierRequired as required:
+        if required.plan.operation != "pull-request-create":
+            raise RuntimeError(
+                "accepted missing-PR recovery produced a foreign carrier"
+            ) from required
+        return required.plan
+    return None
 
 
 def apply_materialization(

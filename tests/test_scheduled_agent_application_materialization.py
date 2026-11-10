@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from collections.abc import Mapping
+from email.message import Message
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+import investment_strategy.scheduled_agent_application_bridge as application_bridge
 import investment_strategy.scheduled_agent_application_materialization as materialization
 import investment_strategy.scheduled_agent_validation_resource as validation_resource
 from investment_strategy.scheduled_agent_application_materialization import (
@@ -3138,6 +3142,247 @@ def _accepted_git_carrier(fixture: _ProofGitRepository) -> str:
     accepted = fixture.commit({fixture.path: "accepted content"}, fixture.message, (fixture.base,))
     fixture.set_head(accepted)
     return accepted
+
+
+def test_accepted_branch_only_consequence_yields_pr_only_plan_after_disjoint_main_advance(
+    proof_git: _ProofGitRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The original Git effect already made the accepted commit/ref, not its PR."""
+    _first_git_intent(proof_git)
+    original_head = _accepted_git_carrier(proof_git)
+    proof_git.prs.clear()
+    proof_git.main = proof_git.commit({"README.md": "disjoint advance"}, "Main", (proof_git.main,))
+    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_a, **_k: True)
+    proof = materialization.prove_materialization(
+        proof_git.payload(),
+        proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        accepted_authorization_revision=proof_git.authorization,
+        allow_pending_continuation=True,
+        accepted_intent=True,
+    )
+    assert proof.disposition == "INCOMPLETE"
+    plan = materialization.missing_accepted_pr_carrier_plan(
+        proof,
+        proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+    )
+    assert plan is not None
+    assert plan.operation == "pull-request-create"
+    assert plan.expected["head_sha"] == original_head
+    assert plan.expected["base_sha"] == proof_git.main
+    assert plan.expected["existing_pr_count"] == 0
+    assert proof_git.mutations == []
+
+    # Only a native carrier PR consequence is missing. Never reconstruct the
+    # original Git commit/ref, and the canonical proof becomes COMPLETE after it.
+    proof_git.install_pr(439, proof_git.branch, original_head)
+    completed = materialization.prove_materialization(
+        proof_git.payload(),
+        proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        accepted_authorization_revision=proof_git.authorization,
+        allow_pending_continuation=True,
+        accepted_intent=True,
+    )
+    assert completed.disposition == "COMPLETE"
+    assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "duplicate-pr",
+        "foreign-pr",
+        "wrong-ref",
+        "changed-content",
+        "overlap",
+        "incomplete-compare",
+        "missing-branch",
+    ],
+)
+def test_accepted_missing_pr_does_not_plan_on_stale_or_ambiguous_github_evidence(
+    proof_git: _ProofGitRepository, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    _first_git_intent(proof_git)
+    accepted = _accepted_git_carrier(proof_git)
+    proof_git.prs.clear()
+    proof_git.main = proof_git.commit({"README.md": "advance"}, "Main", (proof_git.main,))
+    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_a, **_k: True)
+    if damage == "duplicate-pr":
+        proof_git.install_pr(901, proof_git.branch, accepted)
+        proof_git.install_pr(902, proof_git.branch, accepted)
+    elif damage == "foreign-pr":
+        proof_git.install_pr(901, proof_git.branch, accepted)
+        proof_git.prs[0]["body"] = "Refs #999"
+    elif damage == "wrong-ref":
+        proof_git.failure = "wrong-ref"
+    elif damage == "changed-content":
+        proof_git.git("update-ref", f"refs/heads/{proof_git.branch}", proof_git.base)
+    elif damage == "overlap":
+        proof_git.main = proof_git.commit({proof_git.path: "overlap"}, "Overlap", (proof_git.main,))
+    elif damage == "incomplete-compare":
+        proof_git.failure = "incomplete-compare"
+    elif damage == "missing-branch":
+        proof_git.git("update-ref", "-d", f"refs/heads/{proof_git.branch}")
+    proof = materialization.prove_materialization(
+        proof_git.payload(),
+        proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        accepted_authorization_revision=proof_git.authorization,
+        allow_pending_continuation=True,
+        accepted_intent=True,
+    )
+    assert proof.disposition != "COMPLETE", proof
+    plan = materialization.missing_accepted_pr_carrier_plan(
+        proof,
+        proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+    )
+    assert plan is None
+    assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize("read_fault", [None, 500, 502, 503, 504, "timeout"])
+def test_accepted_original_effect_recovery_classifies_real_git_then_completes_without_replay(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    read_fault: int | str | None,
+) -> None:
+    """The immutable original Git Effect survives a derived formal result.
+
+    Real Git commit/ref objects are already durable, but no PR exists. A
+    temporary GitHub read failure cannot trigger a write, and the next fresh
+    observation must produce the exact missing-PR-only native carrier plan.
+    """
+    from urllib.error import HTTPError
+
+    _first_git_intent(proof_git)
+    accepted_head = _accepted_git_carrier(proof_git)
+    proof_git.prs.clear()
+    proof_git.main = proof_git.commit({"README.md": "disjoint advance"}, "Main", (proof_git.main,))
+    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_a, **_k: True)
+    original_effects = [
+        {"kind": "github-mutation", "payload_json": json.dumps(proof_git.payload())}
+    ]
+    original = {
+        "issue_number": proof_git.source.issue_number,
+        "role": proof_git.source.role,
+        "action": proof_git.source.action,
+        "change": "unset",
+        "result_kind": "ready-for-openspec-review",
+        "evidence_ref": "issuecomment-accepted-original",
+        "result_content": "accepted first-carrier materialization",
+        "requested_effects": original_effects,
+    }
+    raw = json.dumps(original, sort_keys=True)
+    projected = {
+        **original,
+        "requested_effects": [
+            *original_effects,
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps({"issue_number": 322, "body": "formal result"}),
+            },
+        ],
+    }
+    identity = application_bridge._accepted_activation_effect_identity(
+        raw,
+        source=proof_git.source,
+        change="unset",
+        projected_raw=json.dumps(projected, sort_keys=True),
+    )
+    assert identity.disposition == "EXACT"
+    assert identity.projected_index == 0
+
+    record = application_bridge.ApplicationDecisionRecord(
+        request_comment_id=100,
+        request_body_sha256="0" * 64,
+        authorization_revision=proof_git.authorization,
+        issue_number=proof_git.source.issue_number,
+        role=proof_git.source.role,
+        action=proof_git.source.action,
+        change="unset",
+        result_kind="ready-for-openspec-review",
+        disposition="ACCEPTED",
+        worker_result_sha256=hashlib.sha256(raw.encode()).hexdigest(),
+        raw_worker_result=raw,
+        reason="accepted",
+    )
+    monkeypatch.setattr(
+        application_bridge, "_accepted_worker_result_for_continuation", lambda **_k: raw
+    )
+
+    def observe() -> application_bridge.AcceptedPostEffectProof:
+        return application_bridge._observe_accepted_post_effect_result(
+            record=record,
+            source=proof_git.source,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            default_branch="main",
+        )
+
+    if read_fault is not None:
+        original_reader = materialization._github_json
+        raised = False
+
+        def intermittent_reader(
+            repo: str,
+            token: str,
+            path: str,
+            *,
+            method: str = "GET",
+            payload: Mapping[str, object] | None = None,
+            allow_not_found: bool = False,
+        ) -> object:
+            nonlocal raised
+            if not raised and path.startswith("git/ref/heads/"):
+                raised = True
+                if read_fault == "timeout":
+                    raise TimeoutError("transient GitHub read timeout")
+                raise HTTPError(path, int(read_fault), "transient", Message(), None)
+            return original_reader(
+                repo,
+                token,
+                path,
+                method=method,
+                payload=payload,
+                allow_not_found=allow_not_found,
+            )
+
+        monkeypatch.setattr(materialization, "_github_json", intermittent_reader)
+        first = observe()
+        assert first.disposition == "INDETERMINATE"
+        assert first.carrier_plan is None
+        assert raised
+        monkeypatch.setattr(materialization, "_github_json", original_reader)
+
+    missing = observe()
+    assert missing.disposition == "MISSING_PR", missing
+    assert missing.carrier_plan is not None
+    assert missing.carrier_plan.operation == "pull-request-create"
+    assert missing.carrier_plan.expected["head_sha"] == accepted_head
+    assert proof_git.mutations == []
+
+    proof_git.install_pr(439, proof_git.branch, accepted_head)
+    assert observe().disposition == "COMPLETE"
+    assert proof_git.mutations == []
 
 
 def _observe_git(fixture: _ProofGitRepository) -> ValidationResourceTarget:

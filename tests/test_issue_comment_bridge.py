@@ -19,6 +19,7 @@ from urllib.request import Request
 import pytest
 
 from investment_strategy import issue_comment_bridge as bridge
+from investment_strategy import scheduled_agent_application_bridge as application
 from investment_strategy import scheduled_agent_carrier as carrier
 from investment_strategy.scheduled_agent_application_bridge import render_application_request
 from investment_strategy.scheduled_agent_checkin import checkin_title
@@ -4539,8 +4540,20 @@ def test_read_only_reconciliation_reobserves_later_complete_without_replay(
     assert read_count[0] == 3
 
 
+@pytest.mark.parametrize(
+    ("initial", "state", "reason"),
+    [
+        ("INDETERMINATE", "RESUMABLE", "application-completion-post-effect-observing"),
+        ("NOT_APPLIED", "INVALID", "application-completion-original-effect-incomplete"),
+        ("UNSAFE", "INVALID", "application-completion-original-effect-unsafe"),
+        ("MISSING_PR", "RESUMABLE", "application-completion-continuation-required"),
+    ],
+)
 def test_legacy_post_effect_result_only_resumes_after_fresh_proof(
     monkeypatch: pytest.MonkeyPatch,
+    initial: str,
+    state: str,
+    reason: str,
 ) -> None:
     failure = {
         "reason": "applied",
@@ -4554,15 +4567,22 @@ def test_legacy_post_effect_result_only_resumes_after_fresh_proof(
         document={"prior_failure_evidence_sha256": [], "failure_evidence": failure},
     )
     record = _accepted_carrier_record()
-    proven = {"value": False}
+    proof = {"value": initial}
     called: list[int] = []
 
-    def verify(**kwargs: object) -> bool:
+    def verify(**kwargs: object) -> application.AcceptedPostEffectProof:
         called.append(cast(bridge.ApplicationDecisionRecord, kwargs["record"]).request_comment_id)
         assert kwargs["artifact"] is recovery
-        return proven["value"]
+        if proof["value"] == "MISSING_PR":
+            return application.AcceptedPostEffectProof(
+                "MISSING_PR", "verified missing PR", _carrier_plan_fixture()
+            )
+        return application.AcceptedPostEffectProof(
+            cast(Literal["COMPLETE", "NOT_APPLIED", "INDETERMINATE", "UNSAFE"], proof["value"]),
+            "proof from accepted owner",
+        )
 
-    monkeypatch.setattr(bridge, "qualify_post_effect_result_recovery", verify)
+    monkeypatch.setattr(bridge, "classify_post_effect_result_recovery", verify)
     monkeypatch.setattr(
         bridge,
         "_application_runs",
@@ -4593,10 +4613,10 @@ def test_legacy_post_effect_result_only_resumes_after_fresh_proof(
         )
 
     first = classify()
-    assert first.state == "RESUMABLE"
-    assert first.reason == "application-completion-read-only-observing"
+    assert first.state == state
+    assert first.reason == reason
     assert first.recovery_artifact is recovery
-    proven["value"] = True
+    proof["value"] = "COMPLETE"
     final = classify()
     assert final.state == "RESUMABLE"
     assert final.reason == "application-completion-continuation-required"

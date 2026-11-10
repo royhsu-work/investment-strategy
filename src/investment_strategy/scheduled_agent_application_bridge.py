@@ -42,10 +42,12 @@ from investment_strategy.scheduled_agent_application_carrier import (
 from investment_strategy.scheduled_agent_application_materialization import (
     find_materialization_payload,
     materialization_requires_validation,
+    missing_accepted_pr_carrier_plan,
     observe_materialization_target,
     prove_materialization,
 )
 from investment_strategy.scheduled_agent_carrier import (
+    CarrierPlan,
     CarrierRequired,
     carrier_plan_document,
     github_comment_has_app_provenance,
@@ -5660,8 +5662,13 @@ class AcceptedActivationEffectIdentity:
 class AcceptedPostEffectProof:
     """Read-only recovery outcome from the canonical materialization owner."""
 
-    disposition: Literal["COMPLETE", "NOT_APPLIED", "INDETERMINATE", "UNSAFE"]
+    disposition: Literal["COMPLETE", "MISSING_PR", "NOT_APPLIED", "INDETERMINATE", "UNSAFE"]
     reason: str
+    carrier_plan: CarrierPlan | None = None
+
+    def __post_init__(self) -> None:
+        if (self.disposition == "MISSING_PR") != (self.carrier_plan is not None):
+            raise ValueError("only an exact missing-PR recovery may carry a CarrierPlan")
 
 
 def _accepted_activation_effect_identity(
@@ -5774,13 +5781,37 @@ def _observe_accepted_post_effect_result(
         allow_pending_continuation=True,
         accepted_intent=True,
     )
-    # Canonical decision table.  NOT_APPLIED is evidence of missing work, not
+    # This is the existing materialization owner's one missing-consequence
+    # refinement. INCOMPLETE alone never grants any Git write or continuation.
+    if proof.disposition == "INCOMPLETE":
+        try:
+            plan = missing_accepted_pr_carrier_plan(
+                proof,
+                source,
+                repository=repository,
+                token=token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+            )
+        except (HTTPError, OSError, RuntimeError, TypeError, ValueError) as error:
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", f"missing-PR proof changed: {type(error).__name__}"
+            )
+        if plan is not None:
+            return AcceptedPostEffectProof(
+                "MISSING_PR", "accepted branch and content proven; only PR absent", plan
+            )
+    # Canonical decision table. NOT_APPLIED is evidence of missing work, not
     # permission to replay an uncertain non-idempotent GitHub request.
     outcomes: dict[str, AcceptedPostEffectProof] = {
         "COMPLETE": AcceptedPostEffectProof("COMPLETE", "exact original effect observed"),
         "INCOMPLETE": AcceptedPostEffectProof("NOT_APPLIED", "original effect incomplete"),
-        "UNKNOWN": AcceptedPostEffectProof("INDETERMINATE", "GitHub proof unavailable"),
-        "CONTRADICTORY": AcceptedPostEffectProof("UNSAFE", "original effect contradictory"),
+        "UNKNOWN": AcceptedPostEffectProof(
+            "INDETERMINATE", proof.reason or "GitHub proof unavailable"
+        ),
+        "CONTRADICTORY": AcceptedPostEffectProof(
+            "UNSAFE", proof.reason or "original effect contradictory"
+        ),
     }
     return outcomes[proof.disposition]
 
@@ -5964,14 +5995,14 @@ def accepted_read_only_effects_complete(
         return False
 
 
-def qualify_post_effect_result_recovery(
+def classify_post_effect_result_recovery(
     *,
     record: ApplicationDecisionRecord,
     artifact: ApplicationRecoveryArtifact,
     repository: str,
     token: str,
-) -> bool:
-    """Prove an old post-effect interruption without upgrading its artifact.
+) -> AcceptedPostEffectProof:
+    """Preserve the canonical proof taxonomy through the dispatch boundary.
 
     The artifact's signed `continuation_eligible=false` remains immutable.
     Each consumer must fresh-observe the original accepted effect, and the
@@ -5991,26 +6022,45 @@ def qualify_post_effect_result_recovery(
         and record.authorization_revision == artifact.document.get("authorization_revision")
     )
     if not eligible or not isinstance(failure, Mapping):
-        return False
+        return AcceptedPostEffectProof("UNSAFE", "invalid immutable recovery correlation")
     try:
         repo = _as_mapping(_github_json(repository, token, ""))
         branch = None if repo is None else repo.get("default_branch")
         if not isinstance(branch, str) or not branch:
-            return False
+            return AcceptedPostEffectProof("INDETERMINATE", "default branch unavailable")
         revision = _fresh_branch_head(repository, token, branch)
         if revision is None or _SHA.fullmatch(revision) is None:
-            return False
+            return AcceptedPostEffectProof("INDETERMINATE", "default revision unavailable")
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
-        return False
-    return accepted_read_only_effects_complete(
+        return AcceptedPostEffectProof("INDETERMINATE", "default GitHub read unavailable")
+    try:
+        return _observe_accepted_post_effect_result(
+            record=record,
+            source=WorkerRequest(record.issue_number, record.role, record.action),
+            repository=repository,
+            token=token,
+            current_revision=revision,
+            default_branch=branch,
+        )
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return AcceptedPostEffectProof("INDETERMINATE", "accepted GitHub proof unavailable")
+
+
+def qualify_post_effect_result_recovery(
+    *,
+    record: ApplicationDecisionRecord,
+    artifact: ApplicationRecoveryArtifact,
+    repository: str,
+    token: str,
+) -> bool:
+    """Boolean compatibility for old continuation qualification callers only."""
+
+    return classify_post_effect_result_recovery(
         record=record,
-        source=WorkerRequest(record.issue_number, record.role, record.action),
-        recovery_evidence=failure,
+        artifact=artifact,
         repository=repository,
         token=token,
-        current_revision=revision,
-        default_branch=branch,
-    )
+    ).disposition in {"COMPLETE", "MISSING_PR"}
 
 
 def _write_application_recovery_evidence(
@@ -6898,6 +6948,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         else _accepted_predecessor_disposition(predecessor_evidence)
     )
     uncertain_effect_index = None
+    missing_pr_only_plan: CarrierPlan | None = None
     if predecessor_disposition == "INDETERMINATE" and predecessor_evidence is not None:
         failure = predecessor_evidence.document.get("failure_evidence")
         if (
@@ -6935,6 +6986,19 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             # Reconcile its postcondition BEFORE any later formal consequence.
             # A disappeared/ambiguous PR must not cause a second Git write.
             uncertain_effect_index = original_identity.projected_index
+            recovery_proof = _observe_accepted_post_effect_result(
+                record=accepted_intent,
+                source=plan.source,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+                default_branch=args.default_branch,
+            )
+            if recovery_proof.disposition == "UNSAFE":
+                raise RuntimeError(
+                    "accepted post-effect recovery is unsafe: " + recovery_proof.reason
+                )
+            missing_pr_only_plan = recovery_proof.carrier_plan
         if isinstance(failure, Mapping) and _accepted_recovery_boundary(failure) == "READ_ONLY":
             candidate_index = failure.get("failed_effect_index")
             if type(candidate_index) is int:
@@ -7061,6 +7125,25 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         raise ValueError("WORKER_RESULT comment changed before Phase-A ACCEPT")
     context.mutation_attempted = True
     try:
+        if missing_pr_only_plan is not None:
+            if accepted_intent is None:
+                raise RuntimeError("accepted missing-PR recovery lost original intent")
+            # Reobserve immediately before emitting the existing carrier exit;
+            # never persist a plan from an earlier dispatch observation.
+            fresh_pr_proof = _observe_accepted_post_effect_result(
+                record=accepted_intent,
+                source=plan.source,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+                default_branch=args.default_branch,
+            )
+            if (
+                fresh_pr_proof.disposition != "MISSING_PR"
+                or fresh_pr_proof.carrier_plan != missing_pr_only_plan
+            ):
+                raise RuntimeError("accepted missing-PR carrier changed before handoff")
+            raise CarrierRequired(missing_pr_only_plan)
         if first_activation and args.validation_passed:
             batch, result = run_guarded_effect_application(
                 application_worker_result,
