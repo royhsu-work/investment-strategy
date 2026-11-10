@@ -352,11 +352,11 @@ def test_post_effect_result_recovery_requires_exact_accepted_materialization_pro
             return {"object": {"sha": _REVISION}}
         pytest.fail(f"unexpected GitHub read: {path}")
 
-    observations: list[StagedEffect] = []
+    observations: list[dict[str, object]] = []
 
-    def observe(_adapter: GitHubEffectAdapter, effect: StagedEffect) -> bool:
-        observations.append(effect)
-        return effect_complete
+    def prove(payload: dict[str, object], *_args: object, **_kwargs: object) -> object:
+        observations.append(payload)
+        return SimpleNamespace(disposition="COMPLETE" if effect_complete else "INCOMPLETE")
 
     monkeypatch.setattr(bridge, "_github_json", read)
     monkeypatch.setattr(
@@ -366,7 +366,7 @@ def test_post_effect_result_recovery_requires_exact_accepted_materialization_pro
             raw if kwargs["accepted_intent"] is accepted else pytest.fail("wrong intent")
         ),
     )
-    monkeypatch.setattr(GitHubEffectAdapter, "observe_postcondition", observe)
+    monkeypatch.setattr(bridge, "prove_materialization", prove)
     assert bridge._accepted_recovery_boundary(failure) == "POST_EFFECT_RESULT"
     assert bridge._accepted_predecessor_disposition(artifact) == "INDETERMINATE"
     assert (
@@ -377,7 +377,7 @@ def test_post_effect_result_recovery_requires_exact_accepted_materialization_pro
     )
     assert reads == ["", "git/ref/heads/main"]
     assert len(observations) == 1
-    assert observations[0].kind == "github-mutation"
+    assert observations[0] == materialization
     assert artifact.continuation_eligible is False  # immutable historical evidence
 
 
@@ -401,6 +401,333 @@ def test_post_effect_result_recovery_rejects_unqualified_shape(invalid: dict[str
     }
     evidence.update(invalid)
     assert bridge._accepted_recovery_boundary(evidence) == "NONE"
+
+
+def test_post_effect_result_continuation_uses_original_435_effect_not_formal_projection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Production #435: one accepted Git write plus an Application-owned result.
+
+    The exact run 42827477053 was rejected before reconciliation because its
+    freshly projected batch had two effects.  No GitHub write is permitted by
+    this test; the boundary must instead reach the original-effect observer.
+    """
+    source = WorkerRequest(435, "lead", "propose-change")
+    change = "restore-t1-dispatch-artifact-consumption"
+    materialization = {
+        "issue_number": 435,
+        "operation": "application-materialize",
+        "expected_change": "unset",
+        "change": change,
+        "branch": f"agent/{change}",
+        "base_sha": "8bf5007c4dc6fb8368473af3aba86dbe5136a627",
+        "message": "OpenSpec: restore exact T1 dispatch Artifact consumption (Refs #435)",
+        "files": [
+            {
+                "path": f"openspec/changes/{change}/proposal.md",
+                "blob_sha": "1ab7b8c1fee8403b77c3c6010a8cd46fcb4e36c4",
+                "expected_sha": None,
+            }
+        ],
+        "pr_number": None,
+    }
+    raw_worker = _worker_result(
+        action="propose-change", role="lead", result_kind="ready-for-openspec-review"
+    )
+    raw_worker["issue_number"] = 435
+    raw_worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(materialization)}
+    ]
+    original = json.dumps(raw_worker, sort_keys=True)
+    projected = json.loads(original)
+    projected["requested_effects"].append(
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps({"issue_number": 435, "body": "ACTION_RESULT\nformal"}),
+        }
+    )
+    projected_raw = json.dumps(projected, sort_keys=True)
+    assert len(bridge.parse_effect_batch(original, source, authorized_change="unset").effects) == 1
+    assert (
+        len(bridge.parse_effect_batch(projected_raw, source, authorized_change="unset").effects)
+        == 2
+    )
+
+    accepted = _accepted_record(
+        original,
+        _effect_request(raw_worker),
+        source=source,
+        change="unset",
+        result_kind="ready-for-openspec-review",
+    )
+    decision_body = "exact accepted decision #435"
+    decision_digest = hashlib.sha256(decision_body.encode()).hexdigest()
+    failure = {
+        "reason": "applied",
+        "mutation_status": "unknown",
+        "unfinished_boundary": "application-result",
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+    }
+    artifact = bridge.ApplicationRecoveryArtifact(
+        run_id=42803777801,
+        run_attempt=1,
+        job_id=1,
+        artifact_id=2,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=accepted.request_comment_id,
+        accepted_decision_sha256=decision_digest,
+        failure_evidence_sha256="b" * 64,
+        recovery_episode_sha256="c" * 64,
+        recovery_attempt=1,
+        continuation_eligible=False,
+        document={"failure_evidence": failure},
+    )
+    continuation_body = render_application_continuation_request(
+        repository=_REPOSITORY,
+        issue_number=435,
+        original_request_comment_id=accepted.request_comment_id,
+        accepted_decision_sha256=decision_digest,
+        predecessor_run_id=artifact.run_id,
+        predecessor_run_attempt=artifact.run_attempt,
+        predecessor_job_id=artifact.job_id,
+        predecessor_artifact_id=artifact.artifact_id,
+        predecessor_artifact_digest=artifact.artifact_digest,
+        failure_evidence_sha256=artifact.failure_evidence_sha256,
+        recovery_episode_sha256=artifact.recovery_episode_sha256,
+    )
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps(_event(continuation_body, comment_id=203)), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled_agent_application_bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+        ],
+    )
+    monkeypatch.setattr(bridge, "_fresh_event_observation", lambda *_args: False)
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_args: _preflight(action="propose-change", issue_number=435),
+    )
+    monkeypatch.setattr(
+        bridge, "_find_application_decision_from_current_frontier", lambda **_kwargs: accepted
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_comment_for_request",
+        lambda **_kwargs: (accepted, decision_body),
+    )
+    monkeypatch.setattr(
+        bridge, "qualify_application_continuation_predecessor", lambda *_args, **_kwargs: artifact
+    )
+    monkeypatch.setattr(
+        bridge, "_accepted_worker_result_for_continuation", lambda **_kwargs: original
+    )
+    monkeypatch.setattr(
+        bridge,
+        "plan_application",
+        lambda **_kwargs: SimpleNamespace(
+            should_apply=True,
+            source=source,
+            raw_worker_result=original,
+            request_comment_id=accepted.request_comment_id,
+            change="unset",
+            pending_application_correlation=None,
+            pending_continuation=True,
+        ),
+    )
+    monkeypatch.setattr(
+        bridge, "_fresh_application_worker_result", lambda *_args, **_kwargs: projected_raw
+    )
+    monkeypatch.setattr(bridge, "_repair_partial_first_activation_route", lambda **_kwargs: False)
+
+    class ReachedOriginalEffectReconciliation(Exception):
+        pass
+
+    def reconcile(*_args: object, **_kwargs: object) -> None:
+        raise ReachedOriginalEffectReconciliation
+
+    monkeypatch.setattr(bridge, "run_guarded_effect_application", reconcile)
+    with pytest.raises(ReachedOriginalEffectReconciliation):
+        bridge._main_unprotected(bridge.ApplicationExceptionContext())
+
+
+@pytest.mark.parametrize(
+    ("original_extra", "projected_extra", "expected", "index"),
+    [
+        ("none", "formal", "EXACT", 0),
+        ("none", "formal-first", "EXACT", 1),
+        ("none", "none", "EXACT", 0),
+        ("duplicate", "formal", "AMBIGUOUS", None),
+        ("foreign-write", "formal", "UNSAFE", None),
+        ("original-comment", "formal", "UNSAFE", None),
+        ("missing", "formal", "MISSING", None),
+        ("none", "missing", "MISSING", None),
+        ("none", "duplicate", "AMBIGUOUS", None),
+        ("none", "foreign-write", "UNSAFE", None),
+    ],
+)
+def test_accepted_activation_identity_contract_table(
+    original_extra: str, projected_extra: str, expected: str, index: int | None
+) -> None:
+    """One canonical decision table: identity comes from intent, never order."""
+    source = WorkerRequest(435, "lead", "propose-change")
+    change = "restore-t1-dispatch-artifact-consumption"
+    original_effect = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps(
+            {
+                "issue_number": 435,
+                "operation": "application-materialize",
+                "expected_change": "unset",
+                "change": change,
+                "branch": f"agent/{change}",
+                "base_sha": _REVISION,
+                "message": "OpenSpec: restore exact Artifact consumption (Refs #435)",
+                "files": [
+                    {
+                        "path": f"openspec/changes/{change}/proposal.md",
+                        "blob_sha": "b" * 40,
+                        "expected_sha": None,
+                    }
+                ],
+                "pr_number": None,
+            },
+            sort_keys=True,
+        ),
+    }
+    foreign = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps({"issue_number": 435, "operation": "issue-label-add"}),
+    }
+    comment = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 435, "body": "ACTION_RESULT\nformal"}),
+    }
+    originals = [original_effect]
+    if original_extra == "missing":
+        originals = []
+    elif original_extra == "duplicate":
+        originals.append(original_effect)
+    elif original_extra == "foreign-write":
+        originals.append(foreign)
+    elif original_extra == "original-comment":
+        originals.append(comment)
+    projection = [original_effect]
+    if projected_extra == "formal":
+        projection.append(comment)
+    elif projected_extra == "formal-first":
+        projection.insert(0, comment)
+    elif projected_extra == "missing":
+        projection = [comment]
+    elif projected_extra == "duplicate":
+        projection.append(original_effect)
+    elif projected_extra == "foreign-write":
+        projection.append(foreign)
+
+    def render(effects: list[dict[str, str]]) -> str:
+        worker = _worker_result(
+            action="propose-change", role="lead", result_kind="ready-for-openspec-review"
+        )
+        worker["issue_number"] = 435
+        worker["requested_effects"] = effects
+        return json.dumps(worker)
+
+    identity = bridge._accepted_activation_effect_identity(
+        render(originals),
+        source=source,
+        change="unset",
+        projected_raw=render(projection),
+    )
+    assert identity.disposition == expected
+    assert identity.projected_index == index
+    assert (identity.effect is not None) is (expected == "EXACT")
+
+
+@pytest.mark.parametrize(
+    ("materialization_status", "recovery_status"),
+    [
+        ("COMPLETE", "COMPLETE"),
+        ("INCOMPLETE", "NOT_APPLIED"),
+        ("UNKNOWN", "INDETERMINATE"),
+        ("CONTRADICTORY", "UNSAFE"),
+    ],
+)
+def test_post_effect_result_uses_existing_typed_materialization_proof(
+    monkeypatch: pytest.MonkeyPatch,
+    materialization_status: str,
+    recovery_status: str,
+) -> None:
+    """All four proof outcomes retain their distinct safety/liveness meaning."""
+    source = WorkerRequest(435, "lead", "propose-change")
+    materialization = {
+        "issue_number": 435,
+        "operation": "application-materialize",
+        "expected_change": "unset",
+        "change": "restore-t1-dispatch-artifact-consumption",
+        "branch": "agent/restore-t1-dispatch-artifact-consumption",
+        "base_sha": _REVISION,
+        "message": "OpenSpec: restore exact Artifact consumption (Refs #435)",
+        "files": [
+            {
+                "path": "openspec/changes/restore-t1-dispatch-artifact-consumption/proposal.md",
+                "blob_sha": "b" * 40,
+                "expected_sha": None,
+            }
+        ],
+        "pr_number": None,
+    }
+    original = _worker_result(
+        action="propose-change", role="lead", result_kind="ready-for-openspec-review"
+    )
+    original["issue_number"] = 435
+    original["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(materialization)}
+    ]
+    raw = json.dumps(original)
+    accepted = _accepted_record(
+        raw,
+        _effect_request(original),
+        source=source,
+        change="unset",
+        result_kind="ready-for-openspec-review",
+    )
+    calls: list[str] = []
+    current = [materialization_status]
+
+    def prove(*_args: object, **kwargs: object) -> object:
+        calls.append(str(kwargs["accepted_authorization_revision"]))
+        return SimpleNamespace(disposition=current[0])
+
+    monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
+    monkeypatch.setattr(bridge, "prove_materialization", prove)
+
+    def observe() -> bridge.AcceptedPostEffectProof:
+        return bridge._observe_accepted_post_effect_result(
+            record=accepted,
+            source=source,
+            repository=_REPOSITORY,
+            token=_REVISION,
+            current_revision=_REVISION,
+            default_branch="main",
+        )
+
+    assert observe().disposition == recovery_status
+    # After a transient failure or an incomplete materialization, a later
+    # fresh read can observe completion without replay or changing the intent.
+    current[0] = "COMPLETE"
+    assert observe().disposition == "COMPLETE"
+    assert calls == [_REVISION, _REVISION]
 
 
 @pytest.mark.parametrize("head_matches", [False, True])
