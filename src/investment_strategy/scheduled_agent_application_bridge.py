@@ -6917,24 +6917,24 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 raise RuntimeError("post-effect recovery has a different original result")
             if materialization is None:
                 raise RuntimeError("post-effect recovery has no materialization projection")
-                original_identity = _accepted_activation_effect_identity(
-                    accepted_original,
-                    source=plan.source,
-                    change=plan.change,
-                    projected_raw=application_worker_result,
+            original_identity = _accepted_activation_effect_identity(
+                accepted_original,
+                source=plan.source,
+                change=effective_change,
+                projected_raw=application_worker_result,
+            )
+            if (
+                original_identity.disposition != "EXACT"
+                or original_identity.projected_index is None
+            ):
+                raise RuntimeError(
+                    "post-effect original activation identity is "
+                    + original_identity.disposition.lower()
                 )
-                if (
-                    original_identity.disposition != "EXACT"
-                    or original_identity.projected_index is None
-                ):
-                    raise RuntimeError(
-                        "post-effect original activation identity is "
-                        + original_identity.disposition.lower()
-                    )
-                # The preceding run's sole original GitHub Effect is uncertain.
-                # Reconcile its postcondition BEFORE any later formal consequence.
-                # A disappeared/ambiguous PR must not cause a second Git write.
-                uncertain_effect_index = original_identity.projected_index
+            # The preceding run's sole original GitHub Effect is uncertain.
+            # Reconcile its postcondition BEFORE any later formal consequence.
+            # A disappeared/ambiguous PR must not cause a second Git write.
+            uncertain_effect_index = original_identity.projected_index
         if isinstance(failure, Mapping) and _accepted_recovery_boundary(failure) == "READ_ONLY":
             candidate_index = failure.get("failed_effect_index")
             if type(candidate_index) is int:

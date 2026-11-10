@@ -575,6 +575,8 @@ def test_post_effect_result_continuation_uses_original_435_effect_not_formal_pro
         pass
 
     def reconcile(*_args: object, **_kwargs: object) -> None:
+        assert _kwargs["reconcile_only"] is True
+        assert _kwargs["uncertain_effect_index"] == 0
         raise ReachedOriginalEffectReconciliation
 
     monkeypatch.setattr(bridge, "run_guarded_effect_application", reconcile)
