@@ -15,6 +15,11 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
+from investment_strategy.scheduled_agent_carrier import (
+    github_comment_has_app_provenance,
+    github_read_bytes_with_retry,
+)
+
 _TAIPEI = ZoneInfo("Asia/Taipei")
 _CHECKIN_TITLE_PREFIX = "[Agent Runtime] "
 _CHECKIN_MARKER = "<!-- scheduled-agent-runtime-checkin -->"
@@ -133,13 +138,8 @@ def parse_rollover_request(body: object) -> tuple[date, int] | None:
 
 
 def _trusted_external_comment(comment: Mapping[str, object], actor_login: str) -> bool:
-    user = comment.get("user")
-    app = comment.get("performed_via_github_app")
-    return (
-        isinstance(user, Mapping)
-        and user.get("login") == actor_login
-        and isinstance(app, Mapping)
-        and app.get("slug") == _TRUSTED_EXTERNAL_APP
+    return github_comment_has_app_provenance(
+        comment, actor=actor_login, app_slug=_TRUSTED_EXTERNAL_APP
     )
 
 
@@ -410,8 +410,12 @@ def _github_json(
         method=method,
     )
     try:
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-            return json.loads(response.read().decode("utf-8"))
+        if method == "GET":
+            raw = github_read_bytes_with_retry(request, open_request=urlopen, wait=time.sleep)
+        else:
+            with urlopen(request, timeout=30) as response:  # noqa: S310 - trusted API host
+                raw = response.read()
+        return json.loads(raw.decode("utf-8"))
     except HTTPError as exc:
         raise RuntimeError(f"GitHub API {method} {path} failed with HTTP {exc.code}") from exc
     except (URLError, TimeoutError, UnicodeError, json.JSONDecodeError) as exc:

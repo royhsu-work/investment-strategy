@@ -6,12 +6,13 @@ import json
 import os
 import re
 import sys
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import cast
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from investment_strategy.human_authority import HUMAN_ACTOR
@@ -27,6 +28,10 @@ from investment_strategy.scheduled_agent_action_model import (
     ActionApplicationDecision,
     ApplicationRejection,
     ApplicationRejectionKind,
+)
+from investment_strategy.scheduled_agent_carrier import (
+    github_paginated_mappings,
+    github_read_bytes_with_retry,
 )
 from investment_strategy.scheduled_agent_effect_contract import GITHUB_MUTATION_KIND
 from investment_strategy.scheduled_agent_effects import (
@@ -124,8 +129,8 @@ def _github_json(repository: str, token: str, api_path: str) -> object:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-        return json.loads(response.read().decode("utf-8"))
+    raw = github_read_bytes_with_retry(request, open_request=urlopen, wait=time.sleep)
+    return json.loads(raw.decode("utf-8"))
 
 
 def _paged_github_list(
@@ -133,26 +138,14 @@ def _paged_github_list(
     token: str,
     api_path: str,
 ) -> tuple[Mapping[str, object], ...]:
-    items: list[Mapping[str, object]] = []
-    page = 1
-    while True:
-        separator = "&" if "?" in api_path else "?"
-        decoded = _github_json(
-            repository,
-            token,
-            f"{api_path}{separator}{urlencode({'per_page': 100, 'page': page})}",
-        )
-        if not isinstance(decoded, list):
-            raise RuntimeError("GitHub paginated evidence endpoint returned a non-list response")
-        current: list[Mapping[str, object]] = []
-        for item in decoded:
-            if not isinstance(item, Mapping):
-                raise RuntimeError("GitHub paginated evidence endpoint returned a malformed item")
-            current.append(cast(Mapping[str, object], item))
-        items.extend(current)
-        if len(current) < 100:
-            return tuple(items)
-        page += 1
+    return github_paginated_mappings(
+        repository,
+        token,
+        api_path,
+        read=_github_json,
+        incomplete_error="GitHub paginated evidence endpoint returned a non-list response",
+        malformed_error="GitHub paginated evidence endpoint returned a malformed item",
+    )
 
 
 def _timestamp(value: object) -> datetime | None:

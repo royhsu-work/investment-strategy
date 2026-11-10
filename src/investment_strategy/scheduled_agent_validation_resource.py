@@ -33,6 +33,7 @@ from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
     CarrierRequired,
     carrier_pr_identity,
+    github_read_bytes_with_retry,
     make_carrier_plan,
 )
 from investment_strategy.scheduled_agent_runtime import (
@@ -214,8 +215,11 @@ def _github_json(
         },
     )
     try:
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-            raw = response.read()
+        if method == "GET":
+            raw = github_read_bytes_with_retry(request, open_request=urlopen, wait=time.sleep)
+        else:
+            with urlopen(request, timeout=30) as response:  # noqa: S310 - trusted API host
+                raw = response.read()
     except HTTPError as exc:
         if allow_not_found and exc.code == 404:
             return None

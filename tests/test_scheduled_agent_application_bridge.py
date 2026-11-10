@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib
 import json
 import sys
 from datetime import date
@@ -19,6 +20,7 @@ import pytest
 
 import investment_strategy.scheduled_agent_application_bridge as bridge
 import investment_strategy.scheduled_agent_carrier as carrier
+import investment_strategy.scheduled_agent_runtime as runtime
 from investment_strategy.scheduled_agent_action_model import (
     ApplicationRejection,
     ApplicationRejectionKind,
@@ -69,6 +71,135 @@ _TEST_PREDECESSOR_ARTIFACT_ID = 9003
 _TEST_PREDECESSOR_ARTIFACT_DIGEST = "sha256:" + "1" * 64
 _TEST_FAILURE_EVIDENCE_SHA256 = "2" * 64
 _TEST_RECOVERY_EPISODE_SHA256 = "3" * 64
+
+
+@pytest.mark.parametrize(
+    ("module_name", "reader_kind"),
+    [
+        ("scheduled_agent_runtime", "object"),
+        ("scheduled_agent_runtime", "list"),
+        ("scheduled_agent_application_bridge", "json"),
+        ("scheduled_agent_effects", "json"),
+        ("issue_comment_bridge", "json"),
+        ("scheduled_agent_application_carrier", "json"),
+        ("scheduled_agent_dispatch_result", "json"),
+        ("scheduled_agent_validation_resource", "json"),
+        ("scheduled_agent_merge_acceptance", "json"),
+        ("scheduled_agent_checkin", "json"),
+        ("scheduled_agent_idle_admission", "json"),
+        ("native_closing_merge_application", "json"),
+    ],
+)
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_every_standard_github_get_uses_one_bounded_transport_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    module_name: str,
+    reader_kind: str,
+    status: int,
+) -> None:
+    """Prevent another read adapter from silently bypassing the shared retry."""
+
+    module = importlib.import_module(f"investment_strategy.{module_name}")
+    requests: list[str] = []
+    delays: list[float] = []
+
+    def open_request(request: Request, *, timeout: int) -> BytesIO:
+        assert timeout == 30
+        requests.append(request.get_method())
+        assert request.get_method() == "GET"
+        if len(requests) < 3:
+            raise HTTPError(request.full_url, status, "transient", Message(), None)
+        return BytesIO(b"[]" if reader_kind == "list" else b"{}")
+
+    monkeypatch.setattr(module, "urlopen", open_request)
+    monkeypatch.setattr(module.time, "sleep", delays.append)
+    if reader_kind == "object":
+        result = module._github_get_object("https://api.github.com/repos/example/repo", "token")
+    elif reader_kind == "list":
+        result = module._github_get_list_page(
+            "https://api.github.com/repos/example/repo/issues", "token"
+        )
+    else:
+        result = module._github_json(_REPOSITORY, "token", "/issues/9")
+    assert result == (() if reader_kind == "list" else {})
+    assert requests == ["GET", "GET", "GET"]
+    assert delays == [0.25, 0.5]
+
+
+@pytest.mark.parametrize("method", ["POST", "PATCH", "DELETE"])
+def test_shared_github_transport_rejects_non_get_before_network(method: str) -> None:
+    request = Request("https://api.github.com/repos/example/repo", method=method)
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("non-GET attempted through the retryable transport")
+
+    with pytest.raises(ValueError, match="only supports GET"):
+        carrier.github_read_bytes_with_retry(request, open_request=forbidden, wait=forbidden)
+
+
+@pytest.mark.parametrize(
+    ("actor", "slug", "expected"),
+    [
+        ("royhsu-work", "chatgpt-codex-connector", True),
+        ("github-actions[bot]", "github-actions", False),
+        ("royhsu-work", "github-actions", False),
+        ("someone-else", "chatgpt-codex-connector", False),
+    ],
+)
+def test_shared_github_app_provenance_preserves_exact_identity(
+    actor: str, slug: str, expected: bool
+) -> None:
+    comment: dict[str, object] = {
+        "user": {"login": actor},
+        "performed_via_github_app": {"slug": slug},
+    }
+    assert (
+        carrier.github_comment_has_app_provenance(
+            comment, actor="royhsu-work", app_slug="chatgpt-codex-connector"
+        )
+        is expected
+    )
+
+
+def test_shared_github_pager_reads_all_pages_and_keeps_query_identity() -> None:
+    observed: list[str] = []
+
+    def reader(_repo: str, _token: str, path: str) -> object:
+        observed.append(path)
+        if path.endswith("page=1"):
+            return [{"id": index} for index in range(100)]
+        return [{"id": 100}]
+
+    items = carrier.github_paginated_mappings(
+        _REPOSITORY,
+        "token",
+        "issues/55/comments?sort=created",
+        read=reader,
+        incomplete_error="incomplete list",
+        malformed_error="malformed item",
+    )
+    assert len(items) == 101
+    assert items[-1] == {"id": 100}
+    assert observed == [
+        "issues/55/comments?sort=created&per_page=100&page=1",
+        "issues/55/comments?sort=created&per_page=100&page=2",
+    ]
+
+
+@pytest.mark.parametrize("invalid_page", [None, {}, ["not-a-mapping"]])
+def test_shared_github_pager_refuses_partial_evidence(invalid_page: object) -> None:
+    def reader(_repo: str, _token: str, path: str) -> object:
+        return [{"id": index} for index in range(100)] if path.endswith("page=1") else invalid_page
+
+    with pytest.raises(RuntimeError, match="incomplete list|malformed item"):
+        carrier.github_paginated_mappings(
+            _REPOSITORY,
+            "token",
+            "issues/55/comments",
+            read=reader,
+            incomplete_error="incomplete list",
+            malformed_error="malformed item",
+        )
 
 
 @pytest.mark.parametrize(
@@ -146,6 +277,130 @@ def test_continuation_classifies_effect_boundary_before_correction(
         document={"failure_evidence": failure},
     )
     assert bridge._accepted_predecessor_disposition(predecessor) == expected
+
+
+@pytest.mark.parametrize("effect_complete", [False, True])
+def test_post_effect_result_recovery_requires_exact_accepted_materialization_proof(
+    monkeypatch: pytest.MonkeyPatch, effect_complete: bool
+) -> None:
+    source = WorkerRequest(138, "lead", "propose-change")
+    materialization = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": "unset",
+        "change": "restore-example",
+        "branch": "agent/restore-example",
+        "base_sha": _REVISION,
+        "message": "OpenSpec proposal",
+        "files": [
+            {
+                "path": "openspec/changes/restore-example/proposal.md",
+                "blob_sha": "b" * 40,
+                "expected_sha": None,
+            }
+        ],
+        "pr_number": None,
+    }
+    worker = _worker_result(
+        action=source.action, role=source.role, result_kind="ready-for-openspec-review"
+    )
+    worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(materialization)}
+    ]
+    raw = json.dumps(worker, sort_keys=True)
+    accepted = _accepted_record(
+        raw,
+        _effect_request(worker),
+        source=source,
+        change="unset",
+        result_kind="ready-for-openspec-review",
+    )
+    failure = {
+        "reason": "applied",
+        "mutation_status": "unknown",
+        "unfinished_boundary": "application-result",
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+    }
+    artifact = bridge.ApplicationRecoveryArtifact(
+        run_id=1,
+        run_attempt=1,
+        job_id=2,
+        artifact_id=3,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=accepted.request_comment_id,
+        accepted_decision_sha256="c" * 64,
+        failure_evidence_sha256="d" * 64,
+        recovery_episode_sha256="e" * 64,
+        recovery_attempt=1,
+        continuation_eligible=False,
+        document={
+            "failure_evidence": failure,
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "authorization_revision": _REVISION,
+        },
+    )
+    reads: list[str] = []
+
+    def read(_repo: str, _token: str, path: str, **_kw: object) -> dict[str, object]:
+        reads.append(path)
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": _REVISION}}
+        pytest.fail(f"unexpected GitHub read: {path}")
+
+    observations: list[StagedEffect] = []
+
+    def observe(_adapter: GitHubEffectAdapter, effect: StagedEffect) -> bool:
+        observations.append(effect)
+        return effect_complete
+
+    monkeypatch.setattr(bridge, "_github_json", read)
+    monkeypatch.setattr(
+        bridge,
+        "_accepted_worker_result_for_continuation",
+        lambda **kwargs: (
+            raw if kwargs["accepted_intent"] is accepted else pytest.fail("wrong intent")
+        ),
+    )
+    monkeypatch.setattr(GitHubEffectAdapter, "observe_postcondition", observe)
+    assert bridge._accepted_recovery_boundary(failure) == "POST_EFFECT_RESULT"
+    assert bridge._accepted_predecessor_disposition(artifact) == "INDETERMINATE"
+    assert (
+        bridge.qualify_post_effect_result_recovery(
+            record=accepted, artifact=artifact, repository=_REPOSITORY, token=_REPOSITORY
+        )
+        is effect_complete
+    )
+    assert reads == ["", "git/ref/heads/main"]
+    assert len(observations) == 1
+    assert observations[0].kind == "github-mutation"
+    assert artifact.continuation_eligible is False  # immutable historical evidence
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"reason": "unknown"},
+        {"unfinished_boundary": "effect-postcondition"},
+        {"mutation_status": "not-complete"},
+        {"completed_effect_indexes": [0]},
+        {"unexpected": "an untrusted override"},
+    ],
+)
+def test_post_effect_result_recovery_rejects_unqualified_shape(invalid: dict[str, object]) -> None:
+    evidence: dict[str, object] = {
+        "reason": "applied",
+        "mutation_status": "unknown",
+        "unfinished_boundary": "application-result",
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+    }
+    evidence.update(invalid)
+    assert bridge._accepted_recovery_boundary(evidence) == "NONE"
 
 
 @pytest.mark.parametrize("head_matches", [False, True])
@@ -235,6 +490,52 @@ def test_application_read_retry_does_not_repeat_write_after_gateway_timeout(
             )
         assert attempts == [method]
         assert delays == []
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_preflight_paged_issue_get_retries_gateway_failure_without_losing_page(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """A transient GET failure cannot strand first-activation preflight."""
+    calls: list[str] = []
+    delays: list[float] = []
+
+    def urlopen(request: Request, *, timeout: int) -> BytesIO:
+        assert timeout == 30
+        calls.append(request.get_method())
+        assert request.full_url.endswith("issues?state=all&per_page=100&page=1")
+        if len(calls) < 3:
+            raise HTTPError(request.full_url, status, "transient", Message(), None)
+        return BytesIO(b'[{"number": 435, "state": "open"}]')
+
+    monkeypatch.setattr(runtime, "urlopen", urlopen)
+    monkeypatch.setattr(runtime.time, "sleep", delays.append)
+    pages = runtime._github_issue_pages(_REPOSITORY, "test-token")
+    assert len(pages) == 1
+    assert pages[0][0]["number"] == 435
+    assert calls == ["GET", "GET", "GET"]
+    assert delays == [0.25, 0.5]
+
+
+@pytest.mark.parametrize(("status", "expected_attempts"), [(502, 3), (401, 1), (404, 1)])
+def test_preflight_get_failure_exhaustion_never_returns_partial_issue_state(
+    monkeypatch: pytest.MonkeyPatch, status: int, expected_attempts: int
+) -> None:
+    calls: list[str] = []
+    delays: list[float] = []
+
+    def urlopen(request: Request, *, timeout: int) -> BytesIO:
+        assert timeout == 30
+        calls.append(request.get_method())
+        raise HTTPError(request.full_url, status, "denied or unavailable", Message(), None)
+
+    monkeypatch.setattr(runtime, "urlopen", urlopen)
+    monkeypatch.setattr(runtime.time, "sleep", delays.append)
+    with pytest.raises(HTTPError) as raised:
+        runtime._github_issue_pages(_REPOSITORY, "test-token")
+    assert raised.value.code == status
+    assert calls == ["GET"] * expected_attempts
+    assert delays == ([0.25, 0.5] if expected_attempts == 3 else [])
 
 
 def test_application_artifact_reader_uses_github_api_media_type_for_raw_artifacts(

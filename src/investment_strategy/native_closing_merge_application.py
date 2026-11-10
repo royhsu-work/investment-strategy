@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
-from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from investment_strategy.native_closing_preflight import (
@@ -16,6 +16,10 @@ from investment_strategy.native_closing_preflight import (
     NativeClosingPreflightResult,
     evaluate_native_closing_preflight,
     explicit_merge_presentation,
+)
+from investment_strategy.scheduled_agent_carrier import (
+    github_paginated_mappings,
+    github_read_bytes_with_retry,
 )
 
 
@@ -87,8 +91,8 @@ def _github_json(repository: str, token: str, api_path: str = "") -> object:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-        return json.loads(response.read().decode("utf-8"))
+    raw = github_read_bytes_with_retry(request, open_request=urlopen, wait=time.sleep)
+    return json.loads(raw.decode("utf-8"))
 
 
 def _paged_github_list(
@@ -96,26 +100,14 @@ def _paged_github_list(
     token: str,
     api_path: str,
 ) -> tuple[Mapping[str, object], ...]:
-    items: list[Mapping[str, object]] = []
-    page = 1
-    while True:
-        separator = "&" if "?" in api_path else "?"
-        decoded = _github_json(
-            repository,
-            token,
-            f"{api_path}{separator}{urlencode({'per_page': 100, 'page': page})}",
-        )
-        if not isinstance(decoded, list):
-            raise RuntimeError("GitHub paginated evidence endpoint returned a non-list response")
-        current: list[Mapping[str, object]] = []
-        for item in decoded:
-            if not isinstance(item, Mapping):
-                raise RuntimeError("GitHub paginated evidence endpoint returned a malformed item")
-            current.append(cast(Mapping[str, object], item))
-        items.extend(current)
-        if len(current) < 100:
-            return tuple(items)
-        page += 1
+    return github_paginated_mappings(
+        repository,
+        token,
+        api_path,
+        read=_github_json,
+        incomplete_error="GitHub paginated evidence endpoint returned a non-list response",
+        malformed_error="GitHub paginated evidence endpoint returned a malformed item",
+    )
 
 
 def _pull_request_head_sha(payload: Mapping[str, object]) -> str | None:

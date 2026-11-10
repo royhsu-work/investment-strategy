@@ -4539,6 +4539,118 @@ def test_read_only_reconciliation_reobserves_later_complete_without_replay(
     assert read_count[0] == 3
 
 
+def test_legacy_post_effect_result_only_resumes_after_fresh_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failure = {
+        "reason": "applied",
+        "mutation_status": "unknown",
+        "unfinished_boundary": "application-result",
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+    }
+    recovery = replace(
+        _qualified_recovery_fixture(continuation_eligible=False),
+        document={"prior_failure_evidence_sha256": [], "failure_evidence": failure},
+    )
+    record = _accepted_carrier_record()
+    proven = {"value": False}
+    called: list[int] = []
+
+    def verify(**kwargs: object) -> bool:
+        called.append(cast(bridge.ApplicationDecisionRecord, kwargs["record"]).request_comment_id)
+        assert kwargs["artifact"] is recovery
+        return proven["value"]
+
+    monkeypatch.setattr(bridge, "qualify_post_effect_result_recovery", verify)
+    monkeypatch.setattr(
+        bridge,
+        "_application_runs",
+        lambda *_a, **_kw: (
+            {"id": 777, "run_attempt": 1, "status": "completed", "head_sha": REVISION},
+        ),
+    )
+    monkeypatch.setattr(
+        bridge, "_qualified_unapplied_terminal_carrier_effect", lambda *_a, **_kw: False
+    )
+    monkeypatch.setattr(bridge, "_qualified_carrier_for_application_run", lambda *_a, **_kw: None)
+    monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_kw: recovery)
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == "actions/runs/777/jobs":
+            return {"jobs": [{"id": 888, "name": "apply"}]}
+        raise AssertionError(path)
+
+    def classify() -> bridge.ApplicationCompletion:
+        return bridge._application_job(
+            "owner/repo",
+            "token",
+            90,
+            read=read,
+            record=record,
+            accepted_decision_sha256="a" * 64,
+            current_revision=REVISION,
+        )
+
+    first = classify()
+    assert first.state == "RESUMABLE"
+    assert first.reason == "application-completion-read-only-observing"
+    assert first.recovery_artifact is recovery
+    proven["value"] = True
+    final = classify()
+    assert final.state == "RESUMABLE"
+    assert final.reason == "application-completion-continuation-required"
+    assert final.recovery_artifact is recovery
+    assert called == [record.request_comment_id, record.request_comment_id]
+    assert recovery.continuation_eligible is False
+
+
+def test_legacy_post_effect_result_continuation_body_requires_new_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _effect_request_comment(
+        comment_id=90,
+        created_at="2026-11-10T08:00:00Z",
+        action="propose-change",
+        result_kind="ready-for-openspec-review",
+    )
+    accepted = _application_decision_comment(request)
+    accepted_body = cast(str, accepted["body"])
+    recovery = replace(
+        _qualified_recovery_fixture(
+            accepted_decision_sha256=hashlib.sha256(accepted_body.encode()).hexdigest(),
+            continuation_eligible=False,
+        ),
+        document={"prior_failure_evidence_sha256": []},
+    )
+    monkeypatch.setattr(bridge, "_paged_list", lambda *_a, **_kw: (accepted,))
+    proven = {"value": False}
+    monkeypatch.setattr(
+        bridge,
+        "qualify_post_effect_result_recovery",
+        lambda **_kwargs: proven["value"],
+    )
+
+    def continuation() -> str | None:
+        return bridge._application_continuation_body(
+            repository="owner/repo",
+            token=REVISION,
+            source=bridge.WorkerRequest(138, "lead", "propose-change"),
+            request_comment_id=90,
+            predecessor_evidence=recovery,
+        )
+
+    assert continuation() is None
+    proven["value"] = True
+    result = continuation()
+    assert isinstance(result, str)
+    parsed = bridge.parse_application_continuation_request(result)
+    assert parsed is not None
+    assert parsed.original_request_comment_id == 90
+    assert parsed.predecessor_artifact_id == recovery.artifact_id
+    assert recovery.continuation_eligible is False
+
+
 def test_completed_application_blocks_a_previous_unreported_carrier_handoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Mapping
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
@@ -15,7 +16,10 @@ from investment_strategy.issue_comment_bridge import (
     parse_dispatch_result_document,
     parse_dispatch_run_name,
 )
-from investment_strategy.scheduled_agent_carrier import github_repository_api_url
+from investment_strategy.scheduled_agent_carrier import (
+    github_read_bytes_with_retry,
+    github_repository_api_url,
+)
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -51,8 +55,8 @@ def _github_json(repository: str, token: str, api_path: str) -> object:
         },
     )
     try:
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-            return json.loads(response.read().decode("utf-8"))
+        raw = github_read_bytes_with_retry(request, open_request=urlopen, wait=time.sleep)
+        return json.loads(raw.decode("utf-8"))
     except HTTPError as exc:
         raise RuntimeError("exact dispatch run API read failed") from exc
     except (URLError, TimeoutError, UnicodeError, json.JSONDecodeError) as exc:

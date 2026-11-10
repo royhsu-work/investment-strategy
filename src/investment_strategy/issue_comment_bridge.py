@@ -41,6 +41,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     dispatch_correlation_for,
     parse_application_continuation_request,
     parse_application_request,
+    qualify_post_effect_result_recovery,
     read_application_recovery_artifact,
     render_application_continuation_request,
 )
@@ -56,6 +57,9 @@ from investment_strategy.scheduled_agent_carrier import (
     CarrierOutcomeReport,
     CarrierPlan,
     QualifiedCarrierPlan,
+    github_comment_has_app_provenance,
+    github_paginated_mappings,
+    github_read_bytes_with_retry,
     github_repository_api_url,
     parse_carrier_outcome_report,
     parse_carrier_plan_document,
@@ -1797,17 +1801,11 @@ def _github_json(repository: str, token: str, api_path: str) -> object | None:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    # Repository observations are GET-only; transient gateway failures are
-    # retryable, whereas an unknown mutation outcome never is.
-    for attempt in range(3):
-        try:
-            with urlopen(request, timeout=30) as response:  # noqa: S310 - trusted API host
-                raw = response.read()
-            break
-        except HTTPError as exc:
-            if exc.code not in {502, 503, 504} or attempt == 2:
-                raise
-            time.sleep(0.25 * (2**attempt))
+    raw = github_read_bytes_with_retry(
+        request,
+        open_request=urlopen,  # noqa: S310 - trusted GitHub API host
+        wait=time.sleep,
+    )
     return None if not raw else json.loads(raw.decode("utf-8"))
 
 
@@ -1818,20 +1816,14 @@ def _paged_list(
     *,
     read: GitHubReader,
 ) -> tuple[Mapping[str, object], ...]:
-    items: list[Mapping[str, object]] = []
-    page = 1
-    separator = "&" if "?" in api_path else "?"
-    while True:
-        payload = read(repository, token, f"{api_path}{separator}per_page=100&page={page}")
-        if not isinstance(payload, list):
-            raise RuntimeError("application completion evidence list is incomplete")
-        for raw in payload:
-            if not isinstance(raw, Mapping):
-                raise RuntimeError("application completion evidence list is malformed")
-            items.append(cast(Mapping[str, object], raw))
-        if len(payload) < 100:
-            return tuple(items)
-        page += 1
+    return github_paginated_mappings(
+        repository,
+        token,
+        api_path,
+        read=read,
+        incomplete_error="application completion evidence list is incomplete",
+        malformed_error="application completion evidence list is malformed",
+    )
 
 
 def _runtime_shard_comments(
@@ -1863,13 +1855,8 @@ def _comment_time(comment: Mapping[str, object]) -> str | None:
 
 
 def _trusted_connector_comment(comment: Mapping[str, object], owner: str) -> bool:
-    user = comment.get("user")
-    app = comment.get("performed_via_github_app")
-    return (
-        isinstance(user, Mapping)
-        and user.get("login") == owner
-        and isinstance(app, Mapping)
-        and app.get("slug") == _CHATGPT_CONNECTOR_APP_SLUG
+    return github_comment_has_app_provenance(
+        comment, actor=owner, app_slug=_CHATGPT_CONNECTOR_APP_SLUG
     )
 
 
@@ -2899,6 +2886,32 @@ def _application_job(
             recovery_artifact=recovery_artifact,
         )
 
+    recovery_failure = recovery_artifact.document.get("failure_evidence")
+    post_effect_candidate = bool(
+        not recovery_artifact.continuation_eligible
+        and isinstance(recovery_failure, Mapping)
+        and _accepted_recovery_boundary(recovery_failure) == "POST_EFFECT_RESULT"
+    )
+    post_effect_proven = bool(
+        post_effect_candidate
+        and record is not None
+        and qualify_post_effect_result_recovery(
+            record=record,
+            artifact=recovery_artifact,
+            repository=repository,
+            token=token,
+        )
+    )
+    if post_effect_candidate and not post_effect_proven:
+        # This is a repeatable read-only observation, not a terminal denial
+        # and not permission to replay the already accepted GitHub write.
+        return ApplicationCompletion(
+            "RESUMABLE",
+            "application-completion-read-only-observing",
+            request_comment_id=request_comment_id,
+            recovery_artifact=recovery_artifact,
+        )
+
     if record is not None:
         try:
             qualified_carrier = _qualified_carrier_for_application_run(
@@ -2920,7 +2933,7 @@ def _application_job(
                 recovery_artifact=recovery_artifact,
             )
         if qualified_carrier is not None:
-            if not recovery_artifact.continuation_eligible:
+            if not recovery_artifact.continuation_eligible and not post_effect_proven:
                 return ApplicationCompletion(
                     "INVALID",
                     "application-completion-carrier-recovery-evidence-incomplete",
@@ -2981,7 +2994,7 @@ def _application_job(
                 recovery_artifact=recovery_artifact,
             )
 
-    if not recovery_artifact.continuation_eligible:
+    if not recovery_artifact.continuation_eligible and not post_effect_proven:
         return ApplicationCompletion(
             "INVALID",
             "application-completion-recovery-boundary-unsafe",
@@ -4772,7 +4785,7 @@ def _application_continuation_body(
 ) -> str | None:
     """Render one exact continuation transport for a qualified predecessor."""
 
-    if predecessor_evidence is None or not predecessor_evidence.continuation_eligible:
+    if predecessor_evidence is None:
         return None
     if predecessor_evidence.failure_evidence_sha256 in cast(
         list[str], predecessor_evidence.document["prior_failure_evidence_sha256"]
@@ -4806,6 +4819,15 @@ def _application_continuation_body(
     decision_sha256 = hashlib.sha256(matches[0].encode("utf-8")).hexdigest()
     if predecessor_evidence.accepted_decision_sha256 != decision_sha256:
         return None
+    if not predecessor_evidence.continuation_eligible:
+        accepted_record = parse_application_decision(matches[0])
+        if accepted_record is None or not qualify_post_effect_result_recovery(
+            record=accepted_record,
+            artifact=predecessor_evidence,
+            repository=repository,
+            token=token,
+        ):
+            return None
     body = render_application_continuation_request(
         repository=repository,
         issue_number=source.issue_number,
@@ -4834,8 +4856,6 @@ def _application_continuation_body(
     }
     if existing_correlations:
         return None
-    if parse_application_continuation_request(body) is None:
-        raise RuntimeError("rendered application continuation is not parseable")
     return body
 
 
