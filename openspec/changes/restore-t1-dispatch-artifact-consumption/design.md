@@ -1,0 +1,52 @@
+# Design: Exact dispatch Artifact read and recovery at existing owners
+
+## Decision boundary and evidence discipline
+
+Source: Human #435, same-Issue accepted `Explore / PROPOSAL_READY` (#435 comments `6760518797`, `6760519420`), current-main governance/specs, original run/artifact metadata and existing reader source. The observed production failure is `_fresh_gate` returning `idle-dispatch-artifact-content-unavailable` with no mutation after run/Artifact metadata qualification. The `artifact_result()` catch masks the original exception. Connector extraction of raw 199-byte JSON and successful canonical parse prove those bytes under the connector surface only. They do **not** prove whether the native runner GET returned 200, 302, another status or other bytes. No repair branch may treat an unobserved HTTP/host/format hypothesis as historical fact.
+
+## Responsibilities, patterns and trade-offs
+
+| Delta | Current owner / decision | Trade-off and source rationale |
+| --- | --- | --- |
+| REUSE | `issue_comment_bridge` canonical dispatch renderer and `parse_dispatch_result_document`; `scheduled_agent_dispatch_result.fetch_dispatch_result` run/Artifact qualification | Functional core remains pure identity, schema/disposition and digest/size checking. No duplicate producer, schema, validator, status authority or bespoke ZIP branch. |
+| REUSE | `scheduled_agent_idle_admission._fresh_gate`, Application fresh dispatch, current Issue read/update/postcondition and dedup | Imperative shell keeps I/O and effects at existing application authority; no alternative admission path. |
+| CONSOLIDATE | `_github_bytes` in `scheduled_agent_dispatch_result.py` and `scheduled_agent_carrier.read_github_artifact_bytes` | Characterize differing `Accept` header, max-byte limit, 200/302 and trusted host behavior first; promote one existing byte reader only if it satisfies both contracts. Preserve any justified consumer-specific bound at the call edge, not a second redirect implementation. |
+| NO-DELTA | `scheduled_agent_action_model`, workflow selection, Human intake, producer Artifact schema, WIP=1, idle concurrency, post-write reconcile, separate wake | No evidence suggests any of these is responsible for T1; changing them expands risk and violates approved scope. |
+| ADD | Structured/redacted read-stage classification in existing reader/idle result, raw-byte size/digest qualification | The generic catch demonstrably destroys the required root evidence, and metadata-only digest check does not attest bytes. The new data is invocation-local output, not persistent status or new workflow authority. |
+
+Functional Core/Imperative Shell: pure helpers qualify one run/attempt, one Artifact identity/digest/size, one canonical JSON result and one typed stage/classification; GitHub GET, redirect and Issue effects stay in existing I/O functions. Hexagonal Ports/Adapters is a seam for test-injected native responses at the existing GitHub reader, not a dependency-injection framework. Typed Result expresses observed `stage`, `category`, `retryability`, `status_if_observed` and correlation, without translating read exceptions into a fabricated successful result. Reconciliation reuses current GitHub state rather than remembering attempts.
+
+## Failure taxonomy (not a routing state machine)
+
+| Condition | Classification | Consequence |
+| --- | --- | --- |
+| Native GET 500/502/503/504, connection timeout | `READ_UNAVAILABLE` / transient | Bounded GET-only retry, then diagnostic fail-closed; later fresh wake may requalify. |
+| Body unavailable/partial pagination/run not finished and recoverable | `RECOVERABLE_INCOMPLETE` | No write; explicit source/stage and fresh reobservation. |
+| Signed redirect host/scheme not permitted | `REDIRECT_UNTRUSTED` | No signed-URL disclosure, token forwarding, write or permissive fallback. |
+| Unexpected raw type, ZIP rather than canonical JSON, invalid UTF-8/JSON/schema | `PAYLOAD_FORMAT_INVALID` | No alternate parser; fail closed. |
+| Declared size/digest and raw bytes differ | `INTEGRITY_MISMATCH` | Fail closed; no trust in connector metadata or content. |
+| Wrong request/run/attempt/main revision or contradicted durable identity | `IDENTITY_STALE` | Fail closed; a different fresh legitimate dispatch is required. |
+| Missing/duplicate/expired Artifact, structurally permanently illegal metadata/status | `PERMANENT_INVALID` | Fail closed with exact stage, never silently convert to transient. |
+
+These categories attach to the **existing** result/error path and retain `mutation_attempted=false` for pre-write failures. 401/403/404 are observed HTTP statuses retained distinctly from 5xx, rather than guessed permission failures. Only safe status/operation/correlation fields may be logged; never bearer token, raw signed URL, private response text or secret-bearing headers. Unknown remains unknown.
+
+## Diagnostic-first decision procedure
+
+1. RED: replay the original normalized 199-byte NO_WORK bytes and metadata; inject the native runner-side URL opener's actual 200 JSON, 302 trusted signed URL, status errors, truncated reads, incorrect bytes, host and authentication behavior. Verify each currently collapses or lacks sufficient integrity/stage information, proving a target-behavior RED, not a fixture/import failure.
+2. Capture a **real** GitHub Actions runner-origin read-only observation against an exact known successful run/Artifact: actual stage, HTTP status when received, redirect host class, response length/hash and sanitized exception chain. Correlate run/attempt/artifact/digest. The immutable fixture digest is sufficient for reproducible local tests; transient signed URLs and tokens must not become durable artifacts. Do not direct-run GitHub Actions or mutate a repository object to probe. Use the normal permitted CI/repository-owned run path when available; if it cannot supply the observation, preserve `UNVERIFIED` and do not select a host/HTTP/ZIP-specific fix.
+3. GREEN: implement shared safe bytes path only for the observed failure and all approved general contract cases. The exact correction remains inside current read/idle owners, and the case-specific hypothesis is tested against the full matrix before selection. If an observation reveals an incompatible upstream media contract, adapt the existing reader/decoder once and make producer/parser/validator agree; a material change to an approved schema/outcome returns to Lead/Human as governance requires.
+4. REFACTOR: remove the characterized duplicate transport path; keep security/no-bearer-forwarding and canonical parsing; run targeted and entire regression, lint/type and exact-head validation.
+
+## Validation matrix
+
+- **Positive:** exact request → successful run/attempt → unique unexpired Artifact; native direct HTTP 200 raw JSON; 302 trusted signed HTTPS redirect; canonical NO_WORK and authoritative digest/size. Existing AUTHORIZE and FAIL_CLOSED must never enter idle mode.
+- **Correlation:** wrong comment, run id/title/path/event/conclusion/attempt, revision, Artifact id, duplicate/missing/expired/list-total mismatch, wrong disposition/schema; size, SHA-256, UTF-8 and partial content.
+- **Fault injection:** 401/403/404, 500/502/503/504 (within and beyond GET bound), timeout, untrusted redirect, 302 without Location, signed read failing, JSON/ZIP representation mismatch, truncated/empty body, malformed JSON, digest mismatch, incomplete pagination.
+- **Stateful:** one/two overlapping attempts; interruption pre-read, pre-write, and unknown post-write; stale/replay/no-rewind; original Issue body and unrelated labels unchanged; fresh reauthorization suppresses mutation when new formal work appears; recoverable read requalifies on a fresh wake.
+- **Negative authority:** never retry POST/PATCH, never use writes as probes, no new Issue/Action/queue/lease/registry, no substitution of old shard/Artifact, no manual routing, no token leak.
+
+## Vertical delivery and acceptance separation
+
+Keep diagnostic/reader/integrity and recovery/concurrency behavior as RED→GREEN→REFACTOR vertical slices within this **one** OpenSpec Change. There is no mandatory extra PR/Change/state machine; a normal independent OpenSpec gate precedes implementation, and required independent implementation review/exact-head CI, merge and archive remain lifecycle controls. Each Executor-completed slice is validated against the current N-1 and full repository checks. The formal implementation tasks do **not** mark later Review/merge/archive/production validation as completed work.
+
+Only a real production-shaped trace **after** legal lifecycle completion can demonstrate final Human acceptance: actual connector `DISPATCH_REQUEST` → native exact run/attempt → raw digest-matched Artifact → Application NO_WORK consume → fresh exact eligibility → #218 admitted exactly once → **separate** later normal `explore-change` dispatch; verify independent Review, exact head and no duplicate/stale/mutation, plus recovered fault trace. The normal dispatcher cannot legitimately output NO_WORK while #435 is routed; do not manufacture it or bypass workflow to accelerate this test. Record the outcome as pending until source event/run/job/Artifact/Issue evidence exists.
