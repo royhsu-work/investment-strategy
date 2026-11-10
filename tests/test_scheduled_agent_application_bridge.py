@@ -19,6 +19,7 @@ import pytest
 
 import investment_strategy.scheduled_agent_application_bridge as bridge
 import investment_strategy.scheduled_agent_carrier as carrier
+import investment_strategy.scheduled_agent_runtime as runtime
 from investment_strategy.scheduled_agent_action_model import (
     ApplicationRejection,
     ApplicationRejectionKind,
@@ -148,6 +149,130 @@ def test_continuation_classifies_effect_boundary_before_correction(
     assert bridge._accepted_predecessor_disposition(predecessor) == expected
 
 
+@pytest.mark.parametrize("effect_complete", [False, True])
+def test_post_effect_result_recovery_requires_exact_accepted_materialization_proof(
+    monkeypatch: pytest.MonkeyPatch, effect_complete: bool
+) -> None:
+    source = WorkerRequest(138, "lead", "propose-change")
+    materialization = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": "unset",
+        "change": "restore-example",
+        "branch": "agent/restore-example",
+        "base_sha": _REVISION,
+        "message": "OpenSpec proposal",
+        "files": [
+            {
+                "path": "openspec/changes/restore-example/proposal.md",
+                "blob_sha": "b" * 40,
+                "expected_sha": None,
+            }
+        ],
+        "pr_number": None,
+    }
+    worker = _worker_result(
+        action=source.action, role=source.role, result_kind="ready-for-openspec-review"
+    )
+    worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(materialization)}
+    ]
+    raw = json.dumps(worker, sort_keys=True)
+    accepted = _accepted_record(
+        raw,
+        _effect_request(worker),
+        source=source,
+        change="unset",
+        result_kind="ready-for-openspec-review",
+    )
+    failure = {
+        "reason": "applied",
+        "mutation_status": "unknown",
+        "unfinished_boundary": "application-result",
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+    }
+    artifact = bridge.ApplicationRecoveryArtifact(
+        run_id=1,
+        run_attempt=1,
+        job_id=2,
+        artifact_id=3,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=accepted.request_comment_id,
+        accepted_decision_sha256="c" * 64,
+        failure_evidence_sha256="d" * 64,
+        recovery_episode_sha256="e" * 64,
+        recovery_attempt=1,
+        continuation_eligible=False,
+        document={
+            "failure_evidence": failure,
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "authorization_revision": _REVISION,
+        },
+    )
+    reads: list[str] = []
+
+    def read(_repo: str, _token: str, path: str, **_kw: object) -> dict[str, object]:
+        reads.append(path)
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": _REVISION}}
+        pytest.fail(f"unexpected GitHub read: {path}")
+
+    observations: list[StagedEffect] = []
+
+    def observe(_adapter: GitHubEffectAdapter, effect: StagedEffect) -> bool:
+        observations.append(effect)
+        return effect_complete
+
+    monkeypatch.setattr(bridge, "_github_json", read)
+    monkeypatch.setattr(
+        bridge,
+        "_accepted_worker_result_for_continuation",
+        lambda **kwargs: (
+            raw if kwargs["accepted_intent"] is accepted else pytest.fail("wrong intent")
+        ),
+    )
+    monkeypatch.setattr(GitHubEffectAdapter, "observe_postcondition", observe)
+    assert bridge._accepted_recovery_boundary(failure) == "POST_EFFECT_RESULT"
+    assert bridge._accepted_predecessor_disposition(artifact) == "INDETERMINATE"
+    assert (
+        bridge.qualify_post_effect_result_recovery(
+            record=accepted, artifact=artifact, repository=_REPOSITORY, token=_REPOSITORY
+        )
+        is effect_complete
+    )
+    assert reads == ["", "git/ref/heads/main"]
+    assert len(observations) == 1
+    assert observations[0].kind == "github-mutation"
+    assert artifact.continuation_eligible is False  # immutable historical evidence
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"reason": "unknown"},
+        {"unfinished_boundary": "effect-postcondition"},
+        {"mutation_status": "not-complete"},
+        {"completed_effect_indexes": [0]},
+        {"unexpected": "an untrusted override"},
+    ],
+)
+def test_post_effect_result_recovery_rejects_unqualified_shape(invalid: dict[str, object]) -> None:
+    evidence: dict[str, object] = {
+        "reason": "applied",
+        "mutation_status": "unknown",
+        "unfinished_boundary": "application-result",
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+    }
+    evidence.update(invalid)
+    assert bridge._accepted_recovery_boundary(evidence) == "NONE"
+
+
 @pytest.mark.parametrize("head_matches", [False, True])
 def test_lead_retirement_rebinding_preserves_original_exact_head(
     monkeypatch: pytest.MonkeyPatch, head_matches: bool
@@ -235,6 +360,52 @@ def test_application_read_retry_does_not_repeat_write_after_gateway_timeout(
             )
         assert attempts == [method]
         assert delays == []
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_preflight_paged_issue_get_retries_gateway_failure_without_losing_page(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """A transient GET failure cannot strand first-activation preflight."""
+    calls: list[str] = []
+    delays: list[float] = []
+
+    def urlopen(request: Request, *, timeout: int) -> BytesIO:
+        assert timeout == 30
+        calls.append(request.get_method())
+        assert request.full_url.endswith("issues?state=all&per_page=100&page=1")
+        if len(calls) < 3:
+            raise HTTPError(request.full_url, status, "transient", Message(), None)
+        return BytesIO(b'[{"number": 435, "state": "open"}]')
+
+    monkeypatch.setattr(runtime, "urlopen", urlopen)
+    monkeypatch.setattr(runtime.time, "sleep", delays.append)
+    pages = runtime._github_issue_pages(_REPOSITORY, "test-token")
+    assert len(pages) == 1
+    assert pages[0][0]["number"] == 435
+    assert calls == ["GET", "GET", "GET"]
+    assert delays == [0.25, 0.5]
+
+
+@pytest.mark.parametrize(("status", "expected_attempts"), [(502, 3), (401, 1), (404, 1)])
+def test_preflight_get_failure_exhaustion_never_returns_partial_issue_state(
+    monkeypatch: pytest.MonkeyPatch, status: int, expected_attempts: int
+) -> None:
+    calls: list[str] = []
+    delays: list[float] = []
+
+    def urlopen(request: Request, *, timeout: int) -> BytesIO:
+        assert timeout == 30
+        calls.append(request.get_method())
+        raise HTTPError(request.full_url, status, "denied or unavailable", Message(), None)
+
+    monkeypatch.setattr(runtime, "urlopen", urlopen)
+    monkeypatch.setattr(runtime.time, "sleep", delays.append)
+    with pytest.raises(HTTPError) as raised:
+        runtime._github_issue_pages(_REPOSITORY, "test-token")
+    assert raised.value.code == status
+    assert calls == ["GET"] * expected_attempts
+    assert delays == ([0.25, 0.5] if expected_attempts == 3 else [])
 
 
 def test_application_artifact_reader_uses_github_api_media_type_for_raw_artifacts(
