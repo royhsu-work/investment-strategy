@@ -414,20 +414,37 @@ def test_post_effect_result_continuation_uses_original_435_effect_not_formal_pro
     """
     source = WorkerRequest(435, "lead", "propose-change")
     change = "restore-t1-dispatch-artifact-consumption"
+    accepted_revision = "8bf5007c4dc6fb8368473af3aba86dbe5136a627"
+    current_revision = "2b57c5d4af488bdd583a66c1f72d65713a594928"
     materialization = {
         "issue_number": 435,
         "operation": "application-materialize",
         "expected_change": "unset",
         "change": change,
         "branch": f"agent/{change}",
-        "base_sha": "8bf5007c4dc6fb8368473af3aba86dbe5136a627",
+        "base_sha": accepted_revision,
         "message": "OpenSpec: restore exact T1 dispatch Artifact consumption (Refs #435)",
         "files": [
             {
                 "path": f"openspec/changes/{change}/proposal.md",
                 "blob_sha": "1ab7b8c1fee8403b77c3c6010a8cd46fcb4e36c4",
                 "expected_sha": None,
-            }
+            },
+            {
+                "path": f"openspec/changes/{change}/design.md",
+                "blob_sha": "6e0b33f9e939401ca1ce8f7983800279641182a7",
+                "expected_sha": None,
+            },
+            {
+                "path": f"openspec/changes/{change}/tasks.md",
+                "blob_sha": "af25a5fd1f668e3e30b0119a2a1a62887db3f68e",
+                "expected_sha": None,
+            },
+            {
+                "path": f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
+                "blob_sha": "bfd977c5d29e7a294de6a5fd3ba040e174760b48",
+                "expected_sha": None,
+            },
         ],
         "pr_number": None,
     }
@@ -453,12 +470,15 @@ def test_post_effect_result_continuation_uses_original_435_effect_not_formal_pro
         == 2
     )
 
-    accepted = _accepted_record(
-        original,
-        _effect_request(raw_worker),
-        source=source,
-        change="unset",
-        result_kind="ready-for-openspec-review",
+    accepted = bridge.replace(
+        _accepted_record(
+            original,
+            _effect_request(raw_worker, revision=accepted_revision),
+            source=source,
+            change="unset",
+            result_kind="ready-for-openspec-review",
+        ),
+        authorization_revision=accepted_revision,
     )
     decision_body = "exact accepted decision #435"
     decision_digest = hashlib.sha256(decision_body.encode()).hexdigest()
@@ -508,7 +528,7 @@ def test_post_effect_result_continuation_uses_original_435_effect_not_formal_pro
             "--event-path",
             str(event_path),
             "--revision",
-            _REVISION,
+            current_revision,
             "--default-branch",
             "main",
         ],
