@@ -54,6 +54,7 @@ from investment_strategy.scheduled_agent_application_materialization import (
 )
 from investment_strategy.scheduled_agent_carrier import (
     CarrierOutcomeReport,
+    CarrierPlan,
     QualifiedCarrierPlan,
     github_repository_api_url,
     parse_carrier_outcome_report,
@@ -1931,6 +1932,39 @@ def _formal_result_records(
     return tuple(records)
 
 
+def _carrier_change_matches_accepted_intent(
+    record: ApplicationDecisionRecord, plan: CarrierPlan
+) -> bool:
+    """Bind a first Change carrier to the immutable materialization, not source `unset`."""
+
+    if record.change != "unset":
+        return plan.change == record.change
+    if (
+        record.role != "lead"
+        or record.action != "propose-change"
+        or plan.operation != "pull-request-create"
+    ):
+        return False
+
+    source = WorkerRequest(record.issue_number, record.role, record.action)
+    try:
+        effects = _materialization_effects(record.raw_worker_result, source, change=record.change)
+        if len(effects) != 1:
+            return False
+        materialization = find_materialization_payload(effects[0], source)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    return (
+        materialization is not None
+        and materialization.expected_change == record.change
+        and materialization.change == plan.change
+        and plan.target.get("head_ref") == materialization.branch
+        and plan.expected.get("head_ref") == materialization.branch
+        and plan.requested.get("head") == materialization.branch
+        and plan.expected_postcondition.get("head_ref") == materialization.branch
+    )
+
+
 def _qualified_carrier_for_application_run(
     repository: str,
     token: str,
@@ -2012,7 +2046,7 @@ def _qualified_carrier_for_application_run(
     if (
         plan.repository != repository
         or plan.issue_number != record.issue_number
-        or plan.change != record.change
+        or not _carrier_change_matches_accepted_intent(record, plan)
         or plan.action != record.action
         or _authorization_ancestry(
             repository,
