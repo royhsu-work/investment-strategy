@@ -131,6 +131,7 @@ class MaterializationProof:
     witness: MaterializationWitness | None = None
     reason: str | None = None
     application_request: MaterializationRequest | None = None
+    carrier_plan: CarrierPlan | None = None
 
     def __post_init__(self) -> None:
         if self.disposition == "COMPLETE":
@@ -140,6 +141,10 @@ class MaterializationProof:
             raise ValueError("unproved materialization cannot carry a target or witness")
         elif self.disposition in {"CONTRADICTORY", "UNKNOWN"} and not self.reason:
             raise ValueError("unproved materialization requires a reason")
+        if self.carrier_plan is not None and (
+            self.disposition != "INCOMPLETE" or self.application_request is None
+        ):
+            raise ValueError("only a proven incomplete carrier may require a PR")
 
 
 def _positive_int(value: object) -> int | None:
@@ -2400,6 +2405,7 @@ def prove_materialization(
                     )
                 if default_advance.intersection(file.path for file in request.files):
                     raise RuntimeError("materialization missing carrier overlaps default advance")
+                carrier_plan = None
                 if head is not None:
                     witness = _proof_witness(
                         request,
@@ -2412,7 +2418,28 @@ def prove_materialization(
                         raise RuntimeError(
                             "materialization orphan branch contradicts accepted intent"
                         )
-                return MaterializationProof("INCOMPLETE", application_request=request)
+                    # This owner already proved the original accepted commit,
+                    # fresh main, Change, ref, complete PR absence and disjoint
+                    # ancestry. Only its existing PR constructor may express
+                    # the missing consequence. No write-capable mode flags.
+                    if (
+                        accepted_intent
+                        and request.expected_change == "unset"
+                        and actual_change == "unset"
+                        and source == WorkerRequest(source.issue_number, "lead", "propose-change")
+                    ):
+                        _verify_revision(repository, token, request, head)
+                        carrier_plan = _new_carrier_pr_plan(
+                            request,
+                            source,
+                            repository=repository,
+                            default_branch=default_branch,
+                            authorization_revision=current_revision,
+                            revision=head,
+                        )
+                return MaterializationProof(
+                    "INCOMPLETE", application_request=request, carrier_plan=carrier_plan
+                )
             number = _positive_int(prs[0].get("number"))
             if number is None:
                 raise _IncompleteGitHubObservation("materialization carrier number is incomplete")

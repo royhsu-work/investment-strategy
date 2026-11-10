@@ -38,10 +38,10 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _worker_semantic_projection,
     accepted_read_only_effects_complete,
     application_continuation_correlation,
+    classify_post_effect_result_recovery,
     dispatch_correlation_for,
     parse_application_continuation_request,
     parse_application_request,
-    qualify_post_effect_result_recovery,
     read_application_recovery_artifact,
     render_application_continuation_request,
 )
@@ -2892,22 +2892,34 @@ def _application_job(
         and isinstance(recovery_failure, Mapping)
         and _accepted_recovery_boundary(recovery_failure) == "POST_EFFECT_RESULT"
     )
-    post_effect_proven = bool(
-        post_effect_candidate
-        and record is not None
-        and qualify_post_effect_result_recovery(
+    post_effect_proof = (
+        classify_post_effect_result_recovery(
             record=record,
             artifact=recovery_artifact,
             repository=repository,
             token=token,
         )
+        if post_effect_candidate and record is not None
+        else None
+    )
+    post_effect_proven = bool(
+        post_effect_proof is not None and post_effect_proof.continuation == "CONTINUE"
     )
     if post_effect_candidate and not post_effect_proven:
-        # This is a repeatable read-only observation, not a terminal denial
-        # and not permission to replay the already accepted GitHub write.
+        # A transient GET failure can be observed on a later wake. A proven
+        # contradictory original is a distinct governed-resolution boundary;
+        # neither status authorizes a GitHub write or a semantic rerun.
+        disposition = None if post_effect_proof is None else post_effect_proof.disposition
+        status, reason = {
+            "INDETERMINATE": ("RESUMABLE", "application-completion-post-effect-observing"),
+            "NOT_APPLIED": ("INVALID", "application-completion-original-effect-incomplete"),
+            "UNSAFE": ("INVALID", "application-completion-original-effect-unsafe"),
+        }.get(
+            disposition or "INVALID", ("INVALID", "application-completion-recovery-proof-missing")
+        )
         return ApplicationCompletion(
-            "RESUMABLE",
-            "application-completion-read-only-observing",
+            cast(Literal["RESUMABLE", "INVALID"], status),
+            reason,
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
         )
@@ -4821,11 +4833,15 @@ def _application_continuation_body(
         return None
     if not predecessor_evidence.continuation_eligible:
         accepted_record = parse_application_decision(matches[0])
-        if accepted_record is None or not qualify_post_effect_result_recovery(
-            record=accepted_record,
-            artifact=predecessor_evidence,
-            repository=repository,
-            token=token,
+        if (
+            accepted_record is None
+            or classify_post_effect_result_recovery(
+                record=accepted_record,
+                artifact=predecessor_evidence,
+                repository=repository,
+                token=token,
+            ).continuation
+            != "CONTINUE"
         ):
             return None
     body = render_application_continuation_request(
