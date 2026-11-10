@@ -3165,19 +3165,16 @@ def test_accepted_branch_only_consequence_yields_pr_only_plan_after_disjoint_mai
         accepted_intent=True,
     )
     assert proof.disposition == "INCOMPLETE"
-    plan = materialization.missing_accepted_pr_carrier_plan(
-        proof,
-        proof_git.source,
-        repository=proof_git.repository,
-        token=_TOKEN,
-        current_revision=proof_git.main,
-        default_branch="main",
-    )
+    plan = proof.carrier_plan
     assert plan is not None
     assert plan.operation == "pull-request-create"
     assert plan.expected["head_sha"] == original_head
     assert plan.expected["base_sha"] == proof_git.main
     assert plan.expected["existing_pr_count"] == 0
+    assert (
+        application_bridge.AcceptedPostEffectProof("MISSING_PR", "missing PR", plan).continuation
+        == "CONTINUE"
+    )
     assert proof_git.mutations == []
 
     # Only a native carrier PR consequence is missing. Never reconstruct the
@@ -3195,6 +3192,28 @@ def test_accepted_branch_only_consequence_yields_pr_only_plan_after_disjoint_mai
         accepted_intent=True,
     )
     assert completed.disposition == "COMPLETE"
+    assert proof_git.mutations == []
+
+
+def test_unaccepted_branch_only_observation_does_not_authorize_pr_plan(
+    proof_git: _ProofGitRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _first_git_intent(proof_git)
+    _accepted_git_carrier(proof_git)
+    proof_git.prs.clear()
+    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_a, **_k: True)
+    proof = materialization.prove_materialization(
+        proof_git.payload(),
+        proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        allow_pending_continuation=True,
+        accepted_intent=False,
+    )
+    assert proof.disposition == "INCOMPLETE"
+    assert proof.carrier_plan is None
     assert proof_git.mutations == []
 
 
@@ -3246,23 +3265,18 @@ def test_accepted_missing_pr_does_not_plan_on_stale_or_ambiguous_github_evidence
         accepted_intent=True,
     )
     assert proof.disposition != "COMPLETE", proof
-    plan = materialization.missing_accepted_pr_carrier_plan(
-        proof,
-        proof_git.source,
-        repository=proof_git.repository,
-        token=_TOKEN,
-        current_revision=proof_git.main,
-        default_branch="main",
-    )
+    plan = proof.carrier_plan
     assert plan is None
     assert proof_git.mutations == []
 
 
 @pytest.mark.parametrize("read_fault", [None, 500, 502, 503, 504, "timeout"])
+@pytest.mark.parametrize("failure_stage", ["branch", "revision"])
 def test_accepted_original_effect_recovery_classifies_real_git_then_completes_without_replay(
     proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
     read_fault: int | str | None,
+    failure_stage: str,
 ) -> None:
     """The immutable original Git Effect survives a derived formal result.
 
@@ -3352,7 +3366,8 @@ def test_accepted_original_effect_recovery_classifies_real_git_then_completes_wi
             allow_not_found: bool = False,
         ) -> object:
             nonlocal raised
-            if not raised and path.startswith("git/ref/heads/"):
+            prefix = "git/ref/heads/" if failure_stage == "branch" else "compare/"
+            if not raised and path.startswith(prefix):
                 raised = True
                 if read_fault == "timeout":
                     raise TimeoutError("transient GitHub read timeout")

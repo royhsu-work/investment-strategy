@@ -42,7 +42,6 @@ from investment_strategy.scheduled_agent_application_bridge import (
     dispatch_correlation_for,
     parse_application_continuation_request,
     parse_application_request,
-    qualify_post_effect_result_recovery,
     read_application_recovery_artifact,
     render_application_continuation_request,
 )
@@ -2904,8 +2903,7 @@ def _application_job(
         else None
     )
     post_effect_proven = bool(
-        post_effect_proof is not None
-        and post_effect_proof.disposition in {"COMPLETE", "MISSING_PR"}
+        post_effect_proof is not None and post_effect_proof.continuation == "CONTINUE"
     )
     if post_effect_candidate and not post_effect_proven:
         # A transient GET failure can be observed on a later wake. A proven
@@ -4835,11 +4833,15 @@ def _application_continuation_body(
         return None
     if not predecessor_evidence.continuation_eligible:
         accepted_record = parse_application_decision(matches[0])
-        if accepted_record is None or not qualify_post_effect_result_recovery(
-            record=accepted_record,
-            artifact=predecessor_evidence,
-            repository=repository,
-            token=token,
+        if (
+            accepted_record is None
+            or classify_post_effect_result_recovery(
+                record=accepted_record,
+                artifact=predecessor_evidence,
+                repository=repository,
+                token=token,
+            ).continuation
+            != "CONTINUE"
         ):
             return None
     body = render_application_continuation_request(

@@ -360,6 +360,7 @@ def test_post_effect_result_recovery_requires_exact_accepted_materialization_pro
             disposition="COMPLETE" if effect_complete else "INCOMPLETE",
             reason=None,
             application_request=None,
+            carrier_plan=None,
         )
 
     monkeypatch.setattr(bridge, "_github_json", read)
@@ -373,12 +374,10 @@ def test_post_effect_result_recovery_requires_exact_accepted_materialization_pro
     monkeypatch.setattr(bridge, "prove_materialization", prove)
     assert bridge._accepted_recovery_boundary(failure) == "POST_EFFECT_RESULT"
     assert bridge._accepted_predecessor_disposition(artifact) == "INDETERMINATE"
-    assert (
-        bridge.qualify_post_effect_result_recovery(
-            record=accepted, artifact=artifact, repository=_REPOSITORY, token=_REPOSITORY
-        )
-        is effect_complete
+    proof = bridge.classify_post_effect_result_recovery(
+        record=accepted, artifact=artifact, repository=_REPOSITORY, token=_REPOSITORY
     )
+    assert (proof.continuation == "CONTINUE") is effect_complete
     assert reads == ["", "git/ref/heads/main"]
     assert len(observations) == 1
     assert observations[0] == materialization
@@ -715,18 +714,19 @@ def test_accepted_activation_identity_contract_table(
 
 
 @pytest.mark.parametrize(
-    ("materialization_status", "recovery_status"),
+    ("materialization_status", "recovery_status", "admission"),
     [
-        ("COMPLETE", "COMPLETE"),
-        ("INCOMPLETE", "NOT_APPLIED"),
-        ("UNKNOWN", "INDETERMINATE"),
-        ("CONTRADICTORY", "UNSAFE"),
+        ("COMPLETE", "COMPLETE", "CONTINUE"),
+        ("INCOMPLETE", "NOT_APPLIED", "REJECT"),
+        ("UNKNOWN", "INDETERMINATE", "OBSERVE"),
+        ("CONTRADICTORY", "UNSAFE", "REJECT"),
     ],
 )
 def test_post_effect_result_uses_existing_typed_materialization_proof(
     monkeypatch: pytest.MonkeyPatch,
     materialization_status: str,
     recovery_status: str,
+    admission: str,
 ) -> None:
     """All four proof outcomes retain their distinct safety/liveness meaning."""
     source = WorkerRequest(435, "lead", "propose-change")
@@ -767,7 +767,9 @@ def test_post_effect_result_uses_existing_typed_materialization_proof(
 
     def prove(*_args: object, **kwargs: object) -> object:
         calls.append(str(kwargs["accepted_authorization_revision"]))
-        return SimpleNamespace(disposition=current[0], reason=None, application_request=None)
+        return SimpleNamespace(
+            disposition=current[0], reason=None, application_request=None, carrier_plan=None
+        )
 
     monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
     monkeypatch.setattr(bridge, "prove_materialization", prove)
@@ -782,7 +784,9 @@ def test_post_effect_result_uses_existing_typed_materialization_proof(
             default_branch="main",
         )
 
-    assert observe().disposition == recovery_status
+    decision = observe()
+    assert decision.disposition == recovery_status
+    assert decision.continuation == admission
     # After a transient failure or an incomplete materialization, a later
     # fresh read can observe completion without replay or changing the intent.
     current[0] = "COMPLETE"

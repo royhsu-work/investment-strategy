@@ -4647,8 +4647,10 @@ def test_legacy_post_effect_result_continuation_body_requires_new_proof(
     proven = {"value": False}
     monkeypatch.setattr(
         bridge,
-        "qualify_post_effect_result_recovery",
-        lambda **_kwargs: proven["value"],
+        "classify_post_effect_result_recovery",
+        lambda **_kwargs: application.AcceptedPostEffectProof(
+            "COMPLETE" if proven["value"] else "INDETERMINATE", "test contract"
+        ),
     )
 
     def continuation() -> str | None:
