@@ -3760,6 +3760,75 @@ def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
     )
 
 
+def _first_change_carrier_intent(
+    *,
+    materialization_change: str = "first-change",
+    materialization_branch: str = "agent/first-change",
+    expected_change: str = "unset",
+    include_materialization: bool = True,
+) -> bridge.ApplicationDecisionRecord:
+    materialization = {
+        "operation": "application-materialize",
+        "issue_number": 322,
+        "expected_change": expected_change,
+        "change": materialization_change,
+        "branch": materialization_branch,
+        "base_sha": REVISION,
+        "message": "Materialize first OpenSpec change",
+        "files": [
+            {
+                "path": f"openspec/changes/{materialization_change}/proposal.md",
+                "blob_sha": "a" * 40,
+                "expected_sha": None,
+            }
+        ],
+        "pr_number": None,
+    }
+    intent = {
+        "issue_number": 322,
+        "role": "lead",
+        "action": "propose-change",
+        "change": "unset",
+        "result_kind": "ready-for-openspec-review",
+        "result_content": "Approved proposal with materialized files",
+        "requested_effects": (
+            [{"kind": "github-mutation", "payload_json": json.dumps(materialization)}]
+            if include_materialization
+            else []
+        ),
+    }
+    raw = json.dumps(intent, sort_keys=True)
+    return replace(
+        _accepted_carrier_record(),
+        role="lead",
+        action="propose-change",
+        change="unset",
+        result_kind="ready-for-openspec-review",
+        raw_worker_result=raw,
+        worker_result_sha256=hashlib.sha256(raw.encode()).hexdigest(),
+    )
+
+
+def _first_change_carrier_plan(
+    *,
+    change: str = "first-change",
+    branch: str = "agent/first-change",
+    operation: str = "pull-request-create",
+) -> carrier.CarrierPlan:
+    return carrier.make_carrier_plan(
+        repository="owner/repo",
+        issue_number=322,
+        change=change,
+        action="propose-change",
+        authorization_revision=REVISION,
+        operation=operation,
+        target={"repository": "owner/repo", "head_ref": branch, "base_ref": "main"},
+        expected={"head_ref": branch, "head_sha": "b" * 40},
+        requested={"head": branch, "base": "main", "head_sha": "b" * 40},
+        expected_postcondition={"head_ref": branch, "head_sha": "b" * 40},
+    )
+
+
 def _qualified_recovery_fixture(
     *,
     accepted_decision_sha256: str = "a" * 64,
@@ -4157,6 +4226,172 @@ def test_completed_application_prefers_saved_qualified_carrier_over_producer_res
     assert completion.qualified_carrier is not None
     assert completion.qualified_carrier.plan == plan
     assert completion.qualified_carrier.artifact_digest == digest
+
+
+@pytest.mark.parametrize(
+    ("case", "eligible"),
+    [
+        ("valid", True),
+        ("wrong-accepted-change", False),
+        ("wrong-source-change", False),
+        ("absent-materialization", False),
+        ("wrong-carrier-change", False),
+        ("wrong-carrier-branch", False),
+        ("wrong-carrier-operation", False),
+    ],
+)
+def test_completed_first_change_qualifies_only_accepted_materialization_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    eligible: bool,
+) -> None:
+    """Change: unset is source state, while the accepted effect names the new Change."""
+
+    record = _first_change_carrier_intent(
+        materialization_change=(
+            "different-change" if case == "wrong-accepted-change" else "first-change"
+        ),
+        expected_change="different-change" if case == "wrong-source-change" else "unset",
+        include_materialization=case != "absent-materialization",
+    )
+    plan = _first_change_carrier_plan(
+        change="different-change" if case == "wrong-carrier-change" else "first-change",
+        branch="agent/unrelated" if case == "wrong-carrier-branch" else "agent/first-change",
+        operation=(
+            "pull-request-head-update"
+            if case == "wrong-carrier-operation"
+            else "pull-request-create"
+        ),
+    )
+    raw = json.dumps(carrier.carrier_plan_document(plan), sort_keys=True).encode()
+    digest = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path == "actions/runs/777/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": 999,
+                        "name": "carrier-plan.json",
+                        "expired": False,
+                        "digest": digest,
+                        "workflow_run": {"id": 777, "head_sha": REVISION},
+                    }
+                ],
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "read_github_artifact_bytes", lambda *_args: raw)
+    if eligible:
+        qualified = bridge._qualified_carrier_for_application_run(
+            "owner/repo",
+            "token",
+            90,
+            run={"head_sha": REVISION},
+            run_id=777,
+            run_attempt=1,
+            job={
+                "steps": [{"name": "Upload exact external carrier plan", "conclusion": "success"}]
+            },
+            record=record,
+            read=fake_read,
+        )
+        assert qualified is not None
+        assert qualified.plan == plan
+    else:
+        with pytest.raises(RuntimeError, match="accepted intent"):
+            bridge._qualified_carrier_for_application_run(
+                "owner/repo",
+                "token",
+                90,
+                run={"head_sha": REVISION},
+                run_id=777,
+                run_attempt=1,
+                job={
+                    "steps": [
+                        {"name": "Upload exact external carrier plan", "conclusion": "success"}
+                    ]
+                },
+                record=record,
+                read=fake_read,
+            )
+
+
+def test_first_change_application_handoff_is_resumable_without_replaying_producer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The normal completion entry point must consume the already-accepted carrier."""
+
+    record = _first_change_carrier_intent()
+    plan = _first_change_carrier_plan()
+    raw = json.dumps(carrier.carrier_plan_document(plan), sort_keys=True).encode()
+    digest = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+    paths: list[str] = []
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        paths.append(path)
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 777,
+                        "display_title": bridge.render_application_run_name(90),
+                        "status": "completed",
+                        "run_attempt": 1,
+                        "head_sha": REVISION,
+                    }
+                ]
+            }
+        if path == "actions/runs/777/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": 888,
+                        "name": "apply",
+                        "steps": [
+                            {
+                                "name": "Upload exact external carrier plan",
+                                "conclusion": "success",
+                            }
+                        ],
+                    }
+                ]
+            }
+        if path == "actions/runs/777/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": 999,
+                        "name": "carrier-plan.json",
+                        "expired": False,
+                        "digest": digest,
+                        "workflow_run": {"id": 777, "head_sha": REVISION},
+                    }
+                ],
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(
+        bridge,
+        "read_application_recovery_artifact",
+        lambda *_args, **_kwargs: _qualified_recovery_fixture(),
+    )
+    monkeypatch.setattr(bridge, "read_github_artifact_bytes", lambda *_args: raw)
+    completion = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=fake_read,
+        record=record,
+        accepted_decision_sha256="a" * 64,
+    )
+    assert completion.state == "RESUMABLE"
+    assert completion.reason == "application-completion-carrier-required"
+    assert completion.qualified_carrier is not None
+    assert completion.qualified_carrier.plan == plan
+    assert all(path.startswith("actions/") for path in paths)
 
 
 def test_completed_application_consumes_only_exact_complete_carrier_outcome(
