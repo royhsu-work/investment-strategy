@@ -303,9 +303,7 @@ def _github_json(
         },
     )
     try:
-        raw = github_read_bytes_with_retry(
-            request, open_request=urlopen, wait=time.sleep
-        )
+        raw = github_read_bytes_with_retry(request, open_request=urlopen, wait=time.sleep)
     except HTTPError as exc:
         if allow_not_found and exc.code == 404:
             return None

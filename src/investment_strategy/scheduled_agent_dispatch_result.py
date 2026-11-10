@@ -55,9 +55,7 @@ def _github_json(repository: str, token: str, api_path: str) -> object:
         },
     )
     try:
-        raw = github_read_bytes_with_retry(
-            request, open_request=urlopen, wait=time.sleep
-        )
+        raw = github_read_bytes_with_retry(request, open_request=urlopen, wait=time.sleep)
         return json.loads(raw.decode("utf-8"))
     except HTTPError as exc:
         raise RuntimeError("exact dispatch run API read failed") from exc

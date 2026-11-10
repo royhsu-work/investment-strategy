@@ -552,9 +552,7 @@ def _github_json(
     )
     try:
         if method == "GET":
-            raw = github_read_bytes_with_retry(
-                request, open_request=urlopen, wait=time.sleep
-            )
+            raw = github_read_bytes_with_retry(request, open_request=urlopen, wait=time.sleep)
         else:
             with urlopen(request, timeout=30) as response:  # noqa: S310 - trusted API host
                 raw = response.read()

@@ -134,9 +134,7 @@ def test_shared_github_transport_rejects_non_get_before_network(method: str) -> 
         pytest.fail("non-GET attempted through the retryable transport")
 
     with pytest.raises(ValueError, match="only supports GET"):
-        carrier.github_read_bytes_with_retry(
-            request, open_request=forbidden, wait=forbidden
-        )
+        carrier.github_read_bytes_with_retry(request, open_request=forbidden, wait=forbidden)
 
 
 @pytest.mark.parametrize(

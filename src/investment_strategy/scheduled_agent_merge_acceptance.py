@@ -129,9 +129,7 @@ def _github_json(repository: str, token: str, api_path: str) -> object:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    raw = github_read_bytes_with_retry(
-        request, open_request=urlopen, wait=time.sleep
-    )
+    raw = github_read_bytes_with_retry(request, open_request=urlopen, wait=time.sleep)
     return json.loads(raw.decode("utf-8"))
 
 
