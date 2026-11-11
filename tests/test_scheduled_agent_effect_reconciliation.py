@@ -1612,8 +1612,8 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
     def read(_repo: str, _token: str, path: str) -> object:
         if path == "actions/runs/7001":
             return run
-        if path == "actions/runs/7001/jobs":
-            return {"jobs": [job]}
+        if path == "actions/runs/7001/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [job]}
         if path == "actions/runs/7001/artifacts?per_page=100":
             return {
                 "artifacts": [
@@ -1666,6 +1666,7 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
     accepted_comment = {
         "id": 92,
         "body": decision_body,
+        "created_at": "2026-09-22T15:39:54Z",
         "user": {"login": "github-actions[bot]"},
         "performed_via_github_app": {"slug": "github-actions"},
     }
@@ -1750,8 +1751,8 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
             return {"default_branch": "main"}
         if path == "actions/runs/7004":
             return second_run
-        if path == "actions/runs/7004/jobs":
-            return {"jobs": [second_job]}
+        if path == "actions/runs/7004/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [second_job]}
         if path == "actions/runs/7004/artifacts?per_page=100":
             return {
                 "artifacts": [

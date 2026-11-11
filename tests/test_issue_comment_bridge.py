@@ -1225,16 +1225,18 @@ def test_accepted_formal_result_waits_for_consequence_postconditions(
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/777/jobs":
+        if path == "actions/runs/777/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 888,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "success",
                     }
-                ]
+                ],
             }
         raise AssertionError(path)
 
@@ -1599,8 +1601,8 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier(
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [{"id": 888, "name": "apply"}]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [{"id": 888, "name": "apply", "run_attempt": 1}]}
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -1764,14 +1766,16 @@ def _completion_matrix_reader(
         if path.startswith("actions/runs/") and path.endswith("/jobs"):
             run_id = int(path.split("/")[2])
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": run_id + 100,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": terminal_conclusion,
                     }
-                ]
+                ],
             }
         raise AssertionError(path)
 
@@ -1840,10 +1844,10 @@ def test_preaccept_exception_blocks_unchanged_code_but_recovers_after_applicatio
                     {
                         "id": 9000,
                         "display_title": "Scheduled Agent Application 654",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                         "head_sha": request_revision,
-                        "run_attempt": 1,
                     }
                 ]
             }
@@ -1991,9 +1995,21 @@ def test_native_malformed_worker_preaccept_exception_retires_without_main_advanc
                     }
                 ]
             }
-        if path == "actions/runs/42393397526/jobs":
+        if (
+            path
+            == f"actions/runs/42393397526/attempts/{2 if case == 'missing-attempt' else 1}/jobs"
+        ):
             return {
-                "jobs": [{"id": 1, "name": "apply", "status": "completed", "conclusion": "failure"}]
+                "total_count": 1,
+                "jobs": [
+                    {
+                        "id": 1,
+                        "name": "apply",
+                        "run_attempt": 2 if case == "missing-attempt" else 1,
+                        "status": "completed",
+                        "conclusion": "failure",
+                    }
+                ],
             }
         if path == "issues/322":
             return current_issue
@@ -2164,6 +2180,7 @@ def test_terminal_preactcept_candidate_survives_archived_authorization_revision(
                     {
                         "id": 9000,
                         "display_title": "Scheduled Agent Application 654",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                     }
@@ -2171,16 +2188,18 @@ def test_terminal_preactcept_candidate_survives_archived_authorization_revision(
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/9000/jobs":
+        if path == "actions/runs/9000/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 9100,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                     }
-                ]
+                ],
             }
         if path.startswith("compare/"):
             raise OSError("archived commit is no longer observable")
@@ -2645,16 +2664,18 @@ def test_unbound_terminal_transport_is_inert_history() -> None:
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/9654/jobs":
+        if path == "actions/runs/9654/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 9754,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                     }
-                ]
+                ],
             }
         raise AssertionError(path)
 
@@ -2757,16 +2778,18 @@ def test_raw_current_source_request_is_classified_after_source_binding() -> None
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/9656/jobs":
+        if path == "actions/runs/9656/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 9756,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                     }
-                ]
+                ],
             }
         raise AssertionError(path)
 
@@ -2944,16 +2967,18 @@ def test_preprotocol_inert_request_is_retired_without_semantic_replay() -> None:
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/777/jobs":
+        if path == "actions/runs/777/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 888,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                     }
-                ]
+                ],
             }
         if path == f"compare/{legacy_revision}...{bridge._APPLICATION_DECISION_PROTOCOL_REVISION}":
             return {"status": "ahead", "base_commit": {"sha": legacy_revision}}
@@ -3005,8 +3030,8 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [{"id": 888, "name": "apply"}]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [{"id": 888, "name": "apply", "run_attempt": 1}]}
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -3251,8 +3276,11 @@ def test_current_accepted_application_stops_replaying_after_repeated_failed_atte
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/35762997171/jobs":
-            return {"jobs": [{"id": 107028234822, "name": "apply"}]}
+        if path == "actions/runs/35762997171/attempts/6/jobs":
+            return {
+                "total_count": 1,
+                "jobs": [{"id": 107028234822, "name": "apply", "run_attempt": 6}],
+            }
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -3323,8 +3351,8 @@ def test_live_322_accepted_request_does_not_resume_completed_failed_application_
             return {"workflow_runs": [run]}
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == f"actions/runs/{run_id}/jobs":
-            return {"jobs": [job]}
+        if path == f"actions/runs/{run_id}/attempts/{run['run_attempt']}/jobs":
+            return {"total_count": 1, "jobs": [dict(job, run_attempt=run["run_attempt"])]}
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -3346,7 +3374,7 @@ def test_live_322_accepted_request_does_not_resume_completed_failed_application_
     assert job_id == 107664011251
     assert run["run_attempt"] == 7
     assert any(path.startswith("actions/workflows/") for path in observed)
-    assert f"actions/runs/{run_id}/jobs" in observed
+    assert f"actions/runs/{run_id}/attempts/{run['run_attempt']}/jobs" in observed
 
 
 def test_new_evidence_continues_past_the_former_attempt_threshold() -> None:
@@ -3364,6 +3392,8 @@ def test_new_evidence_continues_past_the_former_attempt_threshold() -> None:
     def fake_read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("issues/322/comments?"):
             return [decision]
+        if path.startswith("issues/comments?"):
+            return []
         raise AssertionError(path)
 
     accepted_sha256 = hashlib.sha256(cast(str, decision["body"]).encode("utf-8")).hexdigest()
@@ -3422,6 +3452,29 @@ def test_new_evidence_continues_past_the_former_attempt_threshold() -> None:
             request_comment_id=5810765007,
             predecessor_evidence=repeated,
             read=fake_read,
+        )
+        is None
+    )
+
+    # The source Issue contains no continuation; another Runtime shard has
+    # already consumed the exact predecessor. Never emit its correlation twice.
+    already_consumed = _trusted_connector_comment(901, body)
+
+    def cross_shard_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/322/comments?"):
+            return [decision]
+        if path.startswith("issues/comments?"):
+            return [already_consumed]
+        raise AssertionError(path)
+
+    assert (
+        bridge._application_continuation_body(
+            repository="owner/repo",
+            token=REVISION,
+            source=source,
+            request_comment_id=5810765007,
+            predecessor_evidence=predecessor,
+            read=cross_shard_read,
         )
         is None
     )
@@ -3761,6 +3814,198 @@ def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
     )
 
 
+@pytest.mark.parametrize(
+    ("proof", "expected_state", "expected_reason"),
+    [
+        ("COMPLETE", "RESUMABLE", "application-completion-continuation-required"),
+        ("INDETERMINATE", "RESUMABLE", "application-completion-exception-observing"),
+        ("UNSAFE", "INVALID", "application-completion-exception-unsafe"),
+        ("NOT_APPLIED", "INVALID", "application-completion-exception-unsafe"),
+    ],
+)
+def test_exception_only_application_completion_requires_fresh_original_proof(
+    monkeypatch: pytest.MonkeyPatch,
+    proof: str,
+    expected_state: str,
+    expected_reason: str,
+) -> None:
+    record = replace(
+        _accepted_carrier_record(),
+        issue_number=435,
+        role="lead",
+        action="propose-change",
+        change="unset",
+        result_kind="proposal-ready",
+        request_comment_id=6760870154,
+    )
+    evidence = application.ApplicationExceptionArtifact(
+        run_id=42827477053,
+        run_attempt=1,
+        job_id=129868554969,
+        artifact_id=13768983651,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=record.request_comment_id,
+        accepted_decision_sha256="b" * 64,
+        failure_evidence_sha256="c" * 64,
+        recovery_episode_sha256="d" * 64,
+        document={
+            "issue_number": 435,
+            "role": "lead",
+            "action": "propose-change",
+            "change": "unset",
+        },
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_runs",
+        lambda *_a, **_kw: (
+            {
+                "id": evidence.run_id,
+                "run_attempt": 1,
+                "status": "completed",
+                "conclusion": "failure",
+                "head_sha": REVISION,
+            },
+        ),
+    )
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        assert path == "actions/runs/42827477053/attempts/1/jobs"
+        return {
+            "total_count": 1,
+            "jobs": [
+                {
+                    "id": evidence.job_id,
+                    "name": "apply",
+                    "run_attempt": 1,
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "steps": [
+                        {
+                            "name": "Upload exact application recovery evidence",
+                            "conclusion": "skipped",
+                        },
+                        {
+                            "name": (
+                                "Upload pre-ACCEPT or interrupted application exception evidence"
+                            ),
+                            "conclusion": "success",
+                        },
+                    ],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(bridge, "read_application_exception_artifact", lambda *_a, **_kw: evidence)
+    monkeypatch.setattr(
+        bridge,
+        "classify_application_exception_recovery",
+        lambda **_kw: application.AcceptedPostEffectProof(
+            cast(Literal["COMPLETE", "INDETERMINATE", "UNSAFE", "NOT_APPLIED"], proof),
+            "observed",
+        ),
+    )
+    result = bridge._application_job(
+        "royhsu-work/investment-strategy",
+        "token",
+        record.request_comment_id,
+        read=read,
+        record=record,
+        accepted_decision_sha256=evidence.accepted_decision_sha256,
+    )
+    assert result.state == expected_state
+    assert result.reason == expected_reason
+    assert result.recovery_artifact is evidence
+
+
+def test_exception_continuation_uses_existing_wire_and_cross_shard_no_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = bridge.WorkerRequest(435, "lead", "propose-change")
+    record = replace(
+        _accepted_carrier_record(),
+        issue_number=435,
+        role="lead",
+        action="propose-change",
+        change="unset",
+        request_comment_id=6760870154,
+    )
+    accepted_body = "qualified original ACCEPTED decision"
+    decision_sha = hashlib.sha256(accepted_body.encode()).hexdigest()
+    evidence = application.ApplicationExceptionArtifact(
+        run_id=42827477053,
+        run_attempt=1,
+        job_id=129868554969,
+        artifact_id=13768983651,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=record.request_comment_id,
+        accepted_decision_sha256=decision_sha,
+        failure_evidence_sha256="b" * 64,
+        recovery_episode_sha256="c" * 64,
+        document={"schema": "scheduled-agent-execution-exception/v1"},
+    )
+    original = {
+        "id": 90001,
+        "body": accepted_body,
+        "created_at": "2026-11-10T13:00:00Z",
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    history: list[dict[str, object]] = []
+    seen_queries: list[str] = []
+
+    def paged(_repository: str, _token: str, path: str, *, read: object) -> list[dict[str, object]]:
+        seen_queries.append(path)
+        if path.startswith("issues/435/comments?"):
+            return [original]
+        if path.startswith("issues/comments?"):
+            return history
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_paged_list", paged)
+    monkeypatch.setattr(
+        bridge,
+        "parse_application_decision",
+        lambda body: record if body == accepted_body else None,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "classify_application_exception_recovery",
+        lambda **_kw: application.AcceptedPostEffectProof("COMPLETE", "original proven"),
+    )
+    first = bridge._application_continuation_body(
+        repository="royhsu-work/investment-strategy",
+        token=cast(str, "token"),
+        source=source,
+        request_comment_id=record.request_comment_id,
+        predecessor_evidence=evidence,
+    )
+    assert first is not None
+    parsed = application.parse_application_continuation_request(first)
+    assert parsed is not None and parsed.predecessor_artifact_id == evidence.artifact_id
+    assert any("since=2026-11-10T13%3A00%3A00Z" in path for path in seen_queries)
+    # The first continuation was posted on *yesterday's* Runtime shard;
+    # today's read must not emit a duplicate of the accepted predecessor.
+    history.append(
+        {
+            "id": 6769000000,
+            "body": first,
+            "user": {"login": "royhsu-work"},
+            "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+        }
+    )
+    assert (
+        bridge._application_continuation_body(
+            repository="royhsu-work/investment-strategy",
+            token=cast(str, "token"),
+            source=source,
+            request_comment_id=record.request_comment_id,
+            predecessor_evidence=evidence,
+        )
+        is None
+    )
+
+
 def _first_change_carrier_intent(
     *,
     materialization_change: str = "first-change",
@@ -4071,12 +4316,14 @@ def _carrier_completion_reader(
                     }
                 ]
             }
-        if path == "actions/runs/777/jobs":
+        if path == "actions/runs/777/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 888,
                         "name": "apply",
+                        "run_attempt": 1,
                         "steps": [
                             {
                                 "name": "Upload exact external carrier plan",
@@ -4084,7 +4331,7 @@ def _carrier_completion_reader(
                             }
                         ],
                     }
-                ]
+                ],
             }
         if path == "actions/runs/777/artifacts?per_page=100":
             return {
@@ -4169,12 +4416,14 @@ def test_completed_application_prefers_saved_qualified_carrier_over_producer_res
                     }
                 ]
             }
-        if path == "actions/runs/777/jobs":
+        if path == "actions/runs/777/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 888,
                         "name": "apply",
+                        "run_attempt": 1,
                         "steps": [
                             {
                                 "name": "Upload exact external carrier plan",
@@ -4182,7 +4431,7 @@ def test_completed_application_prefers_saved_qualified_carrier_over_producer_res
                             }
                         ],
                     }
-                ]
+                ],
             }
         if path == "actions/runs/777/artifacts?per_page=100":
             return {
@@ -4284,6 +4533,12 @@ def test_completed_first_change_qualifies_only_accepted_materialization_carrier(
         raise AssertionError(path)
 
     monkeypatch.setattr(bridge, "read_github_artifact_bytes", lambda *_args: raw)
+    qualified_job = carrier.QualifiedApplicationJob(
+        id=778,
+        status="completed",
+        conclusion="success",
+        steps=(("Upload exact external carrier plan", "success"),),
+    )
     if eligible:
         qualified = bridge._qualified_carrier_for_application_run(
             "owner/repo",
@@ -4292,9 +4547,7 @@ def test_completed_first_change_qualifies_only_accepted_materialization_carrier(
             run={"head_sha": REVISION},
             run_id=777,
             run_attempt=1,
-            job={
-                "steps": [{"name": "Upload exact external carrier plan", "conclusion": "success"}]
-            },
+            job=qualified_job,
             record=record,
             read=fake_read,
         )
@@ -4309,11 +4562,7 @@ def test_completed_first_change_qualifies_only_accepted_materialization_carrier(
                 run={"head_sha": REVISION},
                 run_id=777,
                 run_attempt=1,
-                job={
-                    "steps": [
-                        {"name": "Upload exact external carrier plan", "conclusion": "success"}
-                    ]
-                },
+                job=qualified_job,
                 record=record,
                 read=fake_read,
             )
@@ -4344,12 +4593,14 @@ def test_first_change_application_handoff_is_resumable_without_replaying_produce
                     }
                 ]
             }
-        if path == "actions/runs/777/jobs":
+        if path == "actions/runs/777/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 888,
                         "name": "apply",
+                        "run_attempt": 1,
                         "steps": [
                             {
                                 "name": "Upload exact external carrier plan",
@@ -4357,7 +4608,7 @@ def test_first_change_application_handoff_is_resumable_without_replaying_produce
                             }
                         ],
                     }
-                ]
+                ],
             }
         if path == "actions/runs/777/artifacts?per_page=100":
             return {
@@ -4508,8 +4759,8 @@ def test_read_only_reconciliation_reobserves_later_complete_without_replay(
     monkeypatch.setattr(bridge, "accepted_read_only_effects_complete", observe)
 
     def fake_read(_repository: str, _token: str, path: str) -> object:
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [{"id": 888, "name": "apply"}]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [{"id": 888, "name": "apply", "run_attempt": 1}]}
         if path == "":
             return {"default_branch": "main"}
         raise AssertionError(path)
@@ -4597,8 +4848,8 @@ def test_legacy_post_effect_result_only_resumes_after_fresh_proof(
     monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_kw: recovery)
 
     def read(_repository: str, _token: str, path: str) -> object:
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [{"id": 888, "name": "apply"}]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [{"id": 888, "name": "apply", "run_attempt": 1}]}
         raise AssertionError(path)
 
     def classify() -> bridge.ApplicationCompletion:
@@ -4808,8 +5059,8 @@ def test_completed_application_distinguishes_absent_from_incomplete_carrier_list
                         }
                     ]
                 }
-            if path == "actions/runs/777/jobs":
-                return {"jobs": [{"id": 888, "name": "apply"}]}
+            if path == "actions/runs/777/attempts/50/jobs":
+                return {"total_count": 1, "jobs": [{"id": 888, "name": "apply", "run_attempt": 50}]}
             if path == "actions/runs/777/artifacts?per_page=100":
                 return {"total_count": total_count, "artifacts": []}
             raise AssertionError(path)
@@ -5417,6 +5668,84 @@ def test_qualifier_uses_full_runtime_shard_history_for_prior_handoff(
     assert status == "application-completion-carrier-prior-dispatch-incomplete"
 
 
+def test_qualifier_resolves_continuation_on_prior_runtime_shard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+        issue_number=138,
+        role=source.role,
+        action=source.action,
+    )
+    decision = _application_decision_comment(request)
+    decision_digest = hashlib.sha256(cast(str, decision["body"]).encode()).hexdigest()
+    continuation = bridge.render_application_continuation_request(
+        repository="owner/repo",
+        issue_number=138,
+        original_request_comment_id=654,
+        accepted_decision_sha256=decision_digest,
+        predecessor_run_id=800,
+        predecessor_run_attempt=1,
+        predecessor_job_id=801,
+        predecessor_artifact_id=802,
+        predecessor_artifact_digest="sha256:" + "3" * 64,
+        failure_evidence_sha256="4" * 64,
+        recovery_episode_sha256="5" * 64,
+    )
+    prior_shard_continuation = _trusted_connector_comment(901, continuation)
+    prior_shard_continuation["created_at"] = "2026-09-18T02:00:00Z"
+    current_shard_request = _trusted_connector_comment(
+        902, "DISPATCH_REQUEST\nRequested-At: 2026-10-21T01:00:00Z"
+    )
+    observed: list[tuple[int, ...] | None] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/138/comments?"):
+            return [decision]
+        if path.startswith("issues/comments?"):
+            assert "2026-09-18" in path  # ACCEPT predates the 30-day window.
+            return [request, prior_shard_continuation]
+        if path.startswith("issues/142/comments?"):
+            return [current_shard_request]
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return _preactivation_admission()
+        raise AssertionError(path)
+
+    def capture_accepted(**kwargs: object) -> bridge.ApplicationCompletion:
+        observed.append(cast(tuple[int, ...] | None, kwargs["continuation_transport_comment_ids"]))
+        assert kwargs["recent_comments"] == (current_shard_request,)
+        return bridge.ApplicationCompletion("INVALID", "observed-cross-shard-lineage")
+
+    monkeypatch.setattr(bridge, "_derive_frontier", lambda **_kw: (None, False))
+    monkeypatch.setattr(bridge, "_accepted_application_state", capture_accepted)
+    monkeypatch.setattr(
+        bridge,
+        "_application_runs",
+        lambda *_args, **_kwargs: (
+            {"display_title": "Scheduled Agent Application 654", "id": 800, "run_attempt": 1},
+            {"display_title": "Scheduled Agent Application 901", "id": 803, "run_attempt": 1},
+        ),
+    )
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        current_dispatch_request_comment_id=902,
+        current_dispatch_issue_number=142,
+        now=datetime(2026, 10, 21, tzinfo=UTC),
+        read=read,
+    )
+
+    assert completion.reason == "observed-cross-shard-lineage"
+    assert observed == [(901,)]
+
+
 def test_prior_dispatch_without_a_visible_run_fails_closed_before_carrier_reissue() -> None:
     status = bridge._prior_dispatch_handoff_reason(
         "owner/repo",
@@ -5825,6 +6154,36 @@ def test_carrier_outcome_cannot_claim_matching_precondition_with_other_observati
     assert reason == "application-completion-carrier-outcome-invalid"
 
 
+@pytest.mark.parametrize("missing_count", [False, True])
+def test_application_job_rejects_incomplete_job_inventory_before_recovery(
+    monkeypatch: pytest.MonkeyPatch, missing_count: bool
+) -> None:
+    """A valid-looking first apply job does not prove an exhaustive inventory."""
+
+    run = {
+        "id": 777,
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "failure",
+    }
+    monkeypatch.setattr(bridge, "_application_runs", lambda *_args, **_kwargs: [run])
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path.startswith("actions/runs/777/attempts/1/jobs"):
+            response: dict[str, object] = {
+                "total_count": 2,
+                "jobs": [{"id": 888, "name": "apply", "run_attempt": 1}],
+            }
+            if missing_count:
+                del response["total_count"]
+            return response
+        raise AssertionError(path)
+
+    completion = bridge._application_job("owner/repo", "token", 90, read=read)
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-job-list-incomplete"
+
+
 @pytest.mark.parametrize(
     ("run_id", "run_attempt", "job_id", "transport_comment_id"),
     [
@@ -5880,17 +6239,19 @@ def test_completed_legacy_application_job_preserves_historical_identity_without_
                     }
                 ]
             }
-        if path == f"actions/runs/{run_id}/jobs":
+        if path == f"actions/runs/{run_id}/attempts/{run_attempt}/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": job_id,
                         "name": "apply",
+                        "run_attempt": run_attempt,
                         "status": "completed",
                         "conclusion": "failure",
                         "steps": steps,
                     }
-                ]
+                ],
             }
         raise AssertionError(f"unexpected read: {path}")
 
@@ -5922,7 +6283,7 @@ def test_completed_legacy_application_job_preserves_historical_identity_without_
         assert completion.job_id == job_id
     assert requested == [
         "actions/workflows/scheduled-agent-application.yml/runs?event=issue_comment&per_page=100&page=1",
-        f"actions/runs/{run_id}/jobs",
+        f"actions/runs/{run_id}/attempts/{run_attempt}/jobs",
     ]
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "/rerun" not in workflow
@@ -5947,12 +6308,14 @@ def test_recovery_artifact_read_failure_is_not_legacy_missing_evidence(
                     }
                 ]
             }
-        if path == "actions/runs/37563005754/jobs":
+        if path == "actions/runs/37563005754/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 112607809410,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                         "steps": [
@@ -5963,7 +6326,7 @@ def test_recovery_artifact_read_failure_is_not_legacy_missing_evidence(
                             {"name": "Complete job", "conclusion": "success"},
                         ],
                     }
-                ]
+                ],
             }
         raise AssertionError(f"unexpected read: {path}")
 
@@ -6294,8 +6657,8 @@ def test_terminal_merge_effect_reconciles_without_error_semantics(
         reads.append(path)
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [job]}
+        if path == f"actions/runs/777/attempts/{run['run_attempt']}/jobs":
+            return {"total_count": 1, "jobs": [dict(job, run_attempt=1)]}
         if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
             if alteration == "terminal-comment-read-failed":
                 raise OSError("terminal source history unavailable")
@@ -6443,8 +6806,8 @@ def test_terminal_carrier_effect_reconciles_by_operation_postcondition(
         assert repository == "royhsu-work/investment-strategy"
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [job]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [dict(job, run_attempt=1)]}
         if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
             return []
         if path == "issues/322":
@@ -6489,8 +6852,8 @@ def test_merge_prewrite_reconciliation_refuses_unavailable_github_reads(
     def read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [job]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [dict(job, run_attempt=1)]}
         if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
             return []
         if path == "issues/322":
@@ -6560,13 +6923,13 @@ def test_new_ingress_cannot_retire_an_accepted_partial_write(
         reads.append(path)
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [job]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [dict(job, run_attempt=1)]}
         if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
-            assert "actions/runs/777/jobs" in reads
+            assert "actions/runs/777/attempts/1/jobs" in reads
             return list(terminal_comments)
         if path == "issues/322":
-            assert "actions/runs/777/jobs" in reads
+            assert "actions/runs/777/attempts/1/jobs" in reads
             return issue
         if path == "issues/comments/90":
             return ingress
@@ -6679,13 +7042,13 @@ def test_create_retarget_and_post_terminal_formal_race_do_not_retire_accepted(
         reads.append(path)
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [job]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [dict(job, run_attempt=1)]}
         if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
-            assert "actions/runs/777/jobs" in reads
+            assert "actions/runs/777/attempts/1/jobs" in reads
             return terminal_comments
         if path == "issues/322":
-            assert "actions/runs/777/jobs" in reads
+            assert "actions/runs/777/attempts/1/jobs" in reads
             return _terminal_carrier_issue("implement-change")
         if path == "issues/comments/90":
             return ingress
@@ -6693,7 +7056,7 @@ def test_create_retarget_and_post_terminal_formal_race_do_not_retire_accepted(
             return {"total_count": 0, "artifacts": []}
         if path.startswith("pulls?state=all&head="):
             assert "&base=" not in path
-            assert "actions/runs/777/jobs" in reads
+            assert "actions/runs/777/attempts/1/jobs" in reads
             return (
                 [
                     {
@@ -6801,11 +7164,18 @@ def test_pending_capacity_cancel_before_accept_recovers_on_fresh_dispatch(
                     }
                 ]
             }
-        if path == "actions/runs/90001/jobs":
+        if path == "actions/runs/90001/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
-                    {"id": 90002, "name": "apply", "status": "completed", "conclusion": terminal}
-                ]
+                    {
+                        "id": 90002,
+                        "name": "apply",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": terminal,
+                    }
+                ],
             }
         raise AssertionError(path)
 
@@ -6891,7 +7261,7 @@ def test_preactcept_cancel_before_apply_job_is_terminal_no_accept(
                     }
                 ]
             }
-        if path == "actions/runs/90021/jobs":
+        if path == "actions/runs/90021/attempts/1/jobs":
             return {"total_count": 0, "jobs": []}
         raise AssertionError(path)
 
@@ -6935,7 +7305,12 @@ def test_unqualified_no_apply_job_never_proves_terminal_no_accept(
                     }
                 ]
             }
-        if path == "actions/runs/90021/jobs":
+        if path in {
+            "actions/runs/90021/attempts/1/jobs",
+            "actions/runs/90021/attempts/1/jobs?per_page=100&page=1",
+            "actions/runs/90021/attempts/2/jobs",
+            "actions/runs/90021/attempts/2/jobs?per_page=100&page=1",
+        }:
             return {"total_count": total_count, "jobs": []}
         raise AssertionError(path)
 
@@ -6974,12 +7349,12 @@ def test_no_apply_job_inventory_requires_unique_positive_ids(
                     }
                 ]
             }
-        if path == "actions/runs/90021/jobs":
+        if path == "actions/runs/90021/attempts/1/jobs":
             return {
                 "total_count": 2,
                 "jobs": [
-                    {"id": job_ids[0], "name": "prepare"},
-                    {"id": job_ids[1], "name": "idle-admission"},
+                    {"id": job_ids[0], "name": "prepare", "run_attempt": 1},
+                    {"id": job_ids[1], "name": "idle-admission", "run_attempt": 1},
                 ],
             }
         raise AssertionError(path)

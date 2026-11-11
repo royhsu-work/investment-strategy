@@ -206,8 +206,8 @@ class GitHubSequence:
             predecessor = self.recovery_predecessor
             if route == "actions/runs/8001":
                 return cast(dict[str, object], predecessor["run"])
-            if route == "actions/runs/8001/jobs":
-                return {"jobs": [cast(dict[str, object], predecessor["job"])]}
+            if route == "actions/runs/8001/attempts/1/jobs":
+                return {"total_count": 1, "jobs": [cast(dict[str, object], predecessor["job"])]}
             if route == "actions/runs/8001/artifacts":
                 return {
                     "total_count": 1,
