@@ -59,6 +59,8 @@ from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
     CarrierRequired,
     carrier_pr_identity,
+    github_paginated_mappings,
+    github_read_bytes_with_retry,
     make_carrier_plan,
 )
 from investment_strategy.scheduled_agent_effect_contract import (
@@ -85,6 +87,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     verify_implementation_candidate,
     work_product_path_allowed,
 )
+from investment_strategy.scheduled_agent_wire import LineWireContract
 from investment_strategy.scheduled_agent_worker import parse_worker_result
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
@@ -138,20 +141,24 @@ class EffectBatch:
 
 APPLICATION_DECISION_MARKER = "APPLICATION_DECISION"
 _APPLICATION_DECISION_DISPOSITIONS = frozenset({"ACCEPTED", "REJECTED"})
-_APPLICATION_DECISION_FIELDS = (
-    "Request-Comment",
-    "Request-Body-SHA256",
-    "Authorization-Revision",
-    "Issue",
-    "Role",
-    "Action",
-    "Change",
-    "Result-Kind",
-    "Disposition",
-    "Worker-Result-SHA256",
-    "Application-Intent-B64",
-    "Reason",
+_APPLICATION_DECISION_WIRE = LineWireContract(
+    APPLICATION_DECISION_MARKER,
+    (
+        "Request-Comment",
+        "Request-Body-SHA256",
+        "Authorization-Revision",
+        "Issue",
+        "Role",
+        "Action",
+        "Change",
+        "Result-Kind",
+        "Disposition",
+        "Worker-Result-SHA256",
+        "Application-Intent-B64",
+        "Reason",
+    ),
 )
+_APPLICATION_DECISION_FIELDS = _APPLICATION_DECISION_WIRE.fields
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SEMANTIC_INTENT_VERSION = 2
 
@@ -269,22 +276,21 @@ def render_application_decision_body(
         normalized_reason = normalized_reason[:240].rstrip()
     encoded_intent = base64.b64encode(raw_worker_result.encode("utf-8")).decode("ascii")
     source = decision.source
-    return "\n".join(
-        (
-            APPLICATION_DECISION_MARKER,
-            f"Request-Comment: {request_comment_id}",
-            f"Request-Body-SHA256: {_sha256_text(request_body)}",
-            f"Authorization-Revision: {authorization_revision}",
-            f"Issue: {source.issue_number}",
-            f"Role: {role_for(source.action).value}",
-            f"Action: {source.action.value}",
-            f"Change: {source.change}",
-            f"Result-Kind: {decision.result.result.kind.value}",
-            f"Disposition: {disposition}",
-            f"Worker-Result-SHA256: {_sha256_text(raw_worker_result)}",
-            f"Application-Intent-B64: {encoded_intent}",
-            f"Reason: {normalized_reason}",
-        )
+    return _APPLICATION_DECISION_WIRE.render(
+        {
+            "Request-Comment": str(request_comment_id),
+            "Request-Body-SHA256": _sha256_text(request_body),
+            "Authorization-Revision": authorization_revision,
+            "Issue": str(source.issue_number),
+            "Role": role_for(source.action).value,
+            "Action": source.action.value,
+            "Change": source.change,
+            "Result-Kind": decision.result.result.kind.value,
+            "Disposition": disposition,
+            "Worker-Result-SHA256": _sha256_text(raw_worker_result),
+            "Application-Intent-B64": encoded_intent,
+            "Reason": normalized_reason,
+        }
     )
 
 
@@ -293,6 +299,8 @@ def parse_application_decision(body: object) -> ApplicationDecisionRecord | None
 
     if not isinstance(body, str):
         return None
+    # Historical decision comments were parsed with splitlines(); retain that
+    # compatibility while sourcing field order from the same producer schema.
     lines = body.splitlines()
     if (
         len(lines) != len(_APPLICATION_DECISION_FIELDS) + 1
@@ -1665,24 +1673,14 @@ def _paged_github_list(
     token: str,
     api_path: str,
 ) -> tuple[Mapping[str, object], ...]:
-    items: list[Mapping[str, object]] = []
-    page = 1
-    while True:
-        separator = "&" if "?" in api_path else "?"
-        payload = _github_json(
-            repository,
-            token,
-            f"{api_path}{separator}per_page=100&page={page}",
-        )
-        if not isinstance(payload, list):
-            raise RuntimeError("application evidence comment list is incomplete")
-        for item in payload:
-            if not isinstance(item, Mapping):
-                raise RuntimeError("application evidence comment list is malformed")
-            items.append(cast(Mapping[str, object], item))
-        if len(payload) < 100:
-            return tuple(items)
-        page += 1
+    return github_paginated_mappings(
+        repository,
+        token,
+        api_path,
+        read=_github_json,
+        incomplete_error="application evidence comment list is incomplete",
+        malformed_error="application evidence comment list is malformed",
+    )
 
 
 def _github_json(
@@ -1708,20 +1706,21 @@ def _github_json(
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    # This is a transport retry for an idempotent GET, not an Action/effect
-    # retry.  A lost response to POST/PATCH/DELETE has an unknown mutation
-    # outcome and must never be submitted again by this adapter.
-    for attempt in range(3):
-        try:
+    try:
+        if method == "GET":
+            raw = github_read_bytes_with_retry(
+                request,
+                open_request=urlopen,  # noqa: S310 - trusted GitHub API host
+                wait=time.sleep,
+            )
+        else:
+            # Unknown write outcome: never replay this request at transport.
             with urlopen(request, timeout=30) as response:  # noqa: S310 - trusted API host
                 raw = response.read()
-            break
-        except HTTPError as exc:
-            if allow_not_found and exc.code == 404:
-                return None
-            if method != "GET" or exc.code not in {502, 503, 504} or attempt == 2:
-                raise
-            time.sleep(0.25 * (2**attempt))
+    except HTTPError as exc:
+        if allow_not_found and exc.code == 404:
+            return None
+        raise
     if not raw:
         return None
     return json.loads(raw.decode("utf-8"))

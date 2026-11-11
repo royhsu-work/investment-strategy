@@ -17,6 +17,7 @@ from investment_strategy.scheduled_agent_action_model import (
     next_action,
     role_for,
 )
+from investment_strategy.scheduled_agent_carrier import github_comment_has_app_provenance
 
 _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -74,13 +75,8 @@ def _marker(body: str) -> str | None:
 
 
 def _is_github_actions_comment(payload: Mapping[str, object]) -> bool:
-    user = payload.get("user")
-    app = payload.get("performed_via_github_app")
-    return (
-        isinstance(user, Mapping)
-        and user.get("login") == _GITHUB_ACTIONS_BOT
-        and isinstance(app, Mapping)
-        and app.get("slug") == _GITHUB_ACTIONS_APP
+    return github_comment_has_app_provenance(
+        payload, actor=_GITHUB_ACTIONS_BOT, app_slug=_GITHUB_ACTIONS_APP
     )
 
 

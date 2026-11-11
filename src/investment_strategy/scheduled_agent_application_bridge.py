@@ -46,8 +46,13 @@ from investment_strategy.scheduled_agent_application_materialization import (
     prove_materialization,
 )
 from investment_strategy.scheduled_agent_carrier import (
+    CarrierPlan,
     CarrierRequired,
     carrier_plan_document,
+    github_comment_has_app_provenance,
+    github_complete_run_jobs,
+    github_paginated_mappings,
+    github_read_bytes_with_retry,
     github_repository_api_url,
     read_github_artifact_bytes,
 )
@@ -183,6 +188,26 @@ class ApplicationRecoveryArtifact:
     document: Mapping[str, object]
 
 
+@dataclass(frozen=True)
+class ApplicationExceptionArtifact:
+    """An actual failed-run exception, never a fabricated recovery checkpoint.
+
+    This identity permits *only* a fresh, read-only accepted-intent proof to
+    authorize a continuation. The exception message is not an effect outcome.
+    """
+
+    run_id: int
+    run_attempt: int
+    job_id: int
+    artifact_id: int
+    artifact_digest: str
+    request_comment_id: int
+    accepted_decision_sha256: str
+    failure_evidence_sha256: str
+    recovery_episode_sha256: str
+    document: Mapping[str, object]
+
+
 @dataclass
 class ApplicationExceptionContext:
     """Invocation-local observations, never routing or continuation authority."""
@@ -203,6 +228,9 @@ class ApplicationExceptionContext:
 _APPLICATION_RECOVERY_ARTIFACT = "application-recovery-evidence"
 _APPLICATION_RECOVERY_SCHEMA = "scheduled-agent-application-recovery/v1"
 _MAX_APPLICATION_RECOVERY_BYTES = 65_536
+_APPLICATION_EXCEPTION_ARTIFACTS = frozenset(
+    {"application-execution-exception", "application-execution-exception.json"}
+)
 
 
 def _canonical_sha256(value: object) -> str:
@@ -385,34 +413,10 @@ def _as_mapping(value: object) -> Mapping[str, object] | None:
     return cast(Mapping[str, object], value) if isinstance(value, Mapping) else None
 
 
-def _app_slug(payload: Mapping[str, object]) -> str | None:
-    app = _as_mapping(payload.get("performed_via_github_app"))
-    slug = None if app is None else app.get("slug")
-    return slug if isinstance(slug, str) else None
-
-
-def _actor_login(payload: Mapping[str, object]) -> str | None:
-    user = _as_mapping(payload.get("user"))
-    login = None if user is None else user.get("login")
-    return login if isinstance(login, str) else None
-
-
 def _trusted_connector_comment(comment: Mapping[str, object], repository_owner: str) -> bool:
-    return (
-        _actor_login(comment) == repository_owner
-        and _app_slug(comment) == _CHATGPT_CONNECTOR_APP_SLUG
+    return github_comment_has_app_provenance(
+        comment, actor=repository_owner, app_slug=_CHATGPT_CONNECTOR_APP_SLUG
     )
-
-
-def typed_request_lines(body: str) -> list[str]:
-    """Share the exact request line-termination contract across both wire parsers.
-
-    One terminal newline is framing, not an extra field.  A second terminal
-    newline remains a blank field and must fail each parser's field contract.
-    """
-
-    lines = body.split("\n")
-    return lines[:-1] if lines and lines[-1] == "" else lines
 
 
 def parse_application_request(body: str) -> ApplicationRequest | None:
@@ -1020,19 +1024,22 @@ def _github_json(
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    # Retry transport failures only for idempotent reads. Every write has an
-    # uncertain outcome after a dropped response and must be reconciled first.
-    for attempt in range(3):
+    # GET retries share one transport contract with the source Issue reader;
+    # writes remain one-shot because a lost response makes outcome unknown.
+    if method == "GET":
         try:
-            with urlopen(request, timeout=30) as response:  # noqa: S310 - trusted API host
-                raw = response.read()
-            break
+            raw = github_read_bytes_with_retry(
+                request,
+                open_request=urlopen,  # noqa: S310 - trusted GitHub API host
+                wait=time.sleep,
+            )
         except HTTPError as exc:
             if allow_not_found and exc.code == 404:
                 return None
-            if method != "GET" or exc.code not in {502, 503, 504} or attempt == 2:
-                raise
-            time.sleep(0.25 * (2**attempt))
+            raise
+    else:
+        with urlopen(request, timeout=30) as response:  # noqa: S310 - trusted API host
+            raw = response.read()
     return None if not raw else json.loads(raw.decode("utf-8"))
 
 
@@ -1041,26 +1048,14 @@ def _paged_github_list(
     token: str,
     api_path: str,
 ) -> tuple[Mapping[str, object], ...]:
-    items: list[Mapping[str, object]] = []
-    page = 1
-    while True:
-        separator = "&" if "?" in api_path else "?"
-        decoded = _github_json(
-            repository,
-            token,
-            f"{api_path}{separator}per_page=100&page={page}",
-        )
-        if not isinstance(decoded, list):
-            raise RuntimeError("GitHub paginated evidence endpoint returned a non-list response")
-        current: list[Mapping[str, object]] = []
-        for item in decoded:
-            if not isinstance(item, Mapping):
-                raise RuntimeError("GitHub paginated evidence endpoint returned a malformed item")
-            current.append(cast(Mapping[str, object], item))
-        items.extend(current)
-        if len(current) < 100:
-            return tuple(items)
-        page += 1
+    return github_paginated_mappings(
+        repository,
+        token,
+        api_path,
+        read=_github_json,
+        incomplete_error="GitHub paginated evidence endpoint returned a non-list response",
+        malformed_error="GitHub paginated evidence endpoint returned a malformed item",
+    )
 
 
 def _application_decision_for_request(
@@ -4889,37 +4884,27 @@ def read_application_recovery_artifact(
         or not isinstance(run.get("head_sha"), str)
     ):
         return unavailable()
-    jobs_payload = api_read(repository, token, f"actions/runs/{run_id}/jobs")
-    if not isinstance(jobs_payload, Mapping) or not isinstance(jobs_payload.get("jobs"), list):
+    inventory = github_complete_run_jobs(
+        repository, token, run_id=run_id, run_attempt=run_attempt, read=api_read
+    )
+    if inventory is None:
         return unavailable()
-    jobs = [
-        item
-        for item in cast(list[object], jobs_payload["jobs"])
-        if isinstance(item, Mapping) and item.get("id") == job_id and item.get("name") == "apply"
-    ]
-    if len(jobs) != 1:
+    job = inventory.single_apply
+    if job is None or job.id != job_id:
         return unavailable()
-    job = cast(Mapping[str, object], jobs[0])
-    if (
-        job.get("run_attempt") != run_attempt
-        or job.get("status") != "completed"
-        or job.get("conclusion") not in {"success", "failure"}
-    ):
+    if job.status != "completed" or job.conclusion not in {"success", "failure"}:
         return unavailable()
-    steps = job.get("steps")
-    if not isinstance(steps, list):
+    steps = job.steps
+    if steps is None:
         return unavailable()
     uploads = [
-        step
-        for step in steps
-        if isinstance(step, Mapping)
-        and step.get("name") == "Upload exact application recovery evidence"
+        conclusion
+        for name, conclusion in steps
+        if name == "Upload exact application recovery evidence"
     ]
-    if len(uploads) != 1 or uploads[0].get("conclusion") != "success":
+    if len(uploads) != 1 or uploads[0] != "success":
         if not uploads and not any(
-            isinstance(step, Mapping)
-            and step.get("name") == "Upload final exact application recovery evidence"
-            for step in steps
+            name == "Upload final exact application recovery evidence" for name, _ in steps
         ):
             # A completed legacy job without an upload step really cannot
             # supply this artifact. Its separate caller still proves legacy
@@ -5104,6 +5089,276 @@ def read_application_recovery_artifact(
     )
 
 
+_EXCEPTION_APPLY_STEP_CONTRACT: dict[str, str] = {
+    "Freshly authorize and apply repository-owned effects": "failure",
+    "Upload exact application recovery evidence": "skipped",
+    "Upload pre-ACCEPT or interrupted application exception evidence": "success",
+    "Persist exact external carrier plan": "skipped",
+    "Upload exact external carrier plan": "skipped",
+    "Persist the derived successor after exact validation": "skipped",
+    "Upload final exact application recovery evidence": "skipped",
+}
+
+_EXCEPTION_DOCUMENT_KEYS = frozenset(
+    {
+        "schema",
+        "repository",
+        "issue_number",
+        "role",
+        "action",
+        "change",
+        "revision",
+        "request_comment_id",
+        "trigger_comment_id",
+        "run_id",
+        "run_attempt",
+        "attempted_operation",
+        "exception_type",
+        "raw_error",
+        "raw_traceback",
+        "mutation_status",
+        "unfinished_boundary",
+        "classification",
+    }
+)
+
+
+def _matches_required_fields(
+    observed: Mapping[str, object], required: Mapping[str, object]
+) -> bool:
+    """Check a named-field contract without an independently maintained guard tree."""
+
+    return all(observed.get(key) == value for key, value in required.items())
+
+
+def _qualified_exception_apply_run(
+    repository: str,
+    token: str,
+    *,
+    run_id: int,
+    run_attempt: int,
+    job_id: int,
+    read: Callable[[str, str, str], object],
+) -> Mapping[str, object] | None:
+    """Prove this run failed before every later writer, without inferring zero writes."""
+
+    run = _as_mapping(read(repository, token, f"actions/runs/{run_id}"))
+    required_run = {
+        "id": run_id,
+        "run_attempt": run_attempt,
+        "status": "completed",
+        "conclusion": "failure",
+    }
+    if run is None or not _matches_required_fields(run, required_run):
+        return None
+    if (
+        not isinstance(run.get("head_sha"), str)
+        or _SHA.fullmatch(cast(str, run["head_sha"])) is None
+    ):
+        return None
+    inventory = github_complete_run_jobs(
+        repository, token, run_id=run_id, run_attempt=run_attempt, read=read
+    )
+    if inventory is None:
+        return None
+    job = inventory.single_apply
+    if job is None:
+        return None
+    if job.id != job_id or job.status != "completed" or job.conclusion != "failure":
+        return None
+    steps = job.steps
+    if steps is None:
+        return None
+    conclusions: dict[str, str] = {}
+    for name, result in steps:
+        if name is None or result is None or name in conclusions:
+            return None
+        conclusions[name] = result
+    return run if _matches_required_fields(conclusions, _EXCEPTION_APPLY_STEP_CONTRACT) else None
+
+
+def _qualified_exception_artifact_metadata(
+    inventory: object, *, run_id: int, run_head_sha: str
+) -> Mapping[str, object] | None:
+    """One complete artifact inventory, with neither carrier nor recovery writer."""
+
+    payload = _as_mapping(inventory)
+    artifacts = None if payload is None else payload.get("artifacts")
+    if not isinstance(artifacts, list) or payload is None:
+        return None
+    if type(payload.get("total_count")) is not int or payload["total_count"] != len(artifacts):
+        return None
+    if any(not isinstance(item, Mapping) for item in artifacts):
+        return None
+    if any(
+        item.get("name") in {_APPLICATION_RECOVERY_ARTIFACT, "carrier-plan.json"}
+        for item in artifacts
+        if isinstance(item, Mapping)
+    ):
+        return None
+    candidates = [
+        item
+        for item in artifacts
+        if isinstance(item, Mapping) and item.get("name") in _APPLICATION_EXCEPTION_ARTIFACTS
+    ]
+    if len(candidates) != 1:
+        return None
+    artifact = candidates[0]
+    workflow_run = _as_mapping(artifact.get("workflow_run"))
+    required = {"id": run_id, "head_sha": run_head_sha}
+    if workflow_run is None or not _matches_required_fields(workflow_run, required):
+        return None
+    return artifact
+
+
+def _qualified_exception_document(
+    document: object,
+    *,
+    repository: str,
+    record: ApplicationDecisionRecord,
+    run: Mapping[str, object],
+    run_id: int,
+    run_attempt: int,
+) -> Mapping[str, object] | None:
+    """Canonical typed identity; diagnostic strings never determine admission."""
+
+    if not isinstance(document, Mapping) or set(document) != _EXCEPTION_DOCUMENT_KEYS:
+        return None
+    expected = {
+        "schema": "scheduled-agent-execution-exception/v1",
+        "repository": repository,
+        "issue_number": record.issue_number,
+        "role": record.role,
+        "action": record.action,
+        "change": record.change,
+        "revision": run.get("head_sha"),
+        "request_comment_id": record.request_comment_id,
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+        "classification": "UNCLASSIFIED_EXECUTION_EXCEPTION",
+    }
+    if not _matches_required_fields(document, expected):
+        return None
+    trigger = _strict_positive_int(document.get("trigger_comment_id"))
+    if trigger is None or run.get("display_title") != f"Scheduled Agent Application {trigger}":
+        return None
+    if document.get("mutation_status") not in {
+        "UNKNOWN_REQUIRES_FRESH_RECONCILIATION",
+        "NO_APPLICATION_WRITE_ATTEMPTED",
+    }:
+        return None
+    if document.get("attempted_operation") != document.get("unfinished_boundary"):
+        return None
+    if any(
+        not isinstance(document.get(key), str)
+        for key in ("exception_type", "raw_error", "raw_traceback", "attempted_operation")
+    ):
+        return None
+    return document
+
+
+def read_application_exception_artifact(
+    repository: str,
+    token: str,
+    *,
+    run_id: int,
+    run_attempt: int,
+    job_id: int,
+    record: ApplicationDecisionRecord,
+    accepted_decision_sha256: str,
+    read: Callable[[str, str, str], object] | None = None,
+    artifact_reader: Callable[[str, str, str], bytes] | None = None,
+    strict_read: bool = False,
+) -> ApplicationExceptionArtifact | None:
+    """Qualify *actual* exception evidence without inferring an unwritten Effect.
+
+    Only a terminal failed apply step with no downstream writer qualifies.
+    This reader never turns an exception string into a recovery predicate.
+    """
+
+    def unavailable() -> ApplicationExceptionArtifact | None:
+        if strict_read:
+            raise RuntimeError("application exception evidence unavailable")
+        return None
+
+    api_read = _github_json if read is None else read
+    download = read_github_artifact_bytes if artifact_reader is None else artifact_reader
+    if (
+        not all(_strict_positive_int(v) is not None for v in (run_id, run_attempt, job_id))
+        or record.disposition != "ACCEPTED"
+        or re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256) is None
+    ):
+        return unavailable()
+    run = _qualified_exception_apply_run(
+        repository,
+        token,
+        run_id=run_id,
+        run_attempt=run_attempt,
+        job_id=job_id,
+        read=api_read,
+    )
+    if run is None:
+        return unavailable()
+    artifact = _qualified_exception_artifact_metadata(
+        api_read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100"),
+        run_id=run_id,
+        run_head_sha=cast(str, run["head_sha"]),
+    )
+    if artifact is None:
+        return unavailable()
+    artifact_id = _strict_positive_int(artifact.get("id"))
+    digest = artifact.get("digest")
+    if (
+        artifact_id is None
+        or artifact.get("expired") is not False
+        or not isinstance(digest, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+    ):
+        return unavailable()
+    raw = download(repository, token, f"actions/artifacts/{artifact_id}/zip")
+    if (
+        not raw
+        or len(raw) > _MAX_APPLICATION_RECOVERY_BYTES
+        or f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest
+    ):
+        return unavailable()
+    try:
+        raw_document = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return unavailable()
+    document = _qualified_exception_document(
+        raw_document,
+        repository=repository,
+        record=record,
+        run=run,
+        run_id=run_id,
+        run_attempt=run_attempt,
+    )
+    if document is None:
+        return unavailable()
+    episode = _canonical_sha256(
+        {
+            "schema": "scheduled-agent-recovery-episode/v1",
+            "repository": repository,
+            "issue_number": record.issue_number,
+            "request_comment_id": record.request_comment_id,
+            "accepted_decision_sha256": accepted_decision_sha256,
+        }
+    )
+    return ApplicationExceptionArtifact(
+        run_id,
+        run_attempt,
+        job_id,
+        artifact_id,
+        digest,
+        record.request_comment_id,
+        accepted_decision_sha256,
+        _canonical_sha256(document),
+        episode,
+        document,
+    )
+
+
 def qualify_application_continuation_predecessor(
     repository: str,
     token: str,
@@ -5113,7 +5368,7 @@ def qualify_application_continuation_predecessor(
     transport_issue_number: int,
     read: Callable[[str, str, str], object] | None = None,
     artifact_reader: Callable[[str, str, str], bytes] | None = None,
-) -> ApplicationRecoveryArtifact | None:
+) -> ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None:
     """Verify the exact prior artifact and reject duplicate continuation branches."""
 
     api_read = _github_json if read is None else read
@@ -5173,27 +5428,61 @@ def qualify_application_continuation_predecessor(
     decision_sha256 = hashlib.sha256(accepted_bodies[0].encode("utf-8")).hexdigest()
     if decision_sha256 != continuation.accepted_decision_sha256:
         return None
-    evidence = read_application_recovery_artifact(
-        repository,
-        token,
-        run_id=continuation.predecessor_run_id,
-        run_attempt=continuation.predecessor_run_attempt,
-        job_id=continuation.predecessor_job_id,
-        request_comment_id=continuation.original_request_comment_id,
-        accepted_decision_sha256=decision_sha256,
-        read=api_read,
-        artifact_reader=artifact_reader,
+    accepted_record = parse_application_decision(accepted_bodies[0])
+    if accepted_record is None:
+        return None
+    evidence: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None = (
+        read_application_recovery_artifact(
+            repository,
+            token,
+            run_id=continuation.predecessor_run_id,
+            run_attempt=continuation.predecessor_run_attempt,
+            job_id=continuation.predecessor_job_id,
+            request_comment_id=continuation.original_request_comment_id,
+            accepted_decision_sha256=decision_sha256,
+            read=api_read,
+            artifact_reader=artifact_reader,
+        )
     )
+    if evidence is None:
+        evidence = read_application_exception_artifact(
+            repository,
+            token,
+            run_id=continuation.predecessor_run_id,
+            run_attempt=continuation.predecessor_run_attempt,
+            job_id=continuation.predecessor_job_id,
+            record=accepted_record,
+            accepted_decision_sha256=decision_sha256,
+            read=api_read,
+            artifact_reader=artifact_reader,
+        )
     if (
         evidence is None
         or evidence.artifact_id != continuation.predecessor_artifact_id
         or evidence.artifact_digest != continuation.predecessor_artifact_digest
         or evidence.failure_evidence_sha256 != continuation.failure_evidence_sha256
         or evidence.recovery_episode_sha256 != continuation.recovery_episode_sha256
-        or not evidence.continuation_eligible
-        or evidence.failure_evidence_sha256
-        in cast(list[str], evidence.document["prior_failure_evidence_sha256"])
+        or (
+            isinstance(evidence, ApplicationRecoveryArtifact)
+            and evidence.failure_evidence_sha256
+            in cast(list[str], evidence.document["prior_failure_evidence_sha256"])
+        )
     ):
+        return None
+    proof = (
+        classify_application_exception_recovery(
+            record=accepted_record, artifact=evidence, repository=repository, token=token
+        )
+        if isinstance(evidence, ApplicationExceptionArtifact)
+        else (
+            classify_post_effect_result_recovery(
+                record=accepted_record, artifact=evidence, repository=repository, token=token
+            )
+            if not evidence.continuation_eligible
+            else None
+        )
+    )
+    if proof is not None and proof.continuation != "CONTINUE":
         return None
     return evidence
 
@@ -5570,7 +5859,7 @@ def _retain_completed_accepted_formal_effect(
 
 def _accepted_recovery_boundary(
     evidence: Mapping[str, object],
-) -> Literal["CARRIER", "ZERO_WRITE_REJECTION", "READ_ONLY", "NONE"]:
+) -> Literal["CARRIER", "ZERO_WRITE_REJECTION", "READ_ONLY", "POST_EFFECT_RESULT", "NONE"]:
     """One structural eligibility contract for producer and artifact reader.
 
     Eligibility starts a *read*, not a retry permission. Unknown attempted
@@ -5579,6 +5868,25 @@ def _accepted_recovery_boundary(
     Artifact prose never upgrades an unsupported boundary into permission.
     """
 
+    if (
+        evidence.get("unfinished_boundary") == "application-result"
+        and evidence.get("mutation_status") == "unknown"
+        and evidence.get("reason") == "applied"
+        and evidence.get("completed_effect_indexes") == []
+        and evidence.get("completed_effect_sha256") == []
+        and set(evidence)
+        == {
+            "unfinished_boundary",
+            "mutation_status",
+            "reason",
+            "completed_effect_indexes",
+            "completed_effect_sha256",
+        }
+    ):
+        # Legacy post-effect, pre-consequence interruption. This is only a
+        # candidate for a fresh read-only proof of a single first-activation
+        # materialization, never permission to replay its GitHub mutation.
+        return "POST_EFFECT_RESULT"
     if (
         evidence.get("unfinished_boundary") == "carrier-required"
         and evidence.get("mutation_status") == "not-complete"
@@ -5629,19 +5937,201 @@ def _accepted_recovery_boundary(
 
 
 def _accepted_predecessor_disposition(
-    predecessor: ApplicationRecoveryArtifact,
+    predecessor: ApplicationRecoveryArtifact | ApplicationExceptionArtifact,
 ) -> Literal["RECONCILE_EFFECTS", "ZERO_WRITE_REJECTION", "INDETERMINATE"]:
     """Preserve the original accepted intent and select only lawful next work."""
 
+    if isinstance(predecessor, ApplicationExceptionArtifact):
+        return "INDETERMINATE"
     evidence = predecessor.document.get("failure_evidence")
-    if not predecessor.continuation_eligible or not isinstance(evidence, Mapping):
+    if not isinstance(evidence, Mapping):
         return "INDETERMINATE"
     boundary = _accepted_recovery_boundary(evidence)
+    if not predecessor.continuation_eligible and boundary != "POST_EFFECT_RESULT":
+        return "INDETERMINATE"
     if boundary == "CARRIER":
         return "RECONCILE_EFFECTS"
     if boundary == "ZERO_WRITE_REJECTION":
         return "ZERO_WRITE_REJECTION"
     return "INDETERMINATE"
+
+
+@dataclass(frozen=True)
+class AcceptedActivationEffectIdentity:
+    """Qualification of the *accepted* write, not a fresh Effect-array shape.
+
+    The index is only an address in the current projection for the existing
+    Effect engine.  It never identifies or authorizes the original write.
+    """
+
+    disposition: Literal["EXACT", "MISSING", "AMBIGUOUS", "UNSAFE"]
+    effect: StagedEffect | None = None
+    projected_index: int | None = None
+
+
+# The one domain decision table; downstream owners may map a typed rejection
+# to their own output protocol but must never change its recovery admission.
+_POST_EFFECT_ADMISSION: dict[
+    Literal["COMPLETE", "MISSING_PR", "NOT_APPLIED", "INDETERMINATE", "UNSAFE"],
+    Literal["CONTINUE", "OBSERVE", "REJECT"],
+] = {
+    "COMPLETE": "CONTINUE",
+    "MISSING_PR": "CONTINUE",
+    "NOT_APPLIED": "REJECT",
+    "INDETERMINATE": "OBSERVE",
+    "UNSAFE": "REJECT",
+}
+
+
+@dataclass(frozen=True)
+class AcceptedPostEffectProof:
+    """Read-only recovery outcome from the canonical materialization owner."""
+
+    disposition: Literal["COMPLETE", "MISSING_PR", "NOT_APPLIED", "INDETERMINATE", "UNSAFE"]
+    reason: str
+    carrier_plan: CarrierPlan | None = None
+
+    def __post_init__(self) -> None:
+        if (self.disposition == "MISSING_PR") != (self.carrier_plan is not None):
+            raise ValueError("only an exact missing-PR recovery may carry a CarrierPlan")
+
+    @property
+    def continuation(self) -> Literal["CONTINUE", "OBSERVE", "REJECT"]:
+        """One contract decision table for dispatch and continuation admission."""
+
+        return _POST_EFFECT_ADMISSION[self.disposition]
+
+
+def _accepted_activation_effect_identity(
+    accepted_raw: str,
+    *,
+    source: WorkerRequest,
+    change: str,
+    projected_raw: str | None = None,
+) -> AcceptedActivationEffectIdentity:
+    """Bind the one uncertain materialization to immutable accepted intent.
+
+    Every original Effect must be accounted for: an unknown historical write
+    cannot be silently ignored.  The Application-owned formal comment is not
+    in that immutable set and does not change its identity or cardinality.
+    """
+
+    accepted = parse_effect_batch(accepted_raw, source, authorized_change=change)
+    originals: list[StagedEffect] = []
+    for effect in accepted.effects:
+        if effect.kind != GITHUB_MUTATION_KIND:
+            return AcceptedActivationEffectIdentity("UNSAFE")
+        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
+        if payload is None or payload.get("operation") != "application-materialize":
+            return AcceptedActivationEffectIdentity("UNSAFE")
+        if find_materialization_payload(payload, source) is None:
+            return AcceptedActivationEffectIdentity("UNSAFE")
+        originals.append(effect)
+
+    if not originals:
+        return AcceptedActivationEffectIdentity("MISSING")
+    if len(originals) != 1:
+        return AcceptedActivationEffectIdentity("AMBIGUOUS")
+    original = originals[0]
+    if projected_raw is None:
+        return AcceptedActivationEffectIdentity("EXACT", original)
+
+    projected = parse_effect_batch(projected_raw, source, authorized_change=change)
+    original_payload = _effect_payload(
+        {"kind": original.kind, "payload_json": original.payload_json}
+    )
+    matches: list[int] = []
+    for index, effect in enumerate(projected.effects):
+        if effect.kind != GITHUB_MUTATION_KIND:
+            continue  # Application-derived formal result has its own owner.
+        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
+        if payload != original_payload:
+            return AcceptedActivationEffectIdentity("UNSAFE")
+        matches.append(index)
+    if not matches:
+        return AcceptedActivationEffectIdentity("MISSING")
+    if len(matches) != 1:
+        return AcceptedActivationEffectIdentity("AMBIGUOUS")
+    return AcceptedActivationEffectIdentity("EXACT", original, matches[0])
+
+
+def _observe_accepted_post_effect_result(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+) -> AcceptedPostEffectProof:
+    """Reconcile original intent; do not treat an absent write as replayable.
+
+    The existing materialization proof distinguishes COMPLETE, INCOMPLETE,
+    UNKNOWN and CONTRADICTORY using fresh GitHub reads.  This adapter only
+    translates those established outcomes into the recovery contract; it
+    owns no independent state, effect registry or GitHub transport.
+    """
+
+    if (source, record.change, record.result_kind) != (
+        WorkerRequest(record.issue_number, "lead", "propose-change"),
+        "unset",
+        _FIRST_ACTIVATION_RESULT,
+    ):
+        return AcceptedPostEffectProof("UNSAFE", "original activation contract mismatch")
+    accepted_raw = _accepted_worker_result_for_continuation(
+        accepted_intent=record,
+        source=source,
+        repository=repository,
+        token=token,
+        request_comment_id=record.request_comment_id,
+    )
+    identity = _accepted_activation_effect_identity(
+        accepted_raw, source=source, change=record.change
+    )
+    if identity.disposition != "EXACT" or identity.effect is None:
+        return AcceptedPostEffectProof("UNSAFE", f"original identity: {identity.disposition}")
+    payload = _effect_payload(
+        {"kind": identity.effect.kind, "payload_json": identity.effect.payload_json}
+    )
+    if payload is None:
+        return AcceptedPostEffectProof("UNSAFE", "original payload unavailable")
+    materialization = find_materialization_payload(payload, source)
+    if materialization is None:
+        return AcceptedPostEffectProof("UNSAFE", "original materialization invalid")
+    if (materialization.expected_change, materialization.base_sha) != (
+        "unset",
+        record.authorization_revision,
+    ):
+        return AcceptedPostEffectProof("UNSAFE", "accepted materialization contract mismatch")
+
+    proof = prove_materialization(
+        payload,
+        source,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+        default_branch=default_branch,
+        accepted_authorization_revision=record.authorization_revision,
+        allow_pending_continuation=True,
+        accepted_intent=True,
+    )
+    if proof.carrier_plan is not None:
+        return AcceptedPostEffectProof(
+            "MISSING_PR", "accepted branch and content proven; only PR absent", proof.carrier_plan
+        )
+    # Canonical decision table. NOT_APPLIED is evidence of missing work, not
+    # permission to replay an uncertain non-idempotent GitHub request.
+    outcomes: dict[str, AcceptedPostEffectProof] = {
+        "COMPLETE": AcceptedPostEffectProof("COMPLETE", "exact original effect observed"),
+        "INCOMPLETE": AcceptedPostEffectProof("NOT_APPLIED", "original effect incomplete"),
+        "UNKNOWN": AcceptedPostEffectProof(
+            "INDETERMINATE", proof.reason or "GitHub proof unavailable"
+        ),
+        "CONTRADICTORY": AcceptedPostEffectProof(
+            "UNSAFE", proof.reason or "original effect contradictory"
+        ),
+    }
+    return outcomes[proof.disposition]
 
 
 def accepted_read_only_effects_complete(
@@ -5668,12 +6158,24 @@ def accepted_read_only_effects_complete(
         or record.issue_number != source.issue_number
         or record.role != source.role
         or record.action != source.action
-        or _accepted_recovery_boundary(recovery_evidence) != "READ_ONLY"
+        or _accepted_recovery_boundary(recovery_evidence) not in {"READ_ONLY", "POST_EFFECT_RESULT"}
         or _SHA.fullmatch(current_revision) is None
         or not default_branch
     ):
         return False
     try:
+        if _accepted_recovery_boundary(recovery_evidence) == "POST_EFFECT_RESULT":
+            return (
+                _observe_accepted_post_effect_result(
+                    record=record,
+                    source=source,
+                    repository=repository,
+                    token=token,
+                    current_revision=current_revision,
+                    default_branch=default_branch,
+                ).disposition
+                == "COMPLETE"
+            )
         # Prefer the immutable attempted prefix emitted by the actual
         # Application run. A fresh projection may legitimately switch from
         # workflow-dispatch to PR-create, or merge to ref-delete, and must
@@ -5811,6 +6313,114 @@ def accepted_read_only_effects_complete(
         return False
 
 
+def classify_post_effect_result_recovery(
+    *,
+    record: ApplicationDecisionRecord,
+    artifact: ApplicationRecoveryArtifact,
+    repository: str,
+    token: str,
+) -> AcceptedPostEffectProof:
+    """Preserve the canonical proof taxonomy through the dispatch boundary.
+
+    The artifact's signed `continuation_eligible=false` remains immutable.
+    Each consumer must fresh-observe the original accepted effect, and the
+    Application must independently prove it again before any formal write.
+    """
+
+    failure = artifact.document.get("failure_evidence")
+    if not isinstance(failure, Mapping):
+        return AcceptedPostEffectProof("UNSAFE", "recovery boundary is not structured")
+    # Exact correlation is one named-field contract, not eight independently
+    # maintained Boolean gates. Both sides must agree on the same immutable
+    # source identity; no observation failure can be promoted to permission.
+    observed = {
+        "boundary": _accepted_recovery_boundary(failure),
+        "continuation_eligible": artifact.continuation_eligible,
+        "request_comment_id": artifact.request_comment_id,
+        "issue_number": artifact.document.get("issue_number"),
+        "role": artifact.document.get("role"),
+        "action": artifact.document.get("action"),
+        "authorization_revision": artifact.document.get("authorization_revision"),
+        "decision": record.disposition,
+    }
+    required = {
+        "boundary": "POST_EFFECT_RESULT",
+        "continuation_eligible": False,
+        "request_comment_id": record.request_comment_id,
+        "issue_number": record.issue_number,
+        "role": record.role,
+        "action": record.action,
+        "authorization_revision": record.authorization_revision,
+        "decision": "ACCEPTED",
+    }
+    if observed != required:
+        return AcceptedPostEffectProof("UNSAFE", "invalid immutable recovery correlation")
+    return _fresh_accepted_activation_proof(record, repository=repository, token=token)
+
+
+def classify_application_exception_recovery(
+    *,
+    record: ApplicationDecisionRecord,
+    artifact: ApplicationExceptionArtifact,
+    repository: str,
+    token: str,
+) -> AcceptedPostEffectProof:
+    """An exception is admissible only after independently proving the original.
+
+    This is not an exception-string classifier: no `raw_error`, traceback or
+    claimed mutation status authorizes a second Effect invocation.
+    """
+
+    identity = (
+        artifact.request_comment_id,
+        artifact.document.get("issue_number"),
+        artifact.document.get("role"),
+        artifact.document.get("action"),
+        artifact.document.get("change"),
+    )
+    if (
+        identity
+        != (
+            record.request_comment_id,
+            record.issue_number,
+            record.role,
+            record.action,
+            record.change,
+        )
+        or record.disposition != "ACCEPTED"
+    ):
+        return AcceptedPostEffectProof("UNSAFE", "exception accepted identity mismatch")
+    return _fresh_accepted_activation_proof(record, repository=repository, token=token)
+
+
+def _fresh_accepted_activation_proof(
+    record: ApplicationDecisionRecord, *, repository: str, token: str
+) -> AcceptedPostEffectProof:
+    """One read-only owner for both standard and exception recovery admission."""
+
+    try:
+        repo = _as_mapping(_github_json(repository, token, ""))
+        branch = None if repo is None else repo.get("default_branch")
+        if not isinstance(branch, str) or not branch:
+            return AcceptedPostEffectProof("INDETERMINATE", "default branch unavailable")
+        revision = _fresh_branch_head(repository, token, branch)
+        if revision is None or _SHA.fullmatch(revision) is None:
+            return AcceptedPostEffectProof("INDETERMINATE", "default revision unavailable")
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return AcceptedPostEffectProof("INDETERMINATE", "default GitHub read unavailable")
+    try:
+        return _observe_accepted_post_effect_result(
+            record=record,
+            source=WorkerRequest(record.issue_number, record.role, record.action),
+            repository=repository,
+            token=token,
+            current_revision=revision,
+            default_branch=branch,
+        )
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return AcceptedPostEffectProof("INDETERMINATE", "accepted GitHub proof unavailable")
+
+
 def _write_application_recovery_evidence(
     path: str | None,
     *,
@@ -5824,7 +6434,7 @@ def _write_application_recovery_evidence(
     current_revision: str,
     run_attempt: int,
     continuation: ApplicationContinuationRequest | None,
-    predecessor: ApplicationRecoveryArtifact | None,
+    predecessor: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None,
     effect_batch: EffectBatch | None = None,
 ) -> bool:
     """Persist a bounded, content-addressed application boundary for later reads."""
@@ -5873,7 +6483,9 @@ def _write_application_recovery_evidence(
         if recovery.mutation_status != "unknown" and not known_unattempted_suffix:
             return False
         predecessor_failure = (
-            None if predecessor is None else predecessor.document.get("failure_evidence")
+            predecessor.document.get("failure_evidence")
+            if isinstance(predecessor, ApplicationRecoveryArtifact)
+            else None
         )
         inherited = (
             _verified_attempted_effect_checkpoint(predecessor_failure, source=source)
@@ -5952,11 +6564,18 @@ def _write_application_recovery_evidence(
         predecessor_document = None
     else:
         episode_sha256 = predecessor.recovery_episode_sha256
-        recovery_attempt = predecessor.recovery_attempt + 1
-        prior_failures = list(
-            cast(list[str], predecessor.document["prior_failure_evidence_sha256"])
+        recovery_attempt = (
+            2
+            if isinstance(predecessor, ApplicationExceptionArtifact)
+            else predecessor.recovery_attempt + 1
         )
-        prior_failures.append(predecessor.failure_evidence_sha256)
+        prior_failures = (
+            [predecessor.failure_evidence_sha256]
+            if isinstance(predecessor, ApplicationExceptionArtifact)
+            else list(cast(list[str], predecessor.document["prior_failure_evidence_sha256"]))
+        )
+        if isinstance(predecessor, ApplicationRecoveryArtifact):
+            prior_failures.append(predecessor.failure_evidence_sha256)
         predecessor_document = {
             "run_id": predecessor.run_id,
             "run_attempt": predecessor.run_attempt,
@@ -5964,13 +6583,24 @@ def _write_application_recovery_evidence(
             "artifact_id": predecessor.artifact_id,
             "artifact_digest": predecessor.artifact_digest,
             "failure_evidence_sha256": predecessor.failure_evidence_sha256,
-            "recovery_attempt": predecessor.recovery_attempt,
+            "recovery_attempt": (
+                1
+                if isinstance(predecessor, ApplicationExceptionArtifact)
+                else predecessor.recovery_attempt
+            ),
         }
     # The structural boundary is shared with the independent reader. READ_ONLY
     # means prove the immutable attempted/completed prefix before any new
     # mutation: UNKNOWN must prove its failed effect too, whereas a confirmed
     # zero-write rejection must *not* require its unattempted suffix to exist.
-    continuation_eligible = _accepted_recovery_boundary(failure_evidence) != "NONE"
+    # A post-effect application-result checkpoint is *always* recorded as
+    # ineligible. Its immutable false flag can only be overcome by a fresh,
+    # read-only proof of the exact accepted first-activation materialization
+    # at every consumer; the producer cannot grant itself this proof.
+    continuation_eligible = _accepted_recovery_boundary(failure_evidence) not in {
+        "NONE",
+        "POST_EFFECT_RESULT",
+    }
     # An inconclusive read-only observation must not erase the legal ability
     # to observe later external truth. The dispatcher gates a *new* continuation
     # on a freshly proved COMPLETE result, rather than treating a repeated
@@ -6193,7 +6823,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     accepted_intent: ApplicationDecisionRecord | None = None
     accepted_raw_worker_result: str | None = None
     continuation: ApplicationContinuationRequest | None = None
-    predecessor_evidence: ApplicationRecoveryArtifact | None = None
+    predecessor_evidence: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None = None
     if isinstance(body, str):
         continuation = parse_application_continuation_request(body)
         if body.startswith(APPLICATION_CONTINUATION_MARKER) and continuation is None:
@@ -6689,8 +7319,63 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         else _accepted_predecessor_disposition(predecessor_evidence)
     )
     uncertain_effect_index = None
+    missing_pr_only_plan: CarrierPlan | None = None
     if predecessor_disposition == "INDETERMINATE" and predecessor_evidence is not None:
-        failure = predecessor_evidence.document.get("failure_evidence")
+        failure = (
+            predecessor_evidence.document.get("failure_evidence")
+            if isinstance(predecessor_evidence, ApplicationRecoveryArtifact)
+            else None
+        )
+        if isinstance(predecessor_evidence, ApplicationExceptionArtifact) or (
+            isinstance(failure, Mapping)
+            and _accepted_recovery_boundary(failure) == "POST_EFFECT_RESULT"
+        ):
+            # Each contract stage has a distinct failure cause; a compound
+            # boolean cannot diagnose which proof was missing.
+            accepted_original = semantic_worker_result
+            if not requires_validation:
+                raise RuntimeError("post-effect recovery has no validation obligation")
+            if accepted_intent is None:
+                raise RuntimeError("post-effect recovery lost its immutable accepted intent")
+            # Immutable result/action, original materialization and projected
+            # effect identity are qualified below by the same typed contract
+            # used by dispatch. Do not independently re-encode those guards.
+            original_identity = _accepted_activation_effect_identity(
+                accepted_original,
+                source=plan.source,
+                change=effective_change,
+                projected_raw=application_worker_result,
+            )
+            if (
+                original_identity.disposition != "EXACT"
+                or original_identity.projected_index is None
+            ):
+                raise RuntimeError(
+                    "post-effect original activation identity is "
+                    + original_identity.disposition.lower()
+                )
+            # The preceding run's sole original GitHub Effect is uncertain.
+            # Reconcile its postcondition BEFORE any later formal consequence.
+            # A disappeared/ambiguous PR must not cause a second Git write.
+            uncertain_effect_index = original_identity.projected_index
+            recovery_proof = _observe_accepted_post_effect_result(
+                record=accepted_intent,
+                source=plan.source,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+                default_branch=args.default_branch,
+            )
+            if recovery_proof.continuation == "REJECT":
+                raise RuntimeError(
+                    "accepted post-effect recovery is unsafe: " + recovery_proof.reason
+                )
+            if recovery_proof.continuation == "OBSERVE":
+                # A temporary read failure cannot grant a write. The failed
+                # native invocation will retain its own exact exception
+                # artifact; the next fresh Dispatch may re-observe it.
+                raise RuntimeError("accepted post-effect recovery observation unavailable")
+            missing_pr_only_plan = recovery_proof.carrier_plan
         if isinstance(failure, Mapping) and _accepted_recovery_boundary(failure) == "READ_ONLY":
             candidate_index = failure.get("failed_effect_index")
             if type(candidate_index) is int:
@@ -6777,7 +7462,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         # Neither path changes the original ACCEPTED result.
         if plan.source.action not in {"merge-implementation-pr", "merge-archive-pr"}:
             raise RuntimeError("accepted effect rejection has no governed correction handoff")
-        if predecessor_evidence is None:
+        if not isinstance(predecessor_evidence, ApplicationRecoveryArtifact):
             raise RuntimeError("accepted merge recovery predecessor is missing")
         reconstructed = _rejected_merge_result_from_checkpoint(predecessor_evidence)
         batch = parse_effect_batch(
@@ -6817,6 +7502,10 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         raise ValueError("WORKER_RESULT comment changed before Phase-A ACCEPT")
     context.mutation_attempted = True
     try:
+        if missing_pr_only_plan is not None:
+            # Native carrier actuator is the mutation boundary and rechecks
+            # the accepted PR-only plan against fresh GitHub postconditions.
+            raise CarrierRequired(missing_pr_only_plan)
         if first_activation and args.validation_passed:
             batch, result = run_guarded_effect_application(
                 application_worker_result,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -14,6 +15,10 @@ from urllib.request import Request, urlopen
 
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import role_for
+from investment_strategy.scheduled_agent_carrier import (
+    github_comment_has_app_provenance,
+    github_read_bytes_with_retry,
+)
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
@@ -38,13 +43,8 @@ _GITHUB_ACTIONS_APP = "github-actions"
 def is_github_actions_comment(payload: Mapping[str, object]) -> bool:
     """Recognize formal evidence authored by the repository Actions app."""
 
-    user = payload.get("user")
-    app = payload.get("performed_via_github_app")
-    return (
-        isinstance(user, Mapping)
-        and user.get("login") == _GITHUB_ACTIONS_BOT
-        and isinstance(app, Mapping)
-        and app.get("slug") == _GITHUB_ACTIONS_APP
+    return github_comment_has_app_provenance(
+        payload, actor=_GITHUB_ACTIONS_BOT, app_slug=_GITHUB_ACTIONS_APP
     )
 
 
@@ -332,8 +332,12 @@ def _github_get_list_page(url: str, token: str) -> tuple[Mapping[str, object], .
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-        decoded = json.loads(response.read().decode("utf-8"))
+    raw = github_read_bytes_with_retry(
+        request,
+        open_request=urlopen,  # noqa: S310 - trusted GitHub API host
+        wait=time.sleep,
+    )
+    decoded = json.loads(raw.decode("utf-8"))
     if not isinstance(decoded, list):
         raise RuntimeError("GitHub API returned a non-list response")
     items: list[Mapping[str, object]] = []
@@ -385,8 +389,12 @@ def _github_get_object(url: str, token: str) -> Mapping[str, object]:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-        decoded = json.loads(response.read().decode("utf-8"))
+    raw = github_read_bytes_with_retry(
+        request,
+        open_request=urlopen,  # noqa: S310 - trusted GitHub API host
+        wait=time.sleep,
+    )
+    decoded = json.loads(raw.decode("utf-8"))
     if not isinstance(decoded, Mapping):
         raise RuntimeError("GitHub API returned a malformed object")
     return cast(Mapping[str, object], decoded)

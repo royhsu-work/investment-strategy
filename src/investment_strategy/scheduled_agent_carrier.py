@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from investment_strategy.scheduled_agent_wire import LineWireContract
+
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT_REDIRECT_HOST = re.compile(
@@ -27,6 +29,235 @@ def github_repository_api_url(repository: str, api_path: str) -> str:
     root = f"https://api.github.com/repos/{repository}"
     relative = api_path.lstrip("/")
     return root if not relative else f"{root}/{relative}"
+
+
+def github_read_bytes_with_retry(
+    request: Request,
+    *,
+    open_request: Callable[..., Any],
+    wait: Callable[[float], None],
+) -> bytes:
+    """Retry bounded transient GitHub GET reads, never an unknown write.
+
+    This transport operation cannot authorize a repository effect or a
+    successor Action. Each consumer still qualifies the fresh response.
+    """
+
+    if request.get_method() != "GET":
+        raise ValueError("GitHub transient retry only supports GET")
+    for attempt in range(3):
+        try:
+            with open_request(request, timeout=30) as response:
+                return cast(bytes, response.read())
+        except HTTPError as exc:
+            if exc.code not in {500, 502, 503, 504} or attempt == 2:
+                raise
+            wait(0.25 * (2**attempt))
+    raise RuntimeError("GitHub GET retry exhausted without a response")
+
+
+def github_comment_has_app_provenance(
+    comment: Mapping[str, object], *, actor: str, app_slug: str
+) -> bool:
+    """Qualify GitHub App authorship alone, not Human or workflow authority."""
+
+    user = comment.get("user")
+    app = comment.get("performed_via_github_app")
+    return (
+        isinstance(user, Mapping)
+        and user.get("login") == actor
+        and isinstance(app, Mapping)
+        and app.get("slug") == app_slug
+    )
+
+
+def github_paginated_mappings(
+    repository: str,
+    token: str,
+    api_path: str,
+    *,
+    read: Callable[[str, str, str], object],
+    incomplete_error: str,
+    malformed_error: str,
+) -> tuple[Mapping[str, object], ...]:
+    """Read all mapping pages; an invalid page never yields partial evidence.
+
+    The caller owns the endpoint, credentials and meaning of the returned
+    observations. Page traversal is a reusable transport/shape operation.
+    """
+
+    items: list[Mapping[str, object]] = []
+    page = 1
+    separator = "&" if "?" in api_path else "?"
+    while True:
+        decoded = read(
+            repository,
+            token,
+            f"{api_path}{separator}per_page=100&page={page}",
+        )
+        if not isinstance(decoded, list):
+            raise RuntimeError(incomplete_error)
+        current: list[Mapping[str, object]] = []
+        for item in decoded:
+            if not isinstance(item, Mapping):
+                raise RuntimeError(malformed_error)
+            current.append(cast(Mapping[str, object], item))
+        items.extend(current)
+        if len(current) < 100:
+            return tuple(items)
+        page += 1
+
+
+@dataclass(frozen=True)
+class _QualifiedJobsPage:
+    total_count: int
+    jobs: tuple[Mapping[str, object], ...]
+    ids: frozenset[int]
+
+
+@dataclass(frozen=True)
+class QualifiedApplicationJob:
+    """Immutable fields used to prove one attempt's Application job effects."""
+
+    id: int
+    status: str | None
+    conclusion: str | None
+    steps: tuple[tuple[str | None, str | None], ...] | None
+
+
+@dataclass(frozen=True)
+class QualifiedApplicationJobs:
+    """Exhaustive inventory and canonical apply cardinality, not a run verdict."""
+
+    total_count: int
+    apply_jobs: tuple[QualifiedApplicationJob, ...]
+
+    @property
+    def single_apply(self) -> QualifiedApplicationJob | None:
+        return self.apply_jobs[0] if len(self.apply_jobs) == 1 else None
+
+
+def _valid_job_identity(job: Mapping[str, object], *, run_id: int, run_attempt: int) -> bool:
+    """Admit only a positive, named job on the requested run and attempt."""
+
+    job_id, name = job.get("id"), job.get("name")
+    if type(job_id) is not int or job_id <= 0 or not isinstance(name, str) or not name:
+        return False
+    attempt, parent_run = job.get("run_attempt", run_attempt), job.get("run_id", run_id)
+    return (
+        type(attempt) is int
+        and attempt == run_attempt
+        and type(parent_run) is int
+        and parent_run == run_id
+    )
+
+
+def _optional_text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _application_jobs_contract(jobs: tuple[Mapping[str, object], ...]) -> QualifiedApplicationJobs:
+    """Pure projection after exhaustive identity-qualified GETs; never a write license."""
+
+    apply_jobs: list[QualifiedApplicationJob] = []
+    for job in jobs:
+        if job["name"] != "apply":
+            continue
+        raw_steps = job.get("steps")
+        steps: tuple[tuple[str | None, str | None], ...] | None = None
+        if isinstance(raw_steps, list) and all(isinstance(step, Mapping) for step in raw_steps):
+            steps = tuple(
+                (_optional_text(step.get("name")), _optional_text(step.get("conclusion")))
+                for step in raw_steps
+            )
+        apply_jobs.append(
+            QualifiedApplicationJob(
+                id=cast(int, job["id"]),
+                status=_optional_text(job.get("status")),
+                conclusion=_optional_text(job.get("conclusion")),
+                steps=steps,
+            )
+        )
+    return QualifiedApplicationJobs(len(jobs), tuple(sorted(apply_jobs, key=lambda job: job.id)))
+
+
+def _qualified_jobs_page(
+    observed: object, *, run_id: int, run_attempt: int
+) -> _QualifiedJobsPage | None:
+    """Pure page contract; no partial or cross-attempt job qualifies."""
+
+    if not isinstance(observed, Mapping):
+        return None
+    count, raw_jobs = observed.get("total_count"), observed.get("jobs")
+    if type(count) is not int or count < 0 or not isinstance(raw_jobs, list):
+        return None
+    if len(raw_jobs) > 100 or any(not isinstance(job, Mapping) for job in raw_jobs):
+        return None
+    jobs = tuple(cast(Mapping[str, object], job) for job in raw_jobs)
+    if any(not _valid_job_identity(job, run_id=run_id, run_attempt=run_attempt) for job in jobs):
+        return None
+    unique_ids = frozenset(cast(int, job["id"]) for job in jobs)
+    return _QualifiedJobsPage(count, jobs, unique_ids) if len(unique_ids) == len(jobs) else None
+
+
+def github_complete_run_jobs(
+    repository: str,
+    token: str,
+    *,
+    run_id: int,
+    run_attempt: int,
+    read: Callable[[str, str, str], object],
+) -> QualifiedApplicationJobs | None:
+    """Read one exhaustive Actions job inventory, or admit no job evidence.
+
+    A short page cannot prove the absence of another `apply` job. Every page
+    must carry the same authoritative total_count. An attempt-specific endpoint
+    binds the job inventory to the exact attempt even when GitHub omits the
+    optional per-job run_attempt; IDs must be unique across pages.
+    """
+
+    if type(run_id) is not int or run_id <= 0 or type(run_attempt) is not int or run_attempt <= 0:
+        return None
+    jobs: list[Mapping[str, object]] = []
+    seen_ids: set[int] = set()
+    total: int | None = None
+    page = 0
+    attempt_path = f"actions/runs/{run_id}/attempts/{run_attempt}/jobs"
+    while True:
+        try:
+            response = read(
+                repository,
+                token,
+                (attempt_path if page == 0 else f"{attempt_path}?per_page=100&page={page}"),
+            )
+        except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+            return None
+        qualified = _qualified_jobs_page(response, run_id=run_id, run_attempt=run_attempt)
+        if qualified is None:
+            return None
+        if total is None:
+            total = qualified.total_count
+        if (
+            qualified.total_count != total
+            or len(jobs) + len(qualified.jobs) > total
+            or not seen_ids.isdisjoint(qualified.ids)
+        ):
+            return None
+        seen_ids.update(qualified.ids)
+        jobs.extend(qualified.jobs)
+        if len(jobs) == total:
+            return _application_jobs_contract(tuple(jobs))
+        if page == 0:
+            # The default 30-item response was incomplete. Restart from an
+            # explicit 100-item first page, never treating it as page 1 of a
+            # different page size.
+            jobs.clear()
+            seen_ids.clear()
+            page = 1
+            continue
+        if len(qualified.jobs) != 100:
+            return None
+        page += 1
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -180,6 +411,9 @@ _CARRIER_OUTCOME_FIELDS = (
     ("Failure-Code", "failure_code"),
     ("Failure-Summary", "failure_summary"),
 )
+_CARRIER_OUTCOME_WIRE = LineWireContract(
+    _CARRIER_OUTCOME_MARKER, tuple(header for header, _ in _CARRIER_OUTCOME_FIELDS)
+)
 
 
 @dataclass(frozen=True)
@@ -222,35 +456,17 @@ def render_carrier_outcome_report(report: CarrierOutcomeReport) -> str:
         .decode("ascii")
         .rstrip("=")
     )
-    body = "\n".join(
-        (
-            _CARRIER_OUTCOME_MARKER,
-            f"Schema: {_CARRIER_OUTCOME_SCHEMA}",
-            f"Repository: {report.repository}",
-            f"Issue: {report.issue_number}",
-            f"Request-Comment: {report.request_comment_id}",
-            f"Accepted-Decision-SHA256: {report.accepted_decision_sha256}",
-            f"Continuation-Correlation: {report.continuation_correlation}",
-            f"Predecessor-Run-ID: {report.predecessor_run_id}",
-            f"Predecessor-Run-Attempt: {report.predecessor_run_attempt}",
-            f"Predecessor-Job-ID: {report.predecessor_job_id}",
-            f"Recovery-Artifact-ID: {report.recovery_artifact_id}",
-            f"Recovery-Artifact-Digest: {report.recovery_artifact_digest}",
-            f"Failure-Evidence-SHA256: {report.failure_evidence_sha256}",
-            f"Recovery-Episode-SHA256: {report.recovery_episode_sha256}",
-            f"Carrier-Artifact-ID: {report.carrier_artifact_id}",
-            f"Carrier-Artifact-Digest: {report.carrier_artifact_digest}",
-            f"Plan-ID: {report.plan_id}",
-            f"Operation: {report.operation}",
-            f"Outcome: {report.outcome}",
-            f"Mutation-Status: {report.mutation_status}",
-            f"Precondition: {report.precondition}",
-            f"Observed-Precondition-JSON-B64: {observed_precondition_b64}",
-            f"Postcondition: {report.postcondition}",
-            f"Unfinished-Boundary: {report.unfinished_boundary}",
-            f"Failure-Code: {report.failure_code}",
-            f"Failure-Summary: {report.failure_summary}",
-        )
+    body = _CARRIER_OUTCOME_WIRE.render(
+        {
+            header: (
+                _CARRIER_OUTCOME_SCHEMA
+                if field == "schema"
+                else observed_precondition_b64
+                if field == "observed_precondition_json_b64"
+                else str(getattr(report, field))
+            )
+            for header, field in _CARRIER_OUTCOME_FIELDS
+        }
     )
     if parse_carrier_outcome_report(body) != report:
         raise ValueError("carrier outcome report identity or status is invalid")
@@ -262,6 +478,8 @@ def parse_carrier_outcome_report(body: object) -> CarrierOutcomeReport | None:
 
     if not isinstance(body, str) or "\r" in body:
         return None
+    # Carrier outcome evidence historically disallowed even one terminal LF.
+    # Keep that stricter parser while sharing producer order and field names.
     lines = body.split("\n")
     if len(lines) != len(_CARRIER_OUTCOME_FIELDS) + 1 or lines[0] != _CARRIER_OUTCOME_MARKER:
         return None
