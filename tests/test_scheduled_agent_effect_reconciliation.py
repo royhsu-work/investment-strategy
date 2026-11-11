@@ -1666,6 +1666,7 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
     accepted_comment = {
         "id": 92,
         "body": decision_body,
+        "created_at": "2026-09-22T15:39:54Z",
         "user": {"login": "github-actions[bot]"},
         "performed_via_github_app": {"slug": "github-actions"},
     }

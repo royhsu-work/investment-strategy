@@ -3364,6 +3364,8 @@ def test_new_evidence_continues_past_the_former_attempt_threshold() -> None:
     def fake_read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("issues/322/comments?"):
             return [decision]
+        if path.startswith("issues/comments?"):
+            return []
         raise AssertionError(path)
 
     accepted_sha256 = hashlib.sha256(cast(str, decision["body"]).encode("utf-8")).hexdigest()
@@ -3422,6 +3424,29 @@ def test_new_evidence_continues_past_the_former_attempt_threshold() -> None:
             request_comment_id=5810765007,
             predecessor_evidence=repeated,
             read=fake_read,
+        )
+        is None
+    )
+
+    # The source Issue contains no continuation; another Runtime shard has
+    # already consumed the exact predecessor. Never emit its correlation twice.
+    already_consumed = _trusted_connector_comment(901, body)
+
+    def cross_shard_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/322/comments?"):
+            return [decision]
+        if path.startswith("issues/comments?"):
+            return [already_consumed]
+        raise AssertionError(path)
+
+    assert (
+        bridge._application_continuation_body(
+            repository="owner/repo",
+            token=REVISION,
+            source=source,
+            request_comment_id=5810765007,
+            predecessor_evidence=predecessor,
+            read=cross_shard_read,
         )
         is None
     )
@@ -3758,6 +3783,196 @@ def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
         worker_result_sha256="2" * 64,
         raw_worker_result="{}",
         reason="application accepted",
+    )
+
+
+@pytest.mark.parametrize(
+    ("proof", "expected_state", "expected_reason"),
+    [
+        ("COMPLETE", "RESUMABLE", "application-completion-continuation-required"),
+        ("INDETERMINATE", "RESUMABLE", "application-completion-exception-observing"),
+        ("UNSAFE", "INVALID", "application-completion-exception-unsafe"),
+        ("NOT_APPLIED", "INVALID", "application-completion-exception-unsafe"),
+    ],
+)
+def test_exception_only_application_completion_requires_fresh_original_proof(
+    monkeypatch: pytest.MonkeyPatch,
+    proof: str,
+    expected_state: str,
+    expected_reason: str,
+) -> None:
+    record = replace(
+        _accepted_carrier_record(),
+        issue_number=435,
+        role="lead",
+        action="propose-change",
+        change="unset",
+        result_kind="proposal-ready",
+        request_comment_id=6760870154,
+    )
+    evidence = application.ApplicationExceptionArtifact(
+        run_id=42827477053,
+        run_attempt=1,
+        job_id=129868554969,
+        artifact_id=13768983651,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=record.request_comment_id,
+        accepted_decision_sha256="b" * 64,
+        failure_evidence_sha256="c" * 64,
+        recovery_episode_sha256="d" * 64,
+        document={
+            "issue_number": 435,
+            "role": "lead",
+            "action": "propose-change",
+            "change": "unset",
+        },
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_runs",
+        lambda *_a, **_kw: (
+            {
+                "id": evidence.run_id,
+                "run_attempt": 1,
+                "status": "completed",
+                "conclusion": "failure",
+                "head_sha": REVISION,
+            },
+        ),
+    )
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        assert path == "actions/runs/42827477053/jobs"
+        return {
+            "jobs": [
+                {
+                    "id": evidence.job_id,
+                    "name": "apply",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "steps": [
+                        {
+                            "name": "Upload exact application recovery evidence",
+                            "conclusion": "skipped",
+                        },
+                        {
+                            "name": (
+                                "Upload pre-ACCEPT or interrupted application exception evidence"
+                            ),
+                            "conclusion": "success",
+                        },
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(bridge, "read_application_exception_artifact", lambda *_a, **_kw: evidence)
+    monkeypatch.setattr(
+        bridge,
+        "classify_application_exception_recovery",
+        lambda **_kw: application.AcceptedPostEffectProof(
+            cast(Literal["COMPLETE", "INDETERMINATE", "UNSAFE", "NOT_APPLIED"], proof),
+            "observed",
+        ),
+    )
+    result = bridge._application_job(
+        "royhsu-work/investment-strategy",
+        "token",
+        record.request_comment_id,
+        read=read,
+        record=record,
+        accepted_decision_sha256=evidence.accepted_decision_sha256,
+    )
+    assert result.state == expected_state
+    assert result.reason == expected_reason
+    assert result.recovery_artifact is evidence
+
+
+def test_exception_continuation_uses_existing_wire_and_cross_shard_no_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = bridge.WorkerRequest(435, "lead", "propose-change")
+    record = replace(
+        _accepted_carrier_record(),
+        issue_number=435,
+        role="lead",
+        action="propose-change",
+        change="unset",
+        request_comment_id=6760870154,
+    )
+    accepted_body = "qualified original ACCEPTED decision"
+    decision_sha = hashlib.sha256(accepted_body.encode()).hexdigest()
+    evidence = application.ApplicationExceptionArtifact(
+        run_id=42827477053,
+        run_attempt=1,
+        job_id=129868554969,
+        artifact_id=13768983651,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=record.request_comment_id,
+        accepted_decision_sha256=decision_sha,
+        failure_evidence_sha256="b" * 64,
+        recovery_episode_sha256="c" * 64,
+        document={"schema": "scheduled-agent-execution-exception/v1"},
+    )
+    original = {
+        "id": 90001,
+        "body": accepted_body,
+        "created_at": "2026-11-10T13:00:00Z",
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    history: list[dict[str, object]] = []
+    seen_queries: list[str] = []
+
+    def paged(_repository: str, _token: str, path: str, *, read: object) -> list[dict[str, object]]:
+        seen_queries.append(path)
+        if path.startswith("issues/435/comments?"):
+            return [original]
+        if path.startswith("issues/comments?"):
+            return history
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_paged_list", paged)
+    monkeypatch.setattr(
+        bridge,
+        "parse_application_decision",
+        lambda body: record if body == accepted_body else None,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "classify_application_exception_recovery",
+        lambda **_kw: application.AcceptedPostEffectProof("COMPLETE", "original proven"),
+    )
+    first = bridge._application_continuation_body(
+        repository="royhsu-work/investment-strategy",
+        token=cast(str, "token"),
+        source=source,
+        request_comment_id=record.request_comment_id,
+        predecessor_evidence=evidence,
+    )
+    assert first is not None
+    parsed = application.parse_application_continuation_request(first)
+    assert parsed is not None and parsed.predecessor_artifact_id == evidence.artifact_id
+    assert any("since=2026-11-10T13%3A00%3A00Z" in path for path in seen_queries)
+    # The first continuation was posted on *yesterday's* Runtime shard;
+    # today's read must not emit a duplicate of the accepted predecessor.
+    history.append(
+        {
+            "id": 6769000000,
+            "body": first,
+            "user": {"login": "royhsu-work"},
+            "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+        }
+    )
+    assert (
+        bridge._application_continuation_body(
+            repository="royhsu-work/investment-strategy",
+            token=cast(str, "token"),
+            source=source,
+            request_comment_id=record.request_comment_id,
+            predecessor_evidence=evidence,
+        )
+        is None
     )
 
 
@@ -5415,6 +5630,84 @@ def test_qualifier_uses_full_runtime_shard_history_for_prior_handoff(
         ),
     )
     assert status == "application-completion-carrier-prior-dispatch-incomplete"
+
+
+def test_qualifier_resolves_continuation_on_prior_runtime_shard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+        issue_number=138,
+        role=source.role,
+        action=source.action,
+    )
+    decision = _application_decision_comment(request)
+    decision_digest = hashlib.sha256(cast(str, decision["body"]).encode()).hexdigest()
+    continuation = bridge.render_application_continuation_request(
+        repository="owner/repo",
+        issue_number=138,
+        original_request_comment_id=654,
+        accepted_decision_sha256=decision_digest,
+        predecessor_run_id=800,
+        predecessor_run_attempt=1,
+        predecessor_job_id=801,
+        predecessor_artifact_id=802,
+        predecessor_artifact_digest="sha256:" + "3" * 64,
+        failure_evidence_sha256="4" * 64,
+        recovery_episode_sha256="5" * 64,
+    )
+    prior_shard_continuation = _trusted_connector_comment(901, continuation)
+    prior_shard_continuation["created_at"] = "2026-09-18T02:00:00Z"
+    current_shard_request = _trusted_connector_comment(
+        902, "DISPATCH_REQUEST\nRequested-At: 2026-10-21T01:00:00Z"
+    )
+    observed: list[tuple[int, ...] | None] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/138/comments?"):
+            return [decision]
+        if path.startswith("issues/comments?"):
+            assert "2026-09-18" in path  # ACCEPT predates the 30-day window.
+            return [request, prior_shard_continuation]
+        if path.startswith("issues/142/comments?"):
+            return [current_shard_request]
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return _preactivation_admission()
+        raise AssertionError(path)
+
+    def capture_accepted(**kwargs: object) -> bridge.ApplicationCompletion:
+        observed.append(cast(tuple[int, ...] | None, kwargs["continuation_transport_comment_ids"]))
+        assert kwargs["recent_comments"] == (current_shard_request,)
+        return bridge.ApplicationCompletion("INVALID", "observed-cross-shard-lineage")
+
+    monkeypatch.setattr(bridge, "_derive_frontier", lambda **_kw: (None, False))
+    monkeypatch.setattr(bridge, "_accepted_application_state", capture_accepted)
+    monkeypatch.setattr(
+        bridge,
+        "_application_runs",
+        lambda *_args, **_kwargs: (
+            {"display_title": "Scheduled Agent Application 654", "id": 800, "run_attempt": 1},
+            {"display_title": "Scheduled Agent Application 901", "id": 803, "run_attempt": 1},
+        ),
+    )
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        current_dispatch_request_comment_id=902,
+        current_dispatch_issue_number=142,
+        now=datetime(2026, 10, 21, tzinfo=UTC),
+        read=read,
+    )
+
+    assert completion.reason == "observed-cross-shard-lineage"
+    assert observed == [(901,)]
 
 
 def test_prior_dispatch_without_a_visible_run_fails_closed_before_carrier_reissue() -> None:

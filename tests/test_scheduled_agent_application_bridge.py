@@ -12,7 +12,7 @@ from email.message import Message
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Literal, cast
 from urllib.error import HTTPError
 from urllib.request import Request
 
@@ -407,8 +407,12 @@ def test_post_effect_result_recovery_rejects_unqualified_shape(invalid: dict[str
 
 
 @pytest.mark.parametrize("post_effect_state", ["COMPLETE", "MISSING_PR"])
+@pytest.mark.parametrize("artifact_kind", ["recovery", "exception"])
 def test_post_effect_result_continuation_uses_original_435_effect_not_formal_projection(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, post_effect_state: str
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    post_effect_state: str,
+    artifact_kind: str,
 ) -> None:
     """Production #435: one accepted Git write plus an Application-owned result.
 
@@ -493,20 +497,35 @@ def test_post_effect_result_continuation_uses_original_435_effect_not_formal_pro
         "completed_effect_indexes": [],
         "completed_effect_sha256": [],
     }
-    artifact = bridge.ApplicationRecoveryArtifact(
-        run_id=42803777801,
-        run_attempt=1,
-        job_id=1,
-        artifact_id=2,
-        artifact_digest="sha256:" + "a" * 64,
-        request_comment_id=accepted.request_comment_id,
-        accepted_decision_sha256=decision_digest,
-        failure_evidence_sha256="b" * 64,
-        recovery_episode_sha256="c" * 64,
-        recovery_attempt=1,
-        continuation_eligible=False,
-        document={"failure_evidence": failure},
-    )
+    artifact: bridge.ApplicationRecoveryArtifact | bridge.ApplicationExceptionArtifact
+    if artifact_kind == "exception":
+        artifact = bridge.ApplicationExceptionArtifact(
+            run_id=42827477053,
+            run_attempt=1,
+            job_id=129868554969,
+            artifact_id=13768983651,
+            artifact_digest="sha256:" + "a" * 64,
+            request_comment_id=accepted.request_comment_id,
+            accepted_decision_sha256=decision_digest,
+            failure_evidence_sha256="b" * 64,
+            recovery_episode_sha256="c" * 64,
+            document={"schema": "scheduled-agent-execution-exception/v1"},
+        )
+    else:
+        artifact = bridge.ApplicationRecoveryArtifact(
+            run_id=42803777801,
+            run_attempt=1,
+            job_id=1,
+            artifact_id=2,
+            artifact_digest="sha256:" + "a" * 64,
+            request_comment_id=accepted.request_comment_id,
+            accepted_decision_sha256=decision_digest,
+            failure_evidence_sha256="b" * 64,
+            recovery_episode_sha256="c" * 64,
+            recovery_attempt=1,
+            continuation_eligible=False,
+            document={"failure_evidence": failure},
+        )
     continuation_body = render_application_continuation_request(
         repository=_REPOSITORY,
         issue_number=435,
@@ -1984,6 +2003,91 @@ def test_recovery_artifact_uses_chain_ordinal_after_a_workflow_rerun(
     assert document["recovery_attempt"] == 1
     assert document["predecessor"] is None
     assert document["continuation_eligible"] is True
+
+
+def test_exception_predecessor_is_preserved_in_next_real_recovery_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    worker = _worker_result(
+        action=source.action, role=source.role, result_kind="more-implementation-required"
+    )
+    worker["change"] = _CHANGE
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    record = _accepted_record(
+        raw,
+        _effect_request(worker),
+        source=source,
+        change=_CHANGE,
+        result_kind="more-implementation-required",
+    )
+    accepted_body = "accepted decision"
+    accepted_hash = hashlib.sha256(accepted_body.encode()).hexdigest()
+    exception = bridge.ApplicationExceptionArtifact(
+        run_id=7000,
+        run_attempt=1,
+        job_id=7001,
+        artifact_id=7002,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=record.request_comment_id,
+        accepted_decision_sha256=accepted_hash,
+        failure_evidence_sha256="b" * 64,
+        recovery_episode_sha256=bridge._canonical_sha256(
+            {
+                "schema": "scheduled-agent-recovery-episode/v1",
+                "repository": _REPOSITORY,
+                "issue_number": source.issue_number,
+                "request_comment_id": record.request_comment_id,
+                "accepted_decision_sha256": accepted_hash,
+            }
+        ),
+        document={"schema": "scheduled-agent-execution-exception/v1"},
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_comment_for_request",
+        lambda **_kwargs: (record, accepted_body),
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "7003")
+    plan = make_carrier_plan(
+        repository=_REPOSITORY,
+        issue_number=source.issue_number,
+        change=_CHANGE,
+        action=source.action,
+        authorization_revision=_REVISION,
+        operation="pull-request-ready",
+        target={"pull_request_number": 236},
+        expected={"head_sha": _REVISION},
+        requested={"head_sha": _REVISION, "draft": False},
+        expected_postcondition={"draft": False},
+    )
+    output = tmp_path / "following-exception.json"
+    bridge._write_application_recovery_evidence(
+        str(output),
+        result=bridge.ApplyResult(False, "carrier-required", carrier_plan=plan),
+        repository=_REPOSITORY,
+        token=_REVISION,
+        source=source,
+        request_comment_id=record.request_comment_id,
+        trigger_comment_id=404,
+        authorization_revision=_REVISION,
+        current_revision=_REVISION,
+        run_attempt=1,
+        continuation=None,
+        predecessor=exception,
+    )
+    document = json.loads(output.read_text(encoding="utf-8"))
+    assert document["recovery_attempt"] == 2
+    assert document["prior_failure_evidence_sha256"] == [exception.failure_evidence_sha256]
+    assert document["predecessor"] == {
+        "run_id": exception.run_id,
+        "run_attempt": exception.run_attempt,
+        "job_id": exception.job_id,
+        "artifact_id": exception.artifact_id,
+        "artifact_digest": exception.artifact_digest,
+        "failure_evidence_sha256": exception.failure_evidence_sha256,
+        "recovery_attempt": 1,
+    }
 
 
 def test_recovery_evidence_continues_only_for_unwritten_precondition_rejection(
@@ -5393,6 +5497,247 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
             read=read,
             artifact_reader=failed_download,
         )
+
+
+@pytest.mark.parametrize(
+    "alteration",
+    [
+        "valid",
+        "bad-digest",
+        "duplicate",
+        "write-after-failure",
+        "missing-upload",
+        "wrong-source",
+        "wrong-run",
+        "recovery-present",
+        "truncated-inventory",
+    ],
+)
+def test_execution_exception_is_a_distinct_verified_predecessor(
+    alteration: str,
+) -> None:
+    """An exception artifact is never silently recast as a recovery checkpoint."""
+
+    source = WorkerRequest(435, "lead", "propose-change")
+    record = _accepted_record(
+        "{}",
+        "EFFECT_REQUEST",
+        source=source,
+        change="unset",
+        result_kind="proposal-ready",
+        request_comment_id=6760870154,
+    )
+    run_id, job_id, artifact_id, trigger = 42827477053, 129868554969, 13768983651, 6768960211
+    revision = "2b57c5d4af488bdd583a66c1f72d65713a594928"
+    document = {
+        "schema": "scheduled-agent-execution-exception/v1",
+        "repository": _REPOSITORY,
+        "issue_number": 435,
+        "role": "lead",
+        "action": "propose-change",
+        "change": "unset",
+        "revision": revision,
+        "request_comment_id": record.request_comment_id,
+        "trigger_comment_id": trigger,
+        "run_id": run_id,
+        "run_attempt": 1,
+        "attempted_operation": "application-effect-preparation",
+        "exception_type": "RuntimeError",
+        "raw_error": "post-effect result recovery has no exact activation effect",
+        "raw_traceback": "actual diagnostic, not an effect outcome",
+        "mutation_status": "UNKNOWN_REQUIRES_FRESH_RECONCILIATION",
+        "unfinished_boundary": "application-effect-preparation",
+        "classification": "UNCLASSIFIED_EXECUTION_EXCEPTION",
+    }
+    if alteration == "wrong-source":
+        document["issue_number"] = 436
+    if alteration == "wrong-run":
+        document["run_id"] = run_id + 1
+    raw = json.dumps(document).encode()
+    digest = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+    artifact = {
+        "id": artifact_id,
+        "name": "application-execution-exception.json",
+        "expired": False,
+        "digest": digest if alteration != "bad-digest" else "sha256:" + "f" * 64,
+        "workflow_run": {"id": run_id, "head_sha": revision},
+    }
+    artifacts = [artifact]
+    if alteration == "duplicate":
+        artifacts.append(dict(artifact, id=artifact_id + 1))
+    if alteration == "recovery-present":
+        artifacts.append({"name": "application-recovery-evidence"})
+    steps = [
+        {"name": "Freshly authorize and apply repository-owned effects", "conclusion": "failure"},
+        {"name": "Upload exact application recovery evidence", "conclusion": "skipped"},
+        {
+            "name": "Upload pre-ACCEPT or interrupted application exception evidence",
+            "conclusion": "success",
+        },
+        {"name": "Persist exact external carrier plan", "conclusion": "skipped"},
+        {"name": "Upload exact external carrier plan", "conclusion": "skipped"},
+        {"name": "Persist the derived successor after exact validation", "conclusion": "skipped"},
+        {"name": "Upload final exact application recovery evidence", "conclusion": "skipped"},
+    ]
+    if alteration == "write-after-failure":
+        steps[-2]["conclusion"] = "success"
+    if alteration == "missing-upload":
+        steps[2]["conclusion"] = "skipped"
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path == f"actions/runs/{run_id}":
+            return {
+                "id": run_id,
+                "run_attempt": 1,
+                "status": "completed",
+                "conclusion": "failure",
+                "head_sha": revision,
+                "display_title": f"Scheduled Agent Application {trigger}",
+            }
+        if path == f"actions/runs/{run_id}/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": job_id,
+                        "name": "apply",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "steps": steps,
+                    }
+                ]
+            }
+        if path == f"actions/runs/{run_id}/artifacts?per_page=100":
+            return {
+                "total_count": len(artifacts) + (1 if alteration == "truncated-inventory" else 0),
+                "artifacts": artifacts,
+            }
+        raise AssertionError(path)
+
+    evidence = bridge.read_application_exception_artifact(
+        _REPOSITORY,
+        "token",
+        run_id=run_id,
+        run_attempt=1,
+        job_id=job_id,
+        record=record,
+        accepted_decision_sha256="a" * 64,
+        read=read,
+        artifact_reader=lambda *_: raw,
+    )
+    if alteration == "valid":
+        assert evidence is not None
+        assert type(evidence) is bridge.ApplicationExceptionArtifact
+        assert evidence.artifact_id == artifact_id
+        assert evidence.failure_evidence_sha256 == bridge._canonical_sha256(document)
+    else:
+        assert evidence is None
+
+
+@pytest.mark.parametrize(
+    ("outcome", "duplicate", "admitted"),
+    [
+        ("COMPLETE", False, True),
+        ("INDETERMINATE", False, False),
+        ("UNSAFE", False, False),
+        ("COMPLETE", True, False),
+    ],
+)
+def test_application_exception_continuation_requalifies_at_native_ingress(
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+    duplicate: bool,
+    admitted: bool,
+) -> None:
+    source = WorkerRequest(435, "lead", "propose-change")
+    record = _accepted_record(
+        "{}",
+        "EFFECT_REQUEST",
+        source=source,
+        change="unset",
+        result_kind="proposal-ready",
+        request_comment_id=6760870154,
+    )
+    accepted_body = "immutable accepted decision"
+    decision_hash = hashlib.sha256(accepted_body.encode()).hexdigest()
+    evidence = bridge.ApplicationExceptionArtifact(
+        42827477053,
+        1,
+        129868554969,
+        13768983651,
+        "sha256:" + "a" * 64,
+        record.request_comment_id,
+        decision_hash,
+        "b" * 64,
+        "c" * 64,
+        {"schema": "scheduled-agent-execution-exception/v1"},
+    )
+    body = bridge.render_application_continuation_request(
+        repository=_REPOSITORY,
+        issue_number=435,
+        original_request_comment_id=record.request_comment_id,
+        accepted_decision_sha256=decision_hash,
+        predecessor_run_id=evidence.run_id,
+        predecessor_run_attempt=evidence.run_attempt,
+        predecessor_job_id=evidence.job_id,
+        predecessor_artifact_id=evidence.artifact_id,
+        predecessor_artifact_digest=evidence.artifact_digest,
+        failure_evidence_sha256=evidence.failure_evidence_sha256,
+        recovery_episode_sha256=evidence.recovery_episode_sha256,
+    )
+    continuation = bridge.parse_application_continuation_request(body)
+    assert continuation is not None
+    decision_comment = {
+        "id": 100,
+        "body": accepted_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    transport_comment = {
+        "id": 200,
+        "body": body,
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+    def comments(_repo: str, _token: str, path: str) -> list[dict[str, object]]:
+        if path.startswith("issues/435/comments?"):
+            return [decision_comment]
+        if path.startswith("issues/440/comments?"):
+            return (
+                [transport_comment, dict(transport_comment, id=201)]
+                if duplicate
+                else [transport_comment]
+            )
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_paged_github_list", comments)
+    monkeypatch.setattr(
+        bridge,
+        "parse_application_decision",
+        lambda raw: record if raw == accepted_body else None,
+    )
+    monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_k: None)
+    monkeypatch.setattr(bridge, "read_application_exception_artifact", lambda *_a, **_k: evidence)
+    monkeypatch.setattr(
+        bridge,
+        "classify_application_exception_recovery",
+        lambda **_k: bridge.AcceptedPostEffectProof(
+            cast(
+                Literal["COMPLETE", "INDETERMINATE", "UNSAFE"],
+                outcome,
+            ),
+            "fresh observation",
+        ),
+    )
+    actual = bridge.qualify_application_continuation_predecessor(
+        _REPOSITORY,
+        "token",
+        continuation,
+        current_comment_id=200,
+        transport_issue_number=440,
+    )
+    assert (actual is evidence) is admitted
 
 
 @pytest.mark.parametrize(

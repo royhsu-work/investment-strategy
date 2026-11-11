@@ -30,6 +30,7 @@ from investment_strategy.scheduled_agent_action_model import Action as ModelActi
 from investment_strategy.scheduled_agent_action_model import next_action, role_for
 from investment_strategy.scheduled_agent_application_bridge import (
     ApplicationContinuationRequest,
+    ApplicationExceptionArtifact,
     ApplicationRecoveryArtifact,
     ApplicationRequest,
     _accepted_recovery_boundary,
@@ -38,10 +39,12 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _worker_semantic_projection,
     accepted_read_only_effects_complete,
     application_continuation_correlation,
+    classify_application_exception_recovery,
     classify_post_effect_result_recovery,
     dispatch_correlation_for,
     parse_application_continuation_request,
     parse_application_request,
+    read_application_exception_artifact,
     read_application_recovery_artifact,
     render_application_continuation_request,
 )
@@ -155,7 +158,7 @@ class ApplicationCompletion:
     request_comment_id: int | None = None
     job_id: int | None = None
     qualified_carrier: QualifiedCarrierPlan | None = None
-    recovery_artifact: ApplicationRecoveryArtifact | None = None
+    recovery_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None = None
 
 
 RecoveryPredicate = Literal["COMPLETE", "INCOMPLETE", "UNKNOWN", "CONFLICT"]
@@ -2806,25 +2809,58 @@ def _application_job(
                 request_comment_id=request_comment_id,
             )
 
-    recovery_artifact = None
+    recovery_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None = None
     if (
         record is not None
         and accepted_decision_sha256 is not None
         and isinstance(run.get("head_sha"), str)
     ):
         try:
-            recovery_artifact = read_application_recovery_artifact(
-                repository,
-                token,
-                run_id=run_id,
-                run_attempt=run_attempt,
-                job_id=job_id,
-                request_comment_id=record.request_comment_id,
-                accepted_decision_sha256=accepted_decision_sha256,
-                read=read,
-                artifact_reader=read_github_artifact_bytes,
-                strict_read=True,
+            steps = job.get("steps")
+            has_exception = isinstance(steps, list) and any(
+                isinstance(step, Mapping)
+                and step.get("name")
+                == "Upload pre-ACCEPT or interrupted application exception evidence"
+                and step.get("conclusion") == "success"
+                for step in steps
             )
+            has_recovery = isinstance(steps, list) and any(
+                isinstance(step, Mapping)
+                and step.get("name") == "Upload exact application recovery evidence"
+                and step.get("conclusion") == "success"
+                for step in steps
+            )
+            if (
+                has_exception
+                and not has_recovery
+                and (record.role, record.action, record.change)
+                == ("lead", "propose-change", "unset")
+            ):
+                recovery_artifact = read_application_exception_artifact(
+                    repository,
+                    token,
+                    run_id=run_id,
+                    run_attempt=run_attempt,
+                    job_id=job_id,
+                    record=record,
+                    accepted_decision_sha256=accepted_decision_sha256,
+                    read=read,
+                    artifact_reader=read_github_artifact_bytes,
+                    strict_read=True,
+                )
+            else:
+                recovery_artifact = read_application_recovery_artifact(
+                    repository,
+                    token,
+                    run_id=run_id,
+                    run_attempt=run_attempt,
+                    job_id=job_id,
+                    request_comment_id=record.request_comment_id,
+                    accepted_decision_sha256=accepted_decision_sha256,
+                    read=read,
+                    artifact_reader=read_github_artifact_bytes,
+                    strict_read=True,
+                )
         except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
             # A failed/incomplete evidence read is not an observed absent
             # legacy artifact. Never reclassify source failure as NO_WRITE.
@@ -2874,6 +2910,28 @@ def _application_job(
             request_comment_id=request_comment_id,
             job_id=job_id if legacy_no_upload_step else None,
         )
+    if isinstance(recovery_artifact, ApplicationExceptionArtifact):
+        if record is None:
+            return ApplicationCompletion("INVALID", "application-exception-acceptance-missing")
+        proof = classify_application_exception_recovery(
+            record=record, artifact=recovery_artifact, repository=repository, token=token
+        )
+        if proof.continuation == "CONTINUE":
+            return ApplicationCompletion(
+                "RESUMABLE",
+                "application-completion-continuation-required",
+                request_comment_id=request_comment_id,
+                recovery_artifact=recovery_artifact,
+            )
+        return ApplicationCompletion(
+            "RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID",
+            "application-completion-exception-observing"
+            if proof.continuation == "OBSERVE"
+            else "application-completion-exception-unsafe",
+            request_comment_id=request_comment_id,
+            recovery_artifact=recovery_artifact,
+        )
+
     prior_failures = cast(
         list[str],
         recovery_artifact.document["prior_failure_evidence_sha256"],
@@ -4792,25 +4850,26 @@ def _application_continuation_body(
     token: str,
     source: WorkerRequest,
     request_comment_id: int,
-    predecessor_evidence: ApplicationRecoveryArtifact | None = None,
+    predecessor_evidence: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None = None,
     read: GitHubReader = _github_json,
 ) -> str | None:
     """Render one exact continuation transport for a qualified predecessor."""
 
     if predecessor_evidence is None:
         return None
-    if predecessor_evidence.failure_evidence_sha256 in cast(
-        list[str], predecessor_evidence.document["prior_failure_evidence_sha256"]
+    if isinstance(predecessor_evidence, ApplicationRecoveryArtifact) and (
+        predecessor_evidence.failure_evidence_sha256
+        in cast(list[str], predecessor_evidence.document["prior_failure_evidence_sha256"])
     ):
         return None
-    comments = _paged_list(
+    issue_comments = _paged_list(
         repository,
         token,
         f"issues/{source.issue_number}/comments?sort=created&direction=asc",
         read=read,
     )
-    matches: list[str] = []
-    for comment in comments:
+    matches: list[tuple[str, str]] = []
+    for comment in issue_comments:
         if not is_github_actions_comment(comment):
             continue
         body = comment.get("body")
@@ -4825,14 +4884,30 @@ def _application_continuation_body(
             and record.role == source.role
             and record.action == source.action
         ):
-            matches.append(body)
+            created_at = _comment_time(comment)
+            if created_at is None:
+                return None
+            matches.append((body, created_at))
     if len(matches) != 1:
         return None
-    decision_sha256 = hashlib.sha256(matches[0].encode("utf-8")).hexdigest()
+    decision_sha256 = hashlib.sha256(matches[0][0].encode("utf-8")).hexdigest()
     if predecessor_evidence.accepted_decision_sha256 != decision_sha256:
         return None
-    if not predecessor_evidence.continuation_eligible:
-        accepted_record = parse_application_decision(matches[0])
+    if isinstance(predecessor_evidence, ApplicationExceptionArtifact):
+        accepted_record = parse_application_decision(matches[0][0])
+        if (
+            accepted_record is None
+            or classify_application_exception_recovery(
+                record=accepted_record,
+                artifact=predecessor_evidence,
+                repository=repository,
+                token=token,
+            ).continuation
+            != "CONTINUE"
+        ):
+            return None
+    elif not predecessor_evidence.continuation_eligible:
+        accepted_record = parse_application_decision(matches[0][0])
         if (
             accepted_record is None
             or classify_post_effect_result_recovery(
@@ -4860,6 +4935,16 @@ def _application_continuation_body(
     parsed_body = parse_application_continuation_request(body)
     if parsed_body is None:
         raise RuntimeError("rendered application continuation is not parseable")
+    # Continuations are carried on Runtime shards, never on the source Issue.
+    # Observe the complete repository-wide lineage since the immutable ACCEPT;
+    # the current-day shard alone cannot prove that a predecessor is unused.
+    history_query = urlencode({"sort": "created", "direction": "asc", "since": matches[0][1]})
+    comments = _paged_list(
+        repository,
+        token,
+        f"issues/comments?{history_query}",
+        read=read,
+    )
     existing_correlations = {
         comment_id
         for item in comments
@@ -4868,6 +4953,7 @@ def _application_continuation_body(
         and (comment_id := _positive_int(item.get("id"))) is not None
         and (existing := parse_application_continuation_request(cast(str, item.get("body"))))
         is not None
+        and _trusted_connector_comment(item, repository.split("/", 1)[0])
         and existing.continuation_correlation == parsed_body.continuation_correlation
     }
     if existing_correlations:
@@ -4896,16 +4982,32 @@ def qualify_application_completion(
     current_time = datetime.now(UTC) if now is None else now.astimezone(UTC)
     owner = repository.split("/", 1)[0]
     since = (current_time - timedelta(days=30)).isoformat(timespec="seconds").replace("+00:00", "Z")
-    recent = _paged_list(
-        repository,
-        token,
-        f"issues/comments?{urlencode({'sort': 'created', 'direction': 'asc', 'since': since})}",
-        read=read,
-    )
     issue_comments = _paged_list(
         repository,
         token,
         f"issues/{source.issue_number}/comments?sort=created&direction=asc",
+        read=read,
+    )
+    # Recovery lineage can cross midnight and Runtime shards. Keep the global
+    # observation window open from the current ACCEPTED intent, even when the
+    # intent is older than the ordinary 30-day ingress lookback.
+    for comment in issue_comments:
+        if not is_github_actions_comment(comment):
+            continue
+        record = parse_application_decision(comment.get("body"))
+        if (
+            record is not None
+            and record.disposition == "ACCEPTED"
+            and (record.issue_number, record.role, record.action)
+            == (source.issue_number, source.role, source.action)
+        ):
+            observed_at = _comment_time(comment)
+            if observed_at is not None:
+                since = min(since, observed_at)
+    recent = _paged_list(
+        repository,
+        token,
+        f"issues/comments?{urlencode({'sort': 'created', 'direction': 'asc', 'since': since})}",
         read=read,
     )
     runtime_comments = recent
@@ -5118,7 +5220,7 @@ def qualify_application_completion(
                     source=source,
                     record=current_accepted[0],
                     issue_comments=issue_comments,
-                    recent_comments=runtime_comments,
+                    recent_comments=recent,
                 ),
             )
             if resumed.state != "NONE":
@@ -5223,7 +5325,7 @@ def qualify_application_completion(
                 source=frontier_source,
                 record=frontier_owner,
                 issue_comments=issue_comments,
-                recent_comments=runtime_comments,
+                recent_comments=recent,
             ),
         )
         if frontier_completion.state != "COMPLETE":
@@ -5453,7 +5555,7 @@ def qualify_application_completion(
             source=source,
             record=record,
             issue_comments=issue_comments,
-            recent_comments=runtime_comments,
+            recent_comments=recent,
         ),
     )
 
