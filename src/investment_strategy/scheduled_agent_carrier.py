@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import re
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
@@ -18,9 +19,49 @@ from investment_strategy.scheduled_agent_wire import LineWireContract
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT_REDIRECT_HOST = re.compile(
-    r"^(?:[a-z0-9-]+\.actions\.githubusercontent\.com|productionresultssa[0-9]+\.blob\.core\.windows\.net)$"
+    r"^(?:[a-z0-9-]+\.actions\.githubusercontent\.com|"
+    r"productionresultssa[0-9]+\.blob\.core\.windows\.net)$"
 )
-_MAX_CARRIER_ARTIFACT_BYTES = 65_536
+MAX_GITHUB_ARTIFACT_BYTES = 65_536
+_MAX_CARRIER_ARTIFACT_BYTES = MAX_GITHUB_ARTIFACT_BYTES
+
+
+class GitHubArtifactReadError(RuntimeError):
+    """Sanitized, typed failure from the shared GitHub artifact byte adapter."""
+
+    def __init__(
+        self,
+        *,
+        stage: str,
+        classification: str,
+        http_status: int | None = None,
+        exception_category: str | None = None,
+        redirect_host_class: str | None = None,
+    ) -> None:
+        super().__init__(f"GitHub artifact {stage}: {classification}")
+        self.stage = stage
+        self.classification = classification
+        self.http_status = http_status
+        self.exception_category = exception_category
+        self.redirect_host_class = redirect_host_class
+
+    def diagnostic(self) -> dict[str, object]:
+        return {
+            "stage": self.stage,
+            "classification": self.classification,
+            "http_status": self.http_status,
+            "exception_category": self.exception_category,
+            "redirect_host_class": self.redirect_host_class,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GitHubArtifactBytes:
+    """Bytes and redacted transport observations from one artifact GET."""
+
+    content: bytes
+    initial_status: int
+    redirect_host_class: str | None
 
 
 def github_repository_api_url(repository: str, api_path: str) -> str:
@@ -31,30 +72,74 @@ def github_repository_api_url(repository: str, api_path: str) -> str:
     return root if not relative else f"{root}/{relative}"
 
 
+def _timeout_error(error: BaseException) -> bool:
+    if isinstance(error, TimeoutError):
+        return True
+    return isinstance(error, URLError) and isinstance(error.reason, TimeoutError)
+
+
+@dataclass(frozen=True)
+class GitHubReadResponse:
+    """One bounded GET body and its observed HTTP success status."""
+
+    content: bytes
+    status: int | None
+
+
+def _github_read_response_with_retry(
+    request: Request,
+    *,
+    open_request: Callable[..., Any],
+    wait: Callable[[float], None],
+    max_bytes: int | None = None,
+) -> GitHubReadResponse:
+    """Retry bounded transient GitHub GET reads and retain response status."""
+
+    if request.get_method() != "GET":
+        raise ValueError("GitHub transient retry only supports GET")
+    if max_bytes is not None and (type(max_bytes) is not int or max_bytes <= 0):
+        raise ValueError("GitHub GET response limit is invalid")
+    for attempt in range(3):
+        try:
+            with open_request(request, timeout=30) as response:
+                limit = None if max_bytes is None else max_bytes + 1
+                raw = response.read() if limit is None else response.read(limit)
+                status_reader = getattr(response, "getcode", None)
+                status = (
+                    status_reader()
+                    if callable(status_reader)
+                    else getattr(response, "status", None)
+                )
+                return GitHubReadResponse(
+                    content=cast(bytes, raw),
+                    status=status if type(status) is int else None,
+                )
+        except HTTPError as exc:
+            if exc.code not in {500, 502, 503, 504} or attempt == 2:
+                raise
+            wait(0.25 * (2**attempt))
+        except (TimeoutError, URLError) as exc:
+            if not _timeout_error(exc) or attempt == 2:
+                raise
+            wait(0.25 * (2**attempt))
+    raise RuntimeError("GitHub GET retry exhausted without a response")
+
+
 def github_read_bytes_with_retry(
     request: Request,
     *,
     open_request: Callable[..., Any],
     wait: Callable[[float], None],
+    max_bytes: int | None = None,
 ) -> bytes:
-    """Retry bounded transient GitHub GET reads, never an unknown write.
+    """Compatibility adapter for consumers that need only the GET body."""
 
-    This transport operation cannot authorize a repository effect or a
-    successor Action. Each consumer still qualifies the fresh response.
-    """
-
-    if request.get_method() != "GET":
-        raise ValueError("GitHub transient retry only supports GET")
-    for attempt in range(3):
-        try:
-            with open_request(request, timeout=30) as response:
-                return cast(bytes, response.read())
-        except HTTPError as exc:
-            if exc.code not in {500, 502, 503, 504} or attempt == 2:
-                raise
-            wait(0.25 * (2**attempt))
-    raise RuntimeError("GitHub GET retry exhausted without a response")
-
+    return _github_read_response_with_retry(
+        request,
+        open_request=open_request,
+        wait=wait,
+        max_bytes=max_bytes,
+    ).content
 
 def github_comment_has_app_provenance(
     comment: Mapping[str, object], *, actor: str, app_slug: str
@@ -263,7 +348,7 @@ def github_complete_run_jobs(
 class _NoRedirect(HTTPRedirectHandler):
     """Expose a signed GitHub artifact redirect without forwarding the API bearer token."""
 
-    def http_error_302(
+    def _raise_redirect(
         self,
         req: Request,
         fp: Any,
@@ -273,51 +358,192 @@ class _NoRedirect(HTTPRedirectHandler):
     ) -> None:
         raise HTTPError(req.full_url, code, msg, headers, fp)
 
+    http_error_301 = _raise_redirect
+    http_error_302 = _raise_redirect
+    http_error_303 = _raise_redirect
+    http_error_307 = _raise_redirect
+    http_error_308 = _raise_redirect
 
-def read_github_artifact_bytes(repository: str, token: str, api_path: str) -> bytes:
-    """Read one GitHub Actions artifact without leaking the API bearer across redirects."""
+
+def _artifact_read_error(
+    error: BaseException,
+    *,
+    stage: str,
+    redirect_host_class: str | None = None,
+) -> GitHubArtifactReadError:
+    if isinstance(error, HTTPError):
+        status = error.code
+        classification = (
+            "READ_UNAVAILABLE"
+            if status in {500, 502, 503, 504} or status == 429
+            else "PERMANENT_INVALID"
+        )
+        return GitHubArtifactReadError(
+            stage=stage,
+            classification=classification,
+            http_status=status,
+            exception_category=type(error).__name__,
+            redirect_host_class=redirect_host_class,
+        )
+    return GitHubArtifactReadError(
+        stage=stage,
+        classification="READ_UNAVAILABLE",
+        exception_category=type(error).__name__,
+        redirect_host_class=redirect_host_class,
+    )
+
+
+def read_github_artifact(
+    repository: str,
+    token: str,
+    api_path: str,
+    *,
+    accept: str = "application/vnd.github+json",
+    max_bytes: int = MAX_GITHUB_ARTIFACT_BYTES,
+) -> GitHubArtifactBytes:
+    """Read bounded artifact bytes through the one credential-safe redirect adapter."""
 
     if _REPOSITORY.fullmatch(repository) is None or not token:
-        raise RuntimeError("repository/token identity is invalid")
+        raise GitHubArtifactReadError(
+            stage="request-identity",
+            classification="PERMANENT_INVALID",
+            exception_category="InvalidRepositoryOrToken",
+        )
+    if not isinstance(accept, str) or not accept or "\n" in accept or "\r" in accept:
+        raise ValueError("GitHub artifact Accept header is invalid")
+    if type(max_bytes) is not int or max_bytes <= 0:
+        raise ValueError("GitHub artifact byte limit is invalid")
+
     request = Request(  # noqa: S310 - fixed trusted GitHub API host
         github_repository_api_url(repository, api_path),
         headers={
-            "Accept": "application/vnd.github+json",
+            "Accept": accept,
             "Authorization": f"Bearer {token}",
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
     try:
-        with build_opener(_NoRedirect).open(request, timeout=30) as response:
-            raw = response.read(_MAX_CARRIER_ARTIFACT_BYTES + 1)
-    except HTTPError as exc:
-        if exc.code != 302:
-            raise RuntimeError("exact GitHub artifact read failed") from exc
-        location = exc.headers.get("Location")
+        response = _github_read_response_with_retry(
+            request,
+            open_request=build_opener(_NoRedirect).open,
+            wait=time.sleep,
+            max_bytes=max_bytes,
+        )
+        if response.status != 200:
+            raise GitHubArtifactReadError(
+                stage="artifact-api-read",
+                classification="PERMANENT_INVALID",
+                http_status=response.status,
+                exception_category="UnexpectedSuccessStatus",
+            )
+        return GitHubArtifactBytes(response.content, response.status, None)
+    except HTTPError as error:
+        if error.code != 302:
+            if 300 <= error.code < 400:
+                raise GitHubArtifactReadError(
+                    stage="redirect",
+                    classification="REDIRECT_UNTRUSTED",
+                    http_status=error.code,
+                    exception_category="UnexpectedRedirect",
+                ) from None
+            raise _artifact_read_error(error, stage="artifact-api-read") from None
+        headers = error.headers
+        location = headers.get("Location") if headers is not None else None
         if not isinstance(location, str):
-            raise RuntimeError("exact GitHub artifact redirect is not trusted") from exc
+            raise GitHubArtifactReadError(
+                stage="redirect",
+                classification="REDIRECT_UNTRUSTED",
+                http_status=302,
+                exception_category="MissingLocation",
+            ) from None
         parsed = urlsplit(location)
         host = parsed.hostname.lower() if parsed.hostname is not None else None
+        actions_host = (
+            host is not None
+            and re.fullmatch(r"[a-z0-9-]+\.actions\.githubusercontent\.com", host) is not None
+        )
+        azure_host = (
+            host is not None
+            and re.fullmatch(r"productionresultssa[0-9]+\.blob\.core\.windows\.net", host)
+            is not None
+        )
         if (
             parsed.scheme != "https"
-            or host is None
-            or _ARTIFACT_REDIRECT_HOST.fullmatch(host) is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or (not actions_host and not azure_host)
         ):
-            raise RuntimeError("exact GitHub artifact redirect is not trusted") from exc
+            raise GitHubArtifactReadError(
+                stage="redirect",
+                classification="REDIRECT_UNTRUSTED",
+                http_status=302,
+                exception_category="UntrustedLocation",
+            ) from None
+        host_class = "actions" if actions_host else "azure-blob"
         redirected = Request(  # noqa: S310 - validated GitHub Actions host
             location,
             headers={"Accept": "application/octet-stream"},
         )
         try:
-            with build_opener().open(redirected, timeout=30) as response:
-                raw = response.read(_MAX_CARRIER_ARTIFACT_BYTES + 1)
-        except (HTTPError, URLError, TimeoutError) as redirect_exc:
-            raise RuntimeError("exact GitHub artifact response is invalid") from redirect_exc
-    except (URLError, TimeoutError) as exc:
-        raise RuntimeError("exact GitHub artifact response is invalid") from exc
-    if not raw or len(raw) > _MAX_CARRIER_ARTIFACT_BYTES:
-        raise RuntimeError("exact GitHub artifact size is invalid")
-    return raw
+            redirected_response = _github_read_response_with_retry(
+                redirected,
+                open_request=build_opener(_NoRedirect).open,
+                wait=time.sleep,
+                max_bytes=max_bytes,
+            )
+            if redirected_response.status != 200:
+                raise GitHubArtifactReadError(
+                    stage="redirected-artifact-read",
+                    classification="PERMANENT_INVALID",
+                    http_status=redirected_response.status,
+                    exception_category="UnexpectedSuccessStatus",
+                    redirect_host_class=host_class,
+                )
+            raw = redirected_response.content
+        except OSError as redirect_error:
+            if isinstance(redirect_error, HTTPError) and 300 <= redirect_error.code < 400:
+                raise GitHubArtifactReadError(
+                    stage="redirect",
+                    classification="REDIRECT_UNTRUSTED",
+                    http_status=redirect_error.code,
+                    exception_category="RedirectChain",
+                    redirect_host_class=host_class,
+                ) from None
+            raise _artifact_read_error(
+                redirect_error,
+                stage="redirected-artifact-read",
+                redirect_host_class=host_class,
+            ) from None
+        return GitHubArtifactBytes(raw, 302, host_class)
+    except OSError as error:
+        raise _artifact_read_error(error, stage="artifact-api-read") from None
+
+
+def read_github_artifact_bytes(
+    repository: str,
+    token: str,
+    api_path: str,
+    *,
+    accept: str = "application/vnd.github+json",
+    max_bytes: int = _MAX_CARRIER_ARTIFACT_BYTES,
+) -> bytes:
+    """Compatibility adapter returning only the bytes from the shared reader."""
+
+    response = read_github_artifact(
+        repository,
+        token,
+        api_path,
+        accept=accept,
+        max_bytes=max_bytes,
+    )
+    if not response.content or len(response.content) > max_bytes:
+        raise GitHubArtifactReadError(
+            stage="artifact-bytes",
+            classification="PERMANENT_INVALID",
+            exception_category="ArtifactSizeLimit",
+            redirect_host_class=response.redirect_host_class,
+        )
+    return response.content
 
 
 @dataclass(frozen=True)
@@ -921,6 +1147,9 @@ def carrier_pr_identity(payload: Mapping[str, object]) -> dict[str, object]:
 
 
 __all__ = [
+    "MAX_GITHUB_ARTIFACT_BYTES",
+    "GitHubArtifactBytes",
+    "GitHubArtifactReadError",
     "CarrierConsumeResult",
     "CarrierOutcomeKind",
     "CarrierOutcomeReport",
@@ -939,5 +1168,6 @@ __all__ = [
     "parse_carrier_plan_document",
     "parse_qualified_carrier_document",
     "qualified_carrier_document",
+    "read_github_artifact",
     "read_github_artifact_bytes",
 ]

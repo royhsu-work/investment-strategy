@@ -32,7 +32,10 @@ from investment_strategy.scheduled_agent_carrier import (
     github_repository_api_url,
 )
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
-from investment_strategy.scheduled_agent_dispatch_result import fetch_dispatch_result
+from investment_strategy.scheduled_agent_dispatch_result import (
+    DispatchArtifactReadError,
+    fetch_dispatch_artifact,
+)
 from investment_strategy.scheduled_agent_runtime import acquire_current_github_preflight
 from investment_strategy.workflow_dispatch import (
     DispatchDecision,
@@ -510,6 +513,45 @@ class IdleAdmissionResult:
     reason: str
     issue_number: int | None = None
     mutation_attempted: bool = False
+    diagnostic: Mapping[str, object] | None = None
+
+
+def _artifact_failure_result(
+    request: IdleAdmissionRequest,
+    *,
+    stage: str,
+    classification: str,
+    exception_category: str,
+    run_attempt: int | None = None,
+    http_status: int | None = None,
+    state: IdleAdmissionState = "FAIL_CLOSED",
+) -> IdleAdmissionResult:
+    """Render a safe pre-write diagnostic from one explicit qualification stage."""
+
+    reason_suffix = classification.lower().replace("_", "-")
+    envelope = request.envelope
+    return IdleAdmissionResult(
+        state,
+        f"idle-dispatch-{stage}-{reason_suffix}",
+        diagnostic={
+            "stage": stage,
+            "classification": classification,
+            "request_comment_id": envelope.request_comment_id,
+            "run_id": envelope.dispatch_run_id,
+            "run_attempt": run_attempt,
+            "artifact_id": envelope.dispatch_artifact_id,
+            "revision": envelope.default_branch_revision,
+            "http_status": http_status,
+            "exception_category": exception_category,
+            "expected_correlation": {
+                "request_comment_id": envelope.request_comment_id,
+                "run_id": envelope.dispatch_run_id,
+                "artifact_id": envelope.dispatch_artifact_id,
+                "revision": envelope.default_branch_revision,
+            },
+            "mutation_attempted": False,
+        },
+    )
 
 
 def is_exact_no_work(decision: DispatchDecision) -> bool:
@@ -632,13 +674,35 @@ def _fresh_gate(
     fresh_dispatch: FreshDispatch,
     artifact_result: ArtifactResultReader,
 ) -> IdleAdmissionResult | None:
-    run = read(
-        request.envelope.repository,
-        "",
-        f"actions/runs/{request.envelope.dispatch_run_id}",
-    )
+    try:
+        run = read(
+            request.envelope.repository,
+            "",
+            f"actions/runs/{request.envelope.dispatch_run_id}",
+        )
+    except (HTTPError, OSError, RuntimeError, ValueError) as error:
+        status = error.code if isinstance(error, HTTPError) else None
+        classification = (
+            "READ_UNAVAILABLE"
+            if status in {429, 500, 502, 503, 504} or isinstance(error, OSError)
+            else "PERMANENT_INVALID"
+            if isinstance(error, HTTPError)
+            else "UNKNOWN"
+        )
+        return _artifact_failure_result(
+            request,
+            stage="run-read",
+            classification=classification,
+            exception_category=type(error).__name__,
+            http_status=status,
+        )
     if not isinstance(run, Mapping):
-        return IdleAdmissionResult("FAIL_CLOSED", "idle-dispatch-run-unavailable")
+        return _artifact_failure_result(
+            request,
+            stage="run-identity",
+            classification="RECOVERABLE_INCOMPLETE",
+            exception_category="RunResponseIncomplete",
+        )
     run_title = f"{_DISPATCH_RUN_PREFIX}{request.envelope.request_comment_id}"
     run_path = run.get("path")
     path_matches = run_path in {
@@ -647,6 +711,14 @@ def _fresh_gate(
         f"{_DISPATCH_WORKFLOW_PATH}@refs/heads/{request.envelope.default_branch}",
     }
     title_matches = run.get("name") == run_title or run.get("display_title") == run_title
+    run_attempt = _positive_int(run.get("run_attempt"))
+    if run_attempt is None:
+        return _artifact_failure_result(
+            request,
+            stage="run-attempt",
+            classification="RECOVERABLE_INCOMPLETE",
+            exception_category="RunAttemptIncomplete",
+        )
     if (
         run.get("id") != request.envelope.dispatch_run_id
         or not title_matches
@@ -656,12 +728,37 @@ def _fresh_gate(
         or run.get("status") != "completed"
         or run.get("conclusion") != "success"
     ):
-        return IdleAdmissionResult("STALE", "idle-dispatch-run-stale")
-    artifacts_payload = read(
-        request.envelope.repository,
-        "",
-        f"actions/runs/{request.envelope.dispatch_run_id}/artifacts?per_page=100",
-    )
+        return _artifact_failure_result(
+            request,
+            stage="run-identity",
+            classification="IDENTITY_STALE",
+            exception_category="RunCorrelationMismatch",
+            run_attempt=run_attempt,
+            state="STALE",
+        )
+    try:
+        artifacts_payload = read(
+            request.envelope.repository,
+            "",
+            f"actions/runs/{request.envelope.dispatch_run_id}/artifacts?per_page=100",
+        )
+    except (HTTPError, OSError, RuntimeError, ValueError) as error:
+        status = error.code if isinstance(error, HTTPError) else None
+        classification = (
+            "READ_UNAVAILABLE"
+            if status in {429, 500, 502, 503, 504} or isinstance(error, OSError)
+            else "PERMANENT_INVALID"
+            if isinstance(error, HTTPError)
+            else "UNKNOWN"
+        )
+        return _artifact_failure_result(
+            request,
+            stage="artifact-list-read",
+            classification=classification,
+            exception_category=type(error).__name__,
+            run_attempt=run_attempt,
+            http_status=status,
+        )
     artifacts = (
         artifacts_payload.get("artifacts") if isinstance(artifacts_payload, Mapping) else None
     )
@@ -674,35 +771,114 @@ def _fresh_gate(
         or not isinstance(total_count, int)
         or total_count != len(artifacts)
     ):
-        return IdleAdmissionResult("FAIL_CLOSED", "idle-dispatch-artifact-list-incomplete")
+        return _artifact_failure_result(
+            request,
+            stage="artifact-list",
+            classification="RECOVERABLE_INCOMPLETE",
+            exception_category="ArtifactListingIncomplete",
+            run_attempt=run_attempt,
+        )
     matches = tuple(
         item
         for item in artifacts
         if isinstance(item, Mapping) and item.get("name") == _DISPATCH_ARTIFACT_NAME
     )
     if len(matches) != 1:
-        return IdleAdmissionResult("FAIL_CLOSED", "idle-dispatch-artifact-ambiguous")
+        return _artifact_failure_result(
+            request,
+            stage="artifact-identity",
+            classification="PERMANENT_INVALID",
+            exception_category="ArtifactMissingOrAmbiguous",
+            run_attempt=run_attempt,
+        )
     artifact = matches[0]
     digest = artifact.get("digest")
     normalized_digest = digest.removeprefix("sha256:") if isinstance(digest, str) else None
+    artifact_size = artifact.get("size_in_bytes")
     if (
         artifact.get("id") != request.envelope.dispatch_artifact_id
-        or artifact.get("expired") is not False
         or normalized_digest != request.envelope.dispatch_artifact_sha256
     ):
-        return IdleAdmissionResult("STALE", "idle-dispatch-artifact-stale")
+        return _artifact_failure_result(
+            request,
+            stage="artifact-identity",
+            classification="IDENTITY_STALE",
+            exception_category="ArtifactCorrelationMismatch",
+            run_attempt=run_attempt,
+            state="STALE",
+        )
+    if artifact.get("expired") is not False:
+        return _artifact_failure_result(
+            request,
+            stage="artifact-metadata",
+            classification="PERMANENT_INVALID",
+            exception_category="ArtifactExpired",
+            run_attempt=run_attempt,
+            state="STALE",
+        )
+    if isinstance(artifact_size, bool) or not isinstance(artifact_size, int) or artifact_size <= 0:
+        return _artifact_failure_result(
+            request,
+            stage="artifact-metadata",
+            classification="RECOVERABLE_INCOMPLETE",
+            exception_category="ArtifactSizeIncomplete",
+            run_attempt=run_attempt,
+        )
     try:
         result = artifact_result()
-    except (HTTPError, OSError, RuntimeError, TimeoutError, ValueError):
-        return IdleAdmissionResult("FAIL_CLOSED", "idle-dispatch-artifact-content-unavailable")
-    if (
-        not isinstance(result, Mapping)
-        or result.get("request_comment_id") != request.envelope.request_comment_id
-        or result.get("default_branch_revision") != request.envelope.default_branch_revision
-        or result.get("disposition") != "NO_WORK"
-        or result.get("reason") != "no-routed-work"
-    ):
-        return IdleAdmissionResult("STALE", "idle-dispatch-artifact-content-stale")
+    except DispatchArtifactReadError as error:
+        diagnostic = error.diagnostic()
+        classification = str(diagnostic.get("classification", "UNKNOWN")).lower().replace("_", "-")
+        return IdleAdmissionResult(
+            "FAIL_CLOSED",
+            f"idle-dispatch-artifact-{classification}",
+            diagnostic=diagnostic,
+        )
+    except (HTTPError, OSError, RuntimeError, TimeoutError, ValueError) as error:
+        return IdleAdmissionResult(
+            "FAIL_CLOSED",
+            "idle-dispatch-artifact-unknown",
+            diagnostic={
+                "stage": "artifact-consumption",
+                "classification": "UNKNOWN",
+                "request_comment_id": request.envelope.request_comment_id,
+                "run_id": request.envelope.dispatch_run_id,
+                "run_attempt": run_attempt,
+                "artifact_id": request.envelope.dispatch_artifact_id,
+                "revision": request.envelope.default_branch_revision,
+                "exception_category": type(error).__name__,
+                "mutation_attempted": False,
+            },
+        )
+    result_matches = (
+        isinstance(result, Mapping)
+        and result.get("request_comment_id") == request.envelope.request_comment_id
+        and result.get("default_branch_revision") == request.envelope.default_branch_revision
+        and result.get("run_attempt") == run_attempt
+        and result.get("artifact_id") == request.envelope.dispatch_artifact_id
+        and result.get("artifact_size_in_bytes") == artifact_size
+        and result.get("artifact_sha256") == normalized_digest
+        and result.get("content_length") == artifact_size
+        and result.get("content_sha256") == normalized_digest
+        and result.get("disposition") == "NO_WORK"
+        and result.get("reason") == "no-routed-work"
+    )
+    if not result_matches:
+        return IdleAdmissionResult(
+            "STALE",
+            "idle-dispatch-artifact-content-stale",
+            diagnostic={
+                "stage": "application-correlation",
+                "classification": "IDENTITY_STALE",
+                "request_comment_id": request.envelope.request_comment_id,
+                "run_id": request.envelope.dispatch_run_id,
+                "run_attempt": run_attempt,
+                "artifact_id": request.envelope.dispatch_artifact_id,
+                "revision": request.envelope.default_branch_revision,
+                "exception_category": "VerifiedArtifactCorrelationMismatch",
+                "mutation_attempted": False,
+            },
+        )
     root = read(request.envelope.repository, "", "")
     if (
         not isinstance(root, Mapping)
@@ -907,7 +1083,12 @@ def admit_idle_request(
             artifact_result=artifact_result,
         )
         if gate is not None:
-            return IdleAdmissionResult(gate.state, gate.reason, candidate.issue_number)
+            return IdleAdmissionResult(
+                gate.state,
+                gate.reason,
+                candidate.issue_number,
+                diagnostic=gate.diagnostic,
+            )
         latest = read(request.envelope.repository, "", f"issues/{candidate.issue_number}")
         if not isinstance(latest, Mapping) or _issue_digest(latest) != _issue_digest(current):
             return IdleAdmissionResult(
@@ -920,7 +1101,12 @@ def admit_idle_request(
             artifact_result=artifact_result,
         )
         if gate is not None:
-            return IdleAdmissionResult(gate.state, gate.reason, candidate.issue_number)
+            return IdleAdmissionResult(
+                gate.state,
+                gate.reason,
+                candidate.issue_number,
+                diagnostic=gate.diagnostic,
+            )
         try:
             write(
                 request.envelope.repository,
@@ -1051,16 +1237,27 @@ def _verified_artifact_result(
     token: str,
     envelope: IdleDispatchEnvelope,
 ) -> Mapping[str, object]:
-    result = fetch_dispatch_result(
+    verified = fetch_dispatch_artifact(
         repository,
         token,
         request_comment_id=envelope.request_comment_id,
         run_id=envelope.dispatch_run_id,
         current_revision=envelope.default_branch_revision,
+        expected_artifact_id=envelope.dispatch_artifact_id,
+        expected_artifact_sha256=envelope.dispatch_artifact_sha256,
     )
+    result = verified.decision
     return {
         "request_comment_id": result.request_comment_id,
         "default_branch_revision": result.default_branch_revision,
+        "run_attempt": verified.run_attempt,
+        "artifact_id": verified.artifact_id,
+        "artifact_size_in_bytes": verified.artifact_size_in_bytes,
+        "artifact_sha256": verified.artifact_sha256,
+        "content_length": verified.content_length,
+        "content_sha256": verified.content_sha256,
+        "initial_status": verified.initial_status,
+        "redirect_host_class": verified.redirect_host_class,
         "disposition": result.disposition,
         "reason": result.reason,
     }
@@ -1114,6 +1311,7 @@ def _main() -> int:
                 "reason": result.reason,
                 "issue_number": result.issue_number,
                 "mutation_attempted": result.mutation_attempted,
+                "diagnostic": result.diagnostic,
             },
             sort_keys=True,
         )

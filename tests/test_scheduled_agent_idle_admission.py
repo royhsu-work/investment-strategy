@@ -9,6 +9,11 @@ from typing import cast
 
 import pytest
 
+from investment_strategy.scheduled_agent_dispatch_result import (
+    DispatchArtifactFailure,
+    DispatchArtifactReadError,
+    FailureClassification,
+)
 from investment_strategy.scheduled_agent_idle_admission import (
     ACTION_EXPLORE_CHANGE,
     IDLE_REQUEST_MARKER,
@@ -63,6 +68,14 @@ def _artifact_result() -> Mapping[str, object]:
     return {
         "request_comment_id": 101,
         "default_branch_revision": REVISION,
+        "run_attempt": 1,
+        "artifact_id": 303,
+        "artifact_size_in_bytes": 199,
+        "artifact_sha256": DIGEST,
+        "content_length": 199,
+        "content_sha256": DIGEST,
+        "initial_status": 200,
+        "redirect_host_class": None,
         "disposition": "NO_WORK",
         "reason": "no-routed-work",
     }
@@ -398,6 +411,9 @@ def _github_root(path: str) -> object:
             "head_sha": REVISION,
             "status": "completed",
             "conclusion": "success",
+            "run_attempt": 1,
+            "run_started_at": "2026-11-11T00:00:00Z",
+            "updated_at": "2026-11-11T00:00:20Z",
         }
     if path == "actions/runs/202/artifacts?per_page=100":
         return {
@@ -408,6 +424,9 @@ def _github_root(path: str) -> object:
                     "name": "dispatch-result.json",
                     "expired": False,
                     "digest": f"sha256:{DIGEST}",
+                    "size_in_bytes": 199,
+                    "created_at": "2026-11-11T00:00:10Z",
+                    "workflow_run": {"id": 202, "head_sha": REVISION},
                 }
             ],
         }
@@ -531,7 +550,10 @@ def test_real_actions_run_identity_shape_accepts_display_title_and_ref_path() ->
     assert len(writes) == 1
 
 
-def test_existing_candidate_fails_closed_when_normal_work_wins_before_write() -> None:
+@pytest.mark.parametrize("disposition", ["AUTHORIZE", "FAIL_CLOSED"])
+def test_existing_candidate_fails_closed_when_normal_work_wins_before_write(
+    disposition: str,
+) -> None:
     issue = {
         "number": 12,
         "state": "open",
@@ -564,7 +586,7 @@ def test_existing_candidate_fails_closed_when_normal_work_wins_before_write() ->
         request,
         read=read,
         write=lambda *_args: writes.append(_args[-1]),
-        fresh_dispatch=lambda: _decision("AUTHORIZE"),
+        fresh_dispatch=lambda: _decision(disposition),
         artifact_result=_artifact_result,
     )
     assert result.state == "FAIL_CLOSED"
@@ -880,3 +902,120 @@ def test_stale_candidate_source_is_rejected_before_repository_reads() -> None:
                 labels=(ACTION_EXPLORE_CHANGE,),
             ),
         )
+
+
+@pytest.mark.parametrize(
+    ("stage", "classification", "status"),
+    [
+        ("artifact-api-read", "READ_UNAVAILABLE", 503),
+        ("redirect", "REDIRECT_UNTRUSTED", 302),
+        ("artifact-integrity", "INTEGRITY_MISMATCH", None),
+        ("canonical-payload", "PAYLOAD_FORMAT_INVALID", None),
+    ],
+)
+def test_artifact_read_failure_preserves_typed_diagnostic_and_never_mutates(
+    stage: str,
+    classification: str,
+    status: int | None,
+) -> None:
+    request = make_idle_admission_request(
+        _envelope(),
+        IdleCandidate(
+            kind="existing",
+            source_kind="friction",
+            source_ref="run:57",
+            source_revision=REVISION,
+            evidence="repeated failure",
+            issue_number=14,
+        ),
+    )
+    issue = {
+        "number": 14,
+        "state": "open",
+        "title": "Finding",
+        "body": "Description",
+        "labels": [],
+    }
+    writes: list[object] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/runs/"):
+            return _github_root(path)
+        if path in {"", "git/ref/heads/main"}:
+            return _github_root(path)
+        if path == "issues/14":
+            return issue
+        raise AssertionError(path)
+
+    failure = DispatchArtifactFailure(
+        stage=stage,
+        classification=cast(FailureClassification, classification),
+        request_comment_id=101,
+        run_id=202,
+        run_attempt=1,
+        artifact_id=303,
+        revision=REVISION,
+        http_status=status,
+        exception_category="HTTPError" if status is not None else "ValueError",
+    )
+
+    def fail_read() -> Mapping[str, object]:
+        raise DispatchArtifactReadError(failure)
+
+    result = admit_idle_request(
+        request,
+        read=read,
+        write=lambda *_args: writes.append(_args[-1]),
+        fresh_dispatch=lambda: _decision(),
+        artifact_result=fail_read,
+    )
+    assert result.state == "FAIL_CLOSED"
+    assert result.reason == f"idle-dispatch-artifact-{classification.lower().replace('_', '-')}"
+    assert result.mutation_attempted is False
+    assert result.diagnostic is not None
+    assert result.diagnostic["stage"] == stage
+    assert result.diagnostic["classification"] == classification
+    assert result.diagnostic["http_status"] == status
+    assert result.diagnostic["mutation_attempted"] is False
+    assert writes == []
+
+
+def test_outer_and_downloaded_attempt_must_be_the_same_fresh_attempt() -> None:
+    request = make_idle_admission_request(
+        _envelope(),
+        IdleCandidate(
+            kind="existing",
+            source_kind="friction",
+            source_ref="run:58",
+            source_revision=REVISION,
+            evidence="repeated failure",
+            issue_number=15,
+        ),
+    )
+    writes: list[object] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path in {"", "git/ref/heads/main"} or path.startswith("actions/runs/"):
+            return _github_root(path)
+        if path == "issues/15":
+            return {
+                "number": 15,
+                "state": "open",
+                "title": "Finding",
+                "body": "Description",
+                "labels": [],
+            }
+        raise AssertionError(path)
+
+    result = admit_idle_request(
+        request,
+        read=read,
+        write=lambda *_args: writes.append(_args[-1]),
+        fresh_dispatch=lambda: _decision(),
+        artifact_result=lambda: {**_artifact_result(), "run_attempt": 2},
+    )
+    assert result.state == "STALE"
+    assert result.reason == "idle-dispatch-artifact-content-stale"
+    assert result.diagnostic is not None
+    assert result.diagnostic["classification"] == "IDENTITY_STALE"
+    assert writes == []
