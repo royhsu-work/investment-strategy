@@ -5098,6 +5098,187 @@ def read_application_recovery_artifact(
     )
 
 
+_EXCEPTION_APPLY_STEP_CONTRACT: dict[str, str] = {
+    "Freshly authorize and apply repository-owned effects": "failure",
+    "Upload exact application recovery evidence": "skipped",
+    "Upload pre-ACCEPT or interrupted application exception evidence": "success",
+    "Persist exact external carrier plan": "skipped",
+    "Upload exact external carrier plan": "skipped",
+    "Persist the derived successor after exact validation": "skipped",
+    "Upload final exact application recovery evidence": "skipped",
+}
+
+_EXCEPTION_DOCUMENT_KEYS = frozenset(
+    {
+        "schema",
+        "repository",
+        "issue_number",
+        "role",
+        "action",
+        "change",
+        "revision",
+        "request_comment_id",
+        "trigger_comment_id",
+        "run_id",
+        "run_attempt",
+        "attempted_operation",
+        "exception_type",
+        "raw_error",
+        "raw_traceback",
+        "mutation_status",
+        "unfinished_boundary",
+        "classification",
+    }
+)
+
+
+def _matches_required_fields(
+    observed: Mapping[str, object], required: Mapping[str, object]
+) -> bool:
+    """Check a named-field contract without an independently maintained guard tree."""
+
+    return all(observed.get(key) == value for key, value in required.items())
+
+
+def _qualified_exception_apply_run(
+    repository: str,
+    token: str,
+    *,
+    run_id: int,
+    run_attempt: int,
+    job_id: int,
+    read: Callable[[str, str, str], object],
+) -> Mapping[str, object] | None:
+    """Prove this run failed before every later writer, without inferring zero writes."""
+
+    run = _as_mapping(read(repository, token, f"actions/runs/{run_id}"))
+    required_run = {
+        "id": run_id,
+        "run_attempt": run_attempt,
+        "status": "completed",
+        "conclusion": "failure",
+    }
+    if run is None or not _matches_required_fields(run, required_run):
+        return None
+    if (
+        not isinstance(run.get("head_sha"), str)
+        or _SHA.fullmatch(cast(str, run["head_sha"])) is None
+    ):
+        return None
+    jobs_payload = _as_mapping(read(repository, token, f"actions/runs/{run_id}/jobs"))
+    jobs = None if jobs_payload is None else jobs_payload.get("jobs")
+    if not isinstance(jobs, list):
+        return None
+    apply_jobs = [
+        item for item in jobs if isinstance(item, Mapping) and item.get("name") == "apply"
+    ]
+    if len(apply_jobs) != 1:
+        return None
+    job = apply_jobs[0]
+    if not _matches_required_fields(
+        job,
+        {
+            "id": job_id,
+            "run_attempt": run_attempt,
+            "status": "completed",
+            "conclusion": "failure",
+        },
+    ):
+        return None
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return None
+    conclusions: dict[str, str] = {}
+    for step in steps:
+        if not isinstance(step, Mapping):
+            return None
+        name, result = step.get("name"), step.get("conclusion")
+        if not isinstance(name, str) or not isinstance(result, str) or name in conclusions:
+            return None
+        conclusions[name] = result
+    return run if _matches_required_fields(conclusions, _EXCEPTION_APPLY_STEP_CONTRACT) else None
+
+
+def _qualified_exception_artifact_metadata(
+    inventory: object, *, run_id: int, run_head_sha: str
+) -> Mapping[str, object] | None:
+    """One complete artifact inventory, with neither carrier nor recovery writer."""
+
+    payload = _as_mapping(inventory)
+    artifacts = None if payload is None else payload.get("artifacts")
+    if not isinstance(artifacts, list) or payload is None:
+        return None
+    if type(payload.get("total_count")) is not int or payload["total_count"] != len(artifacts):
+        return None
+    if any(not isinstance(item, Mapping) for item in artifacts):
+        return None
+    if any(
+        item.get("name") in {_APPLICATION_RECOVERY_ARTIFACT, "carrier-plan.json"}
+        for item in artifacts
+        if isinstance(item, Mapping)
+    ):
+        return None
+    candidates = [
+        item
+        for item in artifacts
+        if isinstance(item, Mapping) and item.get("name") in _APPLICATION_EXCEPTION_ARTIFACTS
+    ]
+    if len(candidates) != 1:
+        return None
+    artifact = candidates[0]
+    workflow_run = _as_mapping(artifact.get("workflow_run"))
+    required = {"id": run_id, "head_sha": run_head_sha}
+    if workflow_run is None or not _matches_required_fields(workflow_run, required):
+        return None
+    return artifact
+
+
+def _qualified_exception_document(
+    document: object,
+    *,
+    repository: str,
+    record: ApplicationDecisionRecord,
+    run: Mapping[str, object],
+    run_id: int,
+    run_attempt: int,
+) -> Mapping[str, object] | None:
+    """Canonical typed identity; diagnostic strings never determine admission."""
+
+    if not isinstance(document, Mapping) or set(document) != _EXCEPTION_DOCUMENT_KEYS:
+        return None
+    expected = {
+        "schema": "scheduled-agent-execution-exception/v1",
+        "repository": repository,
+        "issue_number": record.issue_number,
+        "role": record.role,
+        "action": record.action,
+        "change": record.change,
+        "revision": run.get("head_sha"),
+        "request_comment_id": record.request_comment_id,
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+        "classification": "UNCLASSIFIED_EXECUTION_EXCEPTION",
+    }
+    if not _matches_required_fields(document, expected):
+        return None
+    trigger = _strict_positive_int(document.get("trigger_comment_id"))
+    if trigger is None or run.get("display_title") != f"Scheduled Agent Application {trigger}":
+        return None
+    if document.get("mutation_status") not in {
+        "UNKNOWN_REQUIRES_FRESH_RECONCILIATION",
+        "NO_APPLICATION_WRITE_ATTEMPTED",
+    }:
+        return None
+    if document.get("attempted_operation") != document.get("unfinished_boundary"):
+        return None
+    if any(
+        not isinstance(document.get(key), str)
+        for key in ("exception_type", "raw_error", "raw_traceback", "attempted_operation")
+    ):
+        return None
+    return document
+
+
 def read_application_exception_artifact(
     repository: str,
     token: str,
@@ -5130,152 +5311,52 @@ def read_application_exception_artifact(
         or re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256) is None
     ):
         return unavailable()
-    run = _as_mapping(api_read(repository, token, f"actions/runs/{run_id}"))
-    jobs_payload = _as_mapping(api_read(repository, token, f"actions/runs/{run_id}/jobs"))
-    jobs = None if jobs_payload is None else jobs_payload.get("jobs")
-    if (
-        run is None
-        or run.get("id") != run_id
-        or run.get("run_attempt") != run_attempt
-        or run.get("status") != "completed"
-        or run.get("conclusion") != "failure"
-        or not isinstance(run.get("head_sha"), str)
-        or not isinstance(jobs, list)
-    ):
-        return unavailable()
-    exact_jobs = [
-        job
-        for job in jobs
-        if isinstance(job, Mapping) and job.get("id") == job_id and job.get("name") == "apply"
-    ]
-    if len(exact_jobs) != 1:
-        return unavailable()
-    job = exact_jobs[0]
-    steps = job.get("steps")
-    if (
-        job.get("run_attempt") != run_attempt
-        or job.get("status") != "completed"
-        or job.get("conclusion") != "failure"
-        or not isinstance(steps, list)
-    ):
-        return unavailable()
-    conclusions: dict[str, str] = {}
-    for step in steps:
-        if not isinstance(step, Mapping):
-            return unavailable()
-        name, conclusion = step.get("name"), step.get("conclusion")
-        if not isinstance(name, str) or not isinstance(conclusion, str) or name in conclusions:
-            return unavailable()
-        conclusions[name] = conclusion
-    if (
-        conclusions.get("Freshly authorize and apply repository-owned effects") != "failure"
-        or conclusions.get("Upload exact application recovery evidence") != "skipped"
-        or conclusions.get("Upload pre-ACCEPT or interrupted application exception evidence")
-        != "success"
-        or any(
-            conclusions.get(name) != "skipped"
-            for name in (
-                "Persist exact external carrier plan",
-                "Upload exact external carrier plan",
-                "Persist the derived successor after exact validation",
-                "Upload final exact application recovery evidence",
-            )
-        )
-    ):
-        return unavailable()
-    inventory = _as_mapping(
-        api_read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100")
+    run = _qualified_exception_apply_run(
+        repository,
+        token,
+        run_id=run_id,
+        run_attempt=run_attempt,
+        job_id=job_id,
+        read=api_read,
     )
-    artifacts = None if inventory is None else inventory.get("artifacts")
-    if (
-        not isinstance(artifacts, list)
-        or inventory is None
-        or type(inventory.get("total_count")) is not int
-        or inventory["total_count"] != len(artifacts)
-        or any(not isinstance(item, Mapping) for item in artifacts)
-    ):
+    if run is None:
         return unavailable()
-    if any(
-        isinstance(item, Mapping)
-        and item.get("name") in {_APPLICATION_RECOVERY_ARTIFACT, "carrier-plan.json"}
-        for item in artifacts
-    ):
+    artifact = _qualified_exception_artifact_metadata(
+        api_read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100"),
+        run_id=run_id,
+        run_head_sha=cast(str, run["head_sha"]),
+    )
+    if artifact is None:
         return unavailable()
-    matching = [
-        item
-        for item in artifacts
-        if isinstance(item, Mapping) and item.get("name") in _APPLICATION_EXCEPTION_ARTIFACTS
-    ]
-    if len(matching) != 1:
-        return unavailable()
-    artifact = matching[0]
     artifact_id = _strict_positive_int(artifact.get("id"))
     digest = artifact.get("digest")
-    workflow_run = _as_mapping(artifact.get("workflow_run"))
     if (
         artifact_id is None
         or artifact.get("expired") is not False
         or not isinstance(digest, str)
         or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
-        or workflow_run is None
-        or workflow_run.get("id") != run_id
-        or workflow_run.get("head_sha") != run["head_sha"]
     ):
         return unavailable()
     raw = download(repository, token, f"actions/artifacts/{artifact_id}/zip")
-    if not raw or len(raw) > _MAX_APPLICATION_RECOVERY_BYTES:
-        return unavailable()
-    if f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest:
+    if (
+        not raw
+        or len(raw) > _MAX_APPLICATION_RECOVERY_BYTES
+        or f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest
+    ):
         return unavailable()
     try:
-        document = json.loads(raw.decode("utf-8"))
+        raw_document = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return unavailable()
-    if not isinstance(document, Mapping):
-        return unavailable()
-    expected_keys = {
-        "schema",
-        "repository",
-        "issue_number",
-        "role",
-        "action",
-        "change",
-        "revision",
-        "request_comment_id",
-        "trigger_comment_id",
-        "run_id",
-        "run_attempt",
-        "attempted_operation",
-        "exception_type",
-        "raw_error",
-        "raw_traceback",
-        "mutation_status",
-        "unfinished_boundary",
-        "classification",
-    }
-    trigger = _strict_positive_int(document.get("trigger_comment_id"))
-    if (
-        set(document) != expected_keys
-        or document.get("schema") != "scheduled-agent-execution-exception/v1"
-        or document.get("repository") != repository
-        or (document.get("issue_number"), document.get("role"), document.get("action"))
-        != (record.issue_number, record.role, record.action)
-        or document.get("change") != record.change
-        or document.get("request_comment_id") != record.request_comment_id
-        or document.get("run_id") != run_id
-        or document.get("run_attempt") != run_attempt
-        or document.get("revision") != run.get("head_sha")
-        or trigger is None
-        or run.get("display_title") != f"Scheduled Agent Application {trigger}"
-        or document.get("classification") != "UNCLASSIFIED_EXECUTION_EXCEPTION"
-        or document.get("mutation_status")
-        not in {"UNKNOWN_REQUIRES_FRESH_RECONCILIATION", "NO_APPLICATION_WRITE_ATTEMPTED"}
-        or document.get("attempted_operation") != document.get("unfinished_boundary")
-        or any(
-            not isinstance(document.get(key), str)
-            for key in ("exception_type", "raw_error", "raw_traceback", "attempted_operation")
-        )
-    ):
+    document = _qualified_exception_document(
+        raw_document,
+        repository=repository,
+        record=record,
+        run=run,
+        run_id=run_id,
+        run_attempt=run_attempt,
+    )
+    if document is None:
         return unavailable()
     episode = _canonical_sha256(
         {

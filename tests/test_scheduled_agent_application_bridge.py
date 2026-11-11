@@ -5511,6 +5511,8 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
         "wrong-run",
         "recovery-present",
         "truncated-inventory",
+        "duplicate-job",
+        "wrong-run-head",
     ],
 )
 def test_execution_exception_is_a_distinct_verified_predecessor(
@@ -5591,22 +5593,23 @@ def test_execution_exception_is_a_distinct_verified_predecessor(
                 "run_attempt": 1,
                 "status": "completed",
                 "conclusion": "failure",
-                "head_sha": revision,
+                "head_sha": "f" * 40 if alteration == "wrong-run-head" else revision,
                 "display_title": f"Scheduled Agent Application {trigger}",
             }
         if path == f"actions/runs/{run_id}/jobs":
-            return {
-                "jobs": [
-                    {
-                        "id": job_id,
-                        "name": "apply",
-                        "run_attempt": 1,
-                        "status": "completed",
-                        "conclusion": "failure",
-                        "steps": steps,
-                    }
-                ]
-            }
+            jobs = [
+                {
+                    "id": job_id,
+                    "name": "apply",
+                    "run_attempt": 1,
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "steps": steps,
+                }
+            ]
+            if alteration == "duplicate-job":
+                jobs.append(dict(jobs[0], id=job_id + 1))
+            return {"jobs": jobs}
         if path == f"actions/runs/{run_id}/artifacts?per_page=100":
             return {
                 "total_count": len(artifacts) + (1 if alteration == "truncated-inventory" else 0),
