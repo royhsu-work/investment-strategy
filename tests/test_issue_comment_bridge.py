@@ -1225,16 +1225,18 @@ def test_accepted_formal_result_waits_for_consequence_postconditions(
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/777/jobs":
+        if path == "actions/runs/777/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 888,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "success",
                     }
-                ]
+                ],
             }
         raise AssertionError(path)
 
@@ -1599,8 +1601,8 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier(
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [{"id": 888, "name": "apply"}]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [{"id": 888, "name": "apply", "run_attempt": 1}]}
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -1764,14 +1766,16 @@ def _completion_matrix_reader(
         if path.startswith("actions/runs/") and path.endswith("/jobs"):
             run_id = int(path.split("/")[2])
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": run_id + 100,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": terminal_conclusion,
                     }
-                ]
+                ],
             }
         raise AssertionError(path)
 
@@ -1840,10 +1844,10 @@ def test_preaccept_exception_blocks_unchanged_code_but_recovers_after_applicatio
                     {
                         "id": 9000,
                         "display_title": "Scheduled Agent Application 654",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                         "head_sha": request_revision,
-                        "run_attempt": 1,
                     }
                 ]
             }
@@ -1991,9 +1995,21 @@ def test_native_malformed_worker_preaccept_exception_retires_without_main_advanc
                     }
                 ]
             }
-        if path == "actions/runs/42393397526/jobs":
+        if (
+            path
+            == f"actions/runs/42393397526/attempts/{2 if case == 'missing-attempt' else 1}/jobs"
+        ):
             return {
-                "jobs": [{"id": 1, "name": "apply", "status": "completed", "conclusion": "failure"}]
+                "total_count": 1,
+                "jobs": [
+                    {
+                        "id": 1,
+                        "name": "apply",
+                        "run_attempt": 2 if case == "missing-attempt" else 1,
+                        "status": "completed",
+                        "conclusion": "failure",
+                    }
+                ],
             }
         if path == "issues/322":
             return current_issue
@@ -2164,6 +2180,7 @@ def test_terminal_preactcept_candidate_survives_archived_authorization_revision(
                     {
                         "id": 9000,
                         "display_title": "Scheduled Agent Application 654",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                     }
@@ -2171,16 +2188,18 @@ def test_terminal_preactcept_candidate_survives_archived_authorization_revision(
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/9000/jobs":
+        if path == "actions/runs/9000/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 9100,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                     }
-                ]
+                ],
             }
         if path.startswith("compare/"):
             raise OSError("archived commit is no longer observable")
@@ -2645,16 +2664,18 @@ def test_unbound_terminal_transport_is_inert_history() -> None:
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/9654/jobs":
+        if path == "actions/runs/9654/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 9754,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                     }
-                ]
+                ],
             }
         raise AssertionError(path)
 
@@ -2757,16 +2778,18 @@ def test_raw_current_source_request_is_classified_after_source_binding() -> None
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/9656/jobs":
+        if path == "actions/runs/9656/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 9756,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                     }
-                ]
+                ],
             }
         raise AssertionError(path)
 
@@ -2944,16 +2967,18 @@ def test_preprotocol_inert_request_is_retired_without_semantic_replay() -> None:
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/777/jobs":
+        if path == "actions/runs/777/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 888,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                     }
-                ]
+                ],
             }
         if path == f"compare/{legacy_revision}...{bridge._APPLICATION_DECISION_PROTOCOL_REVISION}":
             return {"status": "ahead", "base_commit": {"sha": legacy_revision}}
@@ -3005,8 +3030,8 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [{"id": 888, "name": "apply"}]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [{"id": 888, "name": "apply", "run_attempt": 1}]}
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -3251,8 +3276,11 @@ def test_current_accepted_application_stops_replaying_after_repeated_failed_atte
             }
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == "actions/runs/35762997171/jobs":
-            return {"jobs": [{"id": 107028234822, "name": "apply"}]}
+        if path == "actions/runs/35762997171/attempts/6/jobs":
+            return {
+                "total_count": 1,
+                "jobs": [{"id": 107028234822, "name": "apply", "run_attempt": 6}],
+            }
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -3323,8 +3351,8 @@ def test_live_322_accepted_request_does_not_resume_completed_failed_application_
             return {"workflow_runs": [run]}
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 0, "artifacts": []}
-        if path == f"actions/runs/{run_id}/jobs":
-            return {"jobs": [job]}
+        if path == f"actions/runs/{run_id}/attempts/{run['run_attempt']}/jobs":
+            return {"total_count": 1, "jobs": [dict(job, run_attempt=run["run_attempt"])]}
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -3346,7 +3374,7 @@ def test_live_322_accepted_request_does_not_resume_completed_failed_application_
     assert job_id == 107664011251
     assert run["run_attempt"] == 7
     assert any(path.startswith("actions/workflows/") for path in observed)
-    assert f"actions/runs/{run_id}/jobs" in observed
+    assert f"actions/runs/{run_id}/attempts/{run['run_attempt']}/jobs" in observed
 
 
 def test_new_evidence_continues_past_the_former_attempt_threshold() -> None:
@@ -3842,12 +3870,14 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
     )
 
     def read(_repo: str, _token: str, path: str) -> object:
-        assert path == "actions/runs/42827477053/jobs"
+        assert path == "actions/runs/42827477053/attempts/1/jobs"
         return {
+            "total_count": 1,
             "jobs": [
                 {
                     "id": evidence.job_id,
                     "name": "apply",
+                    "run_attempt": 1,
                     "status": "completed",
                     "conclusion": "failure",
                     "steps": [
@@ -3863,7 +3893,7 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
                         },
                     ],
                 }
-            ]
+            ],
         }
 
     monkeypatch.setattr(bridge, "read_application_exception_artifact", lambda *_a, **_kw: evidence)
@@ -4286,12 +4316,14 @@ def _carrier_completion_reader(
                     }
                 ]
             }
-        if path == "actions/runs/777/jobs":
+        if path == "actions/runs/777/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 888,
                         "name": "apply",
+                        "run_attempt": 1,
                         "steps": [
                             {
                                 "name": "Upload exact external carrier plan",
@@ -4299,7 +4331,7 @@ def _carrier_completion_reader(
                             }
                         ],
                     }
-                ]
+                ],
             }
         if path == "actions/runs/777/artifacts?per_page=100":
             return {
@@ -4384,12 +4416,14 @@ def test_completed_application_prefers_saved_qualified_carrier_over_producer_res
                     }
                 ]
             }
-        if path == "actions/runs/777/jobs":
+        if path == "actions/runs/777/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 888,
                         "name": "apply",
+                        "run_attempt": 1,
                         "steps": [
                             {
                                 "name": "Upload exact external carrier plan",
@@ -4397,7 +4431,7 @@ def test_completed_application_prefers_saved_qualified_carrier_over_producer_res
                             }
                         ],
                     }
-                ]
+                ],
             }
         if path == "actions/runs/777/artifacts?per_page=100":
             return {
@@ -4559,12 +4593,14 @@ def test_first_change_application_handoff_is_resumable_without_replaying_produce
                     }
                 ]
             }
-        if path == "actions/runs/777/jobs":
+        if path == "actions/runs/777/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 888,
                         "name": "apply",
+                        "run_attempt": 1,
                         "steps": [
                             {
                                 "name": "Upload exact external carrier plan",
@@ -4572,7 +4608,7 @@ def test_first_change_application_handoff_is_resumable_without_replaying_produce
                             }
                         ],
                     }
-                ]
+                ],
             }
         if path == "actions/runs/777/artifacts?per_page=100":
             return {
@@ -4723,8 +4759,8 @@ def test_read_only_reconciliation_reobserves_later_complete_without_replay(
     monkeypatch.setattr(bridge, "accepted_read_only_effects_complete", observe)
 
     def fake_read(_repository: str, _token: str, path: str) -> object:
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [{"id": 888, "name": "apply"}]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [{"id": 888, "name": "apply", "run_attempt": 1}]}
         if path == "":
             return {"default_branch": "main"}
         raise AssertionError(path)
@@ -4812,8 +4848,8 @@ def test_legacy_post_effect_result_only_resumes_after_fresh_proof(
     monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_kw: recovery)
 
     def read(_repository: str, _token: str, path: str) -> object:
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [{"id": 888, "name": "apply"}]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [{"id": 888, "name": "apply", "run_attempt": 1}]}
         raise AssertionError(path)
 
     def classify() -> bridge.ApplicationCompletion:
@@ -5023,8 +5059,8 @@ def test_completed_application_distinguishes_absent_from_incomplete_carrier_list
                         }
                     ]
                 }
-            if path == "actions/runs/777/jobs":
-                return {"jobs": [{"id": 888, "name": "apply"}]}
+            if path == "actions/runs/777/attempts/50/jobs":
+                return {"total_count": 1, "jobs": [{"id": 888, "name": "apply", "run_attempt": 50}]}
             if path == "actions/runs/777/artifacts?per_page=100":
                 return {"total_count": total_count, "artifacts": []}
             raise AssertionError(path)
@@ -6118,6 +6154,36 @@ def test_carrier_outcome_cannot_claim_matching_precondition_with_other_observati
     assert reason == "application-completion-carrier-outcome-invalid"
 
 
+@pytest.mark.parametrize("missing_count", [False, True])
+def test_application_job_rejects_incomplete_job_inventory_before_recovery(
+    monkeypatch: pytest.MonkeyPatch, missing_count: bool
+) -> None:
+    """A valid-looking first apply job does not prove an exhaustive inventory."""
+
+    run = {
+        "id": 777,
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "failure",
+    }
+    monkeypatch.setattr(bridge, "_application_runs", lambda *_args, **_kwargs: [run])
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path.startswith("actions/runs/777/attempts/1/jobs"):
+            response: dict[str, object] = {
+                "total_count": 2,
+                "jobs": [{"id": 888, "name": "apply", "run_attempt": 1}],
+            }
+            if missing_count:
+                del response["total_count"]
+            return response
+        raise AssertionError(path)
+
+    completion = bridge._application_job("owner/repo", "token", 90, read=read)
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-job-list-incomplete"
+
+
 @pytest.mark.parametrize(
     ("run_id", "run_attempt", "job_id", "transport_comment_id"),
     [
@@ -6173,17 +6239,19 @@ def test_completed_legacy_application_job_preserves_historical_identity_without_
                     }
                 ]
             }
-        if path == f"actions/runs/{run_id}/jobs":
+        if path == f"actions/runs/{run_id}/attempts/{run_attempt}/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": job_id,
                         "name": "apply",
+                        "run_attempt": run_attempt,
                         "status": "completed",
                         "conclusion": "failure",
                         "steps": steps,
                     }
-                ]
+                ],
             }
         raise AssertionError(f"unexpected read: {path}")
 
@@ -6215,7 +6283,7 @@ def test_completed_legacy_application_job_preserves_historical_identity_without_
         assert completion.job_id == job_id
     assert requested == [
         "actions/workflows/scheduled-agent-application.yml/runs?event=issue_comment&per_page=100&page=1",
-        f"actions/runs/{run_id}/jobs",
+        f"actions/runs/{run_id}/attempts/{run_attempt}/jobs",
     ]
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "/rerun" not in workflow
@@ -6240,12 +6308,14 @@ def test_recovery_artifact_read_failure_is_not_legacy_missing_evidence(
                     }
                 ]
             }
-        if path == "actions/runs/37563005754/jobs":
+        if path == "actions/runs/37563005754/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": 112607809410,
                         "name": "apply",
+                        "run_attempt": 1,
                         "status": "completed",
                         "conclusion": "failure",
                         "steps": [
@@ -6256,7 +6326,7 @@ def test_recovery_artifact_read_failure_is_not_legacy_missing_evidence(
                             {"name": "Complete job", "conclusion": "success"},
                         ],
                     }
-                ]
+                ],
             }
         raise AssertionError(f"unexpected read: {path}")
 
@@ -6587,8 +6657,8 @@ def test_terminal_merge_effect_reconciles_without_error_semantics(
         reads.append(path)
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [job]}
+        if path == f"actions/runs/777/attempts/{run['run_attempt']}/jobs":
+            return {"total_count": 1, "jobs": [dict(job, run_attempt=1)]}
         if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
             if alteration == "terminal-comment-read-failed":
                 raise OSError("terminal source history unavailable")
@@ -6736,8 +6806,8 @@ def test_terminal_carrier_effect_reconciles_by_operation_postcondition(
         assert repository == "royhsu-work/investment-strategy"
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [job]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [dict(job, run_attempt=1)]}
         if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
             return []
         if path == "issues/322":
@@ -6782,8 +6852,8 @@ def test_merge_prewrite_reconciliation_refuses_unavailable_github_reads(
     def read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [job]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [dict(job, run_attempt=1)]}
         if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
             return []
         if path == "issues/322":
@@ -6853,13 +6923,13 @@ def test_new_ingress_cannot_retire_an_accepted_partial_write(
         reads.append(path)
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [job]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [dict(job, run_attempt=1)]}
         if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
-            assert "actions/runs/777/jobs" in reads
+            assert "actions/runs/777/attempts/1/jobs" in reads
             return list(terminal_comments)
         if path == "issues/322":
-            assert "actions/runs/777/jobs" in reads
+            assert "actions/runs/777/attempts/1/jobs" in reads
             return issue
         if path == "issues/comments/90":
             return ingress
@@ -6972,13 +7042,13 @@ def test_create_retarget_and_post_terminal_formal_race_do_not_retire_accepted(
         reads.append(path)
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
-        if path == "actions/runs/777/jobs":
-            return {"jobs": [job]}
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [dict(job, run_attempt=1)]}
         if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
-            assert "actions/runs/777/jobs" in reads
+            assert "actions/runs/777/attempts/1/jobs" in reads
             return terminal_comments
         if path == "issues/322":
-            assert "actions/runs/777/jobs" in reads
+            assert "actions/runs/777/attempts/1/jobs" in reads
             return _terminal_carrier_issue("implement-change")
         if path == "issues/comments/90":
             return ingress
@@ -6986,7 +7056,7 @@ def test_create_retarget_and_post_terminal_formal_race_do_not_retire_accepted(
             return {"total_count": 0, "artifacts": []}
         if path.startswith("pulls?state=all&head="):
             assert "&base=" not in path
-            assert "actions/runs/777/jobs" in reads
+            assert "actions/runs/777/attempts/1/jobs" in reads
             return (
                 [
                     {
@@ -7094,11 +7164,18 @@ def test_pending_capacity_cancel_before_accept_recovers_on_fresh_dispatch(
                     }
                 ]
             }
-        if path == "actions/runs/90001/jobs":
+        if path == "actions/runs/90001/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
-                    {"id": 90002, "name": "apply", "status": "completed", "conclusion": terminal}
-                ]
+                    {
+                        "id": 90002,
+                        "name": "apply",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": terminal,
+                    }
+                ],
             }
         raise AssertionError(path)
 
@@ -7184,7 +7261,7 @@ def test_preactcept_cancel_before_apply_job_is_terminal_no_accept(
                     }
                 ]
             }
-        if path == "actions/runs/90021/jobs":
+        if path == "actions/runs/90021/attempts/1/jobs":
             return {"total_count": 0, "jobs": []}
         raise AssertionError(path)
 
@@ -7228,7 +7305,12 @@ def test_unqualified_no_apply_job_never_proves_terminal_no_accept(
                     }
                 ]
             }
-        if path == "actions/runs/90021/jobs":
+        if path in {
+            "actions/runs/90021/attempts/1/jobs",
+            "actions/runs/90021/attempts/1/jobs?per_page=100&page=1",
+            "actions/runs/90021/attempts/2/jobs",
+            "actions/runs/90021/attempts/2/jobs?per_page=100&page=1",
+        }:
             return {"total_count": total_count, "jobs": []}
         raise AssertionError(path)
 
@@ -7267,12 +7349,12 @@ def test_no_apply_job_inventory_requires_unique_positive_ids(
                     }
                 ]
             }
-        if path == "actions/runs/90021/jobs":
+        if path == "actions/runs/90021/attempts/1/jobs":
             return {
                 "total_count": 2,
                 "jobs": [
-                    {"id": job_ids[0], "name": "prepare"},
-                    {"id": job_ids[1], "name": "idle-admission"},
+                    {"id": job_ids[0], "name": "prepare", "run_attempt": 1},
+                    {"id": job_ids[1], "name": "idle-admission", "run_attempt": 1},
                 ],
             }
         raise AssertionError(path)

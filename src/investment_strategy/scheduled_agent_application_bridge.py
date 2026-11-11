@@ -50,6 +50,7 @@ from investment_strategy.scheduled_agent_carrier import (
     CarrierRequired,
     carrier_plan_document,
     github_comment_has_app_provenance,
+    github_complete_run_jobs,
     github_paginated_mappings,
     github_read_bytes_with_retry,
     github_repository_api_url,
@@ -4883,22 +4884,16 @@ def read_application_recovery_artifact(
         or not isinstance(run.get("head_sha"), str)
     ):
         return unavailable()
-    jobs_payload = api_read(repository, token, f"actions/runs/{run_id}/jobs")
-    if not isinstance(jobs_payload, Mapping) or not isinstance(jobs_payload.get("jobs"), list):
+    all_jobs = github_complete_run_jobs(
+        repository, token, run_id=run_id, run_attempt=run_attempt, read=api_read
+    )
+    if all_jobs is None:
         return unavailable()
-    jobs = [
-        item
-        for item in cast(list[object], jobs_payload["jobs"])
-        if isinstance(item, Mapping) and item.get("id") == job_id and item.get("name") == "apply"
-    ]
-    if len(jobs) != 1:
+    jobs = [item for item in all_jobs if item.get("name") == "apply"]
+    if len(jobs) != 1 or jobs[0].get("id") != job_id:
         return unavailable()
     job = cast(Mapping[str, object], jobs[0])
-    if (
-        job.get("run_attempt") != run_attempt
-        or job.get("status") != "completed"
-        or job.get("conclusion") not in {"success", "failure"}
-    ):
+    if job.get("status") != "completed" or job.get("conclusion") not in {"success", "failure"}:
         return unavailable()
     steps = job.get("steps")
     if not isinstance(steps, list):
@@ -5165,13 +5160,12 @@ def _qualified_exception_apply_run(
         or _SHA.fullmatch(cast(str, run["head_sha"])) is None
     ):
         return None
-    jobs_payload = _as_mapping(read(repository, token, f"actions/runs/{run_id}/jobs"))
-    jobs = None if jobs_payload is None else jobs_payload.get("jobs")
-    if not isinstance(jobs, list):
+    jobs = github_complete_run_jobs(
+        repository, token, run_id=run_id, run_attempt=run_attempt, read=read
+    )
+    if jobs is None:
         return None
-    apply_jobs = [
-        item for item in jobs if isinstance(item, Mapping) and item.get("name") == "apply"
-    ]
+    apply_jobs = [item for item in jobs if item.get("name") == "apply"]
     if len(apply_jobs) != 1:
         return None
     job = apply_jobs[0]
@@ -5179,7 +5173,6 @@ def _qualified_exception_apply_run(
         job,
         {
             "id": job_id,
-            "run_attempt": run_attempt,
             "status": "completed",
             "conclusion": "failure",
         },

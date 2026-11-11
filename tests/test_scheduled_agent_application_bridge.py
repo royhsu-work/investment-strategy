@@ -74,6 +74,98 @@ _TEST_RECOVERY_EPISODE_SHA256 = "3" * 64
 
 
 @pytest.mark.parametrize(
+    ("case", "expected_count"),
+    [
+        ("complete-default", 1),
+        ("missing-job-attempt-valid", 1),
+        ("complete-zero", 0),
+        ("refreshed-complete", 2),
+        ("paginated-complete", 101),
+        ("missing-total", None),
+        ("truncated-default", None),
+        ("short-explicit-page", None),
+        ("changed-page-count", None),
+        ("duplicate-cross-page-id", None),
+        ("wrong-cross-page-attempt", None),
+        ("wrong-cross-page-run", None),
+        ("unreadable-page", None),
+    ],
+)
+def test_actions_job_inventory_requires_complete_exact_pages(
+    case: str, expected_count: int | None
+) -> None:
+    """Only the shared, count-qualified source reader can prove job uniqueness."""
+
+    run_id, run_attempt = 90001, 2
+    observed: list[str] = []
+    apply = {"id": 1, "name": "apply", "run_attempt": run_attempt}
+    idle = {"id": 2, "name": "idle-admission", "run_attempt": run_attempt}
+    hundred = [apply, idle] + [
+        {"id": index, "name": "idle-admission", "run_attempt": run_attempt}
+        for index in range(3, 101)
+    ]
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        observed.append(path)
+        if path == f"actions/runs/{run_id}/attempts/{run_attempt}/jobs":
+            if case == "complete-zero":
+                return {"total_count": 0, "jobs": []}
+            if case == "missing-total":
+                return {"jobs": [apply]}
+            if case == "complete-default":
+                return {"total_count": 1, "jobs": [apply]}
+            if case == "missing-job-attempt-valid":
+                return {"total_count": 1, "jobs": [{"id": 1, "name": "apply", "run_id": run_id}]}
+            if case == "truncated-default":
+                return {"total_count": 2, "jobs": [apply]}
+            return {"total_count": 2 if case == "refreshed-complete" else 101, "jobs": [apply]}
+        if path == f"actions/runs/{run_id}/attempts/{run_attempt}/jobs?per_page=100&page=1":
+            if case == "refreshed-complete":
+                return {"total_count": 2, "jobs": [apply, idle]}
+            if case == "truncated-default":
+                return {"total_count": 2, "jobs": [apply]}
+            if case == "short-explicit-page":
+                return {"total_count": 101, "jobs": [apply]}
+            return {"total_count": 101, "jobs": hundred}
+        if path == f"actions/runs/{run_id}/attempts/{run_attempt}/jobs?per_page=100&page=2":
+            if case == "unreadable-page":
+                raise OSError("temporary read failure")
+            if case == "changed-page-count":
+                return {
+                    "total_count": 102,
+                    "jobs": [{"id": 101, "name": "apply", "run_attempt": 2}],
+                }
+            if case == "duplicate-cross-page-id":
+                return {"total_count": 101, "jobs": [apply]}
+            if case == "wrong-cross-page-attempt":
+                return {
+                    "total_count": 101,
+                    "jobs": [{"id": 101, "name": "apply", "run_attempt": 1}],
+                }
+            if case == "wrong-cross-page-run":
+                return {
+                    "total_count": 101,
+                    "jobs": [{"id": 101, "name": "apply", "run_id": run_id + 1}],
+                }
+            return {
+                "total_count": 101,
+                "jobs": [{"id": 101, "name": "idle-admission", "run_attempt": 2}],
+            }
+        raise AssertionError(path)
+
+    qualified = carrier.github_complete_run_jobs(
+        _REPOSITORY,
+        "token",
+        run_id=run_id,
+        run_attempt=run_attempt,
+        read=read,
+    )
+    assert (None if qualified is None else len(qualified)) == expected_count
+    if case in {"missing-total", "complete-default", "complete-zero", "missing-job-attempt-valid"}:
+        assert observed == [f"actions/runs/{run_id}/attempts/{run_attempt}/jobs"]
+
+
+@pytest.mark.parametrize(
     ("module_name", "reader_kind"),
     [
         ("scheduled_agent_runtime", "object"),
@@ -5449,8 +5541,9 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
                 "head_sha": run_head,
                 "display_title": "Scheduled Agent Application 90",
             }
-        if path == f"actions/runs/{run_id}/jobs":
+        if path == f"actions/runs/{run_id}/attempts/1/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": job_id,
@@ -5465,7 +5558,7 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
                             }
                         ],
                     }
-                ]
+                ],
             }
         if path == f"actions/runs/{run_id}/artifacts?per_page=100":
             return {
@@ -5513,6 +5606,10 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
         "truncated-inventory",
         "duplicate-job",
         "wrong-run-head",
+        "truncated-jobs",
+        "missing-job-total",
+        "cross-page-duplicate-apply",
+        "cross-page-unreadable",
     ],
 )
 def test_execution_exception_is_a_distinct_verified_predecessor(
@@ -5596,7 +5693,10 @@ def test_execution_exception_is_a_distinct_verified_predecessor(
                 "head_sha": "f" * 40 if alteration == "wrong-run-head" else revision,
                 "display_title": f"Scheduled Agent Application {trigger}",
             }
-        if path == f"actions/runs/{run_id}/jobs":
+        if path in {
+            f"actions/runs/{run_id}/attempts/1/jobs",
+            f"actions/runs/{run_id}/attempts/1/jobs?per_page=100&page=1",
+        }:
             jobs = [
                 {
                     "id": job_id,
@@ -5607,9 +5707,37 @@ def test_execution_exception_is_a_distinct_verified_predecessor(
                     "steps": steps,
                 }
             ]
+            if alteration == "valid":
+                # GitHub's documented job response does not promise run_attempt.
+                # The attempt-specific URL, not this optional field, owns identity.
+                jobs[0].pop("run_attempt")
             if alteration == "duplicate-job":
                 jobs.append(dict(jobs[0], id=job_id + 1))
-            return {"jobs": jobs}
+            if alteration.startswith("cross-page-"):
+                jobs.extend(
+                    {"id": job_id + index, "name": "idle-admission", "run_attempt": 1}
+                    for index in range(1, 100)
+                )
+            inventory: dict[str, object] = {
+                "total_count": len(jobs)
+                + (
+                    1
+                    if alteration
+                    in {"truncated-jobs", "cross-page-duplicate-apply", "cross-page-unreadable"}
+                    else 0
+                ),
+                "jobs": jobs,
+            }
+            if alteration == "missing-job-total":
+                del inventory["total_count"]
+            return inventory
+        if path == f"actions/runs/{run_id}/attempts/1/jobs?per_page=100&page=2":
+            if alteration == "cross-page-duplicate-apply":
+                return {
+                    "total_count": 101,
+                    "jobs": [{"id": job_id + 100, "name": "apply", "run_attempt": 1}],
+                }
+            raise OSError("unavailable second job page")
         if path == f"actions/runs/{run_id}/artifacts?per_page=100":
             return {
                 "total_count": len(artifacts) + (1 if alteration == "truncated-inventory" else 0),
@@ -5811,8 +5939,9 @@ def test_recovery_reader_binds_rerun_checkout_to_immutable_original_run_head(
                 "head_sha": original_head,
                 "display_title": f"Scheduled Agent Application {request_comment_id}",
             }
-        if path == f"actions/runs/{run_id}/jobs":
+        if path == f"actions/runs/{run_id}/attempts/{run_attempt}/jobs":
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": job_id,
@@ -5827,7 +5956,7 @@ def test_recovery_reader_binds_rerun_checkout_to_immutable_original_run_head(
                             }
                         ],
                     }
-                ]
+                ],
             }
         if path == f"actions/runs/{run_id}/artifacts?per_page=100":
             return {
@@ -5895,13 +6024,14 @@ def test_strict_recovery_reader_distinguishes_legacy_absence_from_missing_upload
                 "status": "completed",
                 "head_sha": _REVISION,
             }
-        if path == f"actions/runs/{run_id}/jobs":
+        if path == f"actions/runs/{run_id}/attempts/1/jobs":
             steps = (
                 [{"name": "Upload exact application recovery evidence", "conclusion": "success"}]
                 if has_upload_step
                 else [{"name": "Complete job", "conclusion": "success"}]
             )
             return {
+                "total_count": 1,
                 "jobs": [
                     {
                         "id": job_id,
@@ -5911,7 +6041,7 @@ def test_strict_recovery_reader_distinguishes_legacy_absence_from_missing_upload
                         "conclusion": "failure",
                         "steps": steps,
                     }
-                ]
+                ],
             }
         if path == f"actions/runs/{run_id}/artifacts?per_page=100":
             return {"artifacts": []}

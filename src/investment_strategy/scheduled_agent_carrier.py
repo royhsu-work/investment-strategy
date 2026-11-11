@@ -108,6 +108,105 @@ def github_paginated_mappings(
         page += 1
 
 
+@dataclass(frozen=True)
+class _QualifiedJobsPage:
+    total_count: int
+    jobs: tuple[Mapping[str, object], ...]
+    ids: frozenset[int]
+
+
+def _qualified_jobs_page(
+    observed: object, *, run_id: int, run_attempt: int
+) -> _QualifiedJobsPage | None:
+    """Pure page contract; no partial or cross-attempt job qualifies."""
+
+    if not isinstance(observed, Mapping):
+        return None
+    count, raw_jobs = observed.get("total_count"), observed.get("jobs")
+    if type(count) is not int or count < 0 or not isinstance(raw_jobs, list):
+        return None
+    if len(raw_jobs) > 100 or any(not isinstance(job, Mapping) for job in raw_jobs):
+        return None
+    jobs = tuple(cast(Mapping[str, object], job) for job in raw_jobs)
+    ids = [job.get("id") for job in jobs]
+    if any(
+        type(job_id) is not int
+        or job_id <= 0
+        or not isinstance(job.get("name"), str)
+        or not job.get("name")
+        or (
+            "run_attempt" in job
+            and (type(job.get("run_attempt")) is not int or job.get("run_attempt") != run_attempt)
+        )
+        or type(job.get("run_id", run_id)) is not int
+        or job.get("run_id", run_id) != run_id
+        for job_id, job in zip(ids, jobs, strict=True)
+    ):
+        return None
+    unique_ids = frozenset(cast(int, job_id) for job_id in ids)
+    return _QualifiedJobsPage(count, jobs, unique_ids) if len(unique_ids) == len(jobs) else None
+
+
+def github_complete_run_jobs(
+    repository: str,
+    token: str,
+    *,
+    run_id: int,
+    run_attempt: int,
+    read: Callable[[str, str, str], object],
+) -> tuple[Mapping[str, object], ...] | None:
+    """Read one exhaustive Actions job inventory, or admit no job evidence.
+
+    A short page cannot prove the absence of another `apply` job. Every page
+    must carry the same authoritative total_count. An attempt-specific endpoint
+    binds the job inventory to the exact attempt even when GitHub omits the
+    optional per-job run_attempt; IDs must be unique across pages.
+    """
+
+    if type(run_id) is not int or run_id <= 0 or type(run_attempt) is not int or run_attempt <= 0:
+        return None
+    jobs: list[Mapping[str, object]] = []
+    seen_ids: set[int] = set()
+    total: int | None = None
+    page = 0
+    attempt_path = f"actions/runs/{run_id}/attempts/{run_attempt}/jobs"
+    while True:
+        try:
+            response = read(
+                repository,
+                token,
+                (attempt_path if page == 0 else f"{attempt_path}?per_page=100&page={page}"),
+            )
+        except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+            return None
+        qualified = _qualified_jobs_page(response, run_id=run_id, run_attempt=run_attempt)
+        if qualified is None:
+            return None
+        if total is None:
+            total = qualified.total_count
+        if (
+            qualified.total_count != total
+            or len(jobs) + len(qualified.jobs) > total
+            or not seen_ids.isdisjoint(qualified.ids)
+        ):
+            return None
+        seen_ids.update(qualified.ids)
+        jobs.extend(qualified.jobs)
+        if len(jobs) == total:
+            return tuple(jobs)
+        if page == 0:
+            # The default 30-item response was incomplete. Restart from an
+            # explicit 100-item first page, never treating it as page 1 of a
+            # different page size.
+            jobs.clear()
+            seen_ids.clear()
+            page = 1
+            continue
+        if len(qualified.jobs) != 100:
+            return None
+        page += 1
+
+
 class _NoRedirect(HTTPRedirectHandler):
     """Expose a signed GitHub artifact redirect without forwarding the API bearer token."""
 

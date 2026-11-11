@@ -61,6 +61,7 @@ from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
     QualifiedCarrierPlan,
     github_comment_has_app_provenance,
+    github_complete_run_jobs,
     github_paginated_mappings,
     github_read_bytes_with_retry,
     github_repository_api_url,
@@ -2754,18 +2755,16 @@ def _application_job(
             "application-completion-in-progress",
             request_comment_id=request_comment_id,
         )
-    jobs_payload = read(repository, token, f"actions/runs/{run_id}/jobs")
-    if not isinstance(jobs_payload, Mapping) or not isinstance(jobs_payload.get("jobs"), list):
+    all_jobs = github_complete_run_jobs(
+        repository, token, run_id=run_id, run_attempt=run_attempt, read=read
+    )
+    if all_jobs is None:
         return ApplicationCompletion(
             "INVALID",
             "application-completion-job-list-incomplete",
             request_comment_id=request_comment_id,
         )
-    jobs = [
-        item
-        for item in cast(list[object], jobs_payload["jobs"])
-        if isinstance(item, Mapping) and item.get("name") == "apply"
-    ]
+    jobs = [item for item in all_jobs if item.get("name") == "apply"]
     if len(jobs) != 1:
         return ApplicationCompletion(
             "INVALID",
@@ -3199,39 +3198,29 @@ def _preaccept_application_state(
             "application-completion-run-identity-incomplete",
             request_comment_id=request_comment_id,
         )
-    jobs_payload = read(repository, token, f"actions/runs/{run_id}/jobs")
-    if not isinstance(jobs_payload, Mapping) or not isinstance(jobs_payload.get("jobs"), list):
+    run_attempt = _positive_int(run.get("run_attempt"))
+    all_jobs = (
+        github_complete_run_jobs(
+            repository, token, run_id=run_id, run_attempt=run_attempt, read=read
+        )
+        if run_attempt is not None
+        else None
+    )
+    if all_jobs is None:
         return ApplicationCompletion(
             "INVALID",
             "application-completion-terminal-job-evidence-incomplete",
             request_comment_id=request_comment_id,
         )
-    raw_jobs = cast(list[object], jobs_payload["jobs"])
-    jobs = [item for item in raw_jobs if isinstance(item, Mapping) and item.get("name") == "apply"]
-    if not jobs:
-        # Capacity cancellation can finish before GitHub creates an apply job.
-        # Only a complete first-attempt inventory proves zero apply executions.
-        total_count = jobs_payload.get("total_count")
-        job_ids = [
-            _positive_int(item.get("id")) if isinstance(item, Mapping) else None
-            for item in raw_jobs
-        ]
-        if (
-            conclusion in {"cancelled", "timed_out", "skipped"}
-            and _positive_int(run.get("run_attempt")) == 1
-            and type(total_count) is int
-            and total_count == len(raw_jobs)
-            and all(job_id is not None for job_id in job_ids)
-            and len(set(job_ids)) == len(raw_jobs)
-            and all(
-                isinstance(item, Mapping) and isinstance(item.get("name"), str) for item in raw_jobs
-            )
-        ):
-            return ApplicationCompletion(
-                "REJECTED",
-                "application-completion-preaccept-terminal-no-accept",
-                request_comment_id=request_comment_id,
-            )
+    jobs = [item for item in all_jobs if item.get("name") == "apply"]
+    # Capacity cancellation can finish before GitHub creates an apply job.
+    # Only a complete first-attempt inventory proves zero apply executions.
+    if not jobs and conclusion in {"cancelled", "timed_out", "skipped"} and run_attempt == 1:
+        return ApplicationCompletion(
+            "REJECTED",
+            "application-completion-preaccept-terminal-no-accept",
+            request_comment_id=request_comment_id,
+        )
     if len(jobs) != 1:
         return ApplicationCompletion(
             "INVALID",
