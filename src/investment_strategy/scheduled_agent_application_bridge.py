@@ -4884,31 +4884,27 @@ def read_application_recovery_artifact(
         or not isinstance(run.get("head_sha"), str)
     ):
         return unavailable()
-    all_jobs = github_complete_run_jobs(
+    inventory = github_complete_run_jobs(
         repository, token, run_id=run_id, run_attempt=run_attempt, read=api_read
     )
-    if all_jobs is None:
+    if inventory is None:
         return unavailable()
-    jobs = [item for item in all_jobs if item.get("name") == "apply"]
-    if len(jobs) != 1 or jobs[0].get("id") != job_id:
+    job = inventory.single_apply
+    if job is None or job.id != job_id:
         return unavailable()
-    job = cast(Mapping[str, object], jobs[0])
-    if job.get("status") != "completed" or job.get("conclusion") not in {"success", "failure"}:
+    if job.status != "completed" or job.conclusion not in {"success", "failure"}:
         return unavailable()
-    steps = job.get("steps")
-    if not isinstance(steps, list):
+    steps = job.steps
+    if steps is None:
         return unavailable()
     uploads = [
-        step
-        for step in steps
-        if isinstance(step, Mapping)
-        and step.get("name") == "Upload exact application recovery evidence"
+        conclusion
+        for name, conclusion in steps
+        if name == "Upload exact application recovery evidence"
     ]
-    if len(uploads) != 1 or uploads[0].get("conclusion") != "success":
+    if len(uploads) != 1 or uploads[0] != "success":
         if not uploads and not any(
-            isinstance(step, Mapping)
-            and step.get("name") == "Upload final exact application recovery evidence"
-            for step in steps
+            name == "Upload final exact application recovery evidence" for name, _ in steps
         ):
             # A completed legacy job without an upload step really cannot
             # supply this artifact. Its separate caller still proves legacy
@@ -5160,33 +5156,22 @@ def _qualified_exception_apply_run(
         or _SHA.fullmatch(cast(str, run["head_sha"])) is None
     ):
         return None
-    jobs = github_complete_run_jobs(
+    inventory = github_complete_run_jobs(
         repository, token, run_id=run_id, run_attempt=run_attempt, read=read
     )
-    if jobs is None:
+    if inventory is None:
         return None
-    apply_jobs = [item for item in jobs if item.get("name") == "apply"]
-    if len(apply_jobs) != 1:
+    job = inventory.single_apply
+    if job is None:
         return None
-    job = apply_jobs[0]
-    if not _matches_required_fields(
-        job,
-        {
-            "id": job_id,
-            "status": "completed",
-            "conclusion": "failure",
-        },
-    ):
+    if job.id != job_id or job.status != "completed" or job.conclusion != "failure":
         return None
-    steps = job.get("steps")
-    if not isinstance(steps, list):
+    steps = job.steps
+    if steps is None:
         return None
     conclusions: dict[str, str] = {}
-    for step in steps:
-        if not isinstance(step, Mapping):
-            return None
-        name, result = step.get("name"), step.get("conclusion")
-        if not isinstance(name, str) or not isinstance(result, str) or name in conclusions:
+    for name, result in steps:
+        if name is None or result is None or name in conclusions:
             return None
         conclusions[name] = result
     return run if _matches_required_fields(conclusions, _EXCEPTION_APPLY_STEP_CONTRACT) else None

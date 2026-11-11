@@ -59,6 +59,7 @@ from investment_strategy.scheduled_agent_application_materialization import (
 from investment_strategy.scheduled_agent_carrier import (
     CarrierOutcomeReport,
     CarrierPlan,
+    QualifiedApplicationJob,
     QualifiedCarrierPlan,
     github_comment_has_app_provenance,
     github_complete_run_jobs,
@@ -1964,7 +1965,7 @@ def _qualified_carrier_for_application_run(
     run: Mapping[str, object],
     run_id: int,
     run_attempt: int,
-    job: Mapping[str, object],
+    job: QualifiedApplicationJob,
     record: ApplicationDecisionRecord,
     read: GitHubReader,
 ) -> QualifiedCarrierPlan | None:
@@ -1992,17 +1993,15 @@ def _qualified_carrier_for_application_run(
     if len(artifacts) != 1:
         raise RuntimeError("application carrier artifact identity is ambiguous")
 
-    steps = job.get("steps")
-    if not isinstance(steps, list):
+    steps = job.steps
+    if steps is None:
         raise RuntimeError("application carrier job steps are incomplete")
     upload_steps = [
-        cast(Mapping[str, object], step)
-        for step in steps
-        if isinstance(step, Mapping) and step.get("name") == "Upload exact external carrier plan"
+        conclusion for name, conclusion in steps if name == "Upload exact external carrier plan"
     ]
     if len(upload_steps) != 1:
         raise RuntimeError("application carrier upload step identity is ambiguous")
-    upload_conclusion = upload_steps[0].get("conclusion")
+    upload_conclusion = upload_steps[0]
     if upload_conclusion == "skipped" and run_attempt > 1:
         return None
     if upload_conclusion != "success":
@@ -2476,7 +2475,7 @@ def _qualified_unapplied_terminal_carrier_effect(
     *,
     record: ApplicationDecisionRecord,
     run: Mapping[str, object],
-    job: Mapping[str, object],
+    job: QualifiedApplicationJob,
     run_id: int,
     run_attempt: int,
     read: GitHubReader,
@@ -2494,25 +2493,21 @@ def _qualified_unapplied_terminal_carrier_effect(
     are deliberately irrelevant.
     """
 
-    steps = job.get("steps")
+    steps = job.steps
     if (
         record.disposition != "ACCEPTED"
         or record.role != "executor"
         or run_attempt != 1
         or run.get("status") != "completed"
         or run.get("conclusion") not in {"failure", "cancelled", "timed_out"}
-        or job.get("status") != "completed"
-        or job.get("conclusion") not in {"failure", "cancelled", "timed_out"}
-        or not isinstance(steps, list)
+        or job.status != "completed"
+        or job.conclusion not in {"failure", "cancelled", "timed_out"}
+        or steps is None
     ):
         return False
     conclusions: dict[str, str] = {}
-    for step in steps:
-        if not isinstance(step, Mapping):
-            return False
-        name = step.get("name")
-        conclusion = step.get("conclusion")
-        if not isinstance(name, str) or not isinstance(conclusion, str) or name in conclusions:
+    for name, conclusion in steps:
+        if name is None or conclusion is None or name in conclusions:
             return False
         conclusions[name] = conclusion
     if (
@@ -2755,30 +2750,23 @@ def _application_job(
             "application-completion-in-progress",
             request_comment_id=request_comment_id,
         )
-    all_jobs = github_complete_run_jobs(
+    inventory = github_complete_run_jobs(
         repository, token, run_id=run_id, run_attempt=run_attempt, read=read
     )
-    if all_jobs is None:
+    if inventory is None:
         return ApplicationCompletion(
             "INVALID",
             "application-completion-job-list-incomplete",
             request_comment_id=request_comment_id,
         )
-    jobs = [item for item in all_jobs if item.get("name") == "apply"]
-    if len(jobs) != 1:
+    job = inventory.single_apply
+    if job is None:
         return ApplicationCompletion(
             "INVALID",
             "application-completion-job-identity-ambiguous",
             request_comment_id=request_comment_id,
         )
-    job = cast(Mapping[str, object], jobs[0])
-    job_id = _positive_int(job.get("id"))
-    if job_id is None:
-        return ApplicationCompletion(
-            "INVALID",
-            "application-completion-job-identity-incomplete",
-            request_comment_id=request_comment_id,
-        )
+    job_id = job.id
 
     # Reconcile the final durable Effect for a terminal no-carrier run before
     # considering optional recovery/diagnostic artifacts. Error text is not a
@@ -2815,19 +2803,18 @@ def _application_job(
         and isinstance(run.get("head_sha"), str)
     ):
         try:
-            steps = job.get("steps")
-            has_exception = isinstance(steps, list) and any(
-                isinstance(step, Mapping)
-                and step.get("name")
-                == "Upload pre-ACCEPT or interrupted application exception evidence"
-                and step.get("conclusion") == "success"
-                for step in steps
+            steps = job.steps
+            has_exception = (
+                steps is not None
+                and (
+                    "Upload pre-ACCEPT or interrupted application exception evidence",
+                    "success",
+                )
+                in steps
             )
-            has_recovery = isinstance(steps, list) and any(
-                isinstance(step, Mapping)
-                and step.get("name") == "Upload exact application recovery evidence"
-                and step.get("conclusion") == "success"
-                for step in steps
+            has_recovery = (
+                steps is not None
+                and ("Upload exact application recovery evidence", "success") in steps
             )
             if (
                 has_exception
@@ -2873,31 +2860,23 @@ def _application_job(
         # The pre-recovery-protocol job can be identified from its *actual*
         # completed Actions step list.  This is missing historical evidence,
         # never a proof of zero writes or permission to rerun the old job.
-        steps = job.get("steps")
+        steps = job.steps
         legacy_no_upload_step = (
             record is not None
             and accepted_decision_sha256 is not None
-            and job.get("status") == "completed"
-            and job.get("conclusion") == "failure"
-            and isinstance(steps, list)
-            and any(
-                isinstance(step, Mapping)
-                and step.get("name") == "Freshly authorize and apply repository-owned effects"
-                and step.get("conclusion") == "failure"
-                for step in steps
-            )
+            and job.status == "completed"
+            and job.conclusion == "failure"
+            and steps is not None
+            and ("Freshly authorize and apply repository-owned effects", "failure") in steps
             and not any(
-                isinstance(step, Mapping)
-                and step.get("name")
+                name
                 in {
                     "Upload exact application recovery evidence",
                     "Upload final exact application recovery evidence",
                 }
-                for step in steps
+                for name, _conclusion in steps
             )
-            and any(
-                isinstance(step, Mapping) and step.get("name") == "Complete job" for step in steps
-            )
+            and any(name == "Complete job" for name, _conclusion in steps)
         )
         return ApplicationCompletion(
             "INVALID",
@@ -3199,38 +3178,41 @@ def _preaccept_application_state(
             request_comment_id=request_comment_id,
         )
     run_attempt = _positive_int(run.get("run_attempt"))
-    all_jobs = (
+    inventory = (
         github_complete_run_jobs(
             repository, token, run_id=run_id, run_attempt=run_attempt, read=read
         )
         if run_attempt is not None
         else None
     )
-    if all_jobs is None:
+    if inventory is None:
         return ApplicationCompletion(
             "INVALID",
             "application-completion-terminal-job-evidence-incomplete",
             request_comment_id=request_comment_id,
         )
-    jobs = [item for item in all_jobs if item.get("name") == "apply"]
     # Capacity cancellation can finish before GitHub creates an apply job.
     # Only a complete first-attempt inventory proves zero apply executions.
-    if not jobs and conclusion in {"cancelled", "timed_out", "skipped"} and run_attempt == 1:
+    if (
+        not inventory.apply_jobs
+        and conclusion in {"cancelled", "timed_out", "skipped"}
+        and run_attempt == 1
+    ):
         return ApplicationCompletion(
             "REJECTED",
             "application-completion-preaccept-terminal-no-accept",
             request_comment_id=request_comment_id,
         )
-    if len(jobs) != 1:
+    apply_job = inventory.single_apply
+    if apply_job is None:
         return ApplicationCompletion(
             "INVALID",
             "application-completion-terminal-job-identity-ambiguous",
             request_comment_id=request_comment_id,
         )
-    apply_job = jobs[0]
     if (
-        apply_job.get("status") != "completed"
-        or apply_job.get("conclusion") not in _TERMINAL_NO_ACCEPT_CONCLUSIONS
+        apply_job.status != "completed"
+        or apply_job.conclusion not in _TERMINAL_NO_ACCEPT_CONCLUSIONS
     ):
         return ApplicationCompletion(
             "INVALID",

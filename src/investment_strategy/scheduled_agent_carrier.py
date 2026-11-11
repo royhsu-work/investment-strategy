@@ -115,6 +115,72 @@ class _QualifiedJobsPage:
     ids: frozenset[int]
 
 
+@dataclass(frozen=True)
+class QualifiedApplicationJob:
+    """Immutable fields used to prove one attempt's Application job effects."""
+
+    id: int
+    status: str | None
+    conclusion: str | None
+    steps: tuple[tuple[str | None, str | None], ...] | None
+
+
+@dataclass(frozen=True)
+class QualifiedApplicationJobs:
+    """Exhaustive inventory and canonical apply cardinality, not a run verdict."""
+
+    total_count: int
+    apply_jobs: tuple[QualifiedApplicationJob, ...]
+
+    @property
+    def single_apply(self) -> QualifiedApplicationJob | None:
+        return self.apply_jobs[0] if len(self.apply_jobs) == 1 else None
+
+
+def _valid_job_identity(job: Mapping[str, object], *, run_id: int, run_attempt: int) -> bool:
+    """Admit only a positive, named job on the requested run and attempt."""
+
+    job_id, name = job.get("id"), job.get("name")
+    if type(job_id) is not int or job_id <= 0 or not isinstance(name, str) or not name:
+        return False
+    attempt, parent_run = job.get("run_attempt", run_attempt), job.get("run_id", run_id)
+    return (
+        type(attempt) is int
+        and attempt == run_attempt
+        and type(parent_run) is int
+        and parent_run == run_id
+    )
+
+
+def _optional_text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _application_jobs_contract(jobs: tuple[Mapping[str, object], ...]) -> QualifiedApplicationJobs:
+    """Pure projection after exhaustive identity-qualified GETs; never a write license."""
+
+    apply_jobs: list[QualifiedApplicationJob] = []
+    for job in jobs:
+        if job["name"] != "apply":
+            continue
+        raw_steps = job.get("steps")
+        steps: tuple[tuple[str | None, str | None], ...] | None = None
+        if isinstance(raw_steps, list) and all(isinstance(step, Mapping) for step in raw_steps):
+            steps = tuple(
+                (_optional_text(step.get("name")), _optional_text(step.get("conclusion")))
+                for step in raw_steps
+            )
+        apply_jobs.append(
+            QualifiedApplicationJob(
+                id=cast(int, job["id"]),
+                status=_optional_text(job.get("status")),
+                conclusion=_optional_text(job.get("conclusion")),
+                steps=steps,
+            )
+        )
+    return QualifiedApplicationJobs(len(jobs), tuple(sorted(apply_jobs, key=lambda job: job.id)))
+
+
 def _qualified_jobs_page(
     observed: object, *, run_id: int, run_attempt: int
 ) -> _QualifiedJobsPage | None:
@@ -128,22 +194,9 @@ def _qualified_jobs_page(
     if len(raw_jobs) > 100 or any(not isinstance(job, Mapping) for job in raw_jobs):
         return None
     jobs = tuple(cast(Mapping[str, object], job) for job in raw_jobs)
-    ids = [job.get("id") for job in jobs]
-    if any(
-        type(job_id) is not int
-        or job_id <= 0
-        or not isinstance(job.get("name"), str)
-        or not job.get("name")
-        or (
-            "run_attempt" in job
-            and (type(job.get("run_attempt")) is not int or job.get("run_attempt") != run_attempt)
-        )
-        or type(job.get("run_id", run_id)) is not int
-        or job.get("run_id", run_id) != run_id
-        for job_id, job in zip(ids, jobs, strict=True)
-    ):
+    if any(not _valid_job_identity(job, run_id=run_id, run_attempt=run_attempt) for job in jobs):
         return None
-    unique_ids = frozenset(cast(int, job_id) for job_id in ids)
+    unique_ids = frozenset(cast(int, job["id"]) for job in jobs)
     return _QualifiedJobsPage(count, jobs, unique_ids) if len(unique_ids) == len(jobs) else None
 
 
@@ -154,7 +207,7 @@ def github_complete_run_jobs(
     run_id: int,
     run_attempt: int,
     read: Callable[[str, str, str], object],
-) -> tuple[Mapping[str, object], ...] | None:
+) -> QualifiedApplicationJobs | None:
     """Read one exhaustive Actions job inventory, or admit no job evidence.
 
     A short page cannot prove the absence of another `apply` job. Every page
@@ -193,7 +246,7 @@ def github_complete_run_jobs(
         seen_ids.update(qualified.ids)
         jobs.extend(qualified.jobs)
         if len(jobs) == total:
-            return tuple(jobs)
+            return _application_jobs_contract(tuple(jobs))
         if page == 0:
             # The default 30-item response was incomplete. Restart from an
             # explicit 100-item first page, never treating it as page 1 of a

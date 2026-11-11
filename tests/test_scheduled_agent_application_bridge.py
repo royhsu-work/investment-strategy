@@ -7,6 +7,7 @@ import hashlib
 import importlib
 import json
 import sys
+from dataclasses import FrozenInstanceError
 from datetime import date
 from email.message import Message
 from io import BytesIO
@@ -160,9 +161,102 @@ def test_actions_job_inventory_requires_complete_exact_pages(
         run_attempt=run_attempt,
         read=read,
     )
-    assert (None if qualified is None else len(qualified)) == expected_count
+    assert (None if qualified is None else qualified.total_count) == expected_count
     if case in {"missing-total", "complete-default", "complete-zero", "missing-job-attempt-valid"}:
         assert observed == [f"actions/runs/{run_id}/attempts/{run_attempt}/jobs"]
+
+
+def test_application_job_proof_is_immutable_and_independent_of_page_layout() -> None:
+    """Reordering or a complete page split cannot change one admitted apply identity."""
+
+    run_id, attempt = 880, 2
+    endpoint = f"actions/runs/{run_id}/attempts/{attempt}/jobs"
+    apply: dict[str, object] = {
+        "id": 7,
+        "name": "apply",
+        "run_id": run_id,
+        "run_attempt": attempt,
+        "status": "completed",
+        "conclusion": "failure",
+        "steps": [{"name": "Persist exact external carrier plan", "conclusion": "skipped"}],
+    }
+    idle = [{"id": number, "name": "idle-admission"} for number in range(10, 110)]
+    jobs = [apply, *idle]
+
+    def paginated(_repo: str, _token: str, path: str) -> object:
+        if path == endpoint:
+            return {"total_count": 101, "jobs": [apply]}
+        if path == f"{endpoint}?per_page=100&page=1":
+            return {"total_count": 101, "jobs": idle}
+        if path == f"{endpoint}?per_page=100&page=2":
+            return {"total_count": 101, "jobs": [apply]}
+        raise AssertionError(path)
+
+    # A 101-item response on the default page cannot be a valid single page.
+    # Use the same complete evidence with two different explicit page layouts.
+    def explicit_reordered(_repo: str, _token: str, path: str) -> object:
+        if path == endpoint:
+            return {"total_count": 101, "jobs": [apply]}
+        if path == f"{endpoint}?per_page=100&page=1":
+            return {"total_count": 101, "jobs": list(reversed(jobs))[:100]}
+        if path == f"{endpoint}?per_page=100&page=2":
+            return {"total_count": 101, "jobs": list(reversed(jobs))[100:]}
+        raise AssertionError(path)
+
+    one = carrier.github_complete_run_jobs(
+        _REPOSITORY, "token", run_id=run_id, run_attempt=attempt, read=paginated
+    )
+    reordered = carrier.github_complete_run_jobs(
+        _REPOSITORY, "token", run_id=run_id, run_attempt=attempt, read=explicit_reordered
+    )
+    assert one is not None and reordered is not None
+    assert one == reordered
+    assert one.total_count == 101
+    assert one.single_apply == carrier.QualifiedApplicationJob(
+        7, "completed", "failure", (("Persist exact external carrier plan", "skipped"),)
+    )
+    with pytest.raises(FrozenInstanceError):
+        one.single_apply.status = "success"  # type: ignore[misc,union-attr]
+    cast(list[dict[str, str]], apply["steps"])[0]["conclusion"] = "success"
+    assert one.single_apply == reordered.single_apply
+
+
+def test_application_job_cardinality_and_temporary_read_failure_never_guess() -> None:
+    """A second apply invalidates uniqueness; failure is not absence and can recover."""
+
+    endpoint = "actions/runs/990/attempts/1/jobs"
+    unique = {"id": 11, "name": "apply", "run_attempt": 1}
+    duplicate = {"id": 12, "name": "apply", "run_attempt": 1}
+    calls = 0
+
+    def intermittent(_repo: str, _token: str, path: str) -> object:
+        nonlocal calls
+        assert path == endpoint
+        calls += 1
+        if calls == 1:
+            raise OSError("transient GitHub GET failure")
+        return {"total_count": 1, "jobs": [unique]}
+
+    first = carrier.github_complete_run_jobs(
+        _REPOSITORY, "token", run_id=990, run_attempt=1, read=intermittent
+    )
+    second = carrier.github_complete_run_jobs(
+        _REPOSITORY, "token", run_id=990, run_attempt=1, read=intermittent
+    )
+    assert first is None  # indeterminate read, not proof of zero jobs
+    assert second is not None and second.single_apply is not None
+    assert second.single_apply.id == 11
+
+    def observed(_repo: str, _token: str, path: str) -> object:
+        assert path == endpoint
+        return {"total_count": 2, "jobs": [duplicate, unique]}
+
+    multiple = carrier.github_complete_run_jobs(
+        _REPOSITORY, "token", run_id=990, run_attempt=1, read=observed
+    )
+    assert multiple is not None and multiple.total_count == 2
+    assert tuple(job.id for job in multiple.apply_jobs) == (11, 12)
+    assert multiple.single_apply is None
 
 
 @pytest.mark.parametrize(

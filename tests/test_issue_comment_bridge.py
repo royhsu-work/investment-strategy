@@ -4533,6 +4533,12 @@ def test_completed_first_change_qualifies_only_accepted_materialization_carrier(
         raise AssertionError(path)
 
     monkeypatch.setattr(bridge, "read_github_artifact_bytes", lambda *_args: raw)
+    qualified_job = carrier.QualifiedApplicationJob(
+        id=778,
+        status="completed",
+        conclusion="success",
+        steps=(("Upload exact external carrier plan", "success"),),
+    )
     if eligible:
         qualified = bridge._qualified_carrier_for_application_run(
             "owner/repo",
@@ -4541,9 +4547,7 @@ def test_completed_first_change_qualifies_only_accepted_materialization_carrier(
             run={"head_sha": REVISION},
             run_id=777,
             run_attempt=1,
-            job={
-                "steps": [{"name": "Upload exact external carrier plan", "conclusion": "success"}]
-            },
+            job=qualified_job,
             record=record,
             read=fake_read,
         )
@@ -4558,11 +4562,7 @@ def test_completed_first_change_qualifies_only_accepted_materialization_carrier(
                 run={"head_sha": REVISION},
                 run_id=777,
                 run_attempt=1,
-                job={
-                    "steps": [
-                        {"name": "Upload exact external carrier plan", "conclusion": "success"}
-                    ]
-                },
+                job=qualified_job,
                 record=record,
                 read=fake_read,
             )
