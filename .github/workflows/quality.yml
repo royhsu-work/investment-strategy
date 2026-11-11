@@ -26,6 +26,9 @@ on:
 
 jobs:
   quality:
+    permissions:
+      actions: read
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,3 +49,16 @@ jobs:
         run: uv run ruff format --check .
       - name: Mypy
         run: uv run mypy src tests
+      - name: Diagnose exact T1 native artifact reads
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 437
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        shell: bash
+        run: |
+          if [[ "$(git log -1 --format=%s)" != *"[t1-native-artifact-diagnostic]"* ]]; then
+            echo '{"stage":"diagnostic-gate","classification":"SKIPPED","mutation_attempted":false}'
+            exit 0
+          fi
+          uv run python .github/scripts/diagnose_dispatch_artifact.py
