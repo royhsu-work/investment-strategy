@@ -347,7 +347,9 @@ def test_bridge_is_run_scoped_transport_without_mailbox_semantics() -> None:
 
 @pytest.mark.parametrize("fault", [OSError, RuntimeError, TypeError, ValueError])
 def test_bridge_preserves_pre_dispatch_repair_evidence_without_authorizing_action(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
     fault: type[Exception],
 ) -> None:
     """Native bridge must have a durable, machine-readable fail-closed proof boundary."""
@@ -378,10 +380,14 @@ def test_bridge_preserves_pre_dispatch_repair_evidence_without_authorizing_actio
         "argv",
         [
             "scheduled-agent-bridge",
-            "--event-path", str(event_path),
-            "--revision", REVISION,
-            "--github-output", str(output_path),
-            "--result-payload", str(result_path),
+            "--event-path",
+            str(event_path),
+            "--revision",
+            REVISION,
+            "--github-output",
+            str(output_path),
+            "--result-payload",
+            str(result_path),
         ],
     )
     assert bridge.main() == 0
@@ -393,7 +399,7 @@ def test_bridge_preserves_pre_dispatch_repair_evidence_without_authorizing_actio
     assert result.issue_number is None and result.action is None
     assert result.application_continuation is None and result.qualified_carrier is None
     assert output_path.read_text(encoding="utf-8").startswith(
-        "should_emit=true\\nissue_number=442\\nrequest_comment_id=987\\n"
+        "should_emit=true\nissue_number=442\nrequest_comment_id=987\n"
     )
     out = capsys.readouterr()
     assert fault.__name__ in out.err
