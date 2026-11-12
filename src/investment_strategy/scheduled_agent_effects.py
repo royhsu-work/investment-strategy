@@ -1674,7 +1674,12 @@ def apply_effect_batch(
             )
             return interrupted_before_write(first_pending, proven_prefix, exc)
         if not guard_ok:
-            return rejected("effect precondition rejected", index)
+            return rejected(
+                "effect precondition rejected",
+                index,
+                operation_stage="BEFORE-WRITE",
+                write_call_entered=False,
+            )
 
     if (
         not accepted_intent
@@ -1709,6 +1714,8 @@ def apply_effect_batch(
                 "effect precondition rejected",
                 index,
                 completed_indexes=tuple(completed_indexes),
+                operation_stage="BEFORE-WRITE",
+                write_call_entered=False,
             )
         try:
             apply_effect(effect)
@@ -1769,6 +1776,8 @@ def apply_effect_batch(
                 "effect precondition rejected",
                 len(effects_to_apply),
                 completed_indexes=tuple(completed_indexes),
+                operation_stage="BEFORE-WRITE",
+                write_call_entered=False,
             )
         try:
             apply_effect(derived_effect)
