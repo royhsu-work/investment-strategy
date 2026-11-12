@@ -2211,13 +2211,41 @@ def test_incident_435_accepted_blocked_materialization_is_read_only_proven(
     source = WorkerRequest(435, "executor", "implement-change")
     change = "restore-t1-dispatch-artifact-consumption"
     targets = [
-        ("src/investment_strategy/scheduled_agent_carrier.py", "fa63766cc353d9f3c4a1e11b30ddd64ad53b0bda", "a6b802e2409fadf52fab3aee3c5f79e25ac96575"),
-        ("src/investment_strategy/scheduled_agent_dispatch_result.py", "e5c8de3b034f31b53dab76d56826249dc215e8e0", "b9188f580caf6dcad93bc1cbca111bea440713e2"),
-        ("src/investment_strategy/scheduled_agent_idle_admission.py", "bef6073228b46e07e89f828c5615b3e5518df95f", "b7e8a7f472dd992799eecb5233611b8b0410bd24"),
-        ("tests/test_scheduled_agent_dispatch_result.py", "5a781a964897e248626bd2d8e3fce3369693fa49", "cc7aecb0e65ed41c0a0be4619dfa1b07a90a8709"),
-        ("tests/test_scheduled_agent_idle_admission.py", "2c391fc3dd516259d06a64b3492a4e43dbbf83dc", "5111748a42de52b3f6d5e59c42bcf4a3a35c9ed2"),
-        (".github/workflows/quality.yml", "ab7bb278bfc22fa3e9b2e6867ca2d0ea1d3c29f0", "b7028b01d10d967ee6339274ba6d45f43b9d7cab"),
-        (".github/scripts/diagnose_dispatch_artifact.py", "37da19717c32b0ba323ffe50b511ab6ba5d2112b", None),
+        (
+            "src/investment_strategy/scheduled_agent_carrier.py",
+            "fa63766cc353d9f3c4a1e11b30ddd64ad53b0bda",
+            "a6b802e2409fadf52fab3aee3c5f79e25ac96575",
+        ),
+        (
+            "src/investment_strategy/scheduled_agent_dispatch_result.py",
+            "e5c8de3b034f31b53dab76d56826249dc215e8e0",
+            "b9188f580caf6dcad93bc1cbca111bea440713e2",
+        ),
+        (
+            "src/investment_strategy/scheduled_agent_idle_admission.py",
+            "bef6073228b46e07e89f828c5615b3e5518df95f",
+            "b7e8a7f472dd992799eecb5233611b8b0410bd24",
+        ),
+        (
+            "tests/test_scheduled_agent_dispatch_result.py",
+            "5a781a964897e248626bd2d8e3fce3369693fa49",
+            "cc7aecb0e65ed41c0a0be4619dfa1b07a90a8709",
+        ),
+        (
+            "tests/test_scheduled_agent_idle_admission.py",
+            "2c391fc3dd516259d06a64b3492a4e43dbbf83dc",
+            "5111748a42de52b3f6d5e59c42bcf4a3a35c9ed2",
+        ),
+        (
+            ".github/workflows/quality.yml",
+            "ab7bb278bfc22fa3e9b2e6867ca2d0ea1d3c29f0",
+            "b7028b01d10d967ee6339274ba6d45f43b9d7cab",
+        ),
+        (
+            ".github/scripts/diagnose_dispatch_artifact.py",
+            "37da19717c32b0ba323ffe50b511ab6ba5d2112b",
+            None,
+        ),
     ]
     materialization = {
         "issue_number": 435,
@@ -2227,7 +2255,10 @@ def test_incident_435_accepted_blocked_materialization_is_read_only_proven(
         "branch": "agent/restore-t1-dispatch-artifact-consumption",
         "base_sha": "6f97d0fc53742221f411ceee808938d701d6069f",
         "pr_number": 437,
-        "message": "test: qualify exact T1 Artifact reads [t1-native-artifact-diagnostic] (Refs #435)",
+        "message": (
+            "test: qualify exact T1 Artifact reads "
+            "[t1-native-artifact-diagnostic] (Refs #435)"
+        ),
         "files": [
             {"path": path, "blob_sha": sha, "expected_sha": old}
             for path, sha, old in targets
