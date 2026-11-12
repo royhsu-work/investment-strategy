@@ -3824,12 +3824,14 @@ def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
     ],
 )
 @pytest.mark.parametrize("source_kind", ["activation", "implementation"])
+@pytest.mark.parametrize("exception_stage", ["pre", "post"])
 def test_exception_only_application_completion_requires_fresh_original_proof(
     monkeypatch: pytest.MonkeyPatch,
     proof: str,
     expected_state: str,
     expected_reason: str,
     source_kind: str,
+    exception_stage: str,
 ) -> None:
     record = (
         replace(
@@ -3915,7 +3917,11 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
                             "name": (
                                 "Upload pre-ACCEPT or interrupted application exception evidence"
                             ),
-                            "conclusion": "success",
+                            "conclusion": "success" if exception_stage == "pre" else "skipped",
+                        },
+                        {
+                            "name": "Upload post-validation application exception evidence",
+                            "conclusion": "success" if exception_stage == "post" else "skipped",
                         },
                     ],
                 }
