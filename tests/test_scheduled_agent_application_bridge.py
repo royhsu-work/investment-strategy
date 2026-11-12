@@ -2110,7 +2110,8 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
         lambda **_kw: raw,
     )
     monkeypatch.setattr(
-        bridge, "parse_effect_batch",
+        bridge,
+        "parse_effect_batch",
         lambda *_a, **_kw: SimpleNamespace(
             typed_result=SimpleNamespace(
                 result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
