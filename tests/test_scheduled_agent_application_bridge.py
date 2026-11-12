@@ -2107,7 +2107,7 @@ def test_accepted_projection_preserves_immutable_completed_effects(
     ]
     formal = {
         "kind": "issue-comment",
-        "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\\nformal"}),
+        "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\nformal"}),
     }
     original["requested_effects"] = effects[:2]
     projected = dict(original, requested_effects=[effects[index] for index in projection] + [formal])
@@ -2131,7 +2131,7 @@ def test_empty_original_projection_preserves_application_formal_obligation() -> 
     original = _worker_result(action=source.action, role=source.role, result_kind="blocked")
     formal = {
         "kind": "issue-comment",
-        "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\\nformal"}),
+        "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\nformal"}),
     }
     raw = json.dumps(original, sort_keys=True)
     projected = json.dumps(dict(original, requested_effects=[formal]), sort_keys=True)
