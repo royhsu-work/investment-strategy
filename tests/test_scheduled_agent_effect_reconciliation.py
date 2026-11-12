@@ -2306,6 +2306,27 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
             return observe(effect)
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", FreshAdapter)
+    native_document = json.loads(artifact_path.read_text())
+    native = application.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "b" * 64,
+        request_comment_id=91,
+        accepted_decision_sha256=native_document["accepted_decision_sha256"],
+        failure_evidence_sha256=native_document["failure_evidence_sha256"],
+        recovery_episode_sha256=native_document["recovery_episode_sha256"],
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document=native_document,
+    )
+    monkeypatch.setattr(
+        application, "_accepted_worker_result_for_continuation", lambda **_kw: accepted_raw
+    )
+    monkeypatch.setattr(
+        dispatch, "_application_runs", lambda *_a, **_kw: ({"id": 7001, "run_attempt": 1},)
+    )
 
     def qualified(checkpoint: dict[str, object]) -> bool:
         return application.accepted_read_only_effects_complete(
@@ -2316,6 +2337,7 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
             token=REVISION,
             current_revision=REVISION,
             default_branch="main",
+            recovery_artifact=native,
         )
 
     assert qualified(failure)
