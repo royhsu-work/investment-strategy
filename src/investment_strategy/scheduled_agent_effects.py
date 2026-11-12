@@ -1592,7 +1592,11 @@ def apply_effect_batch(
             if len(batch.effects) != 1 or batch.effects[0].kind != "issue-comment":
                 return ApplyResult(False, "empty accepted original has unexpected Effects")
             payload = _effect_payload(batch.effects[0])
-            if not isinstance(payload, Mapping) or not isinstance(payload.get("body"), str) or not cast(str, payload["body"]).startswith(expected_marker + "\n"):
+            if (
+                not isinstance(payload, Mapping)
+                or not isinstance(payload.get("body"), str)
+                or not cast(str, payload["body"]).startswith(expected_marker + "\n")
+            ):
                 return ApplyResult(False, "empty accepted original has no bounded formal result")
         observed_through = (
             len(batch.effects) if uncertain_effect_index is None else uncertain_effect_index
