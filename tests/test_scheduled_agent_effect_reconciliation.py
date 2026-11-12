@@ -138,11 +138,12 @@ def test_positive_original_effects_are_shared_flat_leaves() -> None:
     assert len(leaves) == len(original)
     assert observed == list(original)
     assert all(not node.depends_on for node in leaves)
-    assert application.evaluate_recovery_evidence(
-        application.RecoveryEvidenceNode(
-            "FORMAL_RESULT", original[0], True, depends_on=leaves
+    assert (
+        application.evaluate_recovery_evidence(
+            application.RecoveryEvidenceNode("FORMAL_RESULT", original[0], True, depends_on=leaves)
         )
-    ) == "SATISFIED"
+        == "SATISFIED"
+    )
 
 
 def _batch(
