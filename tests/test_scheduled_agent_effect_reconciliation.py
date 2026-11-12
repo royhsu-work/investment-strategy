@@ -323,6 +323,111 @@ def _assumed_qualified_history_for_postcondition_test(
     return artifact
 
 
+@pytest.mark.parametrize("successor_failed", [False, True])
+def test_read_only_ir_identifies_formal_result_and_successor_nodes(
+    monkeypatch: pytest.MonkeyPatch, successor_failed: bool
+) -> None:
+    """R8: real read-only classification must distinguish Application obligations."""
+    original, source = _batch()
+    raw = json.dumps(
+        {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "accepted",
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+                for effect in original.effects
+            ],
+        }
+    )
+    record = parse_application_decision(
+        render_application_decision_body(
+            request_comment_id=91,
+            request_body="original request",
+            authorization_revision=REVISION,
+            decision=_decision(),
+            disposition="ACCEPTED",
+            raw_worker_result=raw,
+            reason="application accepted",
+        )
+    )
+    assert record is not None
+    projected = application._application_owned_worker_result(
+        raw,
+        source=source,
+        change=CHANGE,
+        current_revision=REVISION,
+        request_comment_id=91,
+    )
+    formal = parse_effect_batch(projected, source, authorized_change=CHANGE).effects[-1]
+    successor = StagedEffect(
+        "routing-transition",
+        json.dumps({"issue_number": 138, "action": "implement-change"}),
+        True,
+    )
+    attempted = (*original.effects, formal, *((successor,) if successor_failed else ()))
+    failed = attempted[-1]
+    checkpoint: dict[str, object] = {
+        "mutation_status": "not-complete",
+        "unfinished_boundary": "effect-precondition-exception",
+        "write_call_entered": False,
+        "operation_stage": "READ",
+        "rejection": None,
+        "failed_effect_index": len(attempted) - 1,
+        "failed_effect_kind": failed.kind,
+        "failed_effect_sha256": hashlib.sha256(failed.payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": list(range(len(attempted) - 1)),
+        "completed_effect_sha256": [
+            hashlib.sha256(effect.payload_json.encode()).hexdigest() for effect in attempted[:-1]
+        ],
+        "attempt_revision": REVISION,
+        "attempted_effects": [
+            {"kind": effect.kind, "payload_json": effect.payload_json, "derived": effect.derived}
+            for effect in attempted
+        ],
+    }
+    artifact = _assumed_qualified_history_for_postcondition_test(monkeypatch, record, checkpoint)
+
+    class Observer:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            return effect in attempted[:-1]
+
+    observed_nodes: list[application.RecoveryEvidenceNode] = []
+    original_evaluator = application.evaluate_recovery_evidence
+
+    def capture(node: application.RecoveryEvidenceNode) -> application.RecoveryProofDisposition:
+        observed_nodes.append(node)
+        return original_evaluator(node)
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
+    monkeypatch.setattr(application, "evaluate_recovery_evidence", capture)
+    proof = application.classify_accepted_read_only_effects(
+        record=record,
+        source=source,
+        recovery_evidence=checkpoint,
+        repository="owner/repo",
+        token=REVISION,
+        current_revision=REVISION,
+        default_branch="main",
+        recovery_artifact=artifact,
+    )
+    assert proof.disposition == "COMPLETE"
+    assert [node.obligation for node in observed_nodes if node.effect == formal] == [
+        "FORMAL_RESULT"
+    ]
+    if successor_failed:
+        assert [node.obligation for node in observed_nodes if node.effect == successor] == [
+            "SUCCESSOR"
+        ]
+
+
 @pytest.mark.parametrize(
     ("observation", "expected"),
     [
