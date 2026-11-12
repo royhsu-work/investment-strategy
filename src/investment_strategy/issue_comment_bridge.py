@@ -34,7 +34,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     ApplicationRecoveryArtifact,
     ApplicationRequest,
     _accepted_recovery_boundary,
-    _accepted_worker_result_for_continuation,
+    _verified_zero_original_accepted_effects,
     _application_owned_worker_result,
     _materialization_effects,
     _worker_semantic_projection,
@@ -2851,15 +2851,13 @@ def _application_job(
             verified_empty_original = False
             if has_exception and accepted_effects == [] and not legacy_activation:
                 try:
-                    _accepted_worker_result_for_continuation(
-                        accepted_intent=record,
+                    verified_empty_original = _verified_zero_original_accepted_effects(
+                        record=record,
                         source=WorkerRequest(record.issue_number, record.role, record.action),
                         repository=repository,
                         token=token,
-                        request_comment_id=record.request_comment_id,
                         read=read,
                     )
-                    verified_empty_original = True
                 except (HTTPError, OSError, RuntimeError, TypeError, ValueError):
                     # A signed semantic projection cannot independently prove
                     # that an older accepted request had zero physical Effects.
