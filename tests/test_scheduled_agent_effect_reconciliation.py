@@ -628,6 +628,97 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
     assert observe()
 
 
+
+@pytest.mark.parametrize(
+    ("error_type", "retryable"),
+    [
+        (OSError, True),
+        (RuntimeError, False),
+        (TypeError, False),
+        (ValueError, False),
+    ],
+)
+def test_accepted_recovery_observer_captures_only_operational_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+    retryable: bool,
+) -> None:
+    """An unexpected proof implementation failure must not become endless OBSERVE."""
+
+    original, source = _batch()
+    effect = original.effects[0]
+    raw = json.dumps(
+        {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "accepted",
+            "requested_effects": [{"kind": effect.kind, "payload_json": effect.payload_json}],
+        }
+    )
+    decision_body = render_application_decision_body(
+        request_comment_id=91,
+        request_body="exact accepted source",
+        authorization_revision=REVISION,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    record = parse_application_decision(decision_body)
+    assert record is not None
+    evidence: dict[str, object] = {
+        "reason": "accepted observation unavailable",
+        "mutation_status": "unknown",
+        "unfinished_boundary": "effect-reconciliation",
+        "failed_effect_index": 0,
+        "failed_effect_kind": effect.kind,
+        "failed_effect_sha256": hashlib.sha256(effect.payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+        "rejection": None,
+        "attempt_revision": REVISION,
+        "attempted_effects": [
+            {"kind": effect.kind, "payload_json": effect.payload_json, "derived": False}
+        ],
+    }
+    history = _assumed_qualified_history_for_postcondition_test(monkeypatch, record, evidence)
+
+    class FailingObserver:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def observe_postcondition(self, _effect: StagedEffect) -> bool:
+            raise error_type("proof-boundary failure")
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", FailingObserver)
+
+    def classify() -> application.AcceptedPostEffectProof:
+        return application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=evidence,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+            recovery_artifact=history,
+        )
+
+    if retryable:
+        proof = classify()
+        assert proof.disposition == "INDETERMINATE"
+        assert proof.continuation == "OBSERVE"
+    else:
+        # The existing outer execution exception boundary owns unexpected
+        # programming/contract errors; no stale accepted write is replayed.
+        with pytest.raises(error_type, match="proof-boundary failure"):
+            classify()
+
+
 def test_archive_phase_drift_observes_original_dispatch_before_writing_new_pr(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
