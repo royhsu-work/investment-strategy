@@ -6593,6 +6593,116 @@ def _accepted_effect_never_called_in_history(
         current = previous
 
 
+def classify_accepted_read_only_effects(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    recovery_evidence: Mapping[str, object],
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+    recovery_artifact: ApplicationRecoveryArtifact | None = None,
+) -> AcceptedPostEffectProof:
+    """Classify accepted read-only evidence at the existing proof owner.
+
+    A missing history read may be observed later. A contradictory immutable
+    Effect identity is not an observation delay and must not be requeued as
+    one. Neither outcome licenses a GitHub write or a synthetic Action.
+    """
+
+    if (
+        record.disposition != "ACCEPTED"
+        or record.issue_number != source.issue_number
+        or record.role != source.role
+        or record.action != source.action
+    ):
+        return AcceptedPostEffectProof("UNSAFE", "read-only accepted source identity conflicts")
+    boundary = _accepted_recovery_boundary(recovery_evidence)
+    if boundary not in {"READ_ONLY", "POST_EFFECT_RESULT"}:
+        return AcceptedPostEffectProof("UNSAFE", "read-only failure boundary is invalid")
+    if _SHA.fullmatch(current_revision) is None or not default_branch:
+        return AcceptedPostEffectProof("INDETERMINATE", "fresh revision evidence unavailable")
+    try:
+        if boundary == "POST_EFFECT_RESULT":
+            return _observe_accepted_post_effect_result(
+                record=record,
+                source=source,
+                repository=repository,
+                token=token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+            )
+        if "attempted_effects" not in recovery_evidence:
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", "immutable attempted Effect checkpoint unavailable"
+            )
+        attempted = _verified_attempted_effect_checkpoint(recovery_evidence, source=source)
+        attempted_revision = recovery_evidence.get("attempt_revision")
+        if (
+            attempted is None
+            or not isinstance(attempted_revision, str)
+            or _SHA.fullmatch(attempted_revision) is None
+        ):
+            return AcceptedPostEffectProof(
+                "UNSAFE", "immutable attempted Effect identity contradicts checkpoint"
+            )
+        if recovery_artifact is None:
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", "qualified recovery artifact unavailable"
+            )
+        if recovery_artifact.document.get("failure_evidence") != recovery_evidence:
+            return AcceptedPostEffectProof(
+                "UNSAFE", "recovery artifact and attempted Effect checkpoint disagree"
+            )
+        index = recovery_evidence.get("failed_effect_index")
+        if type(index) is not int:
+            return AcceptedPostEffectProof("UNSAFE", "read-only Effect index is invalid")
+        non_entry = recovery_evidence.get("write_call_entered") is False
+        if not _accepted_effect_never_called_in_history(
+            record=record,
+            source=source,
+            artifact=recovery_artifact,
+            failed_index=index if non_entry else index + 1,
+            repository=repository,
+            token=token,
+        ):
+            # This negative result includes unavailable historical GETs. It
+            # never positively proves a conflicting or completed write.
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", "accepted historical write frontier is not proven"
+            )
+        adapter = GitHubEffectAdapter(
+            repository,
+            token,
+            source,
+            authorized_change=record.change,
+            current_revision=current_revision,
+            expected_result_kind=record.result_kind,
+            request_comment_id=record.request_comment_id,
+            authorization_revision=record.authorization_revision,
+            allow_pending_continuation=True,
+            accepted_intent=True,
+            pending_application_correlation=formal_application_correlation(
+                source,
+                change=record.change,
+                result_kind=record.result_kind,
+                current_revision=attempted_revision,
+                request_comment_id=record.request_comment_id,
+            ),
+        )
+        prefix = attempted[:-1] if non_entry else attempted
+        if all(adapter.observe_postcondition(effect) for effect in prefix):
+            return AcceptedPostEffectProof("COMPLETE", "accepted historical prefix observed")
+        return AcceptedPostEffectProof(
+            "INDETERMINATE", "accepted historical postconditions not yet proven"
+        )
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return AcceptedPostEffectProof(
+            "INDETERMINATE", "accepted GitHub observation unavailable"
+        )
+
+
 def accepted_read_only_effects_complete(
     *,
     record: ApplicationDecisionRecord,
@@ -6604,100 +6714,18 @@ def accepted_read_only_effects_complete(
     default_branch: str,
     recovery_artifact: ApplicationRecoveryArtifact | None = None,
 ) -> bool:
-    """Freshly observe *only* the effects of one immutable ACCEPTED intent.
+    """Boolean compatibility projection; typed proof is the sole owner."""
 
-    This is a read-only projection of the same GitHubEffectAdapter postcondition
-    owner that the actual Application uses. Dispatch may use the observation to
-    decide whether another read-only continuation is useful; it must not apply
-    an effect, persist a result, or authorize a successor on this predicate.
-    The Application independently requalifies everything before any mutation.
-    """
-
-    if (
-        record.disposition != "ACCEPTED"
-        or record.issue_number != source.issue_number
-        or record.role != source.role
-        or record.action != source.action
-        or _accepted_recovery_boundary(recovery_evidence) not in {"READ_ONLY", "POST_EFFECT_RESULT"}
-        or _SHA.fullmatch(current_revision) is None
-        or not default_branch
-    ):
-        return False
-    try:
-        if _accepted_recovery_boundary(recovery_evidence) == "POST_EFFECT_RESULT":
-            return (
-                _observe_accepted_post_effect_result(
-                    record=record,
-                    source=source,
-                    repository=repository,
-                    token=token,
-                    current_revision=current_revision,
-                    default_branch=default_branch,
-                ).disposition
-                == "COMPLETE"
-            )
-        # Prefer the immutable attempted prefix emitted by the actual
-        # Application run. A fresh projection may legitimately switch from
-        # workflow-dispatch to PR-create, or merge to ref-delete, and must
-        # never become the identity of the *previously attempted* write.
-        if "attempted_effects" in recovery_evidence:
-            attempted = _verified_attempted_effect_checkpoint(recovery_evidence, source=source)
-            if attempted is None:
-                return False
-            attempted_revision = recovery_evidence.get("attempt_revision")
-            if (
-                not isinstance(attempted_revision, str)
-                or _SHA.fullmatch(attempted_revision) is None
-            ):
-                return False
-            adapter = GitHubEffectAdapter(
-                repository,
-                token,
-                source,
-                authorized_change=record.change,
-                current_revision=current_revision,
-                expected_result_kind=record.result_kind,
-                request_comment_id=record.request_comment_id,
-                authorization_revision=record.authorization_revision,
-                allow_pending_continuation=True,
-                accepted_intent=True,
-                pending_application_correlation=formal_application_correlation(
-                    source,
-                    change=record.change,
-                    result_kind=record.result_kind,
-                    current_revision=attempted_revision,
-                    request_comment_id=record.request_comment_id,
-                ),
-            )
-            # One proof table for both stages: an actual non-entry needs
-            # history through the same Effect index; an attempted/unknown
-            # write must first be freshly SATISFIED, and can only authorize
-            # the *next* Effect when every earlier run stayed before it.
-            index = recovery_evidence.get("failed_effect_index")
-            non_entry = recovery_evidence.get("write_call_entered") is False
-            if (
-                type(index) is not int
-                or recovery_artifact is None
-                or recovery_artifact.document.get("failure_evidence") != recovery_evidence
-                or not _accepted_effect_never_called_in_history(
-                    record=record,
-                    source=source,
-                    artifact=recovery_artifact,
-                    failed_index=index if non_entry else index + 1,
-                    repository=repository,
-                    token=token,
-                )
-            ):
-                return False
-            prefix = attempted[:-1] if non_entry else attempted
-            return all(adapter.observe_postcondition(effect) for effect in prefix)
-        # No original attempted identity: a fresh projection can represent a
-        # DIFFERENT Effect on a later main and cannot prove any accepted history.
-        # Retain UNKNOWN for native recovery or governance repair, never replay.
-        return False
-    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
-        # An unavailable or contradictory observation cannot grant a retry.
-        return False
+    return classify_accepted_read_only_effects(
+        record=record,
+        source=source,
+        recovery_evidence=recovery_evidence,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+        default_branch=default_branch,
+        recovery_artifact=recovery_artifact,
+    ).disposition == "COMPLETE"
 
 
 def classify_post_effect_result_recovery(
