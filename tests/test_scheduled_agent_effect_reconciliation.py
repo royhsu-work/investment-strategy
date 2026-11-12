@@ -2945,3 +2945,72 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
         current_revision=REVISION,
         default_branch="main",
     )
+
+@pytest.mark.parametrize(
+    ("boundary", "mutation_status", "entered", "classification"),
+    [
+        ("effect-precondition-exception", "not-complete", False, None),
+        ("effect-postcondition", "unknown", True, None),
+        ("effect-precondition", "not-complete", False, "effect-precondition-unsatisfied"),
+    ],
+)
+def test_read_only_deferral_preserves_immutable_execution_frontier(
+    boundary: str,
+    mutation_status: str,
+    entered: bool,
+    classification: str | None,
+) -> None:
+    """RED: an unavailable fresh GET must not rewrite the earlier write-call fact.
+
+    A new read-only Application run has not issued this Effect. Its checkpoint
+    must preserve the original, content-addressed execution boundary; otherwise
+    a never-called E1 becomes an artificial unknown write and stalls forever.
+    """
+    second = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "unattempted second Effect"})
+    )
+    rejection = (
+        None
+        if classification is None
+        else {
+            "classification": classification,
+            "expected": "exact guard",
+            "observed": "rejected before write",
+        }
+    )
+    previous: dict[str, object] = {
+        "reason": "prior immutable execution checkpoint",
+        "failed_effect_index": 1,
+        "failed_effect_kind": second.kind,
+        "failed_effect_sha256": hashlib.sha256(second.payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": [0],
+        "completed_effect_sha256": ["a" * 64],
+        "mutation_status": mutation_status,
+        "unfinished_boundary": boundary,
+        "write_call_entered": entered,
+        "operation_stage": "READ" if not entered else "WRITE",
+        "raw_error": "prior source-bound GitHub I/O failure",
+        "rejection": rejection,
+    }
+    assert application._accepted_recovery_boundary(previous) == "READ_ONLY"
+
+    deferred = application._defer_read_only_execution_checkpoint(previous)
+    assert deferred.recovery_evidence is not None
+    fresh_document = application._recovery_failure_document(deferred)
+    assert application._accepted_recovery_boundary(fresh_document) == "READ_ONLY"
+    for name in (
+        "failed_effect_index",
+        "failed_effect_kind",
+        "failed_effect_sha256",
+        "completed_effect_indexes",
+        "completed_effect_sha256",
+        "mutation_status",
+        "unfinished_boundary",
+        "write_call_entered",
+        "operation_stage",
+        "raw_error",
+        "rejection",
+    ):
+        assert fresh_document[name] == previous[name], name
+    assert fresh_document["reason"] != previous["reason"]
+
