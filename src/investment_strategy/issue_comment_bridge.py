@@ -2817,12 +2817,10 @@ def _application_job(
                 "Upload final exact application recovery evidence",
             }
             has_exception = steps is not None and any(
-                name in exception_uploads and conclusion == "success"
-                for name, conclusion in steps
+                name in exception_uploads and conclusion == "success" for name, conclusion in steps
             )
             has_recovery = steps is not None and any(
-                name in recovery_uploads and conclusion == "success"
-                for name, conclusion in steps
+                name in recovery_uploads and conclusion == "success" for name, conclusion in steps
             )
             if has_exception and has_recovery:
                 return ApplicationCompletion(
@@ -2862,8 +2860,10 @@ def _application_job(
                     # A signed semantic projection cannot independently prove
                     # that an older accepted request had zero physical Effects.
                     verified_empty_original = False
-            if has_exception and not has_recovery and (
-                has_original_effect or legacy_activation or verified_empty_original
+            if (
+                has_exception
+                and not has_recovery
+                and (has_original_effect or legacy_activation or verified_empty_original)
             ):
                 recovery_artifact = read_application_exception_artifact(
                     repository,
