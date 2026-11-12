@@ -6710,10 +6710,6 @@ def classify_accepted_read_only_effects(
             if not non_entry or not attempted[-1].derived
             else False
         )
-        if not failed_satisfied and not non_entry:
-            return AcceptedPostEffectProof(
-                "INDETERMINATE", "attempted accepted Effect is not yet proven complete"
-            )
         historical_frontier = index + 1 if failed_satisfied else index
         # Original Effect proof is separate from *authorization of the next*
         # formal/result/successor write. Bind its leaf to the immutable
@@ -6737,6 +6733,12 @@ def classify_accepted_read_only_effects(
                     effect=original.effects[index],
                     final_postcondition=failed_satisfied,
                 )
+            )
+        if not failed_satisfied and not non_entry:
+            return AcceptedPostEffectProof(
+                "INDETERMINATE",
+                "attempted accepted Effect is not yet proven complete",
+                original_effect_proof=original_effect_proof,
             )
         if not _accepted_effect_never_called_in_history(
             record=record,
