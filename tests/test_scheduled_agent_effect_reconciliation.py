@@ -127,6 +127,76 @@ def _assumed_qualified_history_for_postcondition_test(
     return artifact
 
 
+
+@pytest.mark.parametrize(
+    ("observation", "expected"),
+    [
+        (None, "COMPLETE"),
+        (OSError, "INDETERMINATE"),
+        (RuntimeError, "RAISE"),
+        (TypeError, "RAISE"),
+        (ValueError, "RAISE"),
+    ],
+)
+def test_fresh_accepted_proof_captures_only_io_not_implementation_defects(
+    monkeypatch: pytest.MonkeyPatch,
+    observation: type[Exception] | None,
+    expected: str,
+) -> None:
+    """R9: finite proof owner must not swallow a permanent contract defect."""
+
+    batch, source = _batch()
+    raw = json.dumps(
+        {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "accepted",
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+                for effect in batch.effects
+            ],
+        }
+    )
+    decision = render_application_decision_body(
+        request_comment_id=91,
+        request_body="original accepted source",
+        authorization_revision=REVISION,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    record = parse_application_decision(decision)
+    assert record is not None
+    monkeypatch.setattr(application, "_github_json", lambda *_a: {"default_branch": "main"})
+    monkeypatch.setattr(application, "_fresh_branch_head", lambda *_a: REVISION)
+
+    def observed(**_kwargs: object) -> application.AcceptedPostEffectProof:
+        if observation is not None:
+            raise observation("unexpected proof contract defect")
+        return application.AcceptedPostEffectProof("COMPLETE", "exact target state observed")
+
+    monkeypatch.setattr(application, "_observe_accepted_post_effect_result", observed)
+
+    def classify() -> application.AcceptedPostEffectProof:
+        return application._fresh_accepted_activation_proof(
+            record, repository="owner/repo", token=REVISION
+        )
+
+    if expected == "RAISE":
+        assert observation is not None
+        with pytest.raises(observation, match="unexpected proof contract defect"):
+            classify()
+    else:
+        proof = classify()
+        assert proof.disposition == expected
+        assert proof.continuation == ("CONTINUE" if expected == "COMPLETE" else "OBSERVE")
+
+
 @pytest.mark.parametrize("empty_original", [False, True])
 @pytest.mark.parametrize("already_durable", [False, True])
 def test_exception_recovery_real_guarded_engine_cross_wake(
