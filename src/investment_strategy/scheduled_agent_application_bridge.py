@@ -6808,60 +6808,6 @@ def _fresh_accepted_activation_proof(
         return AcceptedPostEffectProof("INDETERMINATE", "accepted GitHub proof unavailable")
 
 
-def _defer_read_only_execution_checkpoint(previous: Mapping[str, object]) -> ApplyResult:
-    """Carry forward a qualified execution frontier when this run only read.
-
-    A later failed observation did not issue the original Effect. It cannot
-    turn a proven non-entry into an attempted write, or erase an earlier
-    attempted/unknown write. The existing evidence writer and history reader
-    must see the same immutable mutation stage and write-call fact.
-    """
-
-    if _accepted_recovery_boundary(previous) != "READ_ONLY":
-        raise RuntimeError("read-only deferral lacks a qualified execution boundary")
-    prior_rejection = previous.get("rejection")
-    if prior_rejection is not None and not isinstance(prior_rejection, Mapping):
-        raise RuntimeError("read-only deferral has malformed rejection evidence")
-    try:
-        rejection = (
-            None
-            if prior_rejection is None
-            else ApplicationRejection(
-                ApplicationRejectionKind(cast(str, prior_rejection["classification"])),
-                cast(str, prior_rejection["expected"]),
-                cast(str, prior_rejection["observed"]),
-            )
-        )
-    except (KeyError, TypeError, ValueError) as exc:
-        raise RuntimeError("read-only deferral cannot reconstruct original rejection") from exc
-    operation_stage = previous.get("operation_stage")
-    entered = previous.get("write_call_entered")
-    raw_error = previous.get("raw_error")
-    if (
-        (operation_stage is not None and not isinstance(operation_stage, str))
-        or (entered is not None and type(entered) is not bool)
-        or (raw_error is not None and not isinstance(raw_error, str))
-    ):
-        raise RuntimeError("read-only deferral has malformed execution-boundary fields")
-    return ApplyResult(
-        False,
-        "accepted original effect not currently proven complete",
-        recovery_evidence=EffectRecoveryEvidence(
-            failed_effect_index=cast(int, previous["failed_effect_index"]),
-            failed_effect_kind=cast(str, previous["failed_effect_kind"]),
-            failed_effect_sha256=cast(str, previous["failed_effect_sha256"]),
-            completed_effect_indexes=tuple(cast(list[int], previous["completed_effect_indexes"])),
-            completed_effect_sha256=tuple(cast(list[str], previous["completed_effect_sha256"])),
-            mutation_status=cast(str, previous["mutation_status"]),
-            unfinished_boundary=cast(str, previous["unfinished_boundary"]),
-            rejection=rejection,
-            operation_stage=cast(str | None, operation_stage),
-            write_call_entered=cast(bool | None, entered),
-            raw_error=cast(str | None, raw_error),
-        ),
-    )
-
-
 def _write_application_recovery_evidence(
     path: str | None,
     *,
@@ -6877,6 +6823,7 @@ def _write_application_recovery_evidence(
     continuation: ApplicationContinuationRequest | None,
     predecessor: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None,
     effect_batch: EffectBatch | None = None,
+    preserve_predecessor_failure: bool = False,
 ) -> bool:
     """Persist a bounded, content-addressed application boundary for later reads."""
 
@@ -6911,7 +6858,33 @@ def _write_application_recovery_evidence(
     if _strict_positive_int(run_id) is None or _strict_positive_int(run_attempt) is None:
         return False
 
-    failure_evidence = _recovery_failure_document(result)
+    if preserve_predecessor_failure:
+        # This invocation only re-observed a fully qualified predecessor:
+        # its write-call facts are immutable, not a new Effect attempt.
+        if (
+            result.applied
+            or result.recovery_evidence is not None
+            or result.carrier_plan is not None
+            or not isinstance(predecessor, ApplicationRecoveryArtifact)
+            or predecessor.request_comment_id != request_comment_id
+            or predecessor.accepted_decision_sha256 != accepted_sha256
+            or predecessor.document.get("issue_number") != source.issue_number
+            or predecessor.document.get("role") != source.role
+            or predecessor.document.get("action") != source.action
+            or predecessor.document.get("authorization_revision") != authorization_revision
+        ):
+            return False
+        original_failure = predecessor.document.get("failure_evidence")
+        if (
+            not isinstance(original_failure, Mapping)
+            or _accepted_recovery_boundary(original_failure) != "READ_ONLY"
+            or _canonical_sha256(original_failure) != predecessor.failure_evidence_sha256
+        ):
+            return False
+        failure_evidence = dict(original_failure)
+        failure_evidence["reason"] = result.reason
+    else:
+        failure_evidence = _recovery_failure_document(result)
     # Redact the raw cause once at the existing evidence producer, before
     # computing its content digest. Neither reader nor proof table uses the
     # error string to infer write eligibility.
@@ -7853,7 +7826,9 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                     # reauthorization. Persist only a read-only boundary with
                     # the SAME attempted identity, and never apply a newly
                     # projected Effect on this invocation.
-                    deferred = _defer_read_only_execution_checkpoint(failure)
+                    deferred = ApplyResult(
+                        False, "accepted original effect not currently proven complete"
+                    )
                     if not _write_application_recovery_evidence(
                         args.recovery_evidence_path,
                         result=deferred,
@@ -7867,6 +7842,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                         run_attempt=args.run_attempt,
                         continuation=continuation,
                         predecessor=predecessor_evidence,
+                        preserve_predecessor_failure=True,
                     ):
                         raise RuntimeError("read-only attempted-effect checkpoint was not durable")
                     _write_carrier_outputs(deferred)
