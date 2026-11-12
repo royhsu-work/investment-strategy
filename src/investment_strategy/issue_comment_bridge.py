@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -5913,18 +5914,34 @@ def main() -> int:
         preflight = acquire_current_github_preflight(repository, token)
         decision = classify_dispatch(preflight)
         source = _completion_source(preflight, decision)
-        completion = (
-            ApplicationCompletion("NONE", "application-completion-none")
-            if source is None
-            else qualify_application_completion(
-                repository,
-                token,
-                source=source,
-                current_revision=args.revision,
-                current_dispatch_request_comment_id=identity[1],
-                current_dispatch_issue_number=identity[0],
-            )
-        )
+        if source is None:
+            completion = ApplicationCompletion("NONE", "application-completion-none")
+        else:
+            try:
+                completion = qualify_application_completion(
+                    repository,
+                    token,
+                    source=source,
+                    current_revision=args.revision,
+                    current_dispatch_request_comment_id=identity[1],
+                    current_dispatch_issue_number=identity[0],
+                )
+            except Exception as exc:
+                # The run-scoped dispatch result is the existing durable
+                # pre-dispatch repair entry. Preserve exact source identity
+                # without exposing exception text, replaying accepted effects,
+                # or manufacturing a repository-dispatched successor Action.
+                print(
+                    "Pre-dispatch accepted-completion proof exception: "
+                    f"issue={source.issue_number} action={source.action} "
+                    f"type={type(exc).__qualname__}",
+                    file=sys.stderr,
+                )
+                completion = ApplicationCompletion(
+                    "INVALID",
+                    "application-completion-proof-exception:"
+                    f"issue-{source.issue_number}:{source.action}",
+                )
         continuation_body = None
         if completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
             if (
