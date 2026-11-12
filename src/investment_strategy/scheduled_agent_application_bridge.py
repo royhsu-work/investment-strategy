@@ -6176,6 +6176,26 @@ def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofDispo
     return evaluate(node)
 
 
+def _observe_original_effect_prefix(
+    effects: Sequence[StagedEffect],
+    observe_postcondition: Callable[[StagedEffect], bool],
+) -> tuple[RecoveryEvidenceNode, ...] | None:
+    """One source-bound positive proof reader, shared by recovery boundaries."""
+
+    nodes: list[RecoveryEvidenceNode] = []
+    for effect in effects:
+        fact = RecoveryEvidenceNode(
+            "ORIGINAL_EFFECT",
+            effect,
+            final_postcondition=observe_postcondition(effect),
+            depends_on=(nodes[-1],) if nodes else (),
+        )
+        if evaluate_recovery_evidence(fact) != "SATISFIED":
+            return None
+        nodes.append(fact)
+    return tuple(nodes)
+
+
 @dataclass(frozen=True)
 class AcceptedPostEffectProof:
     """Read-only recovery outcome from the canonical materialization owner."""
@@ -6320,7 +6340,7 @@ def _observe_accepted_post_effect_result(
             allow_pending_continuation=True,
             accepted_intent=True,
         )
-        if not all(adapter.observe_postcondition(effect) for effect in batch.effects):
+        if _observe_original_effect_prefix(batch.effects, adapter.observe_postcondition) is None:
             return AcceptedPostEffectProof(
                 "INDETERMINATE", "accepted original Effect postconditions unproven"
             )
@@ -6723,16 +6743,13 @@ def classify_accepted_read_only_effects(
         # One proof table: a positively SATISFIED Effect does not have to
         # prove it was never called. Only an absent, invocation-local
         # never-called Effect requires the full historical NOT_APPLIED proof.
-        proven_prefix: list[RecoveryEvidenceNode] = []
-        for effect in attempted[:-1]:
-            fact = RecoveryEvidenceNode(
-                "ORIGINAL_EFFECT", effect, adapter.observe_postcondition(effect)
+        proven_prefix = _observe_original_effect_prefix(
+            attempted[:-1], adapter.observe_postcondition
+        )
+        if proven_prefix is None:
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", "accepted historical prefix is not yet satisfied"
             )
-            if evaluate_recovery_evidence(fact) != "SATISFIED":
-                return AcceptedPostEffectProof(
-                    "INDETERMINATE", "accepted historical prefix is not yet satisfied"
-                )
-            proven_prefix.append(fact)
         # A never-called Application-derived routing transition is authorized
         # only after formal reconciliation, not by prematurely observing the
         # successor route. For an original Effect, positive proof takes priority.
