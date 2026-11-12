@@ -2973,10 +2973,13 @@ def test_run_local_effect_frontier_cannot_prove_accepted_history(
 
 
 @pytest.mark.parametrize("earlier_e1_write", [False, True])
+@pytest.mark.parametrize("continuation_run_attempt", [1, 2])
 def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
-    monkeypatch: pytest.MonkeyPatch, earlier_e1_write: bool
+    monkeypatch: pytest.MonkeyPatch,
+    earlier_e1_write: bool,
+    continuation_run_attempt: int,
 ) -> None:
-    """Identical current GitHub state must not erase an earlier accepted write attempt."""
+    """Current state and newest checkpoint cannot hide earlier writes or run attempts."""
 
     original, source = _batch()
     first = original.effects[0]
@@ -3075,7 +3078,7 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
     }
     child = application.ApplicationRecoveryArtifact(
         run_id=7004,
-        run_attempt=1,
+        run_attempt=continuation_run_attempt,
         job_id=7005,
         artifact_id=7006,
         artifact_digest="sha256:" + "e" * 64,
@@ -3145,7 +3148,7 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
         default_branch="main",
         recovery_artifact=child,
     )
-    assert qualified is not earlier_e1_write
+    assert qualified is (not earlier_e1_write and continuation_run_attempt == 1)
 
     if earlier_e1_write:
         # RED: the exact E1 postcondition may become true after the lost
@@ -3173,7 +3176,9 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
             default_branch="main",
             recovery_artifact=child,
         )
-        assert later.disposition == "COMPLETE"
+        assert later.disposition == (
+            "COMPLETE" if continuation_run_attempt == 1 else "INDETERMINATE"
+        )
         assert observed == [first, second]
 
     # A locally non-entered E1 does not override the earlier lost response.
@@ -3193,7 +3198,7 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
             failed_index=1,
             repository="owner/repo",
             token=REVISION,
-        )
+        ) is (continuation_run_attempt == 1)
     # Omitted or conflicting history cannot become a replay permission.
     assert not application.accepted_read_only_effects_complete(
         record=record,
