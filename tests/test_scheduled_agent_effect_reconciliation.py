@@ -3076,7 +3076,8 @@ def test_read_only_deferral_preserves_immutable_execution_frontier(
     record = parse_application_decision(decision_body)
     assert record is not None
     monkeypatch.setattr(
-        application, "_application_decision_comment_for_request",
+        application,
+        "_application_decision_comment_for_request",
         lambda **_kwargs: (record, decision_body),
     )
     predecessor = application.ApplicationRecoveryArtifact(
@@ -3105,9 +3106,7 @@ def test_read_only_deferral_preserves_immutable_execution_frontier(
         False, "accepted original effect not currently proven complete"
     )
 
-    def persist(
-        target: Path, prior: application.ApplicationRecoveryArtifact
-    ) -> bool:
+    def persist(target: Path, prior: application.ApplicationRecoveryArtifact) -> bool:
         return application._write_application_recovery_evidence(
             str(target),
             result=deferred,
