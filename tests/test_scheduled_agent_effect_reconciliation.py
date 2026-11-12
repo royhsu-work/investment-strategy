@@ -2996,6 +2996,7 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
         default_branch="main",
     )
 
+
 @pytest.mark.parametrize(
     ("boundary", "mutation_status", "entered", "classification"),
     [
@@ -3063,4 +3064,3 @@ def test_read_only_deferral_preserves_immutable_execution_frontier(
     ):
         assert fresh_document[name] == previous[name], name
     assert fresh_document["reason"] != previous["reason"]
-
