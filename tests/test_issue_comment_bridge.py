@@ -3823,20 +3823,31 @@ def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
         ("NOT_APPLIED", "INVALID", "application-completion-exception-unsafe"),
     ],
 )
+@pytest.mark.parametrize("source_kind", ["activation", "implementation"])
 def test_exception_only_application_completion_requires_fresh_original_proof(
     monkeypatch: pytest.MonkeyPatch,
     proof: str,
     expected_state: str,
     expected_reason: str,
+    source_kind: str,
 ) -> None:
-    record = replace(
-        _accepted_carrier_record(),
-        issue_number=435,
-        role="lead",
-        action="propose-change",
-        change="unset",
-        result_kind="proposal-ready",
-        request_comment_id=6760870154,
+    record = (
+        replace(
+            _accepted_carrier_record(),
+            issue_number=435,
+            role="lead",
+            action="propose-change",
+            change="unset",
+            result_kind="proposal-ready",
+            request_comment_id=6760870154,
+        )
+        if source_kind == "activation"
+        else replace(
+            _accepted_carrier_record(),
+            issue_number=435,
+            result_kind="blocked",
+            request_comment_id=6796616018,
+        )
     )
     evidence = application.ApplicationExceptionArtifact(
         run_id=42827477053,
@@ -3849,10 +3860,10 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
         failure_evidence_sha256="c" * 64,
         recovery_episode_sha256="d" * 64,
         document={
-            "issue_number": 435,
-            "role": "lead",
-            "action": "propose-change",
-            "change": "unset",
+            "issue_number": record.issue_number,
+            "role": record.role,
+            "action": record.action,
+            "change": record.change,
         },
     )
     monkeypatch.setattr(
@@ -3896,7 +3907,15 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
             ],
         }
 
+    monkeypatch.setattr(
+        bridge, "_qualified_unapplied_terminal_carrier_effect", lambda *_a, **_kw: False
+    )
     monkeypatch.setattr(bridge, "read_application_exception_artifact", lambda *_a, **_kw: evidence)
+    monkeypatch.setattr(
+        bridge,
+        "read_application_recovery_artifact",
+        lambda *_a, **_kw: pytest.fail("wrong artifact type selected"),
+    )
     monkeypatch.setattr(
         bridge,
         "classify_application_exception_recovery",
