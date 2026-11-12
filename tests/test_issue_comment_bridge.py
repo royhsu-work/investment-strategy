@@ -3859,6 +3859,46 @@ def _carrier_plan_fixture(authorization_revision: str = REVISION) -> carrier.Car
     )
 
 
+@pytest.mark.parametrize(
+    ("origin", "proof_disposition", "state", "reason"),
+    [
+        ("EXCEPTION", "COMPLETE", None, None),
+        ("EXCEPTION", "INDETERMINATE", "RESUMABLE", "application-completion-exception-observing"),
+        ("EXCEPTION", "NOT_APPLIED", "INVALID", "application-completion-exception-unsafe"),
+        ("EXCEPTION", "UNSAFE", "INVALID", "application-completion-exception-unsafe"),
+        ("POST_EFFECT", "COMPLETE", None, None),
+        ("POST_EFFECT", "INDETERMINATE", "RESUMABLE", "application-completion-post-effect-observing"),
+        ("POST_EFFECT", "NOT_APPLIED", "INVALID", "application-completion-original-effect-incomplete"),
+        ("POST_EFFECT", "UNSAFE", "INVALID", "application-completion-original-effect-unsafe"),
+        ("READ_ONLY", "COMPLETE", None, None),
+        ("READ_ONLY", "INDETERMINATE", "RESUMABLE", "application-completion-read-only-observing"),
+        ("READ_ONLY", "NOT_APPLIED", "INVALID", "application-completion-read-only-proof-conflict"),
+        ("READ_ONLY", "UNSAFE", "INVALID", "application-completion-read-only-proof-conflict"),
+    ],
+)
+def test_accepted_recovery_proof_has_one_non_authorizing_completion_projection(
+    origin: str, proof_disposition: str, state: str | None, reason: str | None
+) -> None:
+    proof = application.AcceptedPostEffectProof(
+        cast(Literal["COMPLETE", "INDETERMINATE", "NOT_APPLIED", "UNSAFE"], proof_disposition),
+        "read-only witness",
+    )
+    result = bridge._unresolved_accepted_proof_completion(
+        proof,
+        origin=cast(Literal["EXCEPTION", "POST_EFFECT", "READ_ONLY"], origin),
+        request_comment_id=90,
+        recovery_artifact=None,
+    )
+    if state is None:
+        assert result is None
+    else:
+        assert result == bridge.ApplicationCompletion(
+            cast(Literal["RESUMABLE", "INVALID"], state),
+            cast(str, reason),
+            request_comment_id=90,
+        )
+
+
 def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
     return bridge.ApplicationDecisionRecord(
         request_comment_id=90,
