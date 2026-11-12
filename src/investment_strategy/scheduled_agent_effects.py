@@ -1697,8 +1697,15 @@ def apply_effect_batch(
     ):
         return ApplyResult(False, "application decision postcondition not observed")
 
+    # Execute original and Application-derived Effects through the same
+    # guard/write/postcondition boundary. Derived Effects remain last, after
+    # the original frontier is fully observed or durably applied.
     completed_indexes: list[int] = []
-    for index, effect in enumerate(effects_to_apply):
+    execution_order = (
+        (*effects_to_apply, derived_effect) if apply_derived else effects_to_apply
+    )
+    for index, effect in enumerate(execution_order):
+        is_derived = index == len(effects_to_apply)
         try:
             observed = index in completed_before or (
                 accepted_intent and observe_postcondition(effect)
@@ -1708,6 +1715,8 @@ def apply_effect_batch(
                 index, tuple(completed_indexes), exc, operation_stage="READ"
             )
         if observed:
+            if is_derived:
+                return ApplyResult(True, "already-durable")
             completed_indexes.append(index)
             continue
         try:
@@ -1722,17 +1731,18 @@ def apply_effect_batch(
                 operation_stage="BEFORE-WRITE",
                 write_call_entered=False,
             )
+
+        boundary = "derived-effect-postcondition" if is_derived else "effect-postcondition"
         try:
             apply_effect(effect)
         except CarrierRequired:
             raise
         except OSError as exc:
-            # A failed write response is UNKNOWN even when the POSTcondition is false.
             return rejected(
-                f"effect write outcome unavailable: {type(exc).__qualname__}",
+                f"{'derived' if is_derived else 'effect'} write outcome unavailable: {type(exc).__qualname__}",
                 index,
                 completed_indexes=tuple(completed_indexes),
-                unfinished_boundary="effect-postcondition",
+                unfinished_boundary=boundary,
                 mutation_status="unknown",
                 operation_stage="WRITE",
                 write_call_entered=True,
@@ -1742,10 +1752,14 @@ def apply_effect_batch(
             observed_after = observe_postcondition(effect)
         except OSError as exc:
             return rejected(
-                "durable postcondition observation unavailable",
+                (
+                    "derived postcondition observation unavailable"
+                    if is_derived
+                    else "durable postcondition observation unavailable"
+                ),
                 index,
                 completed_indexes=tuple(completed_indexes),
-                unfinished_boundary="effect-postcondition",
+                unfinished_boundary=boundary,
                 mutation_status="unknown",
                 operation_stage="AFTER-WRITE",
                 write_call_entered=True,
@@ -1756,72 +1770,13 @@ def apply_effect_batch(
                 "durable postcondition not observed",
                 index,
                 completed_indexes=tuple(completed_indexes),
-                unfinished_boundary="effect-postcondition",
+                unfinished_boundary=boundary,
                 mutation_status="unknown",
                 operation_stage="AFTER-WRITE",
                 write_call_entered=True,
             )
-        completed_indexes.append(index)
-
-    if apply_derived:
-        try:
-            derived_complete = accepted_intent and observe_postcondition(derived_effect)
-        except OSError as exc:
-            return interrupted_before_write(
-                len(effects_to_apply), tuple(completed_indexes), exc, operation_stage="READ"
-            )
-        if derived_complete:
-            return ApplyResult(True, "already-durable")
-        try:
-            guard_ok = effect_guard(derived_effect)
-        except OSError as exc:
-            return interrupted_before_write(len(effects_to_apply), tuple(completed_indexes), exc)
-        if not guard_ok:
-            return rejected(
-                "effect precondition rejected",
-                len(effects_to_apply),
-                completed_indexes=tuple(completed_indexes),
-                operation_stage="BEFORE-WRITE",
-                write_call_entered=False,
-            )
-        try:
-            apply_effect(derived_effect)
-        except CarrierRequired:
-            raise
-        except OSError as exc:
-            return rejected(
-                f"derived write outcome unavailable: {type(exc).__qualname__}",
-                len(effects_to_apply),
-                completed_indexes=tuple(completed_indexes),
-                unfinished_boundary="derived-effect-postcondition",
-                mutation_status="unknown",
-                operation_stage="WRITE",
-                write_call_entered=True,
-                raw_error=str(exc),
-            )
-        try:
-            derived_observed = observe_postcondition(derived_effect)
-        except OSError as exc:
-            return rejected(
-                "derived postcondition observation unavailable",
-                len(effects_to_apply),
-                completed_indexes=tuple(completed_indexes),
-                unfinished_boundary="derived-effect-postcondition",
-                mutation_status="unknown",
-                operation_stage="AFTER-WRITE",
-                write_call_entered=True,
-                raw_error=str(exc),
-            )
-        if not derived_observed:
-            return rejected(
-                "durable postcondition not observed",
-                len(effects_to_apply),
-                completed_indexes=tuple(completed_indexes),
-                unfinished_boundary="derived-effect-postcondition",
-                mutation_status="unknown",
-                operation_stage="AFTER-WRITE",
-                write_call_entered=True,
-            )
+        if not is_derived:
+            completed_indexes.append(index)
 
     return ApplyResult(True, "applied")
 
