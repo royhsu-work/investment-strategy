@@ -2613,17 +2613,23 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
     monkeypatch.setattr(
         application, "read_application_recovery_artifact", lambda *_a, **_kw: previous
     )
-    assert not application.accepted_read_only_effects_complete(
-        record=record,
-        source=source,
-        recovery_evidence=failure,
-        repository="owner/repo",
-        token=REVISION,
-        current_revision=REVISION,
-        default_branch="main",
-        recovery_artifact=latest,
-    )
+    def prior_attempt_satisfied() -> bool:
+        return application.accepted_read_only_effects_complete(
+            record=record,
+            source=source,
+            recovery_evidence=failure,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+            recovery_artifact=latest,
+        )
+
+    # A previous lost response cannot prove NOT_APPLIED. But once the exact
+    # Effect is durably SATISFIED, continuing it is no replay.
+    assert prior_attempt_satisfied() is pre_guard_failure
     durable.remove("E0")
+    assert not prior_attempt_satisfied()  # Positive proof is no longer present.
     # No completed prefix exists when the failure preceded every Effect.
     assert qualified(failure) is pre_guard_failure
     durable.add("E0")
