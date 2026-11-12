@@ -6177,16 +6177,35 @@ def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofDispo
     return evaluate(node)
 
 
-def _observe_original_effect_prefix(
+def _recovery_obligation(
+    effect: StagedEffect, source: WorkerRequest
+) -> Literal["ORIGINAL_EFFECT", "FORMAL_RESULT", "SUCCESSOR"]:
+    """Project an existing Effect identity into one typed DAG obligation."""
+
+    if effect.derived:
+        return "SUCCESSOR"
+    if effect.kind == "issue-comment":
+        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
+        body = None if payload is None else payload.get("body")
+        if isinstance(body, str) and _marker(body) == _expected_formal_marker(source):
+            return "FORMAL_RESULT"
+    return "ORIGINAL_EFFECT"
+
+
+def _observe_accepted_effect_prefix(
     effects: Sequence[StagedEffect],
     observe_postcondition: Callable[[StagedEffect], bool],
+    *,
+    source: WorkerRequest,
 ) -> tuple[RecoveryEvidenceNode, ...] | None:
-    """One source-bound positive proof reader, shared by recovery boundaries."""
+    """One positive proof reader for original and Application-owned obligations."""
 
     nodes: list[RecoveryEvidenceNode] = []
     for effect in effects:
         fact = RecoveryEvidenceNode(
-            "ORIGINAL_EFFECT", effect, final_postcondition=observe_postcondition(effect)
+            _recovery_obligation(effect, source),
+            effect,
+            final_postcondition=observe_postcondition(effect),
         )
         if evaluate_recovery_evidence(fact) != "SATISFIED":
             return None
@@ -6338,7 +6357,10 @@ def _observe_accepted_post_effect_result(
             allow_pending_continuation=True,
             accepted_intent=True,
         )
-        if _observe_original_effect_prefix(batch.effects, adapter.observe_postcondition) is None:
+        observed_originals = _observe_accepted_effect_prefix(
+            batch.effects, adapter.observe_postcondition, source=source
+        )
+        if observed_originals is None:
             return AcceptedPostEffectProof(
                 "INDETERMINATE", "accepted original Effect postconditions unproven"
             )
@@ -6765,8 +6787,8 @@ def classify_accepted_read_only_effects(
         # One proof table: a positively SATISFIED Effect does not have to
         # prove it was never called. Only an absent, invocation-local
         # never-called Effect requires the full historical NOT_APPLIED proof.
-        proven_prefix = _observe_original_effect_prefix(
-            attempted[:-1], adapter.observe_postcondition
+        proven_prefix = _observe_accepted_effect_prefix(
+            attempted[:-1], adapter.observe_postcondition, source=source
         )
         if proven_prefix is None:
             return AcceptedPostEffectProof(
@@ -6781,7 +6803,7 @@ def classify_accepted_read_only_effects(
             else False
         )
         attempted_fact = RecoveryEvidenceNode(
-            "SUCCESSOR" if attempted[-1].derived else "ORIGINAL_EFFECT",
+            _recovery_obligation(attempted[-1], source),
             attempted[-1],
             final_postcondition=failed_satisfied,
             depends_on=tuple(proven_prefix),
