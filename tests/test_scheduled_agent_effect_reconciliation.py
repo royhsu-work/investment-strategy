@@ -582,10 +582,38 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
             recovery_artifact=history_artifact,
         )
 
+    def classify(
+        artifact: application.ApplicationRecoveryArtifact | None,
+    ) -> application.AcceptedPostEffectProof:
+        return application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=evidence,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+            recovery_artifact=artifact,
+        )
+
+    # RED: one canonical typed proof must not flatten a source contradiction
+    # into the same reschedulable UNKNOWN as a temporary missing history read.
+    assert classify(None).disposition == "INDETERMINATE"
+    forged_artifact = replace(
+        history_artifact,
+        document={
+            **history_artifact.document,
+            "failure_evidence": {**evidence, "failed_effect_sha256": "f" * 64},
+        },
+    )
+    assert classify(forged_artifact).disposition == "UNSAFE"
+    assert classify(history_artifact).disposition == "INDETERMINATE"
+
     assert not observe()
     state["original"] = True
     assert observe()  # The later formal write is not a prerequisite.
-    assert observations == [first_kind, first_kind]
+    assert classify(history_artifact).disposition == "COMPLETE"
+    assert observations == [first_kind, first_kind, first_kind, first_kind]
 
     evidence["failed_effect_index"] = 1
     evidence["failed_effect_kind"] = "issue-comment"
