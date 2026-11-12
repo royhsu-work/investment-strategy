@@ -327,9 +327,12 @@ def _assumed_qualified_history_for_postcondition_test(
     return artifact
 
 
-@pytest.mark.parametrize("successor_failed", [False, True])
+@pytest.mark.parametrize(
+    ("successor_failed", "successor_durable"),
+    [(False, False), (True, False), (True, True)],
+)
 def test_read_only_ir_identifies_formal_result_and_successor_nodes(
-    monkeypatch: pytest.MonkeyPatch, successor_failed: bool
+    monkeypatch: pytest.MonkeyPatch, successor_failed: bool, successor_durable: bool
 ) -> None:
     """R8: real read-only classification must distinguish Application obligations."""
     original, source = _batch()
@@ -368,10 +371,10 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         request_comment_id=91,
     )
     formal = parse_effect_batch(projected, source, authorized_change=CHANGE).effects[-1]
-    successor = StagedEffect(
-        "routing-transition",
-        json.dumps({"issue_number": 138, "action": "implement-change"}),
-        True,
+    from investment_strategy.scheduled_agent_effects import derived_transition_effect
+
+    successor = derived_transition_effect(
+        issue_number=source.issue_number, change=CHANGE, successor=Action.IMPLEMENT_CHANGE
     )
     attempted = (*original.effects, formal, *((successor,) if successor_failed else ()))
     failed = attempted[-1]
@@ -401,7 +404,17 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
             pass
 
         def observe_postcondition(self, effect: StagedEffect) -> bool:
-            return effect in attempted[:-1]
+            return effect in attempted[:-1] or (successor_durable and effect == successor)
+
+    if successor_durable:
+        # No complete historical non-entry witness is available; a positive
+        # current consequence must still admit read-only convergence.
+        monkeypatch.setattr(
+            application, "_accepted_effect_never_called_in_history", lambda **_kw: False
+        )
+        monkeypatch.setattr(
+            application, "consequence_postconditions_complete", lambda *_a, **_kw: True
+        )
 
     observed_nodes: list[application.RecoveryEvidenceNode] = []
     original_evaluator = application.evaluate_recovery_evidence
