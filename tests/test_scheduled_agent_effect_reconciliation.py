@@ -113,7 +113,7 @@ def test_exception_recovery_real_guarded_engine_cross_wake(
     formal = {
         "kind": "issue-comment",
         "payload_json": json.dumps(
-            {"issue_number": 138, "body": "ACTION_RESULT\\nformal"}
+            {"issue_number": 138, "body": "ACTION_RESULT\nformal"}
         ),
     }
     accepted_raw = json.dumps(dict(semantic, requested_effects=original_effects))
