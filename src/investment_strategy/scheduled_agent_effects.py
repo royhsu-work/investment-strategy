@@ -1639,7 +1639,7 @@ def apply_effect_batch(
             continue
         try:
             guard_ok = effect_guard(effect)
-        except Exception as exc:
+        except OSError as exc:
             # The preflight guard pass has issued *no* Effects yet. Point
             # the checkpoint at the earliest unobserved Effect, not the
             # later guard whose GET failed.
@@ -1671,14 +1671,14 @@ def apply_effect_batch(
             observed = index in completed_before or (
                 accepted_intent and observe_postcondition(effect)
             )
-        except Exception as exc:
+        except OSError as exc:
             return interrupted_before_write(index, tuple(completed_indexes), exc)
         if observed:
             completed_indexes.append(index)
             continue
         try:
             guard_ok = effect_guard(effect)
-        except Exception as exc:
+        except OSError as exc:
             return interrupted_before_write(index, tuple(completed_indexes), exc)
         if not guard_ok:
             return rejected(
@@ -1702,7 +1702,7 @@ def apply_effect_batch(
             )
         try:
             observed_after = observe_postcondition(effect)
-        except Exception:
+        except OSError:
             observed_after = False
         if not observed_after:
             return rejected(
@@ -1717,13 +1717,13 @@ def apply_effect_batch(
     if apply_derived:
         try:
             derived_complete = accepted_intent and observe_postcondition(derived_effect)
-        except Exception as exc:
+        except OSError as exc:
             return interrupted_before_write(len(effects_to_apply), tuple(completed_indexes), exc)
         if derived_complete:
             return ApplyResult(True, "already-durable")
         try:
             guard_ok = effect_guard(derived_effect)
-        except Exception as exc:
+        except OSError as exc:
             return interrupted_before_write(len(effects_to_apply), tuple(completed_indexes), exc)
         if not guard_ok:
             return rejected(
@@ -1745,7 +1745,7 @@ def apply_effect_batch(
             )
         try:
             derived_observed = observe_postcondition(derived_effect)
-        except Exception:
+        except OSError:
             derived_observed = False
         if not derived_observed:
             return rejected(
