@@ -1674,9 +1674,14 @@ def apply_effect_batch(
             )
             return interrupted_before_write(first_pending, proven_prefix, exc)
         if not guard_ok:
+            # Evidence describes the exact completed prefix at this boundary.
+            # Later completed Effects are not a sequential write certificate.
             return rejected(
                 "effect precondition rejected",
                 index,
+                completed_indexes=tuple(
+                    sorted(position for position in completed_before if position < index)
+                ),
                 operation_stage="BEFORE-WRITE",
                 write_call_entered=False,
             )
