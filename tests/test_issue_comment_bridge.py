@@ -4789,14 +4789,19 @@ def test_read_only_reconciliation_reobserves_later_complete_without_replay(
     )
     monkeypatch.setattr(bridge, "_qualified_carrier_for_application_run", lambda *_a, **_kw: None)
     monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_kw: recovery)
-    observed = {"complete": False}
+    observed = {"complete": False, "conflict": False}
     read_count = [0]
 
-    def observe(**_kwargs: object) -> bool:
+    def observe(**_kwargs: object) -> application.AcceptedPostEffectProof:
         read_count[0] += 1
-        return observed["complete"]
+        if observed["conflict"]:
+            return application.AcceptedPostEffectProof("UNSAFE", "immutable checkpoint conflicts")
+        return application.AcceptedPostEffectProof(
+            "COMPLETE" if observed["complete"] else "INDETERMINATE",
+            "fresh accepted proof",
+        )
 
-    monkeypatch.setattr(bridge, "accepted_read_only_effects_complete", observe)
+    monkeypatch.setattr(bridge, "classify_accepted_read_only_effects", observe)
 
     def fake_read(_repository: str, _token: str, path: str) -> object:
         if path == "actions/runs/777/attempts/1/jobs":
@@ -4829,6 +4834,14 @@ def test_read_only_reconciliation_reobserves_later_complete_without_replay(
     assert third.reason == "application-completion-continuation-required"
     assert third.recovery_artifact is recovery
     assert read_count[0] == 3
+    # An actual contradiction cannot be mislabeled as a transient GET.
+    # This does not select a new semantic Action or replay an Effect.
+    observed["conflict"] = True
+    fourth = classify()
+    assert fourth.state == "INVALID"
+    assert fourth.reason == "application-completion-read-only-proof-conflict"
+    assert fourth.recovery_artifact is recovery
+    assert read_count[0] == 4
 
 
 @pytest.mark.parametrize(
