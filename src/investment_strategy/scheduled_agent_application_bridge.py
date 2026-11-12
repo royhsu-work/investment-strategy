@@ -6794,14 +6794,9 @@ def classify_accepted_read_only_effects(
             return AcceptedPostEffectProof(
                 "INDETERMINATE", "accepted historical prefix is not yet satisfied"
             )
-        # A never-called Application-derived routing transition is authorized
-        # only after formal reconciliation, not by prematurely observing the
-        # successor route. For an original Effect, positive proof takes priority.
-        failed_satisfied = (
-            adapter.observe_postcondition(attempted[-1])
-            if not non_entry or not attempted[-1].derived
-            else False
-        )
+        # Observing an existing formal/successor is read-only, not permission
+        # to write one. The DAG already requires a proven original prefix.
+        failed_satisfied = adapter.observe_postcondition(attempted[-1])
         attempted_fact = RecoveryEvidenceNode(
             _recovery_obligation(attempted[-1], source),
             attempted[-1],
@@ -6827,6 +6822,63 @@ def classify_accepted_read_only_effects(
                 "attempted accepted Effect is not yet proven complete",
                 original_effect_proof=original_effect_proof,
             )
+        # R9: a fully durable original/formal/successor consequence needs no
+        # global "never called" history to be read-only reconciled. The actual
+        # GitHub adapter observes all exact Effects; the canonical consequence
+        # owner independently verifies the committed result and model route.
+        # Any missing effect retains the historical no-replay/write gate below.
+        if (
+            attempted_proof == "SATISFIED"
+            and attempted[-1].derived
+            and original is not None
+            and original.typed_result is not None
+            and bool(original.effects)
+            and original.typed_result.result.kind.value == record.result_kind
+            and len(attempted) == len(original.effects) + 2
+            and attempted[:-2] == original.effects
+        ):
+            formal_identity = _attempted_formal_identity(
+                attempted,
+                source=source,
+                change=record.change,
+                result_kind=record.result_kind,
+                request_comment_id=record.request_comment_id,
+            )
+            expected_successor = derived_transition_effect(
+                issue_number=source.issue_number,
+                change=record.change,
+                successor=next_action(
+                    original.typed_result.action, original.typed_result.result
+                ),
+            )
+            if (
+                formal_identity is not None
+                and formal_identity[0] == attempted[-2]
+                and formal_identity[1] == attempted_revision
+                and attempted[-1] == expected_successor
+                and consequence_postconditions_complete(
+                    record.raw_worker_result,
+                    source=source,
+                    repository=repository,
+                    token=token,
+                    current_revision=current_revision,
+                    authorized_change=record.change,
+                    request_comment_id=record.request_comment_id,
+                    accepted_intent=True,
+                    allow_accepted_successor=True,
+                    observed_application_correlation=formal_application_correlation(
+                        source,
+                        change=record.change,
+                        result_kind=record.result_kind,
+                        current_revision=formal_identity[1],
+                        request_comment_id=record.request_comment_id,
+                    ),
+                    formal_result_observed=True,
+                )
+            ):
+                return AcceptedPostEffectProof(
+                    "COMPLETE", "exact accepted formal and successor already observed"
+                )
         if not _accepted_effect_never_called_in_history(
             record=record,
             source=source,
