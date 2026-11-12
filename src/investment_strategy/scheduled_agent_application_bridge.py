@@ -1210,32 +1210,27 @@ def _accepted_worker_result_for_continuation(
     repository: str,
     token: str,
     request_comment_id: int,
-    read: Callable[[str, str, str], object] | None = None,
 ) -> str:
-    """Bind a stripped original-effect set to its exact accepted request.
-
-    A signed empty semantic projection is not necessarily a zero-Effect
-    intent. Only an exact original request proves the difference.
-    """
+    """Recover one old mechanical manifest when an older decision stripped it."""
 
     try:
-        decoded = json.loads(accepted_intent.raw_worker_result)
-        if not isinstance(decoded, dict):
-            raise ValueError("accepted result is not an object")
-        original_effects = decoded.get("requested_effects")
-        if not isinstance(original_effects, list):
-            raise ValueError("accepted effect manifest is invalid")
+        existing = _materialization_effects(
+            accepted_intent.raw_worker_result,
+            source,
+            change=accepted_intent.change,
+        )
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError("accepted application intent is not parseable") from exc
-    if original_effects:
+    if existing:
         return accepted_intent.raw_worker_result
-    first_activation = (
-        source == WorkerRequest(source.issue_number, "lead", "propose-change")
-        and accepted_intent.change == "unset"
-        and accepted_intent.result_kind == _FIRST_ACTIVATION_RESULT
-    )
-    reader = _github_json if read is None else read
-    comment = _as_mapping(reader(repository, token, f"issues/comments/{request_comment_id}"))
+    if (
+        source != WorkerRequest(source.issue_number, "lead", "propose-change")
+        or accepted_intent.change != "unset"
+        or accepted_intent.result_kind != _FIRST_ACTIVATION_RESULT
+    ):
+        return accepted_intent.raw_worker_result
+
+    comment = _as_mapping(_github_json(repository, token, f"issues/comments/{request_comment_id}"))
     owner = repository.split("/", 1)[0]
     body = None if comment is None else comment.get("body")
     if (
@@ -1263,25 +1258,17 @@ def _accepted_worker_result_for_continuation(
         original_worker = parse_worker_result(
             original.raw_worker_result,
             source,
-            authorized_change=accepted_intent.change,
+            authorized_change="unset",
         )
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise RuntimeError("accepted original worker result is invalid") from exc
+        raise RuntimeError("accepted first activation worker result is invalid") from exc
     if (
-        original_worker.change != accepted_intent.change
-        or original_worker.typed_result.result.kind.value != accepted_intent.result_kind
+        original_worker.change != "unset"
+        or original_worker.typed_result.result.kind.value != _FIRST_ACTIVATION_RESULT
         or _worker_semantic_projection(original.raw_worker_result)
         != _worker_semantic_projection(accepted_intent.raw_worker_result)
     ):
-        raise RuntimeError("accepted original semantic intent does not match")
-    if not first_activation:
-        original_document = json.loads(original.raw_worker_result)
-        if (
-            not isinstance(original_document, Mapping)
-            or original_document.get("requested_effects") != []
-        ):
-            raise RuntimeError("accepted zero-Effect identity is not proven")
-        return accepted_intent.raw_worker_result
+        raise RuntimeError("accepted first activation semantic intent does not match")
     materializations = _materialization_effects(
         original.raw_worker_result,
         source,
@@ -1302,6 +1289,68 @@ def _accepted_worker_result_for_continuation(
         }
     ]
     return json.dumps(recovered, sort_keys=True, separators=(",", ":"))
+
+
+def _verified_zero_original_accepted_effects(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    read: Callable[[str, str, str], object] | None = None,
+) -> bool:
+    """Prove zero *physical* original Effects, not an empty semantic projection.
+
+    This additional proof is required only at exception reconciliation; normal
+    accepted continuations remain independent of mutable ingress transport.
+    """
+
+    if (
+        record.disposition != "ACCEPTED"
+        or (record.issue_number, record.role, record.action)
+        != (source.issue_number, source.role, source.action)
+    ):
+        return False
+    decoded = json.loads(record.raw_worker_result)
+    if not isinstance(decoded, dict) or decoded.get("requested_effects") != []:
+        return False
+    reader = _github_json if read is None else read
+    source_comment = _as_mapping(
+        reader(repository, token, f"issues/comments/{record.request_comment_id}")
+    )
+    body = None if source_comment is None else source_comment.get("body")
+    if (
+        source_comment is None
+        or source_comment.get("id") != record.request_comment_id
+        or not isinstance(body, str)
+        or not _trusted_connector_comment(source_comment, repository.split("/", 1)[0])
+        or hashlib.sha256(body.encode()).hexdigest() != record.request_body_sha256
+    ):
+        return False
+    original = parse_application_request(body)
+    if (
+        original is None
+        or original.authorization_revision != record.authorization_revision
+        or (
+            original.dispatch_correlation is not None
+            and original.dispatch_correlation
+            != dispatch_correlation_for(repository, source, original.authorization_revision)
+        )
+        or _claimed_source(original.raw_worker_result) != source
+    ):
+        return False
+    parsed = parse_worker_result(
+        original.raw_worker_result, source, authorized_change=record.change
+    )
+    original_decoded = json.loads(original.raw_worker_result)
+    return bool(
+        isinstance(original_decoded, dict)
+        and original_decoded.get("requested_effects") == []
+        and parsed.change == record.change
+        and parsed.typed_result.result.kind.value == record.result_kind
+        and _worker_semantic_projection(original.raw_worker_result)
+        == _worker_semantic_projection(record.raw_worker_result)
+    )
 
 
 def _github_timestamp(value: object) -> datetime:
