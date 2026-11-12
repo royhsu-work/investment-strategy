@@ -2110,7 +2110,9 @@ def test_accepted_projection_preserves_immutable_completed_effects(
         "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\nformal"}),
     }
     original["requested_effects"] = effects[:2]
-    projected = dict(original, requested_effects=[effects[index] for index in projection] + [formal])
+    projected = dict(
+        original, requested_effects=[effects[index] for index in projection] + [formal]
+    )
     raw = json.dumps(original, sort_keys=True)
     changed = json.dumps(projected, sort_keys=True)
     if not allowed:
