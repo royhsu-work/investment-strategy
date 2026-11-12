@@ -2063,6 +2063,74 @@ def test_nonactivation_exception_proof_reconciles_original_effects_without_repla
     assert seen == ([effect] if original_count else [])
 
 
+@pytest.mark.parametrize(
+    ("postcondition", "expected"),
+    [(True, "COMPLETE"), (False, "INDETERMINATE")],
+)
+def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_history(
+    monkeypatch: pytest.MonkeyPatch, postcondition: bool, expected: str
+) -> None:
+    """R2/R5: original-Effect completion is independent of past Run inventory.
+
+    This concerns the immutable original Effect only; formal result and
+    successor are distinct obligations, not permissions to replay writes.
+    """
+    source = WorkerRequest(435, "executor", "implement-change")
+    raw = json.dumps({"source": "immutable accepted effect"})
+    record = _accepted_record(
+        raw, "EFFECT_REQUEST", source=source,
+        change="restore-t1-dispatch-artifact-consumption",
+        result_kind="blocked", request_comment_id=6796616018,
+    )
+    effect = StagedEffect("github-mutation", "{}")
+    checkpoint: dict[str, object] = {
+        "attempted_effects": [{"kind": effect.kind, "payload_json": effect.payload_json}],
+        "attempt_revision": _REVISION,
+        "failed_effect_index": 0,
+        "write_call_entered": True,
+    }
+    artifact = SimpleNamespace(document={"failure_evidence": checkpoint})
+    monkeypatch.setattr(bridge, "_accepted_recovery_boundary", lambda _e: "READ_ONLY")
+    monkeypatch.setattr(
+        bridge, "_verified_attempted_effect_checkpoint", lambda *_a, **_kw: (effect,),
+    )
+    monkeypatch.setattr(
+        bridge, "_accepted_effect_never_called_in_history", lambda **_kw: False,
+    )
+    monkeypatch.setattr(
+        bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw,
+    )
+    monkeypatch.setattr(
+        bridge, "parse_effect_batch",
+        lambda *_a, **_kw: SimpleNamespace(
+            typed_result=SimpleNamespace(
+                result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
+            ),
+            effects=(effect,),
+        ),
+    )
+
+    class Observer:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def observe_postcondition(self, _effect: StagedEffect) -> bool:
+            return postcondition
+
+    monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
+    proof = bridge.classify_accepted_read_only_effects(
+        record=record,
+        source=source,
+        recovery_evidence=checkpoint,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+        recovery_artifact=artifact,  # type: ignore[arg-type]
+    )
+    assert proof.disposition == expected
+
+
 def test_noncompletion_accepted_intent_has_no_synthetic_checkpoint_obligation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
