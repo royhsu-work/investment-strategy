@@ -2482,6 +2482,56 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
         )
 
     assert qualified(failure)
+
+    # A transient failure in a *later read-only* Application must not turn
+    # an E1 never-called proof into a synthetic UNKNOWN write. Carry the
+    # immutable parent execution frontier through a new run-scoped Artifact.
+    monkeypatch.setenv("GITHUB_RUN_ID", "7004")
+    second_artifact_path = tmp_path / "read-only-deferred-evidence.json"
+    assert application._write_application_recovery_evidence(
+        str(second_artifact_path),
+        result=application._defer_read_only_execution_checkpoint(failure),
+        repository="owner/repo",
+        token=REVISION,
+        source=source,
+        request_comment_id=91,
+        trigger_comment_id=1000,
+        authorization_revision=REVISION,
+        current_revision=REVISION,
+        run_attempt=1,
+        continuation=None,
+        predecessor=native,
+    )
+    deferred_document = json.loads(second_artifact_path.read_text())
+    assert deferred_document["failure_evidence"]["write_call_entered"] is False
+    assert deferred_document["failure_evidence"]["attempted_effects"] == failure["attempted_effects"]
+    deferred_artifact = application.ApplicationRecoveryArtifact(
+        run_id=7004,
+        run_attempt=1,
+        job_id=7005,
+        artifact_id=7006,
+        artifact_digest="sha256:" + "d" * 64,
+        request_comment_id=91,
+        accepted_decision_sha256=deferred_document["accepted_decision_sha256"],
+        failure_evidence_sha256=deferred_document["failure_evidence_sha256"],
+        recovery_episode_sha256=deferred_document["recovery_episode_sha256"],
+        recovery_attempt=2,
+        continuation_eligible=True,
+        document=deferred_document,
+    )
+    monkeypatch.setattr(
+        application, "read_application_recovery_artifact", lambda *_a, **_kw: native
+    )
+    assert application.accepted_read_only_effects_complete(
+        record=record,
+        source=source,
+        recovery_evidence=deferred_document["failure_evidence"],
+        repository="owner/repo",
+        token=REVISION,
+        current_revision=REVISION,
+        default_branch="main",
+        recovery_artifact=deferred_artifact,
+    )
     mutated = dict(failure, failed_effect_sha256="f" * 64)
     assert not qualified(mutated)
 
