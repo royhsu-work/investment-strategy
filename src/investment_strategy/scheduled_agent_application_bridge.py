@@ -6718,7 +6718,10 @@ def classify_accepted_read_only_effects(
             if failed_satisfied
             else "accepted unattempted suffix qualified",
         )
-    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+    except OSError:
+        # Only an expected transport/read failure is re-observable. Invalid
+        # proof data has explicit UNSAFE returns above; unexpected program
+        # errors belong to the existing outer execution-exception capture.
         return AcceptedPostEffectProof("INDETERMINATE", "accepted GitHub observation unavailable")
 
 
