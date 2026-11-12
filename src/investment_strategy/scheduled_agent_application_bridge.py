@@ -6723,10 +6723,16 @@ def classify_accepted_read_only_effects(
         # One proof table: a positively SATISFIED Effect does not have to
         # prove it was never called. Only an absent, invocation-local
         # never-called Effect requires the full historical NOT_APPLIED proof.
-        if not all(adapter.observe_postcondition(effect) for effect in attempted[:-1]):
-            return AcceptedPostEffectProof(
-                "INDETERMINATE", "accepted historical prefix is not yet satisfied"
+        proven_prefix: list[RecoveryEvidenceNode] = []
+        for effect in attempted[:-1]:
+            fact = RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT", effect, adapter.observe_postcondition(effect)
             )
+            if evaluate_recovery_evidence(fact) != "SATISFIED":
+                return AcceptedPostEffectProof(
+                    "INDETERMINATE", "accepted historical prefix is not yet satisfied"
+                )
+            proven_prefix.append(fact)
         # A never-called Application-derived routing transition is authorized
         # only after formal reconciliation, not by prematurely observing the
         # successor route. For an original Effect, positive proof takes priority.
@@ -6735,7 +6741,14 @@ def classify_accepted_read_only_effects(
             if not non_entry or not attempted[-1].derived
             else False
         )
-        historical_frontier = index + 1 if failed_satisfied else index
+        attempted_fact = RecoveryEvidenceNode(
+            "SUCCESSOR" if attempted[-1].derived else "ORIGINAL_EFFECT",
+            attempted[-1],
+            final_postcondition=failed_satisfied,
+            depends_on=tuple(proven_prefix),
+        )
+        attempted_proof = evaluate_recovery_evidence(attempted_fact)
+        historical_frontier = index + 1 if attempted_proof == "SATISFIED" else index
         # Original Effect proof is separate from *authorization of the next*
         # formal/result/successor write. Bind its leaf to the immutable
         # accepted source before attributing a positive postcondition.
@@ -6752,14 +6765,8 @@ def classify_accepted_read_only_effects(
             and 0 <= index < len(original.effects)
             and attempted[: index + 1] == original.effects[: index + 1]
         ):
-            original_effect_proof = evaluate_recovery_evidence(
-                RecoveryEvidenceNode(
-                    obligation="ORIGINAL_EFFECT",
-                    effect=original.effects[index],
-                    final_postcondition=failed_satisfied,
-                )
-            )
-        if not failed_satisfied and not non_entry:
+            original_effect_proof = attempted_proof
+        if attempted_proof != "SATISFIED" and not non_entry:
             return AcceptedPostEffectProof(
                 "INDETERMINATE",
                 "attempted accepted Effect is not yet proven complete",
