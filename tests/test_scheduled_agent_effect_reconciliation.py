@@ -1517,6 +1517,33 @@ def test_durable_formal_then_zero_write_successor_rejection_recovers_after_revis
         "_application_decision_comment_for_request",
         lambda **_kw: (record, decision_body),
     )
+    # The derived guard rejection follows an independently qualified earlier
+    # formal-write response loss. A newly emitted checkpoint is not the whole
+    # accepted history; retain its original native predecessor as proof.
+    first_sha = application._canonical_sha256(original_failure)
+    first_artifact = application.ApplicationRecoveryArtifact(
+        run_id=6001,
+        run_attempt=1,
+        job_id=6002,
+        artifact_id=6003,
+        artifact_digest="sha256:" + "e" * 64,
+        request_comment_id=request_id,
+        accepted_decision_sha256=hashlib.sha256(decision_body.encode()).hexdigest(),
+        failure_evidence_sha256=first_sha,
+        recovery_episode_sha256="f" * 64,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "authorization_revision": r1,
+            "trigger_comment_id": request_id,
+            "prior_failure_evidence_sha256": [],
+            "predecessor": None,
+            "failure_evidence": original_failure,
+        },
+    )
     monkeypatch.setenv("GITHUB_RUN_ID", "7001")
     monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "github-output"))
     artifact = tmp_path / "zero-write-derived-recovery.json"
@@ -1532,7 +1559,7 @@ def test_durable_formal_then_zero_write_successor_rejection_recovers_after_revis
         current_revision=r2,
         run_attempt=1,
         continuation=None,
-        predecessor=None,
+        predecessor=first_artifact,
         effect_batch=batch,
     )
     document = json.loads(artifact.read_text(encoding="utf-8"))
@@ -1555,6 +1582,29 @@ def test_durable_formal_then_zero_write_successor_rejection_recovers_after_revis
             return True
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", Reader)
+    monkeypatch.setattr(
+        application, "_accepted_worker_result_for_continuation", lambda **_kw: raw
+    )
+    monkeypatch.setattr(
+        application, "read_application_recovery_artifact", lambda *_a, **_kw: first_artifact
+    )
+    monkeypatch.setattr(
+        dispatch, "_application_runs", lambda *_a, **_kw: ({"id": 6001, "run_attempt": 1},)
+    )
+    current_artifact = application.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=request_id,
+        accepted_decision_sha256=document["accepted_decision_sha256"],
+        failure_evidence_sha256=document["failure_evidence_sha256"],
+        recovery_episode_sha256=document["recovery_episode_sha256"],
+        recovery_attempt=2,
+        continuation_eligible=True,
+        document=document,
+    )
     assert application.accepted_read_only_effects_complete(
         record=record,
         source=source,
@@ -1563,6 +1613,7 @@ def test_durable_formal_then_zero_write_successor_rejection_recovers_after_revis
         token=REVISION,
         current_revision=r3,
         default_branch="main",
+        recovery_artifact=current_artifact,
     )
     assert observed == [formal]
 
