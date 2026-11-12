@@ -6444,7 +6444,7 @@ def _accepted_effect_never_called_in_history(
         original = parse_effect_batch(original_raw, source, authorized_change=record.change)
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return False
-    if original.typed_result is None or failed_index > len(original.effects) + 1:
+    if original.typed_result is None or failed_index > len(original.effects) + 2:
         return False
     if not original.effects:
         # A semantic-only ACCEPTED projection may have stripped physical
@@ -6669,31 +6669,28 @@ def accepted_read_only_effects_complete(
                     request_comment_id=record.request_comment_id,
                 ),
             )
-            # The shared boundary qualifier has already established the
-            # allowed operational stage. A local non-entry fact requests full
-            # historical proof; error classes and Role/Action never decide it.
-            if recovery_evidence.get("write_call_entered") is False:
-                # A local non-entry checkpoint is NOT proof that this accepted
-                # Effect was never called in a previous native attempt. First
-                # requalify the full causal chain, then observe the prefix
-                # through the existing adapter. No original write is replayed.
-                failed_index = recovery_evidence.get("failed_effect_index")
-                if (
-                    type(failed_index) is not int
-                    or recovery_artifact is None
-                    or recovery_artifact.document.get("failure_evidence") != recovery_evidence
-                    or not _accepted_effect_never_called_in_history(
-                        record=record,
-                        source=source,
-                        artifact=recovery_artifact,
-                        failed_index=failed_index,
-                        repository=repository,
-                        token=token,
-                    )
-                ):
-                    return False
-                return all(adapter.observe_postcondition(effect) for effect in attempted[:-1])
-            return all(adapter.observe_postcondition(effect) for effect in attempted)
+            # One proof table for both stages: an actual non-entry needs
+            # history through the same Effect index; an attempted/unknown
+            # write must first be freshly SATISFIED, and can only authorize
+            # the *next* Effect when every earlier run stayed before it.
+            index = recovery_evidence.get("failed_effect_index")
+            non_entry = recovery_evidence.get("write_call_entered") is False
+            if (
+                type(index) is not int
+                or recovery_artifact is None
+                or recovery_artifact.document.get("failure_evidence") != recovery_evidence
+                or not _accepted_effect_never_called_in_history(
+                    record=record,
+                    source=source,
+                    artifact=recovery_artifact,
+                    failed_index=index if non_entry else index + 1,
+                    repository=repository,
+                    token=token,
+                )
+            ):
+                return False
+            prefix = attempted[:-1] if non_entry else attempted
+            return all(adapter.observe_postcondition(effect) for effect in prefix)
         # No original attempted identity: a fresh projection can represent a
         # DIFFERENT Effect on a later main and cannot prove any accepted history.
         # Retain UNKNOWN for native recovery or governance repair, never replay.
