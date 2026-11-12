@@ -6326,6 +6326,13 @@ def test_application_exception_continuation_requalifies_at_native_ingress(
 
 
 @pytest.mark.parametrize(
+    "upload_stage",
+    [
+        "Upload exact application recovery evidence",
+        "Upload final exact application recovery evidence",
+    ],
+)
+@pytest.mark.parametrize(
     ("run_attempt", "comparison_status", "comparison_base", "expected_qualified"),
     [
         (3, "ahead", "4" * 40, True),
@@ -6336,6 +6343,7 @@ def test_application_exception_continuation_requalifies_at_native_ingress(
     ],
 )
 def test_recovery_reader_binds_rerun_checkout_to_immutable_original_run_head(
+    upload_stage: str,
     run_attempt: int,
     comparison_status: str | None,
     comparison_base: str,
@@ -6405,7 +6413,7 @@ def test_recovery_reader_binds_rerun_checkout_to_immutable_original_run_head(
                         "conclusion": "success",
                         "steps": [
                             {
-                                "name": "Upload exact application recovery evidence",
+                                "name": upload_stage,
                                 "conclusion": "success",
                             }
                         ],
