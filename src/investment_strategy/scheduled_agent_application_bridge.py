@@ -3309,6 +3309,10 @@ def _accepted_checkpoint_already_durable(
         and isinstance(payload.get("body"), str)
         and _marker(cast(str, payload["body"])) == "SLICE_CHECKPOINT"
     ]
+    if not checkpoints:
+        # A non-completion ACCEPTED result has no checkpoint obligation.
+        # Its original Effect remains separately qualified and read-only.
+        return False
     if len(checkpoints) != 1:
         raise RuntimeError("accepted implementation checkpoint identity is incomplete")
     adapter = GitHubEffectAdapter(
@@ -6077,7 +6081,45 @@ def _observe_accepted_post_effect_result(
         "unset",
         _FIRST_ACTIVATION_RESULT,
     ):
-        return AcceptedPostEffectProof("UNSAFE", "original activation contract mismatch")
+        # Reuse the existing original Effect postcondition owner for every
+        # other accepted Action, without classifying by the exception string.
+        try:
+            raw = _accepted_worker_result_for_continuation(
+                accepted_intent=record,
+                source=source,
+                repository=repository,
+                token=token,
+                request_comment_id=record.request_comment_id,
+            )
+            batch = parse_effect_batch(raw, source, authorized_change=record.change)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return AcceptedPostEffectProof("UNSAFE", "accepted original Effect identity invalid")
+        if (
+            batch.typed_result is None
+            or batch.typed_result.result.kind.value != record.result_kind
+            or not batch.effects
+        ):
+            # A vacuous zero-Effect proof cannot certify the old formal writer.
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", "accepted original Effect frontier not provable"
+            )
+        adapter = GitHubEffectAdapter(
+            repository,
+            token,
+            source,
+            authorized_change=record.change,
+            current_revision=current_revision,
+            expected_result_kind=record.result_kind,
+            request_comment_id=record.request_comment_id,
+            authorization_revision=record.authorization_revision,
+            allow_pending_continuation=True,
+            accepted_intent=True,
+        )
+        if not all(adapter.observe_postcondition(effect) for effect in batch.effects):
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", "accepted original Effect postconditions unproven"
+            )
+        return AcceptedPostEffectProof("COMPLETE", "accepted original Effects observed")
     accepted_raw = _accepted_worker_result_for_continuation(
         accepted_intent=record,
         source=source,
@@ -7333,31 +7375,42 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             # Each contract stage has a distinct failure cause; a compound
             # boolean cannot diagnose which proof was missing.
             accepted_original = semantic_worker_result
-            if not requires_validation:
-                raise RuntimeError("post-effect recovery has no validation obligation")
             if accepted_intent is None:
                 raise RuntimeError("post-effect recovery lost its immutable accepted intent")
-            # Immutable result/action, original materialization and projected
-            # effect identity are qualified below by the same typed contract
-            # used by dispatch. Do not independently re-encode those guards.
-            original_identity = _accepted_activation_effect_identity(
-                accepted_original,
-                source=plan.source,
-                change=effective_change,
-                projected_raw=application_worker_result,
-            )
-            if (
-                original_identity.disposition != "EXACT"
-                or original_identity.projected_index is None
-            ):
-                raise RuntimeError(
-                    "post-effect original activation identity is "
-                    + original_identity.disposition.lower()
+            if requires_validation:
+                # Keep the existing exact first-activation proof/validation gate.
+                original_identity = _accepted_activation_effect_identity(
+                    accepted_original,
+                    source=plan.source,
+                    change=effective_change,
+                    projected_raw=application_worker_result,
                 )
-            # The preceding run's sole original GitHub Effect is uncertain.
-            # Reconcile its postcondition BEFORE any later formal consequence.
-            # A disappeared/ambiguous PR must not cause a second Git write.
-            uncertain_effect_index = original_identity.projected_index
+                if (
+                    original_identity.disposition != "EXACT"
+                    or original_identity.projected_index is None
+                ):
+                    raise RuntimeError(
+                        "post-effect original activation identity is "
+                        + original_identity.disposition.lower()
+                    )
+                uncertain_effect_index = original_identity.projected_index
+            else:
+                # Derive the old attempted prefix from immutable accepted
+                # effects, not a Role, error class or new arbitrary cursor.
+                originals = parse_effect_batch(
+                    accepted_original, plan.source, authorized_change=effective_change
+                )
+                projected = parse_effect_batch(
+                    application_worker_result, plan.source, authorized_change=effective_change
+                )
+                if (
+                    originals.typed_result is None
+                    or projected.typed_result is None
+                    or not originals.effects
+                    or tuple(projected.effects[: len(originals.effects)]) != originals.effects
+                ):
+                    raise RuntimeError("accepted original Effect prefix is not exact")
+                uncertain_effect_index = len(originals.effects) - 1
             recovery_proof = _observe_accepted_post_effect_result(
                 record=accepted_intent,
                 source=plan.source,
