@@ -2504,7 +2504,10 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
     )
     deferred_document = json.loads(second_artifact_path.read_text())
     assert deferred_document["failure_evidence"]["write_call_entered"] is False
-    assert deferred_document["failure_evidence"]["attempted_effects"] == failure["attempted_effects"]
+    assert (
+        deferred_document["failure_evidence"]["attempted_effects"]
+        == failure["attempted_effects"]
+    )
     deferred_artifact = application.ApplicationRecoveryArtifact(
         run_id=7004,
         run_attempt=1,
