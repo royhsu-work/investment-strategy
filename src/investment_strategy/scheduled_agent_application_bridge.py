@@ -5167,7 +5167,6 @@ _EXCEPTION_APPLY_STEP_CONTRACT: dict[str, str] = {
 
 _POST_VALIDATION_EXCEPTION_STEP_CONTRACT: dict[str, str] = {
     "Freshly authorize and apply repository-owned effects": "success",
-    "Upload exact application recovery evidence": "skipped",
     "Upload pre-ACCEPT or interrupted application exception evidence": "skipped",
     "Persist exact external carrier plan": "skipped",
     "Upload exact external carrier plan": "skipped",
@@ -5175,6 +5174,38 @@ _POST_VALIDATION_EXCEPTION_STEP_CONTRACT: dict[str, str] = {
     "Upload final exact application recovery evidence": "skipped",
     "Upload post-validation application exception evidence": "success",
 }
+
+def application_artifact_stage(
+    steps: Sequence[tuple[str | None, str | None]] | None,
+) -> Literal[
+    "PRE_EXCEPTION", "POST_EXCEPTION", "PRE_RECOVERY", "FINAL_RECOVERY", "INVALID", "NONE"
+]:
+    """Select one native output phase; a prior checkpoint is not a same-stage conflict."""
+
+    if steps is None:
+        return "NONE"
+    names = [name for name, _ in steps]
+    if any(not isinstance(name, str) for name in names) or len(names) != len(set(names)):
+        return "INVALID"
+    completed = {name for name, conclusion in steps if conclusion == "success"}
+    pre_exception = "Upload pre-ACCEPT or interrupted application exception evidence" in completed
+    post_exception = "Upload post-validation application exception evidence" in completed
+    early_recovery = "Upload exact application recovery evidence" in completed
+    final_recovery = "Upload final exact application recovery evidence" in completed
+    if (pre_exception and (post_exception or early_recovery or final_recovery)) or (
+        post_exception and final_recovery
+    ):
+        return "INVALID"
+    if post_exception:
+        return "POST_EXCEPTION"
+    if pre_exception:
+        return "PRE_EXCEPTION"
+    if final_recovery:
+        return "FINAL_RECOVERY"
+    if early_recovery:
+        return "PRE_RECOVERY"
+    return "NONE"
+
 
 _EXCEPTION_DOCUMENT_KEYS = frozenset(
     {
@@ -5216,8 +5247,8 @@ def _qualified_exception_apply_run(
     run_attempt: int,
     job_id: int,
     read: Callable[[str, str, str], object],
-) -> Mapping[str, object] | None:
-    """Prove this run failed before every later writer, without inferring zero writes."""
+) -> tuple[Mapping[str, object], bool] | None:
+    """Prove one failed native stage and its earlier-phase recovery writer."""
 
     run = _as_mapping(read(repository, token, f"actions/runs/{run_id}"))
     required_run = {
@@ -5251,28 +5282,30 @@ def _qualified_exception_apply_run(
         if name is None or result is None or name in conclusions:
             return None
         conclusions[name] = result
-    pre_exception = _matches_required_fields(conclusions, _EXCEPTION_APPLY_STEP_CONTRACT)
-    post_exception = _matches_required_fields(conclusions, _POST_VALIDATION_EXCEPTION_STEP_CONTRACT)
-    # Two successful exception writers or a successful recovery writer cannot
-    # identify one immutable failed Application stage.
-    competing = (
-        conclusions.get("Upload pre-ACCEPT or interrupted application exception evidence")
-        == "success"
-        and conclusions.get("Upload post-validation application exception evidence") == "success"
-    ) or any(
-        conclusions.get(name) == "success"
-        for name in (
-            "Upload exact application recovery evidence",
-            "Upload final exact application recovery evidence",
-        )
+    stage = application_artifact_stage(steps)
+    pre_exception = stage == "PRE_EXCEPTION" and _matches_required_fields(
+        conclusions, _EXCEPTION_APPLY_STEP_CONTRACT
     )
-    return run if (pre_exception != post_exception and not competing) else None
+    post_exception = stage == "POST_EXCEPTION" and _matches_required_fields(
+        conclusions, _POST_VALIDATION_EXCEPTION_STEP_CONTRACT
+    )
+    if post_exception and conclusions.get("Upload exact application recovery evidence") not in {
+        "success",
+        "skipped",
+    }:
+        return None
+    if pre_exception == post_exception:
+        return None
+    return run, bool(
+        post_exception
+        and conclusions.get("Upload exact application recovery evidence") == "success"
+    )
 
 
 def _qualified_exception_artifact_metadata(
-    inventory: object, *, run_id: int, run_head_sha: str
+    inventory: object, *, run_id: int, run_head_sha: str, predecessor_recovery: bool
 ) -> Mapping[str, object] | None:
-    """One complete artifact inventory, with neither carrier nor recovery writer."""
+    """Qualify a later exception without discarding a prior-phase checkpoint."""
 
     payload = _as_mapping(inventory)
     artifacts = None if payload is None else payload.get("artifacts")
@@ -5282,12 +5315,23 @@ def _qualified_exception_artifact_metadata(
         return None
     if any(not isinstance(item, Mapping) for item in artifacts):
         return None
-    if any(
-        item.get("name") in {_APPLICATION_RECOVERY_ARTIFACT, "carrier-plan.json"}
-        for item in artifacts
-        if isinstance(item, Mapping)
-    ):
+    if any(item.get("name") == "carrier-plan.json" for item in artifacts):
         return None
+    prior = [item for item in artifacts if item.get("name") == _APPLICATION_RECOVERY_ARTIFACT]
+    if len(prior) != (1 if predecessor_recovery else 0):
+        return None
+    if prior:
+        prior_run = _as_mapping(prior[0].get("workflow_run"))
+        if (
+            prior_run is None
+            or not _matches_required_fields(
+                prior_run, {"id": run_id, "head_sha": run_head_sha}
+            )
+            or prior[0].get("expired") is not False
+            or not isinstance(prior[0].get("digest"), str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", cast(str, prior[0]["digest"])) is None
+        ):
+            return None
     candidates = [
         item
         for item in artifacts
@@ -5381,7 +5425,7 @@ def read_application_exception_artifact(
         or re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256) is None
     ):
         return unavailable()
-    run = _qualified_exception_apply_run(
+    qualified = _qualified_exception_apply_run(
         repository,
         token,
         run_id=run_id,
@@ -5389,12 +5433,14 @@ def read_application_exception_artifact(
         job_id=job_id,
         read=api_read,
     )
-    if run is None:
+    if qualified is None:
         return unavailable()
+    run, predecessor_recovery = qualified
     artifact = _qualified_exception_artifact_metadata(
         api_read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100"),
         run_id=run_id,
         run_head_sha=cast(str, run["head_sha"]),
+        predecessor_recovery=predecessor_recovery,
     )
     if artifact is None:
         return unavailable()

@@ -39,6 +39,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _verified_zero_original_accepted_effects,
     _worker_semantic_projection,
     accepted_read_only_effects_complete,
+    application_artifact_stage,
     application_continuation_correlation,
     classify_application_exception_recovery,
     classify_post_effect_result_recovery,
@@ -2808,26 +2809,14 @@ def _application_job(
             # Both native Application stages can fail after ACCEPT. The
             # complete attempt-scoped job inventory selects the evidence type,
             # not the Role, error message or the historical request shape.
-            exception_uploads = {
-                "Upload pre-ACCEPT or interrupted application exception evidence",
-                "Upload post-validation application exception evidence",
-            }
-            recovery_uploads = {
-                "Upload exact application recovery evidence",
-                "Upload final exact application recovery evidence",
-            }
-            has_exception = steps is not None and any(
-                name in exception_uploads and conclusion == "success" for name, conclusion in steps
-            )
-            has_recovery = steps is not None and any(
-                name in recovery_uploads and conclusion == "success" for name, conclusion in steps
-            )
-            if has_exception and has_recovery:
+            stage = application_artifact_stage(steps)
+            if stage == "INVALID":
                 return ApplicationCompletion(
                     "INVALID",
                     "application-completion-artifact-writers-ambiguous",
                     request_comment_id=request_comment_id,
                 )
+            has_exception = stage in {"PRE_EXCEPTION", "POST_EXCEPTION"}
             accepted_effects: object = None
             try:
                 accepted_document = json.loads(record.raw_worker_result)
@@ -2862,7 +2851,6 @@ def _application_job(
                     verified_empty_original = False
             if (
                 has_exception
-                and not has_recovery
                 and (has_original_effect or legacy_activation or verified_empty_original)
             ):
                 recovery_artifact = read_application_exception_artifact(

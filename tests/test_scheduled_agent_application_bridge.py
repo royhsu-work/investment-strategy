@@ -5995,6 +5995,9 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
     [
         "valid",
         "post-validation-valid",
+        "post-validation-earlier-recovery",
+        "post-validation-earlier-recovery-unqualified",
+        "post-validation-final-recovery-conflict",
         "post-validation-conflicting-writers",
         "bad-digest",
         "duplicate",
@@ -6066,6 +6069,20 @@ def test_execution_exception_is_a_distinct_verified_predecessor(
         artifacts.append(dict(artifact, id=artifact_id + 1))
     if alteration == "recovery-present":
         artifacts.append({"name": "application-recovery-evidence"})
+    if alteration in {
+        "post-validation-earlier-recovery",
+        "post-validation-earlier-recovery-unqualified",
+        "post-validation-final-recovery-conflict",
+    }:
+        artifacts.append(
+            {
+                "id": artifact_id + 1,
+                "name": "application-recovery-evidence",
+                "expired": alteration == "post-validation-earlier-recovery-unqualified",
+                "digest": "sha256:" + "b" * 64,
+                "workflow_run": {"id": run_id, "head_sha": revision},
+            }
+        )
     steps = [
         {"name": "Freshly authorize and apply repository-owned effects", "conclusion": "failure"},
         {"name": "Upload exact application recovery evidence", "conclusion": "skipped"},
@@ -6088,6 +6105,14 @@ def test_execution_exception_is_a_distinct_verified_predecessor(
                 "conclusion": "success",
             }
         )
+        if alteration in {
+            "post-validation-earlier-recovery",
+            "post-validation-earlier-recovery-unqualified",
+            "post-validation-final-recovery-conflict",
+        }:
+            steps[1]["conclusion"] = "success"
+        if alteration == "post-validation-final-recovery-conflict":
+            steps[6]["conclusion"] = "success"
         if alteration == "post-validation-conflicting-writers":
             steps[2]["conclusion"] = "success"
     if alteration == "write-after-failure":
@@ -6168,13 +6193,30 @@ def test_execution_exception_is_a_distinct_verified_predecessor(
         read=read,
         artifact_reader=lambda *_: raw,
     )
-    if alteration in {"valid", "post-validation-valid"}:
+    if alteration in {"valid", "post-validation-valid", "post-validation-earlier-recovery"}:
         assert evidence is not None
         assert type(evidence) is bridge.ApplicationExceptionArtifact
         assert evidence.artifact_id == artifact_id
         assert evidence.failure_evidence_sha256 == bridge._canonical_sha256(document)
     else:
         assert evidence is None
+
+
+def test_native_application_artifact_stage_preserves_phase_order() -> None:
+    def steps(*completed: str) -> tuple[tuple[str, str], ...]:
+        return tuple((name, "success") for name in completed)
+
+    early = "Upload exact application recovery evidence"
+    final = "Upload final exact application recovery evidence"
+    pre = "Upload pre-ACCEPT or interrupted application exception evidence"
+    post = "Upload post-validation application exception evidence"
+    assert bridge.application_artifact_stage(steps(early, post)) == "POST_EXCEPTION"
+    assert bridge.application_artifact_stage(steps(early, final)) == "FINAL_RECOVERY"
+    assert bridge.application_artifact_stage(steps(pre)) == "PRE_EXCEPTION"
+    assert bridge.application_artifact_stage(steps(pre, early)) == "INVALID"
+    assert bridge.application_artifact_stage(steps(pre, post)) == "INVALID"
+    assert bridge.application_artifact_stage(steps(post, final)) == "INVALID"
+    assert bridge.application_artifact_stage(steps(early, early)) == "INVALID"
 
 
 @pytest.mark.parametrize(
