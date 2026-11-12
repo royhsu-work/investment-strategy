@@ -5735,7 +5735,7 @@ def _recovery_failure_document(result: ApplyResult) -> dict[str, object]:
             "expected": recovery.rejection.expected,
             "observed": recovery.rejection.observed,
         }
-    return {
+    failure: dict[str, object] = {
         "reason": result.reason,
         "failed_effect_index": recovery.failed_effect_index,
         "failed_effect_kind": recovery.failed_effect_kind,
@@ -5746,6 +5746,14 @@ def _recovery_failure_document(result: ApplyResult) -> dict[str, object]:
         "unfinished_boundary": recovery.unfinished_boundary,
         "rejection": rejection_document,
     }
+    # Capture only observed operational failure facts. This does not decide
+    # whether the same accepted Effect was called in an earlier native run.
+    if recovery.operation_stage is not None:
+        failure["operation_stage"] = recovery.operation_stage
+        failure["write_call_entered"] = recovery.write_call_entered
+    if recovery.raw_error is not None:
+        failure["raw_error"] = recovery.raw_error
+    return failure
 
 
 def _attempted_effect_checkpoint(
@@ -6747,6 +6755,15 @@ def _write_application_recovery_evidence(
         return False
 
     failure_evidence = _recovery_failure_document(result)
+    # Redact the raw cause once at the existing evidence producer, before
+    # computing its content digest. Neither reader nor proof table uses the
+    # error string to infer write eligibility.
+    raw_error = failure_evidence.get("raw_error")
+    if isinstance(raw_error, str):
+        safe_error = raw_error.replace(token, "***") if token else raw_error
+        failure_evidence["raw_error"] = re.sub(
+            r"https?://\\S+", "[redacted-url]", safe_error
+        )[:2048]
     recovery = result.recovery_evidence
     if recovery is not None and _accepted_recovery_boundary(failure_evidence) == "READ_ONLY":
         known_unattempted_suffix = (
