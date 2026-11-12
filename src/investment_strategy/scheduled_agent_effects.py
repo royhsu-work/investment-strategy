@@ -1738,8 +1738,9 @@ def apply_effect_batch(
         except CarrierRequired:
             raise
         except OSError as exc:
+            operation = "derived" if is_derived else "effect"
             return rejected(
-                f"{'derived' if is_derived else 'effect'} write outcome unavailable: {type(exc).__qualname__}",
+                f"{operation} write outcome unavailable: {type(exc).__qualname__}",
                 index,
                 completed_indexes=tuple(completed_indexes),
                 unfinished_boundary=boundary,
