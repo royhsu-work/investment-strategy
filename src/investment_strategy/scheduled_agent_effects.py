@@ -1701,9 +1701,7 @@ def apply_effect_batch(
     # guard/write/postcondition boundary. Derived Effects remain last, after
     # the original frontier is fully observed or durably applied.
     completed_indexes: list[int] = []
-    execution_order = (
-        (*effects_to_apply, derived_effect) if apply_derived else effects_to_apply
-    )
+    execution_order = (*effects_to_apply, derived_effect) if apply_derived else effects_to_apply
     for index, effect in enumerate(execution_order):
         is_derived = index == len(effects_to_apply)
         try:
