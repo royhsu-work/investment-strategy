@@ -2064,11 +2064,17 @@ def test_nonactivation_exception_proof_reconciles_original_effects_without_repla
 
 
 @pytest.mark.parametrize(
+    "semantic_projection_only", [False, True],
+)
+@pytest.mark.parametrize(
     ("postcondition", "expected"),
     [(True, "SATISFIED"), (False, "UNKNOWN")],
 )
 def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_history(
-    monkeypatch: pytest.MonkeyPatch, postcondition: bool, expected: str
+    monkeypatch: pytest.MonkeyPatch,
+    postcondition: bool,
+    expected: str,
+    semantic_projection_only: bool,
 ) -> None:
     """R2/R5: original-Effect completion is independent of past Run inventory.
 
@@ -2076,7 +2082,8 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
     successor are distinct obligations, not permissions to replay writes.
     """
     source = WorkerRequest(435, "executor", "implement-change")
-    raw = json.dumps({"source": "immutable accepted effect"})
+    raw = json.dumps({"source": "immutable accepted semantic projection"})
+    physical = json.dumps({"source": "qualified original request with Effects"})
     record = _accepted_record(
         raw,
         "EFFECT_REQUEST",
@@ -2107,18 +2114,18 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
     monkeypatch.setattr(
         bridge,
         "_accepted_worker_result_for_continuation",
-        lambda **_kw: raw,
+        lambda **_kw: physical,
     )
-    monkeypatch.setattr(
-        bridge,
-        "parse_effect_batch",
-        lambda *_a, **_kw: SimpleNamespace(
+    def parsed(original_raw: str, *_args: object, **_kwargs: object) -> SimpleNamespace:
+        assert original_raw in {raw, physical}
+        return SimpleNamespace(
             typed_result=SimpleNamespace(
                 result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
             ),
-            effects=(effect,),
-        ),
-    )
+            effects=() if original_raw == raw and semantic_projection_only else (effect,),
+        )
+
+    monkeypatch.setattr(bridge, "parse_effect_batch", parsed)
 
     class Observer:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
