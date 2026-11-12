@@ -6140,15 +6140,40 @@ class RecoveryEvidenceNode:
 
 
 def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofDisposition:
-    """Pure positive-first evidence evaluation; NOT_APPLIED needs a witness."""
+    """Pure DAG proof: shared facts once; conflicts dominate; no write permission.
 
-    if node.source_conflict:
-        return "CONFLICT"
-    if node.final_postcondition is True:
-        return "SATISFIED"
-    if node.final_postcondition is False and node.positive_never_called is True:
-        return "NOT_APPLIED"
-    return "UNKNOWN"
+    A positive exact final state does not require historical attempt inventory,
+    but a provenance contradiction cannot be ignored. A *missing* descendant
+    is NOT_APPLIED only when all prerequisites are SATISFIED and the descendant
+    has its own positive never-called witness. Cycles are invalid evidence.
+    """
+
+    memo: dict[int, RecoveryProofDisposition] = {}
+    visiting: set[int] = set()
+
+    def evaluate(fact: RecoveryEvidenceNode) -> RecoveryProofDisposition:
+        identity = id(fact)
+        if identity in visiting:
+            return "CONFLICT"
+        if identity in memo:
+            return memo[identity]
+        visiting.add(identity)
+        dependencies = tuple(evaluate(parent) for parent in fact.depends_on)
+        visiting.remove(identity)
+        if fact.source_conflict or "CONFLICT" in dependencies:
+            disposition: RecoveryProofDisposition = "CONFLICT"
+        elif fact.final_postcondition is True:
+            disposition = "SATISFIED"
+        elif any(result != "SATISFIED" for result in dependencies):
+            disposition = "UNKNOWN"
+        elif fact.final_postcondition is False and fact.positive_never_called is True:
+            disposition = "NOT_APPLIED"
+        else:
+            disposition = "UNKNOWN"
+        memo[identity] = disposition
+        return disposition
+
+    return evaluate(node)
 
 
 @dataclass(frozen=True)
