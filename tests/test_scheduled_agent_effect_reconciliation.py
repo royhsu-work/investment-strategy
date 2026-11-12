@@ -119,8 +119,10 @@ def _assumed_qualified_history_for_postcondition_test(
     monkeypatch.setattr(
         application,
         "_accepted_effect_never_called_in_history",
-        lambda **kw: kw["artifact"] is artifact
-        and kw["record"].request_comment_id == record.request_comment_id,
+        lambda **kw: (
+            kw["artifact"] is artifact
+            and kw["record"].request_comment_id == record.request_comment_id
+        ),
     )
     return artifact
 
@@ -2057,8 +2059,10 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
     monkeypatch.setattr(
         application,
         "_accepted_effect_never_called_in_history",
-        lambda **kw: kw["artifact"] == second_qualified
-        and kw["record"].request_comment_id == record.request_comment_id,
+        lambda **kw: (
+            kw["artifact"] == second_qualified
+            and kw["record"].request_comment_id == record.request_comment_id
+        ),
     )
 
     def classify_again() -> dispatch.ApplicationCompletion:
@@ -2737,6 +2741,7 @@ def test_run_local_effect_frontier_cannot_prove_accepted_history(
         default_branch="main",
     )
 
+
 @pytest.mark.parametrize("earlier_e1_write", [False, True])
 def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
     monkeypatch: pytest.MonkeyPatch, earlier_e1_write: bool
@@ -2759,8 +2764,7 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
             "evidence_ref": "issuecomment-138-qualified",
             "result_content": "accepted",
             "requested_effects": [
-                {"kind": effect.kind, "payload_json": effect.payload_json}
-                for effect in originals
+                {"kind": effect.kind, "payload_json": effect.payload_json} for effect in originals
             ],
         }
     )
@@ -2870,9 +2874,7 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
             "failure_evidence": child_failure,
         },
     )
-    monkeypatch.setattr(
-        application, "_accepted_worker_result_for_continuation", lambda **_kw: raw
-    )
+    monkeypatch.setattr(application, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
     monkeypatch.setattr(
         dispatch, "_application_runs", lambda *_a, **_kw: ({"id": 7001, "run_attempt": 1},)
     )
@@ -2943,4 +2945,3 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
         current_revision=REVISION,
         default_branch="main",
     )
-
