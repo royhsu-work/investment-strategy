@@ -3847,6 +3847,21 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
             issue_number=435,
             result_kind="blocked",
             request_comment_id=6796616018,
+            raw_worker_result=json.dumps(
+                {
+                    "requested_effects": [
+                        {
+                            "kind": "github-mutation",
+                            "payload_json": json.dumps(
+                                {
+                                    "operation": "application-materialize",
+                                    "issue_number": 435,
+                                }
+                            ),
+                        }
+                    ]
+                }
+            ),
         )
     )
     evidence = application.ApplicationExceptionArtifact(
