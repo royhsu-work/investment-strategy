@@ -628,7 +628,6 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
     assert observe()
 
 
-
 @pytest.mark.parametrize(
     ("error_type", "retryable"),
     [
