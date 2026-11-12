@@ -1291,20 +1291,18 @@ def _accepted_worker_result_for_continuation(
     return json.dumps(recovered, sort_keys=True, separators=(",", ":"))
 
 
-def _qualified_original_accepted_effects(
+def _verified_zero_original_accepted_effects(
     *,
     record: ApplicationDecisionRecord,
     source: WorkerRequest,
     repository: str,
     token: str,
     read: Callable[[str, str, str], object] | None = None,
-) -> tuple[StagedEffect, ...] | None:
-    """Qualify the immutable *physical* Effect tuple at its existing source.
+) -> bool:
+    """Prove zero *physical* original Effects, not an empty semantic projection.
 
-    Semantic ACCEPTED projections may omit controls. The exact request hash,
-    trusted writer, dispatch correlation and semantic identity are common
-    evidence for zero and nonzero originals; neither absence nor a different
-    transport attempt supplies an original Effect identity.
+    This additional proof is required only at exception reconciliation; normal
+    accepted continuations remain independent of mutable ingress transport.
     """
 
     if record.disposition != "ACCEPTED" or (record.issue_number, record.role, record.action) != (
@@ -1312,7 +1310,10 @@ def _qualified_original_accepted_effects(
         source.role,
         source.action,
     ):
-        return None
+        return False
+    decoded = json.loads(record.raw_worker_result)
+    if not isinstance(decoded, dict) or decoded.get("requested_effects") != []:
+        return False
     reader = _github_json if read is None else read
     source_comment = _as_mapping(
         reader(repository, token, f"issues/comments/{record.request_comment_id}")
@@ -1325,7 +1326,7 @@ def _qualified_original_accepted_effects(
         or not _trusted_connector_comment(source_comment, repository.split("/", 1)[0])
         or hashlib.sha256(body.encode()).hexdigest() != record.request_body_sha256
     ):
-        return None
+        return False
     original = parse_application_request(body)
     if (
         original is None
@@ -1337,43 +1338,18 @@ def _qualified_original_accepted_effects(
         )
         or _claimed_source(original.raw_worker_result) != source
     ):
-        return None
-    parsed = parse_effect_batch(
+        return False
+    parsed = parse_worker_result(
         original.raw_worker_result, source, authorized_change=record.change
     )
-    if (
-        parsed.typed_result is None
-        or parsed.typed_result.change != record.change
-        or parsed.typed_result.result.kind.value != record.result_kind
-        or _worker_semantic_projection(original.raw_worker_result)
-        != _worker_semantic_projection(record.raw_worker_result)
-    ):
-        return None
-    return parsed.effects
-
-
-def _verified_zero_original_accepted_effects(
-    *,
-    record: ApplicationDecisionRecord,
-    source: WorkerRequest,
-    repository: str,
-    token: str,
-    read: Callable[[str, str, str], object] | None = None,
-) -> bool:
-    """Zero original Effects require a qualified physical tuple, not a projection."""
-
-    decoded = json.loads(record.raw_worker_result)
-    if not isinstance(decoded, dict) or decoded.get("requested_effects") != []:
-        return False
-    return (
-        _qualified_original_accepted_effects(
-            record=record,
-            source=source,
-            repository=repository,
-            token=token,
-            read=read,
-        )
-        == ()
+    original_decoded = json.loads(original.raw_worker_result)
+    return bool(
+        isinstance(original_decoded, dict)
+        and original_decoded.get("requested_effects") == []
+        and parsed.change == record.change
+        and parsed.typed_result.result.kind.value == record.result_kind
+        and _worker_semantic_projection(original.raw_worker_result)
+        == _worker_semantic_projection(record.raw_worker_result)
     )
 
 
@@ -6740,21 +6716,21 @@ def classify_accepted_read_only_effects(
         # accepted source before attributing a positive postcondition.
         # This uses the already-accepted source, not optional historic Runs.
         original_effect_proof: RecoveryProofDisposition | None = None
-        original_effects = _qualified_original_accepted_effects(
-            record=record,
-            source=source,
-            repository=repository,
-            token=token,
-        )
+        try:
+            original = parse_effect_batch(
+                record.raw_worker_result, source, authorized_change=record.change
+            )
+        except (TypeError, ValueError, RuntimeError, json.JSONDecodeError):
+            original = None
         if (
-            original_effects is not None
-            and 0 <= index < len(original_effects)
-            and attempted[: index + 1] == original_effects[: index + 1]
+            original is not None
+            and 0 <= index < len(original.effects)
+            and attempted[: index + 1] == original.effects[: index + 1]
         ):
             original_effect_proof = evaluate_recovery_evidence(
                 RecoveryEvidenceNode(
                     obligation="ORIGINAL_EFFECT",
-                    effect=original_effects[index],
+                    effect=original.effects[index],
                     final_postcondition=failed_satisfied,
                 )
             )
