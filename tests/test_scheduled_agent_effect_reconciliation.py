@@ -328,11 +328,20 @@ def _assumed_qualified_history_for_postcondition_test(
 
 
 @pytest.mark.parametrize(
-    ("successor_failed", "successor_durable"),
-    [(False, False), (True, False), (True, True)],
+    ("successor_failed", "successor_durable", "history_qualified", "expected"),
+    [
+        (False, False, True, "COMPLETE"),
+        (True, False, True, "COMPLETE"),
+        (True, True, False, "COMPLETE"),
+        (True, False, False, "INDETERMINATE"),
+    ],
 )
 def test_read_only_ir_identifies_formal_result_and_successor_nodes(
-    monkeypatch: pytest.MonkeyPatch, successor_failed: bool, successor_durable: bool
+    monkeypatch: pytest.MonkeyPatch,
+    successor_failed: bool,
+    successor_durable: bool,
+    history_qualified: bool,
+    expected: str,
 ) -> None:
     """R8: real read-only classification must distinguish Application obligations."""
     original, source = _batch()
@@ -406,9 +415,9 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         def observe_postcondition(self, effect: StagedEffect) -> bool:
             return effect in attempted[:-1] or (successor_durable and effect == successor)
 
-    if successor_durable:
-        # No complete historical non-entry witness is available; a positive
-        # current consequence must still admit read-only convergence.
+    if not history_qualified:
+        # Even an already committed formal result is not a completed projection.
+        # The final routing must also be authoritative and positive.
         monkeypatch.setattr(
             application, "_accepted_effect_never_called_in_history", lambda **_kw: False
         )
@@ -435,7 +444,7 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         default_branch="main",
         recovery_artifact=artifact,
     )
-    assert proof.disposition == "COMPLETE"
+    assert proof.disposition == expected
     assert [node.obligation for node in observed_nodes if node.effect == formal] == [
         "FORMAL_RESULT"
     ]
