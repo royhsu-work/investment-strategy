@@ -2764,7 +2764,6 @@ def test_initial_accepted_effect_observation_failure_has_exact_frontier(
     assert writes == []
 
 
-
 @pytest.mark.parametrize("guard_failure", ["rejected", "exception"])
 def test_prewrite_guard_preserves_observed_completed_prefix(
     monkeypatch: pytest.MonkeyPatch, guard_failure: str
