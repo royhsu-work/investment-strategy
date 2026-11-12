@@ -6194,10 +6194,22 @@ def _observe_accepted_post_effect_result(
         ):
             return AcceptedPostEffectProof("UNSAFE", "accepted original result identity invalid")
         if not batch.effects:
-            # This is an exact zero-Effect set qualified against the original
-            # request above; the Application-owned formal/derived consequence
-            # remains an independently guarded, uncompleted obligation.
-            return AcceptedPostEffectProof("COMPLETE", "original empty Effect set proven")
+            # The signed accepted semantic projection may have omitted a
+            # physical Effect. Verify its original request specifically at
+            # this recovery gate, not during normal accepted continuation.
+            try:
+                verified_empty = _verified_zero_original_accepted_effects(
+                    record=record, source=source, repository=repository, token=token
+                )
+            except (HTTPError, OSError, RuntimeError, TypeError, ValueError):
+                verified_empty = False
+            return (
+                AcceptedPostEffectProof("COMPLETE", "original empty Effect set proven")
+                if verified_empty
+                else AcceptedPostEffectProof(
+                    "INDETERMINATE", "accepted zero-Effect source not proven"
+                )
+            )
         adapter = GitHubEffectAdapter(
             repository,
             token,
@@ -7745,8 +7757,10 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 **({"accepted_intent": True} if accepted_intent is not None else {}),
                 **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
                 uncertain_effect_index=uncertain_effect_index,
-                proven_empty_original_effects=(
-                    original_effect_count == 0 and predecessor_disposition == "INDETERMINATE"
+                **(
+                    {"proven_empty_original_effects": True}
+                    if original_effect_count == 0 and predecessor_disposition == "INDETERMINATE"
+                    else {}
                 ),
             )
             if result.applied:
@@ -7793,8 +7807,10 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 **({"accepted_intent": True} if accepted_intent is not None else {}),
                 **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
                 uncertain_effect_index=uncertain_effect_index,
-                proven_empty_original_effects=(
-                    original_effect_count == 0 and predecessor_disposition == "INDETERMINATE"
+                **(
+                    {"proven_empty_original_effects": True}
+                    if original_effect_count == 0 and predecessor_disposition == "INDETERMINATE"
+                    else {}
                 ),
             )
     except CarrierRequired as exc:
