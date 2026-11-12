@@ -1522,6 +1522,20 @@ def apply_effect_batch(
         )
         return ApplyResult(False, reason, rejection=rejection, recovery_evidence=evidence)
 
+    def interrupted_before_write(
+        effect_index: int, completed: tuple[int, ...], exc: Exception
+    ) -> ApplyResult:
+        # The adapter has not been called for this Effect. The existing
+        # content-addressed recovery checkpoint will prove the preceding
+        # completed prefix before a fresh guard can attempt this suffix.
+        return rejected(
+            f"effect observation raised before write: {type(exc).__qualname__}",
+            effect_index,
+            completed_indexes=completed,
+            unfinished_boundary="effect-precondition-exception",
+            mutation_status="not-complete",
+        )
+
     # ACCEPT is the immutable linearization point.  A new process may enter
     # after any GitHub write (including a write whose HTTP response was lost).
     # Its exact postcondition is checked *before* any mutation precondition:
@@ -1623,7 +1637,21 @@ def apply_effect_batch(
     for index, effect in enumerate(effects_to_apply):
         if index in completed_before:
             continue
-        if not effect_guard(effect):
+        try:
+            guard_ok = effect_guard(effect)
+        except Exception as exc:
+            # The preflight guard pass has issued *no* Effects yet. Point
+            # the checkpoint at the earliest unobserved Effect, not the
+            # later guard whose GET failed.
+            first_pending = next(
+                (position for position in range(index + 1) if position not in completed_before),
+                index,
+            )
+            proven_prefix = tuple(
+                sorted(position for position in completed_before if position < first_pending)
+            )
+            return interrupted_before_write(first_pending, proven_prefix, exc)
+        if not guard_ok:
             return rejected("effect precondition rejected", index)
 
     if (
@@ -1639,10 +1667,20 @@ def apply_effect_batch(
 
     completed_indexes: list[int] = []
     for index, effect in enumerate(effects_to_apply):
-        if index in completed_before or (accepted_intent and observe_postcondition(effect)):
+        try:
+            observed = index in completed_before or (
+                accepted_intent and observe_postcondition(effect)
+            )
+        except Exception as exc:
+            return interrupted_before_write(index, tuple(completed_indexes), exc)
+        if observed:
             completed_indexes.append(index)
             continue
-        if not effect_guard(effect):
+        try:
+            guard_ok = effect_guard(effect)
+        except Exception as exc:
+            return interrupted_before_write(index, tuple(completed_indexes), exc)
+        if not guard_ok:
             return rejected(
                 "effect precondition rejected",
                 index,
@@ -1652,7 +1690,21 @@ def apply_effect_batch(
             apply_effect(effect)
         except CarrierRequired:
             raise
-        if not observe_postcondition(effect):
+        except OSError as exc:
+            # A lost GitHub response is an *attempted*, unknown write. Never
+            # reissue it merely because the API raised an exception.
+            return rejected(
+                f"effect write outcome unavailable: {type(exc).__qualname__}",
+                index,
+                completed_indexes=tuple(completed_indexes),
+                unfinished_boundary="effect-postcondition",
+                mutation_status="unknown",
+            )
+        try:
+            observed_after = observe_postcondition(effect)
+        except Exception:
+            observed_after = False
+        if not observed_after:
             return rejected(
                 "durable postcondition not observed",
                 index,
@@ -1663,9 +1715,17 @@ def apply_effect_batch(
         completed_indexes.append(index)
 
     if apply_derived:
-        if accepted_intent and observe_postcondition(derived_effect):
+        try:
+            derived_complete = accepted_intent and observe_postcondition(derived_effect)
+        except Exception as exc:
+            return interrupted_before_write(len(effects_to_apply), tuple(completed_indexes), exc)
+        if derived_complete:
             return ApplyResult(True, "already-durable")
-        if not effect_guard(derived_effect):
+        try:
+            guard_ok = effect_guard(derived_effect)
+        except Exception as exc:
+            return interrupted_before_write(len(effects_to_apply), tuple(completed_indexes), exc)
+        if not guard_ok:
             return rejected(
                 "effect precondition rejected",
                 len(effects_to_apply),
@@ -1675,7 +1735,19 @@ def apply_effect_batch(
             apply_effect(derived_effect)
         except CarrierRequired:
             raise
-        if not observe_postcondition(derived_effect):
+        except OSError as exc:
+            return rejected(
+                f"derived write outcome unavailable: {type(exc).__qualname__}",
+                len(effects_to_apply),
+                completed_indexes=tuple(completed_indexes),
+                unfinished_boundary="derived-effect-postcondition",
+                mutation_status="unknown",
+            )
+        try:
+            derived_observed = observe_postcondition(derived_effect)
+        except Exception:
+            derived_observed = False
+        if not derived_observed:
             return rejected(
                 "durable postcondition not observed",
                 len(effects_to_apply),

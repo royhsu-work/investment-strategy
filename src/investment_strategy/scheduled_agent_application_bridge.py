@@ -6059,10 +6059,18 @@ def _accepted_recovery_boundary(
         and isinstance(evidence.get("failed_effect_sha256"), str)
         and re.fullmatch(r"[0-9a-f]{64}", cast(str, evidence["failed_effect_sha256"])) is not None
     )
+    # A catchable guard/read exception proves this Effect was *not called*
+    # by the sequential engine. It does not prove the preceding writes;
+    # those still require fresh exact postconditions on every continuation.
+    unattempted_exception = (
+        evidence.get("unfinished_boundary") == "effect-precondition-exception"
+        and evidence.get("mutation_status") == "not-complete"
+        and evidence.get("rejection") is None
+    )
     if known_rejection and exact_frontier and exact_failure and not indexes:
         return "ZERO_WRITE_REJECTION"
     if exact_frontier and exact_failure:
-        if known_rejection and indexes:
+        if unattempted_exception or (known_rejection and indexes):
             return "READ_ONLY"
         if evidence.get("mutation_status") == "unknown" and evidence.get("unfinished_boundary") in {
             "effect-postcondition",
@@ -6475,10 +6483,18 @@ def accepted_read_only_effects_complete(
             )
             rejection_document = recovery_evidence.get("rejection")
             deterministic_suffix_rejection = (
-                recovery_evidence.get("unfinished_boundary") == "effect-precondition"
-                and recovery_evidence.get("mutation_status") == "not-complete"
-                and isinstance(rejection_document, Mapping)
-                and rejection_document.get("classification") == "effect-precondition-unsatisfied"
+                (
+                    recovery_evidence.get("unfinished_boundary") == "effect-precondition"
+                    and recovery_evidence.get("mutation_status") == "not-complete"
+                    and isinstance(rejection_document, Mapping)
+                    and rejection_document.get("classification")
+                    == "effect-precondition-unsatisfied"
+                )
+                or (
+                    recovery_evidence.get("unfinished_boundary") == "effect-precondition-exception"
+                    and recovery_evidence.get("mutation_status") == "not-complete"
+                    and rejection_document is None
+                )
             )
             if deterministic_suffix_rejection:
                 # The failed Effect has not been attempted. Require the exact
@@ -6489,7 +6505,7 @@ def accepted_read_only_effects_complete(
                 failed_index = recovery_evidence.get("failed_effect_index")
                 if (
                     type(failed_index) is not int
-                    or failed_index < 1
+                    or failed_index < 0
                     or recovery_evidence.get("completed_effect_indexes")
                     != list(range(failed_index))
                 ):
@@ -6739,9 +6755,17 @@ def _write_application_recovery_evidence(
     if recovery is not None and _accepted_recovery_boundary(failure_evidence) == "READ_ONLY":
         known_unattempted_suffix = (
             recovery.mutation_status == "not-complete"
-            and recovery.unfinished_boundary == "effect-precondition"
-            and recovery.rejection is not None
-            and recovery.rejection.classification.value == "effect-precondition-unsatisfied"
+            and (
+                (
+                    recovery.unfinished_boundary == "effect-precondition"
+                    and recovery.rejection is not None
+                    and recovery.rejection.classification.value == "effect-precondition-unsatisfied"
+                )
+                or (
+                    recovery.unfinished_boundary == "effect-precondition-exception"
+                    and recovery.rejection is None
+                )
+            )
             and recovery.completed_effect_indexes == tuple(range(recovery.failed_effect_index))
         )
         if recovery.mutation_status != "unknown" and not known_unattempted_suffix:
@@ -6753,8 +6777,7 @@ def _write_application_recovery_evidence(
         )
         inherited = (
             _verified_attempted_effect_checkpoint(predecessor_failure, source=source)
-            if not known_unattempted_suffix
-            and isinstance(predecessor_failure, Mapping)
+            if isinstance(predecessor_failure, Mapping)
             and predecessor_failure.get("failed_effect_sha256") == recovery.failed_effect_sha256
             and predecessor_failure.get("failed_effect_kind") == recovery.failed_effect_kind
             and predecessor_failure.get("failed_effect_index") == recovery.failed_effect_index

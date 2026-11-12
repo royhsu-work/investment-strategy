@@ -3083,7 +3083,10 @@ def _application_job(
     if (
         isinstance(failure_evidence, Mapping)
         and _accepted_recovery_boundary(failure_evidence) == "READ_ONLY"
-        and failure_evidence.get("unfinished_boundary") == "effect-reconciliation"
+        and failure_evidence.get("unfinished_boundary") in {
+            "effect-reconciliation",
+            "effect-precondition-exception",
+        }
     ):
         # The previous read-only invocation obtained no sufficient proof.
         # Re-observe the *same* immutable accepted effects in each fresh

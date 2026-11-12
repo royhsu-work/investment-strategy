@@ -2154,3 +2154,251 @@ def test_read_only_recovery_of_recovery_is_evidence_bounded(
     # A stable read-only observation must retain the ability to observe a
     # *later* authoritative GitHub postcondition, without replaying the write.
     assert second_document["continuation_eligible"] is True
+
+
+@pytest.mark.parametrize("pre_guard_failure", [False, True])
+def test_partial_guard_exception_reuses_verified_unattempted_suffix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pre_guard_failure: bool
+) -> None:
+    """Native-shaped recovery evidence: E0 durable, E1 never called, then fresh E1/formal/route."""
+
+    import investment_strategy.scheduled_agent_effects as effects
+
+    original, source = _batch()
+    first = original.effects[0]
+    second = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "second accepted write"})
+    )
+    formal = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "ACTION_RESULT\nformal"})
+    )
+    semantic = {
+        "issue_number": source.issue_number,
+        "role": source.role,
+        "action": source.action,
+        "change": CHANGE,
+        "result_kind": "ready",
+        "evidence_ref": "issuecomment-138-qualified",
+        "result_content": "accepted semantics",
+    }
+    accepted_raw = json.dumps(
+        dict(
+            semantic,
+            requested_effects=[
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+                for effect in (first, second)
+            ],
+        )
+    )
+    projected_raw = json.dumps(
+        dict(
+            semantic,
+            requested_effects=[
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+                for effect in (first, second, formal)
+            ],
+        )
+    )
+    recovered_raw, original_count = application._accepted_reconciliation_effect_projection(
+        accepted_raw=accepted_raw,
+        projected_raw=projected_raw,
+        source=source,
+        change=CHANGE,
+    )
+    assert original_count == 2
+    batch = parse_effect_batch(recovered_raw, source, authorized_change=CHANGE)
+    successor = effects.derived_transition_effect(
+        issue_number=138, change=CHANGE, successor=Action.IMPLEMENT_CHANGE
+    )
+    monkeypatch.setattr(
+        effects, "_typed_application_plan", lambda *_a: (_decision(), successor, None)
+    )
+    labels = {first: "E0", second: "E1", formal: "formal", successor: "successor"}
+    durable: set[str] = set()
+    writes: list[str] = []
+    interrupted = {"allowed": True}
+
+    def observe(effect: StagedEffect) -> bool:
+        return labels[effect] in durable
+
+    def guard(effect: StagedEffect) -> bool:
+        if (
+            interrupted["allowed"]
+            and effect == second
+            and (pre_guard_failure or "E0" in durable)
+        ):
+            raise OSError("transient GitHub GET failure before this write")
+        return True
+
+    def apply(effect: StagedEffect) -> None:
+        key = labels[effect]
+        assert key not in durable, f"replayed {key}"
+        durable.add(key)
+        writes.append(key)
+
+    def run(recover: bool) -> effects.ApplyResult:
+        return apply_effect_batch(
+            batch,
+            fresh_preflight=lambda: cast(DispatchPreflight, None),
+            effect_guard=guard,
+            apply_effect=apply,
+            observe_postcondition=observe,
+            current_revision=REVISION,
+            accepted_intent=True,
+            reconcile_only=recover,
+            uncertain_effect_index=0 if recover else None,
+        )
+
+    failed = run(False)
+    assert not failed.applied and failed.recovery_evidence is not None
+    assert failed.recovery_evidence.unfinished_boundary == "effect-precondition-exception"
+    assert failed.recovery_evidence.mutation_status == "not-complete"
+    if pre_guard_failure:
+        assert failed.recovery_evidence.failed_effect_index == 0
+        assert writes == []
+        durable.add("E0")  # Independently observed before any lawful continuation.
+    else:
+        assert failed.recovery_evidence.failed_effect_index == 1
+        assert failed.recovery_evidence.completed_effect_indexes == (0,)
+        assert writes == ["E0"]
+    decision_body = render_application_decision_body(
+        request_comment_id=91,
+        request_body="exact accepted request",
+        authorization_revision=REVISION,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=accepted_raw,
+        reason="application accepted",
+    )
+    record = parse_application_decision(decision_body)
+    assert record is not None
+    monkeypatch.setattr(
+        application,
+        "_application_decision_comment_for_request",
+        lambda **_kw: (record, decision_body),
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "7001")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "github-output"))
+    artifact_path = tmp_path / "recovery.json"
+    assert application._write_application_recovery_evidence(
+        str(artifact_path),
+        result=failed,
+        repository="owner/repo",
+        token=REVISION,
+        source=source,
+        request_comment_id=91,
+        trigger_comment_id=91,
+        authorization_revision=REVISION,
+        current_revision=REVISION,
+        run_attempt=1,
+        continuation=None,
+        predecessor=None,
+        effect_batch=batch,
+    )
+    failure = json.loads(artifact_path.read_text())["failure_evidence"]
+    assert application._accepted_recovery_boundary(failure) == "READ_ONLY"
+    attempted = application._verified_attempted_effect_checkpoint(failure, source=source)
+    assert attempted is not None
+    assert attempted[0] == first
+    assert attempted[-1] == (first if pre_guard_failure else second)
+
+    class FreshAdapter:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            return observe(effect)
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", FreshAdapter)
+
+    def qualified(checkpoint: dict[str, object]) -> bool:
+        return application.accepted_read_only_effects_complete(
+            record=record,
+            source=source,
+            recovery_evidence=checkpoint,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+        )
+
+    assert qualified(failure)
+    mutated = dict(failure, failed_effect_sha256="f" * 64)
+    assert not qualified(mutated)
+    durable.remove("E0")
+    # No completed prefix exists when the failure preceded every Effect.
+    assert qualified(failure) is pre_guard_failure
+    durable.add("E0")
+    interrupted["allowed"] = False
+    if pre_guard_failure:
+        # The source checkpoint proves only E0 was unattempted; the next
+        # fresh run must still inspect E0 rather than assuming it was done.
+        durable.remove("E0")
+        assert run(False).applied
+        assert writes == ["E0", "E1", "formal", "successor"]
+    else:
+        assert run(True).applied
+        assert writes == ["E0", "E1", "formal", "successor"]
+    assert run(False).applied
+    assert writes == ["E0", "E1", "formal", "successor"]
+
+
+def test_attempted_effect_exception_is_unknown_not_a_write_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same engine distinguishes an uncalled E1 from a lost E1 write response."""
+
+    import investment_strategy.scheduled_agent_effects as effects
+
+    base, _source = _batch()
+    second = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "second accepted write"})
+    )
+    batch = replace(base, effects=(base.effects[0], second))
+    successor = effects.derived_transition_effect(
+        issue_number=138, change=CHANGE, successor=Action.IMPLEMENT_CHANGE
+    )
+    monkeypatch.setattr(
+        effects, "_typed_application_plan", lambda *_a: (_decision(), successor, None)
+    )
+    complete: set[StagedEffect] = set()
+    writes: list[StagedEffect] = []
+
+    def apply(effect: StagedEffect) -> None:
+        if effect == second:
+            raise OSError("lost write response for E1")
+        complete.add(effect)
+        writes.append(effect)
+
+    def reconcile() -> effects.ApplyResult:
+        return apply_effect_batch(
+            batch,
+            fresh_preflight=lambda: cast(DispatchPreflight, None),
+            effect_guard=lambda _e: True,
+            apply_effect=apply,
+            observe_postcondition=lambda e: e in complete,
+            current_revision=REVISION,
+            accepted_intent=True,
+            reconcile_only=True,
+            uncertain_effect_index=1,
+        )
+
+    first = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: cast(DispatchPreflight, None),
+        effect_guard=lambda _e: True,
+        apply_effect=apply,
+        observe_postcondition=lambda e: e in complete,
+        current_revision=REVISION,
+        accepted_intent=True,
+    )
+    assert not first.applied and first.recovery_evidence is not None
+    assert first.recovery_evidence.mutation_status == "unknown"
+    assert first.recovery_evidence.unfinished_boundary == "effect-postcondition"
+    assert first.recovery_evidence.completed_effect_indexes == (0,)
+    assert writes == [batch.effects[0]]
+    assert not reconcile().applied
+    assert writes == [batch.effects[0]]  # The uncertain E1 must never replay.
+    complete.add(second)  # A later fresh GET establishes exact E1 durability.
+    assert reconcile().applied
+    assert writes == [batch.effects[0], successor]
