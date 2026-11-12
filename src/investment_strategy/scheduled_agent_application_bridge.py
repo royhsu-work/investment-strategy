@@ -6794,9 +6794,14 @@ def classify_accepted_read_only_effects(
             return AcceptedPostEffectProof(
                 "INDETERMINATE", "accepted historical prefix is not yet satisfied"
             )
-        # Observing an existing formal/successor is read-only, not permission
-        # to write one. The DAG already requires a proven original prefix.
-        failed_satisfied = adapter.observe_postcondition(attempted[-1])
+        # A never-called derived Effect is not independently observed here:
+        # its final state has a canonical consequence owner below. This
+        # preserves the producer's no-write checkpoint observation boundary.
+        failed_satisfied = (
+            adapter.observe_postcondition(attempted[-1])
+            if not non_entry or not attempted[-1].derived
+            else False
+        )
         attempted_fact = RecoveryEvidenceNode(
             _recovery_obligation(attempted[-1], source),
             attempted[-1],
@@ -6822,14 +6827,12 @@ def classify_accepted_read_only_effects(
                 "attempted accepted Effect is not yet proven complete",
                 original_effect_proof=original_effect_proof,
             )
-        # R9: a fully durable original/formal/successor consequence needs no
-        # global "never called" history to be read-only reconciled. The actual
-        # GitHub adapter observes all exact Effects; the canonical consequence
-        # owner independently verifies the committed result and model route.
-        # Any missing effect retains the historical no-replay/write gate below.
+        # R9: after positive original/formal witnesses, the canonical
+        # consequence owner can read-only prove an already durable successor.
+        # No history-of-nonentry gate is needed when no write remains.
+        # A missing result/route still requires the no-replay gate below.
         if (
-            attempted_proof == "SATISFIED"
-            and attempted[-1].derived
+            attempted[-1].derived
             and original is not None
             and original.typed_result is not None
             and bool(original.effects)
