@@ -2816,12 +2816,7 @@ def _application_job(
                 steps is not None
                 and ("Upload exact application recovery evidence", "success") in steps
             )
-            if (
-                has_exception
-                and not has_recovery
-                and (record.role, record.action, record.change)
-                == ("lead", "propose-change", "unset")
-            ):
+            if has_exception and not has_recovery:
                 recovery_artifact = read_application_exception_artifact(
                     repository,
                     token,
