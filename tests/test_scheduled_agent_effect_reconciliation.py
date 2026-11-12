@@ -2410,6 +2410,63 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
     assert qualified(failure)
     mutated = dict(failure, failed_effect_sha256="f" * 64)
     assert not qualified(mutated)
+
+    # The identical latest before-write checkpoint must not hide a previous
+    # attempted write whose response was lost. That history is UNKNOWN, not
+    # a certified NOT_APPLIED permission for the same immutable Effect.
+    previous_failure = dict(
+        failure,
+        mutation_status="unknown",
+        unfinished_boundary="effect-postcondition",
+        operation_stage="WRITE",
+        write_call_entered=True,
+    )
+    previous_hash = application._canonical_sha256(previous_failure)
+    previous = replace(
+        native,
+        failure_evidence_sha256=previous_hash,
+        document={
+            **native_document,
+            "failure_evidence": previous_failure,
+            "failure_evidence_sha256": previous_hash,
+        },
+    )
+    latest_document = {
+        **native_document,
+        "recovery_attempt": 2,
+        "trigger_comment_id": 1000,
+        "prior_failure_evidence_sha256": [previous_hash],
+        "predecessor": {
+            "run_id": previous.run_id,
+            "run_attempt": previous.run_attempt,
+            "job_id": previous.job_id,
+            "artifact_id": previous.artifact_id,
+            "artifact_digest": previous.artifact_digest,
+            "failure_evidence_sha256": previous_hash,
+            "recovery_attempt": 1,
+        },
+    }
+    latest = replace(
+        native,
+        run_id=8001,
+        job_id=8002,
+        artifact_id=8003,
+        recovery_attempt=2,
+        document=latest_document,
+    )
+    monkeypatch.setattr(
+        application, "read_application_recovery_artifact", lambda *_a, **_kw: previous
+    )
+    assert not application.accepted_read_only_effects_complete(
+        record=record,
+        source=source,
+        recovery_evidence=failure,
+        repository="owner/repo",
+        token=REVISION,
+        current_revision=REVISION,
+        default_branch="main",
+        recovery_artifact=latest,
+    )
     durable.remove("E0")
     # No completed prefix exists when the failure preceded every Effect.
     assert qualified(failure) is pre_guard_failure
