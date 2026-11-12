@@ -7482,6 +7482,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         else _accepted_predecessor_disposition(predecessor_evidence)
     )
     uncertain_effect_index = None
+    original_effect_count: int | None = None
     missing_pr_only_plan: CarrierPlan | None = None
     if predecessor_disposition == "INDETERMINATE" and predecessor_evidence is not None:
         failure = (
@@ -7695,6 +7696,9 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 **({"accepted_intent": True} if accepted_intent is not None else {}),
                 **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
                 uncertain_effect_index=uncertain_effect_index,
+                proven_empty_original_effects=(
+                    original_effect_count == 0 and predecessor_disposition == "INDETERMINATE"
+                ),
             )
             if result.applied:
                 if materialization is None or target is None:
@@ -7740,6 +7744,9 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 **({"accepted_intent": True} if accepted_intent is not None else {}),
                 **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
                 uncertain_effect_index=uncertain_effect_index,
+                proven_empty_original_effects=(
+                    original_effect_count == 0 and predecessor_disposition == "INDETERMINATE"
+                ),
             )
     except CarrierRequired as exc:
         # CarrierRequired is the hard invocation-exit boundary. Persist only
