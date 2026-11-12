@@ -2065,7 +2065,7 @@ def test_nonactivation_exception_proof_reconciles_original_effects_without_repla
 
 @pytest.mark.parametrize(
     ("postcondition", "expected"),
-    [(True, "COMPLETE"), (False, "INDETERMINATE")],
+    [(True, "SATISFIED"), (False, "UNKNOWN")],
 )
 def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_history(
     monkeypatch: pytest.MonkeyPatch, postcondition: bool, expected: str
@@ -2128,7 +2128,10 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
         default_branch="main",
         recovery_artifact=artifact,  # type: ignore[arg-type]
     )
-    assert proof.disposition == expected
+    # A positive original Effect proof is not the formal-result/successor gate.
+    # Historical uncertainty may still block the *next write* independently.
+    assert proof.original_effect_proof == expected
+    assert proof.disposition == "INDETERMINATE"
 
 
 def test_noncompletion_accepted_intent_has_no_synthetic_checkpoint_obligation(
