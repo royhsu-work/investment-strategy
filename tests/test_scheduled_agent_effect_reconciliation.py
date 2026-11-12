@@ -7,7 +7,7 @@ import json
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 
@@ -85,7 +85,7 @@ def test_positive_descendant_requires_satisfied_upstream_obligation(stage: str) 
     missing = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", effect, None)
     completed = replace(missing, final_postcondition=True)
     descendant = application.RecoveryEvidenceNode(
-        cast("Literal[\"ORIGINAL_EFFECT\", \"FORMAL_RESULT\", \"SUCCESSOR\"]", stage),
+        cast(Literal["FORMAL_RESULT", "SUCCESSOR"], stage),
         effect,
         True,
         depends_on=(missing,),
