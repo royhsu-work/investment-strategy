@@ -2736,3 +2736,211 @@ def test_run_local_effect_frontier_cannot_prove_accepted_history(
         current_revision=REVISION,
         default_branch="main",
     )
+
+@pytest.mark.parametrize("earlier_e1_write", [False, True])
+def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
+    monkeypatch: pytest.MonkeyPatch, earlier_e1_write: bool
+) -> None:
+    """Identical current GitHub state must not erase an earlier accepted write attempt."""
+
+    original, source = _batch()
+    first = original.effects[0]
+    second = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "second original effect"})
+    )
+    originals = (first, second)
+    raw = json.dumps(
+        {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "accepted",
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+                for effect in originals
+            ],
+        }
+    )
+    body = render_application_decision_body(
+        request_comment_id=91,
+        request_body="original request",
+        authorization_revision=REVISION,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    record = parse_application_decision(body)
+    assert record is not None
+    parent_index = 1 if earlier_e1_write else 0
+    parent_failure: dict[str, object] = {
+        "failed_effect_index": parent_index,
+        "failed_effect_kind": originals[parent_index].kind,
+        "failed_effect_sha256": hashlib.sha256(
+            originals[parent_index].payload_json.encode()
+        ).hexdigest(),
+        "completed_effect_indexes": [0] if earlier_e1_write else [],
+        "completed_effect_sha256": [hashlib.sha256(first.payload_json.encode()).hexdigest()]
+        if earlier_e1_write
+        else [],
+        "mutation_status": "unknown",
+        "unfinished_boundary": "effect-postcondition",
+        "write_call_entered": True,
+        "operation_stage": "WRITE",
+        "rejection": None,
+        "attempt_revision": REVISION,
+        "attempted_effects": [
+            {"kind": effect.kind, "payload_json": effect.payload_json, "derived": False}
+            for effect in originals[: parent_index + 1]
+        ],
+    }
+    episode = "c" * 64
+    decision_sha = hashlib.sha256(body.encode()).hexdigest()
+    parent = application.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "d" * 64,
+        request_comment_id=91,
+        accepted_decision_sha256=decision_sha,
+        failure_evidence_sha256=application._canonical_sha256(parent_failure),
+        recovery_episode_sha256=episode,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={
+            "issue_number": 138,
+            "role": source.role,
+            "action": source.action,
+            "authorization_revision": REVISION,
+            "trigger_comment_id": 91,
+            "prior_failure_evidence_sha256": [],
+            "predecessor": None,
+            "failure_evidence": parent_failure,
+        },
+    )
+    child_failure: dict[str, object] = {
+        "failed_effect_index": 1,
+        "failed_effect_kind": second.kind,
+        "failed_effect_sha256": hashlib.sha256(second.payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": [0],
+        "completed_effect_sha256": [hashlib.sha256(first.payload_json.encode()).hexdigest()],
+        "mutation_status": "not-complete",
+        "unfinished_boundary": "effect-precondition-exception",
+        "write_call_entered": False,
+        "operation_stage": "READ",
+        "rejection": None,
+        "attempt_revision": REVISION,
+        "attempted_effects": [
+            {"kind": effect.kind, "payload_json": effect.payload_json, "derived": False}
+            for effect in originals
+        ],
+    }
+    child = application.ApplicationRecoveryArtifact(
+        run_id=7004,
+        run_attempt=1,
+        job_id=7005,
+        artifact_id=7006,
+        artifact_digest="sha256:" + "e" * 64,
+        request_comment_id=91,
+        accepted_decision_sha256=decision_sha,
+        failure_evidence_sha256=application._canonical_sha256(child_failure),
+        recovery_episode_sha256=episode,
+        recovery_attempt=2,
+        continuation_eligible=True,
+        document={
+            "issue_number": 138,
+            "role": source.role,
+            "action": source.action,
+            "authorization_revision": REVISION,
+            "trigger_comment_id": 1000,
+            "prior_failure_evidence_sha256": [parent.failure_evidence_sha256],
+            "predecessor": {
+                "run_id": parent.run_id,
+                "run_attempt": parent.run_attempt,
+                "job_id": parent.job_id,
+                "artifact_id": parent.artifact_id,
+                "artifact_digest": parent.artifact_digest,
+                "failure_evidence_sha256": parent.failure_evidence_sha256,
+                "recovery_attempt": 1,
+            },
+            "failure_evidence": child_failure,
+        },
+    )
+    monkeypatch.setattr(
+        application, "_accepted_worker_result_for_continuation", lambda **_kw: raw
+    )
+    monkeypatch.setattr(
+        dispatch, "_application_runs", lambda *_a, **_kw: ({"id": 7001, "run_attempt": 1},)
+    )
+
+    def read_parent(
+        _repository: str,
+        _token: str,
+        *,
+        run_id: int,
+        run_attempt: int,
+        job_id: int,
+        request_comment_id: int,
+        accepted_decision_sha256: str,
+        strict_read: bool,
+    ) -> application.ApplicationRecoveryArtifact:
+        assert (run_id, run_attempt, job_id, request_comment_id) == (7001, 1, 7002, 91)
+        assert accepted_decision_sha256 == decision_sha and strict_read
+        return parent
+
+    monkeypatch.setattr(application, "read_application_recovery_artifact", read_parent)
+
+    class Observer:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            assert effect == first  # E1 is absent in BOTH historical cases.
+            return True
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
+    qualified = application.accepted_read_only_effects_complete(
+        record=record,
+        source=source,
+        recovery_evidence=child_failure,
+        repository="owner/repo",
+        token=REVISION,
+        current_revision=REVISION,
+        default_branch="main",
+        recovery_artifact=child,
+    )
+    assert qualified is not earlier_e1_write
+
+    # A locally non-entered E1 does not override the earlier lost response.
+    assert not application._accepted_effect_never_called_in_history(
+        record=record,
+        source=source,
+        artifact=child,
+        failed_index=0,
+        repository="owner/repo",
+        token=REVISION,
+    )
+    if not earlier_e1_write:
+        assert application._accepted_effect_never_called_in_history(
+            record=record,
+            source=source,
+            artifact=child,
+            failed_index=1,
+            repository="owner/repo",
+            token=REVISION,
+        )
+    # Omitted or conflicting history cannot become a replay permission.
+    assert not application.accepted_read_only_effects_complete(
+        record=record,
+        source=source,
+        recovery_evidence=child_failure,
+        repository="owner/repo",
+        token=REVISION,
+        current_revision=REVISION,
+        default_branch="main",
+    )
+
