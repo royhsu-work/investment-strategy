@@ -4963,18 +4963,17 @@ def read_application_recovery_artifact(
     steps = job.steps
     if steps is None:
         return unavailable()
-    uploads = [
-        conclusion
-        for name, conclusion in steps
-        if name == "Upload exact application recovery evidence"
-    ]
-    if len(uploads) != 1 or uploads[0] != "success":
-        if not uploads and not any(
-            name == "Upload final exact application recovery evidence" for name, _ in steps
+    upload_stage = application_artifact_stage(steps)
+    if upload_stage not in {"PRE_RECOVERY", "FINAL_RECOVERY"}:
+        if upload_stage == "NONE" and not any(
+            name in {
+                "Upload exact application recovery evidence",
+                "Upload final exact application recovery evidence",
+            }
+            for name, _ in steps
         ):
-            # A completed legacy job without an upload step really cannot
-            # supply this artifact. Its separate caller still proves legacy
-            # identity and does not infer zero writes.
+            # A completed legacy job with no writer step is distinct from a
+            # missing artifact after a successful native upload.
             return None
         return unavailable()
     artifacts_payload = api_read(
