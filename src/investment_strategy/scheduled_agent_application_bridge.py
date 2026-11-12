@@ -6444,7 +6444,7 @@ def _accepted_effect_never_called_in_history(
         original = parse_effect_batch(original_raw, source, authorized_change=record.change)
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return False
-    if original.typed_result is None or failed_index >= len(original.effects):
+    if original.typed_result is None or failed_index > len(original.effects) + 1:
         return False
 
     current = artifact
@@ -6480,6 +6480,36 @@ def _accepted_effect_never_called_in_history(
             # An earlier attempt reached this Effect, or its original identity
             # cannot be independently established.
             return False
+        # The immutable worker owns original Effects, while the Application
+        # owns exactly one later formal result and one derived transition.
+        # Their identities are already defined by the accepted Action model;
+        # they must never become a second source of user-requested Effects.
+        derived_tail = attempted[len(original.effects) :]
+        if derived_tail:
+            try:
+                formal_revision = _attempted_formal_revision(
+                    attempted,
+                    source=source,
+                    change=record.change,
+                    result_kind=record.result_kind,
+                    request_comment_id=record.request_comment_id,
+                )
+                expected_derived = derived_transition_effect(
+                    issue_number=source.issue_number,
+                    change=record.change,
+                    successor=next_action(
+                        original.typed_result.action, original.typed_result.result
+                    ),
+                )
+            except (RuntimeError, TypeError, ValueError):
+                return False
+            if (
+                formal_revision is None
+                or failure.get("attempt_revision") != formal_revision
+                or len(derived_tail) > 2
+                or (len(derived_tail) == 2 and derived_tail[1] != expected_derived)
+            ):
+                return False
         if index == failed_index and not (
             failure.get("mutation_status") == "not-complete"
             and failure.get("unfinished_boundary")
