@@ -2453,3 +2453,72 @@ def test_initial_accepted_effect_observation_failure_has_exact_frontier(
     assert evidence.raw_error == "GitHub GET failed before any E1 write"
     assert observed == [original.effects[0], second]
     assert writes == []
+
+
+def test_run_local_effect_frontier_cannot_prove_accepted_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RED: the same absent effect may have a lost response in an earlier run."""
+
+    original, source = _batch()
+    effect = original.effects[0]
+    body = render_application_decision_body(
+        request_comment_id=91,
+        request_body="exact accepted request",
+        authorization_revision=REVISION,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=json.dumps(
+            {
+                "issue_number": 138,
+                "role": "lead",
+                "action": "resolve-question",
+                "change": CHANGE,
+                "result_kind": "ready",
+                "evidence_ref": "issuecomment-138-qualified",
+                "result_content": "accepted",
+                "requested_effects": [
+                    {"kind": effect.kind, "payload_json": effect.payload_json}
+                ],
+            }
+        ),
+        reason="application accepted",
+    )
+    record = parse_application_decision(body)
+    assert record is not None
+    failure: dict[str, object] = {
+        "reason": "effect observation raised before write: OSError",
+        "mutation_status": "not-complete",
+        "unfinished_boundary": "effect-precondition-exception",
+        "failed_effect_index": 0,
+        "failed_effect_kind": effect.kind,
+        "failed_effect_sha256": hashlib.sha256(effect.payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+        "rejection": None,
+        "attempt_revision": REVISION,
+        "attempted_effects": [
+            {"kind": effect.kind, "payload_json": effect.payload_json, "derived": False}
+        ],
+    }
+
+    class Observer:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def observe_postcondition(self, _effect: StagedEffect) -> bool:
+            return False
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
+    # No run / predecessor evidence was supplied. An invocation-local
+    # before-write failure must not upgrade an earlier unknown write to
+    # an intent-wide NOT_APPLIED permission.
+    assert not application.accepted_read_only_effects_complete(
+        record=record,
+        source=source,
+        recovery_evidence=failure,
+        repository="owner/repo",
+        token=REVISION,
+        current_revision=REVISION,
+        default_branch="main",
+    )
