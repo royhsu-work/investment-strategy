@@ -4966,7 +4966,8 @@ def read_application_recovery_artifact(
     upload_stage = application_artifact_stage(steps)
     if upload_stage not in {"PRE_RECOVERY", "FINAL_RECOVERY"}:
         if upload_stage == "NONE" and not any(
-            name in {
+            name
+            in {
                 "Upload exact application recovery evidence",
                 "Upload final exact application recovery evidence",
             }
