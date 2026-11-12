@@ -6120,6 +6120,37 @@ _POST_EFFECT_ADMISSION: dict[
 }
 
 
+RecoveryProofDisposition = Literal["SATISFIED", "NOT_APPLIED", "UNKNOWN", "CONFLICT"]
+
+
+@dataclass(frozen=True)
+class RecoveryEvidenceNode:
+    """Typed per-obligation IR fact, never an Action or write authorization.
+
+    A later formal-result node can depend on shared original-Effect nodes,
+    and a successor on formal-result proof. Evidence remains invocation-local.
+    """
+
+    obligation: Literal["ORIGINAL_EFFECT", "FORMAL_RESULT", "SUCCESSOR"]
+    effect: StagedEffect
+    final_postcondition: bool | None
+    positive_never_called: bool | None = None
+    source_conflict: bool = False
+    depends_on: tuple[RecoveryEvidenceNode, ...] = ()
+
+
+def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofDisposition:
+    """Pure positive-first evidence evaluation; NOT_APPLIED needs a witness."""
+
+    if node.source_conflict:
+        return "CONFLICT"
+    if node.final_postcondition is True:
+        return "SATISFIED"
+    if node.final_postcondition is False and node.positive_never_called is True:
+        return "NOT_APPLIED"
+    return "UNKNOWN"
+
+
 @dataclass(frozen=True)
 class AcceptedPostEffectProof:
     """Read-only recovery outcome from the canonical materialization owner."""
@@ -6127,6 +6158,8 @@ class AcceptedPostEffectProof:
     disposition: Literal["COMPLETE", "MISSING_PR", "NOT_APPLIED", "INDETERMINATE", "UNSAFE"]
     reason: str
     carrier_plan: CarrierPlan | None = None
+    # Independent leaf proof. It never grants continuation or replay authority.
+    original_effect_proof: RecoveryProofDisposition | None = None
 
     def __post_init__(self) -> None:
         if (self.disposition == "MISSING_PR") != (self.carrier_plan is not None):
@@ -6682,6 +6715,29 @@ def classify_accepted_read_only_effects(
                 "INDETERMINATE", "attempted accepted Effect is not yet proven complete"
             )
         historical_frontier = index + 1 if failed_satisfied else index
+        # Original Effect proof is separate from *authorization of the next*
+        # formal/result/successor write. Bind its leaf to the immutable
+        # accepted source before attributing a positive postcondition.
+        # This uses the already-accepted source, not optional historic Runs.
+        original_effect_proof: RecoveryProofDisposition | None = None
+        try:
+            original = parse_effect_batch(
+                record.raw_worker_result, source, authorized_change=record.change
+            )
+        except (TypeError, ValueError, RuntimeError, json.JSONDecodeError):
+            original = None
+        if (
+            original is not None
+            and 0 <= index < len(original.effects)
+            and attempted[: index + 1] == original.effects[: index + 1]
+        ):
+            original_effect_proof = evaluate_recovery_evidence(
+                RecoveryEvidenceNode(
+                    obligation="ORIGINAL_EFFECT",
+                    effect=original.effects[index],
+                    final_postcondition=failed_satisfied,
+                )
+            )
         if not _accepted_effect_never_called_in_history(
             record=record,
             source=source,
@@ -6690,17 +6746,20 @@ def classify_accepted_read_only_effects(
             repository=repository,
             token=token,
         ):
-            # Qualified history is still needed for all *later* unattempted
-            # Effects. A lost response at the current index cannot turn an
-            # absent postcondition into permission to repeat its write.
+            # An original may be SATISFIED while the next non-idempotent
+            # formal/derived write is still unqualified. Preserve both facts:
+            # neither a history gap nor a positive Effect creates write power.
             return AcceptedPostEffectProof(
-                "INDETERMINATE", "accepted historical write frontier is not proven"
+                "INDETERMINATE",
+                "accepted historical write frontier is not proven",
+                original_effect_proof=original_effect_proof,
             )
         return AcceptedPostEffectProof(
             "COMPLETE",
             "accepted historical Effect satisfied"
             if failed_satisfied
             else "accepted unattempted suffix qualified",
+            original_effect_proof=original_effect_proof,
         )
     except OSError:
         # Only an expected transport/read failure is re-observable. Invalid
