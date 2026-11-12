@@ -151,28 +151,32 @@ def test_r9_conflicting_immutable_effect_is_unsafe_even_if_current_postcondition
 ) -> None:
     """A tampered native checkpoint is not a transient history gap or completed intent."""
     original, source = _batch()
-    accepted_raw = json.dumps({
-        "issue_number": source.issue_number,
-        "role": source.role,
-        "action": source.action,
-        "change": CHANGE,
-        "result_kind": "ready",
-        "evidence_ref": "issuecomment-138-qualified",
-        "result_content": "accepted",
-        "requested_effects": [
-            {"kind": effect.kind, "payload_json": effect.payload_json}
-            for effect in original.effects
-        ],
-    })
-    accepted = parse_application_decision(render_application_decision_body(
-        request_comment_id=91,
-        request_body="immutable original request",
-        authorization_revision=REVISION,
-        decision=_decision(),
-        disposition="ACCEPTED",
-        raw_worker_result=accepted_raw,
-        reason="application accepted",
-    ))
+    accepted_raw = json.dumps(
+        {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "accepted",
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+                for effect in original.effects
+            ],
+        }
+    )
+    accepted = parse_application_decision(
+        render_application_decision_body(
+            request_comment_id=91,
+            request_body="immutable original request",
+            authorization_revision=REVISION,
+            decision=_decision(),
+            disposition="ACCEPTED",
+            raw_worker_result=accepted_raw,
+            reason="application accepted",
+        )
+    )
     assert accepted is not None
     conflicting = StagedEffect(
         "issue-comment", json.dumps({"issue_number": 138, "body": "different effect"})
@@ -193,9 +197,7 @@ def test_r9_conflicting_immutable_effect_is_unsafe_even_if_current_postcondition
             {"kind": conflicting.kind, "payload_json": conflicting.payload_json, "derived": False}
         ],
     }
-    artifact = _assumed_qualified_history_for_postcondition_test(
-        monkeypatch, accepted, failure
-    )
+    artifact = _assumed_qualified_history_for_postcondition_test(monkeypatch, accepted, failure)
 
     class Observer:
         def __init__(self, *_args: object, **_kw: object) -> None:
