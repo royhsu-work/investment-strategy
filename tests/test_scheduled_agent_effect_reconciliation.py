@@ -129,7 +129,9 @@ def test_shared_original_effect_prefix_observation(
         observed.append(effect)
         return effect == first or second_satisfied
 
-    nodes = application._observe_original_effect_prefix((first, second), observe)
+    nodes = application._observe_accepted_effect_prefix(
+        (first, second), observe, source=WorkerRequest(138, "lead", "resolve-question")
+    )
     assert observed == [first, second]
     if not second_satisfied:
         assert nodes is None
@@ -152,7 +154,9 @@ def test_positive_original_effects_are_shared_flat_leaves() -> None:
         observed.append(effect)
         return True
 
-    leaves = application._observe_original_effect_prefix(original, observe)
+    leaves = application._observe_accepted_effect_prefix(
+        original, observe, source=WorkerRequest(138, "lead", "resolve-question")
+    )
     assert leaves is not None
     assert len(leaves) == len(original)
     assert observed == list(original)
