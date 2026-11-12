@@ -127,7 +127,6 @@ def _assumed_qualified_history_for_postcondition_test(
     return artifact
 
 
-
 @pytest.mark.parametrize(
     ("observation", "expected"),
     [
