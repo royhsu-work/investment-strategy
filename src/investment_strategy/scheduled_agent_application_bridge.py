@@ -6698,9 +6698,7 @@ def classify_accepted_read_only_effects(
             "INDETERMINATE", "accepted historical postconditions not yet proven"
         )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
-        return AcceptedPostEffectProof(
-            "INDETERMINATE", "accepted GitHub observation unavailable"
-        )
+        return AcceptedPostEffectProof("INDETERMINATE", "accepted GitHub observation unavailable")
 
 
 def accepted_read_only_effects_complete(
@@ -6716,16 +6714,19 @@ def accepted_read_only_effects_complete(
 ) -> bool:
     """Boolean compatibility projection; typed proof is the sole owner."""
 
-    return classify_accepted_read_only_effects(
-        record=record,
-        source=source,
-        recovery_evidence=recovery_evidence,
-        repository=repository,
-        token=token,
-        current_revision=current_revision,
-        default_branch=default_branch,
-        recovery_artifact=recovery_artifact,
-    ).disposition == "COMPLETE"
+    return (
+        classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=recovery_evidence,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            recovery_artifact=recovery_artifact,
+        ).disposition
+        == "COMPLETE"
+    )
 
 
 def classify_post_effect_result_recovery(
