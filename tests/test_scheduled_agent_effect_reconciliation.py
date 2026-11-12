@@ -2983,8 +2983,8 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
             pass
 
         def observe_postcondition(self, effect: StagedEffect) -> bool:
-            assert effect == first  # E1 is absent in BOTH historical cases.
-            return True
+            # Identical current truth: E0 is durable, E1 is not (yet).
+            return effect == first
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
     qualified = application.accepted_read_only_effects_complete(
@@ -2998,6 +2998,35 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
         recovery_artifact=child,
     )
     assert qualified is not earlier_e1_write
+
+    if earlier_e1_write:
+        # RED: the exact E1 postcondition may become true after the lost
+        # earlier write response. A verified SATISFIED Effect never needs
+        # NOT_APPLIED/no-call proof; continuing must not replay E1.
+        observed: list[StagedEffect] = []
+
+        class LaterObserved:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def observe_postcondition(self, effect: StagedEffect) -> bool:
+                observed.append(effect)
+                assert effect in originals
+                return True
+
+        monkeypatch.setattr(application, "GitHubEffectAdapter", LaterObserved)
+        later = application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=child_failure,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+            recovery_artifact=child,
+        )
+        assert later.disposition == "COMPLETE"
+        assert observed == [first, second]
 
     # A locally non-entered E1 does not override the earlier lost response.
     assert not application._accepted_effect_never_called_in_history(
