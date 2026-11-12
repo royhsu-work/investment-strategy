@@ -6761,9 +6761,8 @@ def _write_application_recovery_evidence(
     raw_error = failure_evidence.get("raw_error")
     if isinstance(raw_error, str):
         safe_error = raw_error.replace(token, "***") if token else raw_error
-        failure_evidence["raw_error"] = re.sub(
-            r"https?://\\S+", "[redacted-url]", safe_error
-        )[:2048]
+        safe_error = re.sub(r"https?://\S+", "[redacted-url]", safe_error)
+        failure_evidence["raw_error"] = safe_error[:2048]
     recovery = result.recovery_evidence
     if recovery is not None and _accepted_recovery_boundary(failure_evidence) == "READ_ONLY":
         known_unattempted_suffix = (
