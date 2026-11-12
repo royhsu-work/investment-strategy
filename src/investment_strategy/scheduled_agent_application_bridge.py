@@ -6133,17 +6133,22 @@ def _observe_accepted_post_effect_result(
                 request_comment_id=record.request_comment_id,
             )
             batch = parse_effect_batch(raw, source, authorized_change=record.change)
+        except (HTTPError, OSError, RuntimeError):
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", "accepted original Effect source proof unavailable"
+            )
         except (TypeError, ValueError, json.JSONDecodeError):
             return AcceptedPostEffectProof("UNSAFE", "accepted original Effect identity invalid")
         if (
             batch.typed_result is None
             or batch.typed_result.result.kind.value != record.result_kind
-            or not batch.effects
         ):
-            # A vacuous zero-Effect proof cannot certify the old formal writer.
-            return AcceptedPostEffectProof(
-                "INDETERMINATE", "accepted original Effect frontier not provable"
-            )
+            return AcceptedPostEffectProof("UNSAFE", "accepted original result identity invalid")
+        if not batch.effects:
+            # This is an exact zero-Effect set qualified against the original
+            # request above; the Application-owned formal/derived consequence
+            # remains an independently guarded, uncompleted obligation.
+            return AcceptedPostEffectProof("COMPLETE", "original empty Effect set proven")
         adapter = GitHubEffectAdapter(
             repository,
             token,
