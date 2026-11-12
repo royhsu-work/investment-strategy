@@ -6846,9 +6846,6 @@ def _fresh_accepted_activation_proof(
         revision = _fresh_branch_head(repository, token, branch)
         if revision is None or _SHA.fullmatch(revision) is None:
             return AcceptedPostEffectProof("INDETERMINATE", "default revision unavailable")
-    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
-        return AcceptedPostEffectProof("INDETERMINATE", "default GitHub read unavailable")
-    try:
         return _observe_accepted_post_effect_result(
             record=record,
             source=WorkerRequest(record.issue_number, record.role, record.action),
@@ -6857,7 +6854,10 @@ def _fresh_accepted_activation_proof(
             current_revision=revision,
             default_branch=branch,
         )
-    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+    except OSError:
+        # The shared I/O boundary admits read failures only. A contract or
+        # programming error must reach the existing outer exception owner,
+        # not become an indefinite read-only observation.
         return AcceptedPostEffectProof("INDETERMINATE", "accepted GitHub proof unavailable")
 
 
