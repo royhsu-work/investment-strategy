@@ -86,6 +86,132 @@ def _decision() -> ActionApplicationDecision:
     )
 
 
+@pytest.mark.parametrize("empty_original", [False, True])
+@pytest.mark.parametrize("already_durable", [False, True])
+def test_exception_recovery_real_guarded_engine_cross_wake(
+    monkeypatch: pytest.MonkeyPatch, empty_original: bool, already_durable: bool
+) -> None:
+    """Real guarded effect engine: no old replay; one lawful formal/successor."""
+
+    import investment_strategy.scheduled_agent_effects as effects
+    import investment_strategy.scheduled_agent_merge_acceptance as merge
+
+    original, source = _batch()
+    semantic = {
+        "issue_number": source.issue_number,
+        "role": source.role,
+        "action": source.action,
+        "change": CHANGE,
+        "result_kind": "ready",
+        "evidence_ref": "issuecomment-138-qualified",
+        "result_content": "already accepted",
+    }
+    original_effects = [] if empty_original else [
+        {"kind": effect.kind, "payload_json": effect.payload_json}
+        for effect in original.effects
+    ]
+    formal = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps(
+            {"issue_number": 138, "body": "ACTION_RESULT\\nformal"}
+        ),
+    }
+    accepted_raw = json.dumps(dict(semantic, requested_effects=original_effects))
+    fresh_raw = json.dumps(dict(semantic, requested_effects=[formal]))
+    projected_raw, original_count = application._accepted_reconciliation_effect_projection(
+        accepted_raw=accepted_raw,
+        projected_raw=fresh_raw,
+        source=source,
+        change=CHANGE,
+    )
+    assert original_count == len(original_effects)
+    formal_effect = parse_effect_batch(projected_raw, source, authorized_change=CHANGE).effects[
+        -1
+    ]
+    derived = StagedEffect(
+        "routing-transition",
+        json.dumps({"issue_number": 138, "action": "implement-change"}),
+        derived=True,
+    )
+    state = {
+        "original": already_durable,
+        "formal": False,
+        "successor": False,
+    }
+    writes: list[str] = []
+
+    def identify(effect: StagedEffect) -> str:
+        if effect == derived:
+            return "successor"
+        if effect == formal_effect:
+            return "formal"
+        return "original"
+
+    class Adapter:
+        def __init__(self, *_a: object, **_k: object) -> None:
+            pass
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            return state[identify(effect)]
+
+        def guard(self, effect: StagedEffect) -> bool:
+            assert not state[identify(effect)]
+            return True
+
+        def apply(self, effect: StagedEffect) -> None:
+            key = identify(effect)
+            assert not state[key]
+            writes.append(key)
+            state[key] = True
+
+        def validate_implementation_checkpoint(self, *_a: object) -> bool:
+            return True
+
+        def carrier_plan_if_required(self, *_a: object) -> None:
+            return None
+
+        def effect_rejection(self) -> None:
+            return None
+
+    monkeypatch.setattr(merge, "GitHubEffectAdapter", Adapter)
+    monkeypatch.setattr(
+        merge, "acquire_current_github_preflight", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        effects,
+        "_typed_application_plan",
+        lambda *_a: (_decision(), derived, None),
+    )
+
+    def run(*, proven_empty: bool) -> tuple[EffectBatch, effects.ApplyResult]:
+        return merge.run_guarded_effect_application(
+            projected_raw,
+            source=source,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            authorized_change=CHANGE,
+            accepted_intent=True,
+            reconcile_only=True,
+            uncertain_effect_index=original_count - 1,
+            proven_empty_original_effects=proven_empty,
+        )
+
+    if empty_original:
+        _, rejected = run(proven_empty=False)
+        assert not rejected.applied and writes == []
+    if not empty_original and not already_durable:
+        _, blocked = run(proven_empty=False)
+        assert not blocked.applied and writes == []
+        state["original"] = True
+
+    _, first = run(proven_empty=empty_original)
+    assert first.applied
+    assert writes == ["formal", "successor"]
+    _, second = run(proven_empty=empty_original)
+    assert second.applied and writes == ["formal", "successor"]
+
+
 @pytest.mark.parametrize("already_complete", [True, False])
 def test_accepted_effect_reconciles_before_write_and_then_commits_successor(
     monkeypatch: pytest.MonkeyPatch, already_complete: bool
