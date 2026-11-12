@@ -5859,34 +5859,34 @@ def _verified_attempted_effect_checkpoint(
     return tuple(attempted)
 
 
-def _attempted_formal_revision(
+def _attempted_formal_identity(
     attempted: Sequence[StagedEffect],
     *,
     source: WorkerRequest,
     change: str,
     result_kind: str,
     request_comment_id: int,
-) -> str | None:
-    """Read a formal result's original revision from its exact Effect payload.
+) -> tuple[StagedEffect, str, str] | None:
+    """Read one exact original formal Effect, revision and body from its checkpoint.
 
     A later continuation's default-branch HEAD is not the revision of an
     already-committed formal comment. This identity must survive *subsequent*
     interrupted or zero-write-rejected successor attempts as well.
     """
 
-    formal_bodies: list[str] = []
+    formals: list[tuple[StagedEffect, str]] = []
     for effect in attempted:
         if effect.kind != "issue-comment":
             continue
         payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
         body = None if payload is None else payload.get("body")
         if isinstance(body, str) and _marker(body) in _FORMAL_RESULT_MARKERS:
-            formal_bodies.append(body)
-    if not formal_bodies:
+            formals.append((effect, body))
+    if not formals:
         return None
-    if len(formal_bodies) != 1:
+    if len(formals) != 1:
         raise RuntimeError("accepted attempted prefix has ambiguous formal result")
-    body = formal_bodies[0]
+    formal_effect, body = formals[0]
     revision = _field(body, "Default-Branch-Revision")
     if (
         not isinstance(revision, str)
@@ -5907,7 +5907,7 @@ def _attempted_formal_revision(
         )
     ):
         raise RuntimeError("accepted attempted formal identity is invalid")
-    return revision
+    return formal_effect, revision, body
 
 
 def _retain_completed_accepted_formal_effect(
@@ -5930,34 +5930,18 @@ def _retain_completed_accepted_formal_effect(
     attempted = _verified_attempted_effect_checkpoint(failure, source=source)
     if attempted is None:
         return None
-    original_revision = _attempted_formal_revision(
+    formal_identity = _attempted_formal_identity(
         attempted,
         source=source,
         change=change,
         result_kind=result_kind,
         request_comment_id=request_comment_id,
     )
-    if original_revision is None:
+    if formal_identity is None:
         return None
+    original, original_revision, original_body = formal_identity
     if failure.get("attempt_revision") != original_revision:
         raise RuntimeError("accepted attempted formal revision is inconsistent")
-    formal: list[StagedEffect] = []
-    for effect in attempted:
-        if effect.kind != "issue-comment":
-            continue
-        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
-        body = None if payload is None else payload.get("body")
-        if isinstance(body, str) and _marker(body) in _FORMAL_RESULT_MARKERS:
-            formal.append(effect)
-    if not formal:
-        return None
-    if len(formal) != 1:
-        raise RuntimeError("accepted attempted prefix has ambiguous formal result")
-    original = formal[0]
-    payload = _effect_payload({"kind": original.kind, "payload_json": original.payload_json})
-    original_body = None if payload is None else payload.get("body")
-    if not isinstance(original_body, str):
-        raise RuntimeError("accepted attempted formal body is invalid")
     original_correlation = formal_application_correlation(
         source,
         change=change,
@@ -6501,7 +6485,7 @@ def _accepted_effect_never_called_in_history(
         derived_tail = attempted[len(original.effects) :]
         if derived_tail:
             try:
-                formal_revision = _attempted_formal_revision(
+                formal_identity = _attempted_formal_identity(
                     attempted,
                     source=source,
                     change=record.change,
@@ -6518,8 +6502,8 @@ def _accepted_effect_never_called_in_history(
             except (RuntimeError, TypeError, ValueError):
                 return False
             if (
-                formal_revision is None
-                or failure.get("attempt_revision") != formal_revision
+                formal_identity is None
+                or failure.get("attempt_revision") != formal_identity[1]
                 or len(derived_tail) > 2
                 or (len(derived_tail) == 2 and derived_tail[1] != expected_derived)
             ):
@@ -6990,7 +6974,7 @@ def _write_application_recovery_evidence(
         else:
             failure_evidence["attempted_effects"] = attempted
             try:
-                formal_revision = _attempted_formal_revision(
+                formal_identity = _attempted_formal_identity(
                     tuple(
                         StagedEffect(
                             kind=cast(str, entry["kind"]),
@@ -7006,6 +6990,7 @@ def _write_application_recovery_evidence(
                 )
             except (KeyError, TypeError, RuntimeError):
                 return False
+            formal_revision = None if formal_identity is None else formal_identity[1]
             attempt_revision = (
                 predecessor_failure.get("attempt_revision")
                 if inherited is not None and isinstance(predecessor_failure, Mapping)
