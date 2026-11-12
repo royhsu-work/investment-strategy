@@ -1305,10 +1305,10 @@ def _verified_zero_original_accepted_effects(
     accepted continuations remain independent of mutable ingress transport.
     """
 
-    if (
-        record.disposition != "ACCEPTED"
-        or (record.issue_number, record.role, record.action)
-        != (source.issue_number, source.role, source.action)
+    if record.disposition != "ACCEPTED" or (record.issue_number, record.role, record.action) != (
+        source.issue_number,
+        source.role,
+        source.action,
     ):
         return False
     decoded = json.loads(record.raw_worker_result)
@@ -5252,9 +5252,7 @@ def _qualified_exception_apply_run(
             return None
         conclusions[name] = result
     pre_exception = _matches_required_fields(conclusions, _EXCEPTION_APPLY_STEP_CONTRACT)
-    post_exception = _matches_required_fields(
-        conclusions, _POST_VALIDATION_EXCEPTION_STEP_CONTRACT
-    )
+    post_exception = _matches_required_fields(conclusions, _POST_VALIDATION_EXCEPTION_STEP_CONTRACT)
     # Two successful exception writers or a successful recovery writer cannot
     # identify one immutable failed Application stage.
     competing = (
@@ -6188,10 +6186,7 @@ def _observe_accepted_post_effect_result(
             )
         except (TypeError, ValueError, json.JSONDecodeError):
             return AcceptedPostEffectProof("UNSAFE", "accepted original Effect identity invalid")
-        if (
-            batch.typed_result is None
-            or batch.typed_result.result.kind.value != record.result_kind
-        ):
+        if batch.typed_result is None or batch.typed_result.result.kind.value != record.result_kind:
             return AcceptedPostEffectProof("UNSAFE", "accepted original result identity invalid")
         if not batch.effects:
             # The signed accepted semantic projection may have omitted a
@@ -6318,9 +6313,7 @@ def _accepted_reconciliation_effect_projection(
             if suffix:
                 raise RuntimeError("accepted recovery Effect appears after a new suffix")
             continue
-        payload = _effect_payload(
-            {"kind": candidate.kind, "payload_json": candidate.payload_json}
-        )
+        payload = _effect_payload({"kind": candidate.kind, "payload_json": candidate.payload_json})
         body = None if payload is None else payload.get("body")
         if (
             candidate.kind != "issue-comment"
@@ -6337,9 +6330,11 @@ def _accepted_reconciliation_effect_projection(
     if any(
         effect.kind == "issue-comment"
         and isinstance(
-            (payload := _effect_payload(
-                {"kind": effect.kind, "payload_json": effect.payload_json}
-            )),
+            (
+                payload := _effect_payload(
+                    {"kind": effect.kind, "payload_json": effect.payload_json}
+                )
+            ),
             Mapping,
         )
         and isinstance(payload.get("body"), str)
