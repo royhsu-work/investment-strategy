@@ -6718,6 +6718,30 @@ def classify_accepted_read_only_effects(
         if type(index) is not int:
             return AcceptedPostEffectProof("UNSAFE", "read-only Effect index is invalid")
         non_entry = recovery_evidence.get("write_call_entered") is False
+        try:
+            original = parse_effect_batch(
+                record.raw_worker_result, source, authorized_change=record.change
+            )
+        except (TypeError, ValueError, RuntimeError, json.JSONDecodeError):
+            original = None
+        # A witnessed postcondition cannot rehabilitate a checkpoint whose
+        # original, immutable accepted Effect identity is contradictory.
+        # An empty semantic projection is not proof of zero physical Effects;
+        # leave that historical qualification to its existing source reader.
+        if original is not None and original.effects:
+            prefix_length = min(len(original.effects), len(attempted))
+            if attempted[:prefix_length] != original.effects[:prefix_length]:
+                conflict = RecoveryEvidenceNode(
+                    "ORIGINAL_EFFECT",
+                    attempted[0],
+                    final_postcondition=None,
+                    source_conflict=True,
+                )
+                return AcceptedPostEffectProof(
+                    "UNSAFE",
+                    "immutable accepted original Effect prefix contradicts checkpoint",
+                    original_effect_proof=evaluate_recovery_evidence(conflict),
+                )
         adapter = GitHubEffectAdapter(
             repository,
             token,
@@ -6768,12 +6792,6 @@ def classify_accepted_read_only_effects(
         # accepted source before attributing a positive postcondition.
         # This uses the already-accepted source, not optional historic Runs.
         original_effect_proof: RecoveryProofDisposition | None = None
-        try:
-            original = parse_effect_batch(
-                record.raw_worker_result, source, authorized_change=record.change
-            )
-        except (TypeError, ValueError, RuntimeError, json.JSONDecodeError):
-            original = None
         if (
             original is not None
             and 0 <= index < len(original.effects)
