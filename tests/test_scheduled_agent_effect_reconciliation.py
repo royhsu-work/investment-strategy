@@ -513,7 +513,9 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
                 {"kind": first_kind, "payload_json": batch.effects[0].payload_json},
                 {
                     "kind": "issue-comment",
-                    "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\npending"}),
+                    "payload_json": json.dumps(
+                        {"issue_number": 138, "body": "ACTION_RESULT\npending"}
+                    ),
                 },
             ],
         }
