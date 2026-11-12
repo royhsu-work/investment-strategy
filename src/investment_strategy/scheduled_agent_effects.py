@@ -1396,6 +1396,7 @@ def apply_effect_batch(
     accepted_intent: bool = False,
     reconcile_only: bool = False,
     uncertain_effect_index: int | None = None,
+    proven_empty_original_effects: bool = False,
     durable_checkpoint_revision: str | None = None,
     persist_application_decision: (
         Callable[[ActionApplicationDecision, str, str], bool] | None
@@ -1567,15 +1568,32 @@ def apply_effect_batch(
     # may apply it (notably the original formal result and legal successor).
     # An absent boundary retains the older, more restrictive read-only mode.
     if reconcile_only:
-        if not accepted_intent or (
-            uncertain_effect_index is not None
-            and (
-                type(uncertain_effect_index) is not int
-                or uncertain_effect_index < 0
-                or uncertain_effect_index > len(batch.effects)
+        valid_index = (
+            uncertain_effect_index is None
+            or (
+                type(uncertain_effect_index) is int
+                and (uncertain_effect_index >= 0 or proven_empty_original_effects)
+                and uncertain_effect_index <= len(batch.effects)
             )
+        )
+        if not accepted_intent or not valid_index or (
+            proven_empty_original_effects and uncertain_effect_index != -1
         ):
             return ApplyResult(False, "indeterminate accepted effects require reconciliation")
+        if proven_empty_original_effects:
+            # The caller has already proven an exact empty immutable source.
+            # Only the Application-owned formal result may follow that empty
+            # attempted frontier; no untrusted/new control write can enter.
+            expected_marker = (
+                "REVIEW_RESULT" if batch.source.role == "reviewer"
+                else "MERGE_RESULT" if batch.source.action.startswith("merge-")
+                else "ACTION_RESULT"
+            )
+            if len(batch.effects) != 1 or batch.effects[0].kind != "issue-comment":
+                return ApplyResult(False, "empty accepted original has unexpected Effects")
+            payload = _effect_payload(batch.effects[0])
+            if not isinstance(payload, Mapping) or not isinstance(payload.get("body"), str) or not cast(str, payload["body"]).startswith(expected_marker + "\n"):
+                return ApplyResult(False, "empty accepted original has no bounded formal result")
         observed_through = (
             len(batch.effects) if uncertain_effect_index is None else uncertain_effect_index
         )
