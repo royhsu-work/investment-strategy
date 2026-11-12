@@ -6222,6 +6222,81 @@ def _observe_accepted_post_effect_result(
     return outcomes[proof.disposition]
 
 
+def _accepted_reconciliation_effect_projection(
+    *,
+    accepted_raw: str,
+    projected_raw: str,
+    source: WorkerRequest,
+    change: str,
+) -> tuple[str, int]:
+    """Keep proven immutable originals ahead of fresh Application-owned formal work.
+
+    The ordinary fresh planner may drop already-applied labels/updates. Its
+    mutable list is not an immutable original Effect identity. This pure
+    projection retains the original order; unexpected or reordered effects
+    are never inferred to be a lawful successor.
+    """
+
+    original = parse_effect_batch(accepted_raw, source, authorized_change=change)
+    projected = parse_effect_batch(projected_raw, source, authorized_change=change)
+    if (
+        original.typed_result is None
+        or projected.typed_result is None
+        or original.typed_result != projected.typed_result
+    ):
+        raise RuntimeError("accepted recovery semantic result has changed")
+    originals = original.effects
+    expected_index = 0
+    suffix: list[StagedEffect] = []
+    for candidate in projected.effects:
+        if candidate in originals:
+            index = originals.index(candidate)
+            if index < expected_index:
+                raise RuntimeError("accepted recovery original Effect order has changed")
+            expected_index = index + 1
+            if suffix:
+                raise RuntimeError("accepted recovery Effect appears after a new suffix")
+            continue
+        payload = _effect_payload(
+            {"kind": candidate.kind, "payload_json": candidate.payload_json}
+        )
+        body = None if payload is None else payload.get("body")
+        if (
+            candidate.kind != "issue-comment"
+            or not isinstance(body, str)
+            or _marker(body) not in _FORMAL_RESULT_MARKERS
+            or suffix
+        ):
+            raise RuntimeError("accepted recovery has unqualified new Effect")
+        suffix.append(candidate)
+    if len(suffix) != 1:
+        raise RuntimeError("accepted recovery formal consequence is not unique")
+    # A semantic worker never owns a formal result. Its immutable Effects
+    # are distinct from the single Application-derived consequence.
+    if any(
+        effect.kind == "issue-comment"
+        and isinstance(
+            (payload := _effect_payload(
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+            )),
+            Mapping,
+        )
+        and isinstance(payload.get("body"), str)
+        and _marker(cast(str, payload["body"])) in _FORMAL_RESULT_MARKERS
+        for effect in originals
+    ):
+        raise RuntimeError("accepted recovery includes a worker-owned formal result")
+
+    decoded = json.loads(projected_raw)
+    if not isinstance(decoded, dict):
+        raise RuntimeError("accepted recovery projected result is not an object")
+    decoded["requested_effects"] = [
+        {"kind": effect.kind, "payload_json": effect.payload_json}
+        for effect in (*originals, *suffix)
+    ]
+    return json.dumps(decoded, sort_keys=True, separators=(",", ":")), len(originals)
+
+
 def accepted_read_only_effects_complete(
     *,
     record: ApplicationDecisionRecord,
@@ -7443,20 +7518,15 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             else:
                 # Derive the old attempted prefix from immutable accepted
                 # effects, not a Role, error class or new arbitrary cursor.
-                originals = parse_effect_batch(
-                    accepted_original, plan.source, authorized_change=effective_change
+                application_worker_result, original_effect_count = (
+                    _accepted_reconciliation_effect_projection(
+                        accepted_raw=accepted_original,
+                        projected_raw=application_worker_result,
+                        source=plan.source,
+                        change=effective_change,
+                    )
                 )
-                projected = parse_effect_batch(
-                    application_worker_result, plan.source, authorized_change=effective_change
-                )
-                if (
-                    originals.typed_result is None
-                    or projected.typed_result is None
-                    or not originals.effects
-                    or tuple(projected.effects[: len(originals.effects)]) != originals.effects
-                ):
-                    raise RuntimeError("accepted original Effect prefix is not exact")
-                uncertain_effect_index = len(originals.effects) - 1
+                uncertain_effect_index = original_effect_count - 1
             recovery_proof = _observe_accepted_post_effect_result(
                 record=accepted_intent,
                 source=plan.source,
