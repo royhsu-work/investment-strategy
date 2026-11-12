@@ -6685,7 +6685,14 @@ def classify_accepted_read_only_effects(
             return AcceptedPostEffectProof(
                 "INDETERMINATE", "accepted historical prefix is not yet satisfied"
             )
-        failed_satisfied = adapter.observe_postcondition(attempted[-1])
+        # A never-called Application-derived routing transition is authorized
+        # only after formal reconciliation, not by prematurely observing the
+        # successor route. For an original Effect, positive proof takes priority.
+        failed_satisfied = (
+            adapter.observe_postcondition(attempted[-1])
+            if not non_entry or not attempted[-1].derived
+            else False
+        )
         if not failed_satisfied and not non_entry:
             return AcceptedPostEffectProof(
                 "INDETERMINATE", "attempted accepted Effect is not yet proven complete"
