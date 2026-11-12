@@ -6654,18 +6654,10 @@ def accepted_read_only_effects_complete(
                     request_comment_id=record.request_comment_id,
                 ),
             )
-            rejection_document = recovery_evidence.get("rejection")
-            deterministic_suffix_rejection = (
-                recovery_evidence.get("unfinished_boundary") == "effect-precondition"
-                and recovery_evidence.get("mutation_status") == "not-complete"
-                and isinstance(rejection_document, Mapping)
-                and rejection_document.get("classification") == "effect-precondition-unsatisfied"
-            ) or (
-                recovery_evidence.get("unfinished_boundary") == "effect-precondition-exception"
-                and recovery_evidence.get("mutation_status") == "not-complete"
-                and rejection_document is None
-            )
-            if deterministic_suffix_rejection:
+            # The shared boundary qualifier has already established the
+            # allowed operational stage. A local non-entry fact requests full
+            # historical proof; error classes and Role/Action never decide it.
+            if recovery_evidence.get("write_call_entered") is False:
                 # A local non-entry checkpoint is NOT proof that this accepted
                 # Effect was never called in a previous native attempt. First
                 # requalify the full causal chain, then observe the prefix
