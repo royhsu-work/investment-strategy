@@ -344,6 +344,63 @@ def test_bridge_is_run_scoped_transport_without_mailbox_semantics() -> None:
         assert forbidden not in workflow
 
 
+
+@pytest.mark.parametrize("fault", [OSError, RuntimeError, TypeError, ValueError])
+def test_bridge_preserves_pre_dispatch_repair_evidence_without_authorizing_action(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    fault: type[Exception],
+) -> None:
+    """Native bridge must have a durable, machine-readable fail-closed proof boundary."""
+
+    event_path = tmp_path / "event.json"
+    result_path = tmp_path / "dispatch-result.json"
+    output_path = tmp_path / "github-output"
+    event_path.write_text(json.dumps({"action": "created"}), encoding="utf-8")
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("GITHUB_TOKEN", "private-credential")
+    monkeypatch.setattr(bridge, "_request_identity", lambda _event: (442, 987))
+    monkeypatch.setattr(bridge, "acquire_current_github_preflight", lambda *_a: None)
+    monkeypatch.setattr(
+        bridge,
+        "classify_dispatch",
+        lambda _p: _decision(
+            "AUTHORIZE", issue_number=435, routing=("executor", "implement-change")
+        ),
+    )
+
+    def broken_completion(*_args: object, **_kw: object) -> bridge.ApplicationCompletion:
+        raise fault("sensitive private-credential in GitHub proof failure")
+
+    monkeypatch.setattr(bridge, "qualify_application_completion", broken_completion)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled-agent-bridge",
+            "--event-path", str(event_path),
+            "--revision", REVISION,
+            "--github-output", str(output_path),
+            "--result-payload", str(result_path),
+        ],
+    )
+    assert bridge.main() == 0
+    result = bridge.parse_dispatch_result_document(result_path.read_text(encoding="utf-8"))
+    assert result.disposition == "FAIL_CLOSED"
+    assert result.request_comment_id == 987
+    assert result.default_branch_revision == REVISION
+    assert result.reason == "application-completion-proof-exception:issue-435:implement-change"
+    assert result.issue_number is None and result.action is None
+    assert result.application_continuation is None and result.qualified_carrier is None
+    assert output_path.read_text(encoding="utf-8").startswith(
+        "should_emit=true\\nissue_number=442\\nrequest_comment_id=987\\n"
+    )
+    out = capsys.readouterr()
+    assert fault.__name__ in out.err
+    assert "private-credential" not in result_path.read_text(encoding="utf-8")
+    assert "private-credential" not in out.err
+
+
 def test_request_and_run_name_parsers_require_exact_identity() -> None:
     request = bridge.parse_dispatch_request(REQUEST_BODY)
     assert request is not None
