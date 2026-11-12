@@ -2613,6 +2613,7 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
     monkeypatch.setattr(
         application, "read_application_recovery_artifact", lambda *_a, **_kw: previous
     )
+
     def prior_attempt_satisfied() -> bool:
         return application.accepted_read_only_effects_complete(
             record=record,
