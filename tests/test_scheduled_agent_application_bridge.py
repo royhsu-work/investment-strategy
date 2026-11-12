@@ -2142,6 +2142,57 @@ def test_empty_original_projection_preserves_application_formal_obligation() -> 
     assert json.loads(reconciled)["requested_effects"] == [formal]
 
 
+@pytest.mark.parametrize(
+    ("has_physical_effect", "mutated", "verified"),
+    [
+        (False, False, True),
+        (True, False, False),
+        (False, True, False),
+    ],
+)
+def test_accepted_zero_effect_source_requires_exact_original_request(
+    has_physical_effect: bool, mutated: bool, verified: bool
+) -> None:
+    source = WorkerRequest(138, "lead", "explore-change")
+    original = _worker_result(action=source.action, role=source.role, result_kind="blocked")
+    if has_physical_effect:
+        original["requested_effects"] = [
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps(
+                    {"issue_number": 138, "body": "historical physical Effect"}
+                ),
+            }
+        ]
+    request_body = _effect_request(original)
+    semantic = dict(original, _semantic_intent_version=2, requested_effects=[])
+    record = _accepted_record(
+        json.dumps(semantic),
+        request_body,
+        source=source,
+        change="unset",
+        result_kind="blocked",
+        request_comment_id=102,
+    )
+    source_comment = {
+        "id": record.request_comment_id,
+        "body": request_body + (" " if mutated else ""),
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+    def read(_repo: str, _token: str, path: str) -> object:
+        assert path == "issues/comments/102"
+        return source_comment
+
+    assert bridge._verified_zero_original_accepted_effects(
+        record=record,
+        source=source,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        read=read,
+    ) is verified
+
+
 def test_accepted_intent_lookup_includes_indeterminate_current_issue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
