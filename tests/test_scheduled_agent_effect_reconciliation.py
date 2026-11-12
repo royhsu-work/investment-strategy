@@ -45,6 +45,46 @@ REVISION = "a" * 40
 CHANGE = "deterministic-recovery"
 
 
+def test_recovery_dag_shared_dependencies_never_authorize_successor_write() -> None:
+    """R2/R8: completion of one Effect is not formal/successor authority."""
+    effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"effect"}')
+    formal = StagedEffect("issue-comment", '{"issue_number":138,"body":"formal"}')
+    successor = StagedEffect("routing-transition", '{"issue_number":138}')
+    completed = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", effect, True)
+    unresolved = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", effect, None)
+    formal_node = application.RecoveryEvidenceNode(
+        "FORMAL_RESULT", formal, False, positive_never_called=True,
+        depends_on=(completed, unresolved),
+    )
+    assert application.evaluate_recovery_evidence(completed) == "SATISFIED"
+    assert application.evaluate_recovery_evidence(formal_node) == "UNKNOWN"
+    ready_formal = replace(formal_node, depends_on=(completed,))
+    assert application.evaluate_recovery_evidence(ready_formal) == "NOT_APPLIED"
+    waiting_successor = application.RecoveryEvidenceNode(
+        "SUCCESSOR", successor, False, positive_never_called=True,
+        depends_on=(completed, ready_formal, completed),
+    )
+    assert application.evaluate_recovery_evidence(waiting_successor) == "UNKNOWN"
+    complete_formal = replace(ready_formal, final_postcondition=True)
+    assert application.evaluate_recovery_evidence(complete_formal) == "SATISFIED"
+    eligible_successor = replace(waiting_successor, depends_on=(completed, complete_formal))
+    assert application.evaluate_recovery_evidence(eligible_successor) == "NOT_APPLIED"
+    # IR proof never calls an Effect; the shell must independently reauthorize it.
+
+
+def test_recovery_dag_conflicting_provenance_blocks_positive_descendant() -> None:
+    """R9: source contradiction dominates even a positive child observation."""
+    effect = StagedEffect("issue-comment", '{"issue_number":138}')
+    contradiction = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT", effect, None, source_conflict=True,
+    )
+    proven = application.RecoveryEvidenceNode(
+        "FORMAL_RESULT", effect, True, depends_on=(contradiction,),
+    )
+    assert application.evaluate_recovery_evidence(contradiction) == "CONFLICT"
+    assert application.evaluate_recovery_evidence(proven) == "CONFLICT"
+
+
 def _batch(
     action: str = "resolve-question", kind: str = "ready"
 ) -> tuple[EffectBatch, WorkerRequest]:
