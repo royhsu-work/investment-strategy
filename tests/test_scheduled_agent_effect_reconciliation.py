@@ -2490,7 +2490,9 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
     second_artifact_path = tmp_path / "read-only-deferred-evidence.json"
     assert application._write_application_recovery_evidence(
         str(second_artifact_path),
-        result=application._defer_read_only_execution_checkpoint(failure),
+        result=application.ApplyResult(
+            False, "accepted original effect not currently proven complete"
+        ),
         repository="owner/repo",
         token=REVISION,
         source=source,
@@ -2501,6 +2503,7 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
         run_attempt=1,
         continuation=None,
         predecessor=native,
+        preserve_predecessor_failure=True,
     )
     deferred_document = json.loads(second_artifact_path.read_text())
     assert deferred_document["failure_evidence"]["write_call_entered"] is False
@@ -3007,6 +3010,8 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
     ],
 )
 def test_read_only_deferral_preserves_immutable_execution_frontier(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     boundary: str,
     mutation_status: str,
     entered: bool,
@@ -3046,10 +3051,87 @@ def test_read_only_deferral_preserves_immutable_execution_frontier(
     }
     assert application._accepted_recovery_boundary(previous) == "READ_ONLY"
 
-    deferred = application._defer_read_only_execution_checkpoint(previous)
-    assert deferred.recovery_evidence is not None
-    fresh_document = application._recovery_failure_document(deferred)
+    source = WorkerRequest(138, "lead", "resolve-question")
+    raw = json.dumps(
+        {
+            "issue_number": 138,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "original accepted result",
+            "requested_effects": [],
+        }
+    )
+    decision_body = render_application_decision_body(
+        request_comment_id=91,
+        request_body="original exact request",
+        authorization_revision=REVISION,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    record = parse_application_decision(decision_body)
+    assert record is not None
+    monkeypatch.setattr(
+        application, "_application_decision_comment_for_request",
+        lambda **_kwargs: (record, decision_body),
+    )
+    predecessor = application.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=91,
+        accepted_decision_sha256=hashlib.sha256(decision_body.encode()).hexdigest(),
+        failure_evidence_sha256=application._canonical_sha256(previous),
+        recovery_episode_sha256="b" * 64,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "authorization_revision": REVISION,
+            "prior_failure_evidence_sha256": [],
+            "failure_evidence": previous,
+        },
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "7004")
+    deferred = application.ApplyResult(
+        False, "accepted original effect not currently proven complete"
+    )
+
+    def persist(
+        target: Path, prior: application.ApplicationRecoveryArtifact
+    ) -> bool:
+        return application._write_application_recovery_evidence(
+            str(target),
+            result=deferred,
+            repository="owner/repo",
+            token=REVISION,
+            source=source,
+            request_comment_id=91,
+            trigger_comment_id=1000,
+            authorization_revision=REVISION,
+            current_revision=REVISION,
+            run_attempt=1,
+            continuation=None,
+            predecessor=prior,
+            preserve_predecessor_failure=True,
+        )
+
+    path = tmp_path / "read-only-checkpoint.json"
+    assert persist(path, predecessor)
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    fresh_document = saved["failure_evidence"]
     assert application._accepted_recovery_boundary(fresh_document) == "READ_ONLY"
+    assert saved["predecessor"]["artifact_id"] == predecessor.artifact_id
+    assert saved["prior_failure_evidence_sha256"] == [predecessor.failure_evidence_sha256]
+    assert saved["failure_evidence_sha256"] == application._canonical_sha256(fresh_document)
     for name in (
         "failed_effect_index",
         "failed_effect_kind",
@@ -3065,3 +3147,9 @@ def test_read_only_deferral_preserves_immutable_execution_frontier(
     ):
         assert fresh_document[name] == previous[name], name
     assert fresh_document["reason"] != previous["reason"]
+
+    # Content-addressed identity is a necessary producer precondition.
+    forged = replace(predecessor, failure_evidence_sha256="f" * 64)
+    bad_path = tmp_path / "forged-checkpoint.json"
+    assert not persist(bad_path, forged)
+    assert not bad_path.exists()
