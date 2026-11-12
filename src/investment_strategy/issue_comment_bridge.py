@@ -30,6 +30,7 @@ from investment_strategy.human_authority import (
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import next_action, role_for
 from investment_strategy.scheduled_agent_application_bridge import (
+    AcceptedPostEffectProof,
     ApplicationContinuationRequest,
     ApplicationExceptionArtifact,
     ApplicationRecoveryArtifact,
@@ -164,6 +165,46 @@ class ApplicationCompletion:
     job_id: int | None = None
     qualified_carrier: QualifiedCarrierPlan | None = None
     recovery_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None = None
+
+
+# The canonical proof owns permission. This Bridge-only table preserves the
+# existing reason vocabulary without inventing a second recovery decision.
+_ACCEPTED_PROOF_FAILURE_REASONS = {
+    "EXCEPTION": {
+        "INDETERMINATE": "application-completion-exception-observing",
+        "NOT_APPLIED": "application-completion-exception-unsafe",
+        "UNSAFE": "application-completion-exception-unsafe",
+    },
+    "POST_EFFECT": {
+        "INDETERMINATE": "application-completion-post-effect-observing",
+        "NOT_APPLIED": "application-completion-original-effect-incomplete",
+        "UNSAFE": "application-completion-original-effect-unsafe",
+    },
+    "READ_ONLY": {
+        "INDETERMINATE": "application-completion-read-only-observing",
+        "NOT_APPLIED": "application-completion-read-only-proof-conflict",
+        "UNSAFE": "application-completion-read-only-proof-conflict",
+    },
+}
+
+
+def _unresolved_accepted_proof_completion(
+    proof: AcceptedPostEffectProof,
+    *,
+    origin: Literal["EXCEPTION", "POST_EFFECT", "READ_ONLY"],
+    request_comment_id: int,
+    recovery_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None,
+) -> ApplicationCompletion | None:
+    """Project one proof into a non-authorizing read/repair consequence."""
+
+    if proof.continuation == "CONTINUE":
+        return None
+    return ApplicationCompletion(
+        "RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID",
+        _ACCEPTED_PROOF_FAILURE_REASONS[origin][proof.disposition],
+        request_comment_id=request_comment_id,
+        recovery_artifact=recovery_artifact,
+    )
 
 
 RecoveryPredicate = Literal["COMPLETE", "INCOMPLETE", "UNKNOWN", "CONFLICT"]
@@ -2925,18 +2966,17 @@ def _application_job(
         proof = classify_application_exception_recovery(
             record=record, artifact=recovery_artifact, repository=repository, token=token
         )
-        if proof.continuation == "CONTINUE":
-            return ApplicationCompletion(
-                "RESUMABLE",
-                "application-completion-continuation-required",
-                request_comment_id=request_comment_id,
-                recovery_artifact=recovery_artifact,
-            )
+        unresolved = _unresolved_accepted_proof_completion(
+            proof,
+            origin="EXCEPTION",
+            request_comment_id=request_comment_id,
+            recovery_artifact=recovery_artifact,
+        )
+        if unresolved is not None:
+            return unresolved
         return ApplicationCompletion(
-            "RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID",
-            "application-completion-exception-observing"
-            if proof.continuation == "OBSERVE"
-            else "application-completion-exception-unsafe",
+            "RESUMABLE",
+            "application-completion-continuation-required",
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
         )
@@ -2972,24 +3012,22 @@ def _application_job(
     post_effect_proven = bool(
         post_effect_proof is not None and post_effect_proof.continuation == "CONTINUE"
     )
-    if post_effect_candidate and not post_effect_proven:
-        # A transient GET failure can be observed on a later wake. A proven
-        # contradictory original is a distinct governed-resolution boundary;
-        # neither status authorizes a GitHub write or a semantic rerun.
-        disposition = None if post_effect_proof is None else post_effect_proof.disposition
-        status, reason = {
-            "INDETERMINATE": ("RESUMABLE", "application-completion-post-effect-observing"),
-            "NOT_APPLIED": ("INVALID", "application-completion-original-effect-incomplete"),
-            "UNSAFE": ("INVALID", "application-completion-original-effect-unsafe"),
-        }.get(
-            disposition or "INVALID", ("INVALID", "application-completion-recovery-proof-missing")
-        )
-        return ApplicationCompletion(
-            cast(Literal["RESUMABLE", "INVALID"], status),
-            reason,
+    if post_effect_candidate:
+        if post_effect_proof is None:
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-recovery-proof-missing",
+                request_comment_id=request_comment_id,
+                recovery_artifact=recovery_artifact,
+            )
+        unresolved = _unresolved_accepted_proof_completion(
+            post_effect_proof,
+            origin="POST_EFFECT",
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
         )
+        if unresolved is not None:
+            return unresolved
 
     if record is not None:
         try:
@@ -3128,17 +3166,14 @@ def _application_job(
                 else None
             ),
         )
-        if proof.continuation != "CONTINUE":
-            # An exact source contradiction needs a governed repair owner,
-            # not an indefinite identical read-only observation.
-            return ApplicationCompletion(
-                "INVALID" if proof.continuation == "REJECT" else "RESUMABLE",
-                "application-completion-read-only-proof-conflict"
-                if proof.continuation == "REJECT"
-                else "application-completion-read-only-observing",
-                request_comment_id=request_comment_id,
-                recovery_artifact=recovery_artifact,
-            )
+        unresolved = _unresolved_accepted_proof_completion(
+            proof,
+            origin="READ_ONLY",
+            request_comment_id=request_comment_id,
+            recovery_artifact=recovery_artifact,
+        )
+        if unresolved is not None:
+            return unresolved
     return ApplicationCompletion(
         "RESUMABLE",
         "application-completion-continuation-required",
