@@ -2082,6 +2082,66 @@ def test_noncompletion_accepted_intent_has_no_synthetic_checkpoint_obligation(
     )
 
 
+@pytest.mark.parametrize(
+    ("projection", "allowed"),
+    [
+        ((), True),
+        ((0, 1), True),
+        ((1, 0), False),
+        ((0, 2), False),
+    ],
+)
+def test_accepted_projection_preserves_immutable_completed_effects(
+    projection: tuple[int, ...], allowed: bool
+) -> None:
+    # Use the actual typed worker parser: a fresh planner may omit completed
+    # effects, but cannot replace or reorder their immutable identities.
+    source = WorkerRequest(138, "lead", "explore-change")
+    original = _worker_result(action=source.action, role=source.role, result_kind="blocked")
+    effects = [
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps({"issue_number": 138, "body": f"original-{n}"}),
+        }
+        for n in range(3)
+    ]
+    formal = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\\nformal"}),
+    }
+    original["requested_effects"] = effects[:2]
+    projected = dict(original, requested_effects=[effects[index] for index in projection] + [formal])
+    raw = json.dumps(original, sort_keys=True)
+    changed = json.dumps(projected, sort_keys=True)
+    if not allowed:
+        with pytest.raises(RuntimeError, match="accepted recovery"):
+            bridge._accepted_reconciliation_effect_projection(
+                accepted_raw=raw, projected_raw=changed, source=source, change="unset"
+            )
+        return
+    reconciled, count = bridge._accepted_reconciliation_effect_projection(
+        accepted_raw=raw, projected_raw=changed, source=source, change="unset"
+    )
+    assert count == 2
+    assert json.loads(reconciled)["requested_effects"] == effects[:2] + [formal]
+
+
+def test_empty_original_projection_preserves_application_formal_obligation() -> None:
+    source = WorkerRequest(138, "lead", "explore-change")
+    original = _worker_result(action=source.action, role=source.role, result_kind="blocked")
+    formal = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\\nformal"}),
+    }
+    raw = json.dumps(original, sort_keys=True)
+    projected = json.dumps(dict(original, requested_effects=[formal]), sort_keys=True)
+    reconciled, count = bridge._accepted_reconciliation_effect_projection(
+        accepted_raw=raw, projected_raw=projected, source=source, change="unset"
+    )
+    assert count == 0
+    assert json.loads(reconciled)["requested_effects"] == [formal]
+
+
 def test_accepted_intent_lookup_includes_indeterminate_current_issue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
