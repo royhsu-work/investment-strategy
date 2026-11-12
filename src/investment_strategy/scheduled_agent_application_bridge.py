@@ -6694,82 +6694,10 @@ def accepted_read_only_effects_complete(
                     return False
                 return all(adapter.observe_postcondition(effect) for effect in attempted[:-1])
             return all(adapter.observe_postcondition(effect) for effect in attempted)
-        # Reuse the accepted-intent projection used by the actual Application,
-        # including current, application-owned control effects. Never treat an
-        # empty/missing projection as vacuous proof of an old unknown write.
-        raw = _fresh_application_worker_result(
-            record.raw_worker_result,
-            source=source,
-            change=record.change,
-            repository=repository,
-            token=token,
-            current_revision=current_revision,
-            default_branch=default_branch,
-            request_comment_id=record.request_comment_id,
-        )
-        batch = parse_effect_batch(raw, source, authorized_change=record.change)
-        if batch.typed_result is None or not batch.effects:
-            return False
-        failed_index = recovery_evidence.get("failed_effect_index")
-        completed_indexes = recovery_evidence.get("completed_effect_indexes")
-        if (
-            type(failed_index) is not int
-            or failed_index > len(batch.effects)
-            or not isinstance(completed_indexes, list)
-            or any(
-                type(index) is not int or index >= len(batch.effects) for index in completed_indexes
-            )
-        ):
-            return False
-        completed_hashes = recovery_evidence.get("completed_effect_sha256")
-        if not isinstance(completed_hashes, list) or len(completed_hashes) != len(
-            completed_indexes
-        ):
-            return False
-        if any(
-            hashlib.sha256(batch.effects[index].payload_json.encode()).hexdigest() != digest
-            for index, digest in zip(completed_indexes, completed_hashes, strict=True)
-        ):
-            return False
-        failed_effect = (
-            batch.effects[failed_index]
-            if failed_index < len(batch.effects)
-            else derived_transition_effect(
-                issue_number=source.issue_number,
-                change=record.change,
-                successor=next_action(batch.typed_result.action, batch.typed_result.result),
-            )
-        )
-        if (
-            recovery_evidence.get("failed_effect_kind") != failed_effect.kind
-            or recovery_evidence.get("failed_effect_sha256")
-            != hashlib.sha256(failed_effect.payload_json.encode()).hexdigest()
-        ):
-            return False
-        adapter = GitHubEffectAdapter(
-            repository,
-            token,
-            source,
-            authorized_change=record.change,
-            current_revision=current_revision,
-            expected_result_kind=batch.typed_result.result.kind.value,
-            request_comment_id=record.request_comment_id,
-            authorization_revision=record.authorization_revision,
-            allow_pending_continuation=True,
-            accepted_intent=True,
-        )
-        # Only the attempted prefix is uncertain. Effects after the failure
-        # could not yet have been written by the sequential Application; their
-        # missing formal result must NOT prevent a safe continuation.
-        if not all(
-            adapter.observe_postcondition(effect)
-            for index, effect in enumerate(batch.effects)
-            if index <= failed_index
-        ):
-            return False
-        if failed_index == len(batch.effects):
-            return adapter.observe_postcondition(failed_effect)
-        return True
+        # No original attempted identity: a fresh projection can represent a
+        # DIFFERENT Effect on a later main and cannot prove any accepted history.
+        # Retain UNKNOWN for native recovery or governance repair, never replay.
+        return False
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         # An unavailable or contradictory observation cannot grant a retry.
         return False
