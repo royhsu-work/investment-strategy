@@ -6808,7 +6808,6 @@ def _fresh_accepted_activation_proof(
         return AcceptedPostEffectProof("INDETERMINATE", "accepted GitHub proof unavailable")
 
 
-
 def _defer_read_only_execution_checkpoint(previous: Mapping[str, object]) -> ApplyResult:
     """Carry forward a qualified execution frontier when this run only read.
 
