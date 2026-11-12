@@ -2078,9 +2078,12 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
     source = WorkerRequest(435, "executor", "implement-change")
     raw = json.dumps({"source": "immutable accepted effect"})
     record = _accepted_record(
-        raw, "EFFECT_REQUEST", source=source,
+        raw,
+        "EFFECT_REQUEST",
+        source=source,
         change="restore-t1-dispatch-artifact-consumption",
-        result_kind="blocked", request_comment_id=6796616018,
+        result_kind="blocked",
+        request_comment_id=6796616018,
     )
     effect = StagedEffect("github-mutation", "{}")
     checkpoint: dict[str, object] = {
@@ -2092,13 +2095,19 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
     artifact = SimpleNamespace(document={"failure_evidence": checkpoint})
     monkeypatch.setattr(bridge, "_accepted_recovery_boundary", lambda _e: "READ_ONLY")
     monkeypatch.setattr(
-        bridge, "_verified_attempted_effect_checkpoint", lambda *_a, **_kw: (effect,),
+        bridge,
+        "_verified_attempted_effect_checkpoint",
+        lambda *_a, **_kw: (effect,),
     )
     monkeypatch.setattr(
-        bridge, "_accepted_effect_never_called_in_history", lambda **_kw: False,
+        bridge,
+        "_accepted_effect_never_called_in_history",
+        lambda **_kw: False,
     )
     monkeypatch.setattr(
-        bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw,
+        bridge,
+        "_accepted_worker_result_for_continuation",
+        lambda **_kw: raw,
     )
     monkeypatch.setattr(
         bridge, "parse_effect_batch",
