@@ -86,6 +86,45 @@ def _decision() -> ActionApplicationDecision:
     )
 
 
+def _assumed_qualified_history_for_postcondition_test(
+    monkeypatch: pytest.MonkeyPatch,
+    record: application.ApplicationDecisionRecord,
+    failure: dict[str, object],
+) -> application.ApplicationRecoveryArtifact:
+    """Isolate postcondition tests from the separately tested history proof.
+
+    This fixture assumes a qualified run history; it is NOT a native recovery
+    reader or a proof that a bare checkpoint authorizes another write.
+    """
+    artifact = application.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=record.request_comment_id,
+        accepted_decision_sha256="b" * 64,
+        failure_evidence_sha256=application._canonical_sha256(failure),
+        recovery_episode_sha256="c" * 64,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={
+            "issue_number": record.issue_number,
+            "role": record.role,
+            "action": record.action,
+            "authorization_revision": record.authorization_revision,
+            "failure_evidence": failure,
+        },
+    )
+    monkeypatch.setattr(
+        application,
+        "_accepted_effect_never_called_in_history",
+        lambda **kw: kw["artifact"] is artifact
+        and kw["record"].request_comment_id == record.request_comment_id,
+    )
+    return artifact
+
+
 @pytest.mark.parametrize("empty_original", [False, True])
 @pytest.mark.parametrize("already_durable", [False, True])
 def test_exception_recovery_real_guarded_engine_cross_wake(
@@ -474,7 +513,7 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
                 {"kind": first_kind, "payload_json": batch.effects[0].payload_json},
                 {
                     "kind": "issue-comment",
-                    "payload_json": json.dumps({"body": "ACTION_RESULT\npending"}),
+                    "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\npending"}),
                 },
             ],
         }
@@ -517,7 +556,15 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
         "completed_effect_indexes": [],
         "completed_effect_sha256": [],
         "rejection": None,
+        "attempted_effects": [
+            {"kind": first_kind, "payload_json": batch.effects[0].payload_json, "derived": False}
+        ],
+        "attempt_revision": REVISION,
+        "write_call_entered": True,
     }
+    history_artifact = _assumed_qualified_history_for_postcondition_test(
+        monkeypatch, record, evidence
+    )
 
     def observe() -> bool:
         return application.accepted_read_only_effects_complete(
@@ -528,6 +575,7 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
             token=REVISION,
             current_revision=REVISION,
             default_branch="main",
+            recovery_artifact=history_artifact,
         )
 
     assert not observe()
@@ -537,9 +585,12 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
 
     evidence["failed_effect_index"] = 1
     evidence["failed_effect_kind"] = "issue-comment"
-    evidence["failed_effect_sha256"] = hashlib.sha256(
-        json.loads(raw)["requested_effects"][1]["payload_json"].encode()
-    ).hexdigest()
+    formal_payload = json.loads(raw)["requested_effects"][1]["payload_json"]
+    evidence["failed_effect_sha256"] = hashlib.sha256(formal_payload.encode()).hexdigest()
+    evidence["attempted_effects"] = [
+        *cast(list[dict[str, object]], evidence["attempted_effects"]),
+        {"kind": "issue-comment", "payload_json": formal_payload, "derived": False},
+    ]
     assert not observe()  # But when the formal write itself was unknown, observe it.
     state["formal"] = True
     assert observe()
@@ -674,6 +725,9 @@ def test_archive_phase_drift_observes_original_dispatch_before_writing_new_pr(
             return bool(stage["original_completed"])
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
+    history_artifact = _assumed_qualified_history_for_postcondition_test(
+        monkeypatch, record, failure
+    )
 
     def original_complete() -> bool:
         return application.accepted_read_only_effects_complete(
@@ -684,6 +738,7 @@ def test_archive_phase_drift_observes_original_dispatch_before_writing_new_pr(
             token=REVISION,
             current_revision=advanced_revision,
             default_branch="main",
+            recovery_artifact=history_artifact,
         )
 
     assert not original_complete()
@@ -855,6 +910,9 @@ def test_merge_phase_drift_preserves_original_merge_before_ref_cleanup(
             return effect == merge
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", Reader)
+    history_artifact = _assumed_qualified_history_for_postcondition_test(
+        monkeypatch, record, failure
+    )
     assert application.accepted_read_only_effects_complete(
         record=record,
         source=source,
@@ -863,6 +921,7 @@ def test_merge_phase_drift_preserves_original_merge_before_ref_cleanup(
         token=REVISION,
         current_revision="d" * 40,
         default_branch="main",
+        recovery_artifact=history_artifact,
     )
     assert observed == [merge]  # No ref-delete observation or replay.
 
@@ -1990,6 +2049,15 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
             return effect_state[effect_ids.index((effect.kind, effect.payload_json))]
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", ReadOnlyAdapter)
+    # The genuine artifact reader has qualified the predecessor above.
+    # This integration test exercises the dispatcher/continuation wiring;
+    # intent-wide historical proof has independent positive/negative tests.
+    monkeypatch.setattr(
+        application,
+        "_accepted_effect_never_called_in_history",
+        lambda **kw: kw["artifact"] == second_qualified
+        and kw["record"].request_comment_id == record.request_comment_id,
+    )
 
     def classify_again() -> dispatch.ApplicationCompletion:
         return dispatch._application_job(
