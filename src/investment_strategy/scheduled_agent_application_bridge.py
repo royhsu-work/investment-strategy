@@ -6659,19 +6659,6 @@ def classify_accepted_read_only_effects(
         if type(index) is not int:
             return AcceptedPostEffectProof("UNSAFE", "read-only Effect index is invalid")
         non_entry = recovery_evidence.get("write_call_entered") is False
-        if not _accepted_effect_never_called_in_history(
-            record=record,
-            source=source,
-            artifact=recovery_artifact,
-            failed_index=index if non_entry else index + 1,
-            repository=repository,
-            token=token,
-        ):
-            # This negative result includes unavailable historical GETs. It
-            # never positively proves a conflicting or completed write.
-            return AcceptedPostEffectProof(
-                "INDETERMINATE", "accepted historical write frontier is not proven"
-            )
         adapter = GitHubEffectAdapter(
             repository,
             token,
@@ -6691,11 +6678,38 @@ def classify_accepted_read_only_effects(
                 request_comment_id=record.request_comment_id,
             ),
         )
-        prefix = attempted[:-1] if non_entry else attempted
-        if all(adapter.observe_postcondition(effect) for effect in prefix):
-            return AcceptedPostEffectProof("COMPLETE", "accepted historical prefix observed")
+        # One proof table: a positively SATISFIED Effect does not have to
+        # prove it was never called. Only an absent, invocation-local
+        # never-called Effect requires the full historical NOT_APPLIED proof.
+        if not all(adapter.observe_postcondition(effect) for effect in attempted[:-1]):
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", "accepted historical prefix is not yet satisfied"
+            )
+        failed_satisfied = adapter.observe_postcondition(attempted[-1])
+        if not failed_satisfied and not non_entry:
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", "attempted accepted Effect is not yet proven complete"
+            )
+        historical_frontier = index + 1 if failed_satisfied else index
+        if not _accepted_effect_never_called_in_history(
+            record=record,
+            source=source,
+            artifact=recovery_artifact,
+            failed_index=historical_frontier,
+            repository=repository,
+            token=token,
+        ):
+            # Qualified history is still needed for all *later* unattempted
+            # Effects. A lost response at the current index cannot turn an
+            # absent postcondition into permission to repeat its write.
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", "accepted historical write frontier is not proven"
+            )
         return AcceptedPostEffectProof(
-            "INDETERMINATE", "accepted historical postconditions not yet proven"
+            "COMPLETE",
+            "accepted historical Effect satisfied"
+            if failed_satisfied
+            else "accepted unattempted suffix qualified",
         )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return AcceptedPostEffectProof("INDETERMINATE", "accepted GitHub observation unavailable")
