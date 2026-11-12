@@ -2256,12 +2256,10 @@ def test_incident_435_accepted_blocked_materialization_is_read_only_proven(
         "base_sha": "6f97d0fc53742221f411ceee808938d701d6069f",
         "pr_number": 437,
         "message": (
-            "test: qualify exact T1 Artifact reads "
-            "[t1-native-artifact-diagnostic] (Refs #435)"
+            "test: qualify exact T1 Artifact reads [t1-native-artifact-diagnostic] (Refs #435)"
         ),
         "files": [
-            {"path": path, "blob_sha": sha, "expected_sha": old}
-            for path, sha, old in targets
+            {"path": path, "blob_sha": sha, "expected_sha": old} for path, sha, old in targets
         ],
     }
     raw = json.dumps(
@@ -2281,8 +2279,12 @@ def test_incident_435_accepted_blocked_materialization_is_read_only_proven(
         sort_keys=True,
     )
     record = _accepted_record(
-        raw, "EFFECT_REQUEST", source=source, change=change,
-        result_kind="blocked", request_comment_id=6796616018
+        raw,
+        "EFFECT_REQUEST",
+        source=source,
+        change=change,
+        result_kind="blocked",
+        request_comment_id=6796616018,
     )
     checked: list[StagedEffect] = []
 
