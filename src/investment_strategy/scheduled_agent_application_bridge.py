@@ -6445,6 +6445,20 @@ def _accepted_effect_never_called_in_history(
         return False
     if original.typed_result is None or failed_index > len(original.effects) + 1:
         return False
+    if not original.effects:
+        # A semantic-only ACCEPTED projection may have stripped physical
+        # worker Effects. Reuse the existing original-transport proof rather
+        # than equating an empty array with zero immutable obligations.
+        try:
+            if not _verified_zero_original_accepted_effects(
+                record=record,
+                source=source,
+                repository=repository,
+                token=token,
+            ):
+                return False
+        except (HTTPError, OSError, RuntimeError, TypeError, ValueError):
+            return False
 
     current = artifact
     seen: set[tuple[int, int, int]] = set()
