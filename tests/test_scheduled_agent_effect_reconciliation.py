@@ -116,9 +116,7 @@ def test_exception_recovery_real_guarded_engine_cross_wake(
     )
     formal = {
         "kind": "issue-comment",
-        "payload_json": json.dumps(
-            {"issue_number": 138, "body": "ACTION_RESULT\nformal"}
-        ),
+        "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\nformal"}),
     }
     accepted_raw = json.dumps(dict(semantic, requested_effects=original_effects))
     fresh_raw = json.dumps(dict(semantic, requested_effects=[formal]))
@@ -129,9 +127,7 @@ def test_exception_recovery_real_guarded_engine_cross_wake(
         change=CHANGE,
     )
     assert original_count == len(original_effects)
-    formal_effect = parse_effect_batch(projected_raw, source, authorized_change=CHANGE).effects[
-        -1
-    ]
+    formal_effect = parse_effect_batch(projected_raw, source, authorized_change=CHANGE).effects[-1]
     derived = StagedEffect(
         "routing-transition",
         json.dumps({"issue_number": 138, "action": "implement-change"}),
@@ -178,9 +174,7 @@ def test_exception_recovery_real_guarded_engine_cross_wake(
             return None
 
     monkeypatch.setattr(merge, "GitHubEffectAdapter", Adapter)
-    monkeypatch.setattr(
-        merge, "acquire_current_github_preflight", lambda *_a, **_k: None
-    )
+    monkeypatch.setattr(merge, "acquire_current_github_preflight", lambda *_a, **_k: None)
     monkeypatch.setattr(
         effects,
         "_typed_application_plan",
