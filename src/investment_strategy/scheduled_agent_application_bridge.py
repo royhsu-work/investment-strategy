@@ -6162,10 +6162,11 @@ def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofDispo
         visiting.remove(identity)
         if fact.source_conflict or "CONFLICT" in dependencies:
             disposition: RecoveryProofDisposition = "CONFLICT"
+        elif any(result != "SATISFIED" for result in dependencies):
+            # An observed descendant alone cannot discharge upstream work.
+            disposition = "UNKNOWN"
         elif fact.final_postcondition is True:
             disposition = "SATISFIED"
-        elif any(result != "SATISFIED" for result in dependencies):
-            disposition = "UNKNOWN"
         elif fact.final_postcondition is False and fact.positive_never_called is True:
             disposition = "NOT_APPLIED"
         else:
