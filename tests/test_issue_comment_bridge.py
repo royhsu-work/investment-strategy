@@ -344,7 +344,6 @@ def test_bridge_is_run_scoped_transport_without_mailbox_semantics() -> None:
         assert forbidden not in workflow
 
 
-
 @pytest.mark.parametrize("fault", [OSError, RuntimeError, TypeError, ValueError])
 def test_bridge_preserves_pre_dispatch_repair_evidence_without_authorizing_action(
     monkeypatch: pytest.MonkeyPatch,
