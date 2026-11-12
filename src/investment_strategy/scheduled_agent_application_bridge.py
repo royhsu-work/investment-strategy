@@ -6850,9 +6850,7 @@ def classify_accepted_read_only_effects(
             expected_successor = derived_transition_effect(
                 issue_number=source.issue_number,
                 change=record.change,
-                successor=next_action(
-                    original.typed_result.action, original.typed_result.result
-                ),
+                successor=next_action(original.typed_result.action, original.typed_result.result),
             )
             if (
                 formal_identity is not None
