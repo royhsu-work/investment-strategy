@@ -2849,9 +2849,8 @@ def _application_job(
                     # A signed semantic projection cannot independently prove
                     # that an older accepted request had zero physical Effects.
                     verified_empty_original = False
-            if (
-                has_exception
-                and (has_original_effect or legacy_activation or verified_empty_original)
+            if has_exception and (
+                has_original_effect or legacy_activation or verified_empty_original
             ):
                 recovery_artifact = read_application_exception_artifact(
                     repository,

@@ -5175,6 +5175,7 @@ _POST_VALIDATION_EXCEPTION_STEP_CONTRACT: dict[str, str] = {
     "Upload post-validation application exception evidence": "success",
 }
 
+
 def application_artifact_stage(
     steps: Sequence[tuple[str | None, str | None]] | None,
 ) -> Literal[
@@ -5324,9 +5325,7 @@ def _qualified_exception_artifact_metadata(
         prior_run = _as_mapping(prior[0].get("workflow_run"))
         if (
             prior_run is None
-            or not _matches_required_fields(
-                prior_run, {"id": run_id, "head_sha": run_head_sha}
-            )
+            or not _matches_required_fields(prior_run, {"id": run_id, "head_sha": run_head_sha})
             or prior[0].get("expired") is not False
             or not isinstance(prior[0].get("digest"), str)
             or re.fullmatch(r"sha256:[0-9a-f]{64}", cast(str, prior[0]["digest"])) is None
