@@ -1142,7 +1142,16 @@ def test_application_continuation_at_r2_preserves_durable_r1_formal_result(
         recovery_episode_sha256="f" * 64,
         recovery_attempt=1,
         continuation_eligible=True,
-        document={"failure_evidence": failure, "prior_failure_evidence_sha256": []},
+        document={
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "authorization_revision": r1,
+            "trigger_comment_id": request_id,
+            "failure_evidence": failure,
+            "prior_failure_evidence_sha256": [],
+            "predecessor": None,
+        },
     )
     active = {
         "revision": r2,
@@ -1198,6 +1207,15 @@ def test_application_continuation_at_r2_preserves_durable_r1_formal_result(
         lambda *_a, **_kw: active["predecessor"],
     )
     monkeypatch.setattr(application, "_authorization_revision_is_ancestor", lambda *_a: True)
+    monkeypatch.setattr(
+        application, "_accepted_worker_result_for_continuation", lambda **_kw: raw
+    )
+    monkeypatch.setattr(
+        application, "read_application_recovery_artifact", lambda *_a, **_kw: predecessor
+    )
+    monkeypatch.setattr(
+        dispatch, "_application_runs", lambda *_a, **_kw: ({"id": 7001, "run_attempt": 1},)
+    )
 
     class DurableReader:
         def __init__(self, *_a: object, **kwargs: object) -> None:
