@@ -97,6 +97,30 @@ def test_recovery_dag_conflicting_provenance_blocks_positive_descendant() -> Non
     assert application.evaluate_recovery_evidence(proven) == "CONFLICT"
 
 
+@pytest.mark.parametrize("second_satisfied", [False, True])
+def test_shared_original_effect_prefix_observation(
+    second_satisfied: bool,
+) -> None:
+    """The same proof reader serves read-only and post-effect reconciliation."""
+    first = StagedEffect("issue-comment", '{"issue_number":138,"body":"first"}')
+    second = StagedEffect("issue-comment", '{"issue_number":138,"body":"second"}')
+    observed: list[StagedEffect] = []
+
+    def observe(effect: StagedEffect) -> bool:
+        observed.append(effect)
+        return effect == first or second_satisfied
+
+    nodes = application._observe_original_effect_prefix((first, second), observe)
+    assert observed == [first, second]
+    if not second_satisfied:
+        assert nodes is None
+    else:
+        assert nodes is not None
+        assert len(nodes) == 2
+        assert nodes[1].depends_on == (nodes[0],)
+        assert application.evaluate_recovery_evidence(nodes[-1]) == "SATISFIED"
+
+
 def _batch(
     action: str = "resolve-question", kind: str = "ready"
 ) -> tuple[EffectBatch, WorkerRequest]:
