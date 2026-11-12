@@ -6857,6 +6857,10 @@ def classify_accepted_read_only_effects(
                 and formal_identity[0] == attempted[-2]
                 and formal_identity[1] == attempted_revision
                 and attempted[-1] == expected_successor
+                # Commit of the formal result does not prove the final
+                # routing/terminal projection. Only the existing authoritative
+                # Effect adapter can observe that later durable consequence.
+                and adapter.observe_postcondition(expected_successor)
                 and consequence_postconditions_complete(
                     record.raw_worker_result,
                     source=source,
