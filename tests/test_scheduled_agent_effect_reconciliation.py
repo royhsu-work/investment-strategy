@@ -121,6 +121,30 @@ def test_shared_original_effect_prefix_observation(
         assert application.evaluate_recovery_evidence(nodes[-1]) == "SATISFIED"
 
 
+def test_positive_original_effects_are_shared_flat_leaves() -> None:
+    """Long already-satisfied prefixes must not be re-evaluated recursively."""
+    original = tuple(
+        StagedEffect("issue-comment", json.dumps({"issue_number": 138, "sequence": index}))
+        for index in range(1025)
+    )
+    observed: list[StagedEffect] = []
+
+    def observe(effect: StagedEffect) -> bool:
+        observed.append(effect)
+        return True
+
+    leaves = application._observe_original_effect_prefix(original, observe)
+    assert leaves is not None
+    assert len(leaves) == len(original)
+    assert observed == list(original)
+    assert all(not node.depends_on for node in leaves)
+    assert application.evaluate_recovery_evidence(
+        application.RecoveryEvidenceNode(
+            "FORMAL_RESULT", original[0], True, depends_on=leaves
+        )
+    ) == "SATISFIED"
+
+
 def _batch(
     action: str = "resolve-question", kind: str = "ready"
 ) -> tuple[EffectBatch, WorkerRequest]:
