@@ -845,7 +845,7 @@ def run_effect_application(
             accepted_intent=accepted_intent,
             reconcile_only=reconcile_only,
             uncertain_effect_index=uncertain_effect_index,
-        proven_empty_original_effects=proven_empty_original_effects,
+            proven_empty_original_effects=proven_empty_original_effects,
             durable_checkpoint_revision=(
                 validated_materialization_revision if accepted_intent else None
             ),
