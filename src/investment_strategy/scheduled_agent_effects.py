@@ -369,6 +369,9 @@ class EffectRecoveryEvidence:
     mutation_status: str
     unfinished_boundary: str
     rejection: ApplicationRejection | None = None
+    operation_stage: str | None = None
+    write_call_entered: bool | None = None
+    raw_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1492,6 +1495,9 @@ def apply_effect_batch(
         completed_indexes: tuple[int, ...] = (),
         unfinished_boundary: str = "effect-precondition",
         mutation_status: str = "not-complete",
+        operation_stage: str | None = None,
+        write_call_entered: bool | None = None,
+        raw_error: str | None = None,
     ) -> ApplyResult:
         failed_effect = (
             effects_to_apply[effect_index]
@@ -1519,21 +1525,29 @@ def apply_effect_batch(
             mutation_status=mutation_status,
             unfinished_boundary=unfinished_boundary,
             rejection=rejection,
+            operation_stage=operation_stage,
+            write_call_entered=write_call_entered,
+            raw_error=raw_error,
         )
         return ApplyResult(False, reason, rejection=rejection, recovery_evidence=evidence)
 
     def interrupted_before_write(
-        effect_index: int, completed: tuple[int, ...], exc: Exception
+        effect_index: int,
+        completed: tuple[int, ...],
+        exc: OSError,
+        *,
+        operation_stage: str = "BEFORE-WRITE",
     ) -> ApplyResult:
-        # The adapter has not been called for this Effect. The existing
-        # content-addressed recovery checkpoint will prove the preceding
-        # completed prefix before a fresh guard can attempt this suffix.
+        # These are *invocation-local* facts, never historical NOT_APPLIED proof.
         return rejected(
             f"effect observation raised before write: {type(exc).__qualname__}",
             effect_index,
             completed_indexes=completed,
             unfinished_boundary="effect-precondition-exception",
             mutation_status="not-complete",
+            operation_stage=operation_stage,
+            write_call_entered=False,
+            raw_error=str(exc),
         )
 
     # ACCEPT is the immutable linearization point.  A new process may enter
@@ -1542,11 +1556,19 @@ def apply_effect_batch(
     # the latter normally describes the pre-write state and can no longer
     # hold once the effect is durable.  Never infer completion from a failed
     # guard, and never apply this shortcut to an unaccepted worker request.
-    completed_before = {
-        index
-        for index, effect in enumerate(effects_to_apply)
-        if accepted_intent and observe_postcondition(effect)
-    }
+    completed_before: set[int] = set()
+    if accepted_intent:
+        for index, effect in enumerate(effects_to_apply):
+            try:
+                if observe_postcondition(effect):
+                    completed_before.add(index)
+            except OSError as exc:
+                # The first observation is also an I/O boundary. Preserve
+                # the exact observed prefix instead of escaping without a
+                # recovery checkpoint or inferring historical non-attempt.
+                return interrupted_before_write(
+                    index, tuple(sorted(completed_before)), exc, operation_stage="READ"
+                )
 
     def unproven_effect(missing: int | None) -> ApplyResult:
         failed_effect = effects_to_apply[missing] if missing is not None else derived_effect
@@ -1672,7 +1694,9 @@ def apply_effect_batch(
                 accepted_intent and observe_postcondition(effect)
             )
         except OSError as exc:
-            return interrupted_before_write(index, tuple(completed_indexes), exc)
+            return interrupted_before_write(
+                index, tuple(completed_indexes), exc, operation_stage="READ"
+            )
         if observed:
             completed_indexes.append(index)
             continue
@@ -1691,19 +1715,30 @@ def apply_effect_batch(
         except CarrierRequired:
             raise
         except OSError as exc:
-            # A lost GitHub response is an *attempted*, unknown write. Never
-            # reissue it merely because the API raised an exception.
+            # A failed write response is UNKNOWN even when the POSTcondition is false.
             return rejected(
                 f"effect write outcome unavailable: {type(exc).__qualname__}",
                 index,
                 completed_indexes=tuple(completed_indexes),
                 unfinished_boundary="effect-postcondition",
                 mutation_status="unknown",
+                operation_stage="WRITE",
+                write_call_entered=True,
+                raw_error=str(exc),
             )
         try:
             observed_after = observe_postcondition(effect)
-        except OSError:
-            observed_after = False
+        except OSError as exc:
+            return rejected(
+                "durable postcondition observation unavailable",
+                index,
+                completed_indexes=tuple(completed_indexes),
+                unfinished_boundary="effect-postcondition",
+                mutation_status="unknown",
+                operation_stage="AFTER-WRITE",
+                write_call_entered=True,
+                raw_error=str(exc),
+            )
         if not observed_after:
             return rejected(
                 "durable postcondition not observed",
@@ -1711,6 +1746,8 @@ def apply_effect_batch(
                 completed_indexes=tuple(completed_indexes),
                 unfinished_boundary="effect-postcondition",
                 mutation_status="unknown",
+                operation_stage="AFTER-WRITE",
+                write_call_entered=True,
             )
         completed_indexes.append(index)
 
@@ -1718,7 +1755,9 @@ def apply_effect_batch(
         try:
             derived_complete = accepted_intent and observe_postcondition(derived_effect)
         except OSError as exc:
-            return interrupted_before_write(len(effects_to_apply), tuple(completed_indexes), exc)
+            return interrupted_before_write(
+                len(effects_to_apply), tuple(completed_indexes), exc, operation_stage="READ"
+            )
         if derived_complete:
             return ApplyResult(True, "already-durable")
         try:
@@ -1742,11 +1781,23 @@ def apply_effect_batch(
                 completed_indexes=tuple(completed_indexes),
                 unfinished_boundary="derived-effect-postcondition",
                 mutation_status="unknown",
+                operation_stage="WRITE",
+                write_call_entered=True,
+                raw_error=str(exc),
             )
         try:
             derived_observed = observe_postcondition(derived_effect)
-        except OSError:
-            derived_observed = False
+        except OSError as exc:
+            return rejected(
+                "derived postcondition observation unavailable",
+                len(effects_to_apply),
+                completed_indexes=tuple(completed_indexes),
+                unfinished_boundary="derived-effect-postcondition",
+                mutation_status="unknown",
+                operation_stage="AFTER-WRITE",
+                write_call_entered=True,
+                raw_error=str(exc),
+            )
         if not derived_observed:
             return rejected(
                 "durable postcondition not observed",
@@ -1754,6 +1805,8 @@ def apply_effect_batch(
                 completed_indexes=tuple(completed_indexes),
                 unfinished_boundary="derived-effect-postcondition",
                 mutation_status="unknown",
+                operation_stage="AFTER-WRITE",
+                write_call_entered=True,
             )
 
     return ApplyResult(True, "applied")
