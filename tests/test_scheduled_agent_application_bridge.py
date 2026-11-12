@@ -2008,7 +2008,6 @@ def _accepted_record(
     )
 
 
-
 @pytest.mark.parametrize(
     ("original_count", "observed", "expected"),
     [
@@ -2035,14 +2034,10 @@ def test_nonactivation_exception_proof_reconciles_original_effects_without_repla
     )
     effect = StagedEffect("github-mutation", "{}")
     batch = SimpleNamespace(
-        typed_result=SimpleNamespace(
-            result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
-        ),
+        typed_result=SimpleNamespace(result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))),
         effects=(effect,) if original_count else (),
     )
-    monkeypatch.setattr(
-        bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw
-    )
+    monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
     monkeypatch.setattr(bridge, "parse_effect_batch", lambda *_a, **_kw: batch)
     seen: list[StagedEffect] = []
 
