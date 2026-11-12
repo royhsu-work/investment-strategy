@@ -117,7 +117,7 @@ def test_shared_original_effect_prefix_observation(
     else:
         assert nodes is not None
         assert len(nodes) == 2
-        assert nodes[1].depends_on == (nodes[0],)
+        assert all(not node.depends_on for node in nodes)
         assert application.evaluate_recovery_evidence(nodes[-1]) == "SATISFIED"
 
 
