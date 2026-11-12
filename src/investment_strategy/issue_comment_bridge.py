@@ -2804,18 +2804,31 @@ def _application_job(
     ):
         try:
             steps = job.steps
-            has_exception = (
-                steps is not None
-                and (
-                    "Upload pre-ACCEPT or interrupted application exception evidence",
-                    "success",
+            # Both native Application stages can fail after ACCEPT. The
+            # complete attempt-scoped job inventory selects the evidence type,
+            # not the Role, error message or the historical request shape.
+            exception_uploads = {
+                "Upload pre-ACCEPT or interrupted application exception evidence",
+                "Upload post-validation application exception evidence",
+            }
+            recovery_uploads = {
+                "Upload exact application recovery evidence",
+                "Upload final exact application recovery evidence",
+            }
+            has_exception = steps is not None and any(
+                name in exception_uploads and conclusion == "success"
+                for name, conclusion in steps
+            )
+            has_recovery = steps is not None and any(
+                name in recovery_uploads and conclusion == "success"
+                for name, conclusion in steps
+            )
+            if has_exception and has_recovery:
+                return ApplicationCompletion(
+                    "INVALID",
+                    "application-completion-artifact-writers-ambiguous",
+                    request_comment_id=request_comment_id,
                 )
-                in steps
-            )
-            has_recovery = (
-                steps is not None
-                and ("Upload exact application recovery evidence", "success") in steps
-            )
             accepted_effects: object = None
             try:
                 accepted_document = json.loads(record.raw_worker_result)
