@@ -106,10 +106,14 @@ def test_exception_recovery_real_guarded_engine_cross_wake(
         "evidence_ref": "issuecomment-138-qualified",
         "result_content": "already accepted",
     }
-    original_effects = [] if empty_original else [
-        {"kind": effect.kind, "payload_json": effect.payload_json}
-        for effect in original.effects
-    ]
+    original_effects = (
+        []
+        if empty_original
+        else [
+            {"kind": effect.kind, "payload_json": effect.payload_json}
+            for effect in original.effects
+        ]
+    )
     formal = {
         "kind": "issue-comment",
         "payload_json": json.dumps(
