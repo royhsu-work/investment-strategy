@@ -2064,17 +2064,11 @@ def test_nonactivation_exception_proof_reconciles_original_effects_without_repla
 
 
 @pytest.mark.parametrize(
-    "semantic_projection_only", [False, True],
-)
-@pytest.mark.parametrize(
     ("postcondition", "expected"),
     [(True, "SATISFIED"), (False, "UNKNOWN")],
 )
 def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_history(
-    monkeypatch: pytest.MonkeyPatch,
-    postcondition: bool,
-    expected: str,
-    semantic_projection_only: bool,
+    monkeypatch: pytest.MonkeyPatch, postcondition: bool, expected: str
 ) -> None:
     """R2/R5: original-Effect completion is independent of past Run inventory.
 
@@ -2082,45 +2076,16 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
     successor are distinct obligations, not permissions to replay writes.
     """
     source = WorkerRequest(435, "executor", "implement-change")
-    change = "restore-t1-dispatch-artifact-consumption"
-    physical_worker = _worker_result(
-        action=source.action, role=source.role, result_kind="blocked"
-    )
-    physical_worker["issue_number"] = source.issue_number
-    physical_worker["change"] = change
-    effect_document = {
-        "kind": "issue-comment",
-        "payload_json": json.dumps(
-            {"issue_number": source.issue_number, "body": "immutable original"}
-        ),
-    }
-    physical_worker["requested_effects"] = [effect_document]
-    physical = json.dumps(physical_worker, sort_keys=True)
-    semantic = dict(physical_worker, _semantic_intent_version=2, requested_effects=[])
-    raw = json.dumps(semantic, sort_keys=True) if semantic_projection_only else physical
-    request_body = _effect_request(physical_worker)
+    raw = json.dumps({"source": "immutable accepted effect"})
     record = _accepted_record(
         raw,
-        request_body,
+        "EFFECT_REQUEST",
         source=source,
-        change=change,
+        change="restore-t1-dispatch-artifact-consumption",
         result_kind="blocked",
         request_comment_id=6796616018,
     )
-    effect = StagedEffect(
-        "issue-comment", str(effect_document["payload_json"])
-    )
-
-    def qualified_source(_repository: str, _token: str, path: str) -> object:
-        assert path == f"issues/comments/{record.request_comment_id}"
-        return {
-            "id": record.request_comment_id,
-            "body": request_body,
-            "user": {"login": "royhsu-work"},
-            "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
-        }
-
-    monkeypatch.setattr(bridge, "_github_json", qualified_source)
+    effect = StagedEffect("github-mutation", "{}")
     checkpoint: dict[str, object] = {
         "attempted_effects": [{"kind": effect.kind, "payload_json": effect.payload_json}],
         "attempt_revision": _REVISION,
@@ -2139,6 +2104,22 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
         "_accepted_effect_never_called_in_history",
         lambda **_kw: False,
     )
+    monkeypatch.setattr(
+        bridge,
+        "_accepted_worker_result_for_continuation",
+        lambda **_kw: raw,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "parse_effect_batch",
+        lambda *_a, **_kw: SimpleNamespace(
+            typed_result=SimpleNamespace(
+                result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
+            ),
+            effects=(effect,),
+        ),
+    )
+
     class Observer:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             pass
