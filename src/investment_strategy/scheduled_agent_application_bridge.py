@@ -6185,10 +6185,7 @@ def _observe_original_effect_prefix(
     nodes: list[RecoveryEvidenceNode] = []
     for effect in effects:
         fact = RecoveryEvidenceNode(
-            "ORIGINAL_EFFECT",
-            effect,
-            final_postcondition=observe_postcondition(effect),
-            depends_on=(nodes[-1],) if nodes else (),
+            "ORIGINAL_EFFECT", effect, final_postcondition=observe_postcondition(effect)
         )
         if evaluate_recovery_evidence(fact) != "SATISFIED":
             return None
