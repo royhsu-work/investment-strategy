@@ -6414,6 +6414,141 @@ def _accepted_reconciliation_effect_projection(
     return json.dumps(decoded, sort_keys=True, separators=(",", ":")), len(originals)
 
 
+def _accepted_effect_never_called_in_history(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    artifact: ApplicationRecoveryArtifact | None,
+    failed_index: int,
+    repository: str,
+    token: str,
+) -> bool:
+    """Prove a non-entry frontier over the *whole* native accepted attempt chain.
+
+    A checkpoint proves only its own invocation. Each predecessor must be
+    content-addressed and independently re-read; missing history remains
+    UNKNOWN. This is read-only proof in the existing Application evidence
+    owner, not a second recovery state or permission to skip fresh guards.
+    """
+
+    if artifact is None or failed_index < 0:
+        return False
+    try:
+        original_raw = _accepted_worker_result_for_continuation(
+            accepted_intent=record,
+            source=source,
+            repository=repository,
+            token=token,
+            request_comment_id=record.request_comment_id,
+        )
+        original = parse_effect_batch(original_raw, source, authorized_change=record.change)
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if original.typed_result is None or failed_index >= len(original.effects):
+        return False
+
+    current = artifact
+    seen: set[tuple[int, int, int]] = set()
+    while True:
+        identity = (current.run_id, current.run_attempt, current.artifact_id)
+        document = current.document
+        failure = document.get("failure_evidence")
+        if (
+            identity in seen
+            or current.request_comment_id != record.request_comment_id
+            or document.get("issue_number") != record.issue_number
+            or document.get("role") != record.role
+            or document.get("action") != record.action
+            or document.get("authorization_revision") != record.authorization_revision
+            or not isinstance(failure, Mapping)
+            or _accepted_recovery_boundary(failure) != "READ_ONLY"
+        ):
+            return False
+        seen.add(identity)
+        attempted = _verified_attempted_effect_checkpoint(failure, source=source)
+        index = failure.get("failed_effect_index")
+        if (
+            attempted is None
+            or type(index) is not int
+            or index > failed_index
+            or any(
+                effect != original.effects[position]
+                for position, effect in enumerate(attempted)
+                if position < len(original.effects)
+            )
+        ):
+            # An earlier attempt reached this Effect, or its original identity
+            # cannot be independently established.
+            return False
+        if index == failed_index and not (
+            failure.get("mutation_status") == "not-complete"
+            and failure.get("unfinished_boundary")
+            in {"effect-precondition", "effect-precondition-exception"}
+            and failure.get("write_call_entered") is False
+        ):
+            return False
+
+        if current.recovery_attempt == 1:
+            if (
+                current.run_attempt != 1
+                or document.get("predecessor") is not None
+                or document.get("trigger_comment_id") != record.request_comment_id
+                or document.get("prior_failure_evidence_sha256") != []
+            ):
+                return False
+            # Use the existing exhaustive native run-history reader. A first
+            # artifact is not an accepted-history certificate if an earlier
+            # attempt or another source run is visible.
+            from investment_strategy.issue_comment_bridge import _application_runs
+
+            try:
+                runs = _application_runs(
+                    repository, token, record.request_comment_id, read=_github_json
+                )
+            except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+                return False
+            return (
+                runs is not None
+                and len(runs) == 1
+                and runs[0].get("id") == current.run_id
+                and runs[0].get("run_attempt") == 1
+            )
+
+        predecessor = document.get("predecessor")
+        previous_hashes = document.get("prior_failure_evidence_sha256")
+        if not isinstance(predecessor, Mapping) or not isinstance(previous_hashes, list):
+            return False
+        try:
+            previous = read_application_recovery_artifact(
+                repository,
+                token,
+                run_id=cast(int, predecessor["run_id"]),
+                run_attempt=cast(int, predecessor["run_attempt"]),
+                job_id=cast(int, predecessor["job_id"]),
+                request_comment_id=record.request_comment_id,
+                accepted_decision_sha256=current.accepted_decision_sha256,
+                strict_read=True,
+            )
+        except (HTTPError, OSError, RuntimeError, KeyError, TypeError, ValueError):
+            return False
+        if (
+            previous is None
+            or previous.recovery_attempt != current.recovery_attempt - 1
+            or previous.artifact_id != predecessor.get("artifact_id")
+            or previous.artifact_digest != predecessor.get("artifact_digest")
+            or previous.failure_evidence_sha256 != predecessor.get("failure_evidence_sha256")
+            or previous.recovery_episode_sha256 != current.recovery_episode_sha256
+            or previous.accepted_decision_sha256 != current.accepted_decision_sha256
+            or previous_hashes
+            != [
+                *cast(list[str], previous.document["prior_failure_evidence_sha256"]),
+                previous.failure_evidence_sha256,
+            ]
+        ):
+            return False
+        current = previous
+
+
 def accepted_read_only_effects_complete(
     *,
     record: ApplicationDecisionRecord,
@@ -6423,6 +6558,7 @@ def accepted_read_only_effects_complete(
     token: str,
     current_revision: str,
     default_branch: str,
+    recovery_artifact: ApplicationRecoveryArtifact | None = None,
 ) -> bool:
     """Freshly observe *only* the effects of one immutable ACCEPTED intent.
 
@@ -6501,17 +6637,23 @@ def accepted_read_only_effects_complete(
                 and rejection_document is None
             )
             if deterministic_suffix_rejection:
-                # The failed Effect has not been attempted. Require the exact
-                # ordered completed prefix to be independently observed, then
-                # return to ordinary fresh guards for the missing suffix.
-                # Requiring the failed guard's postcondition would deadlock:
-                # no actor has ever made that write.
+                # A local non-entry checkpoint is NOT proof that this accepted
+                # Effect was never called in a previous native attempt. First
+                # requalify the full causal chain, then observe the prefix
+                # through the existing adapter. No original write is replayed.
                 failed_index = recovery_evidence.get("failed_effect_index")
                 if (
                     type(failed_index) is not int
-                    or failed_index < 0
-                    or recovery_evidence.get("completed_effect_indexes")
-                    != list(range(failed_index))
+                    or recovery_artifact is None
+                    or recovery_artifact.document.get("failure_evidence") != recovery_evidence
+                    or not _accepted_effect_never_called_in_history(
+                        record=record,
+                        source=source,
+                        artifact=recovery_artifact,
+                        failed_index=failed_index,
+                        repository=repository,
+                        token=token,
+                    )
                 ):
                     return False
                 return all(adapter.observe_postcondition(effect) for effect in attempted[:-1])
@@ -6765,23 +6907,9 @@ def _write_application_recovery_evidence(
         failure_evidence["raw_error"] = safe_error[:2048]
     recovery = result.recovery_evidence
     if recovery is not None and _accepted_recovery_boundary(failure_evidence) == "READ_ONLY":
-        known_unattempted_suffix = (
-            recovery.mutation_status == "not-complete"
-            and (
-                (
-                    recovery.unfinished_boundary == "effect-precondition"
-                    and recovery.rejection is not None
-                    and recovery.rejection.classification.value == "effect-precondition-unsatisfied"
-                )
-                or (
-                    recovery.unfinished_boundary == "effect-precondition-exception"
-                    and recovery.rejection is None
-                )
-            )
-            and recovery.completed_effect_indexes == tuple(range(recovery.failed_effect_index))
-        )
-        if recovery.mutation_status != "unknown" and not known_unattempted_suffix:
-            return False
+        # Structural qualification already belongs to _accepted_recovery_boundary.
+        # Capture incomplete prefixes; do not reimplement its admissibility
+        # predicate or silently lose evidence when an earlier GET was absent.
         predecessor_failure = (
             predecessor.document.get("failure_evidence")
             if isinstance(predecessor, ApplicationRecoveryArtifact)
