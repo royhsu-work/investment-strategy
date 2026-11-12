@@ -38,8 +38,8 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _materialization_effects,
     _verified_zero_original_accepted_effects,
     _worker_semantic_projection,
-    accepted_read_only_effects_complete,
     application_artifact_stage,
+    classify_accepted_read_only_effects,
     application_continuation_correlation,
     classify_application_exception_recovery,
     classify_post_effect_result_recovery,
@@ -3113,7 +3113,7 @@ def _application_job(
                 recovery_artifact=recovery_artifact,
             )
         source = WorkerRequest(record.issue_number, record.role, record.action)
-        if not accepted_read_only_effects_complete(
+        proof = classify_accepted_read_only_effects(
             record=record,
             source=source,
             recovery_evidence=failure_evidence,
@@ -3126,10 +3126,15 @@ def _application_job(
                 if isinstance(recovery_artifact, ApplicationRecoveryArtifact)
                 else None
             ),
-        ):
+        )
+        if proof.continuation != "CONTINUE":
+            # An exact source contradiction needs a governed repair owner,
+            # not an indefinite identical read-only observation.
             return ApplicationCompletion(
-                "RESUMABLE",
-                "application-completion-read-only-observing",
+                "INVALID" if proof.continuation == "REJECT" else "RESUMABLE",
+                "application-completion-read-only-proof-conflict"
+                if proof.continuation == "REJECT"
+                else "application-completion-read-only-observing",
                 request_comment_id=request_comment_id,
                 recovery_artifact=recovery_artifact,
             )
