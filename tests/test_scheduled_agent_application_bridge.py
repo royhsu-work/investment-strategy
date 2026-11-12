@@ -2008,6 +2008,85 @@ def _accepted_record(
     )
 
 
+
+@pytest.mark.parametrize(
+    ("original_count", "observed", "expected"),
+    [
+        (1, True, "COMPLETE"),
+        (1, False, "INDETERMINATE"),
+        (0, True, "INDETERMINATE"),
+    ],
+)
+def test_nonactivation_exception_proof_reconciles_original_effects_without_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    original_count: int,
+    observed: bool,
+    expected: str,
+) -> None:
+    source = WorkerRequest(435, "executor", "implement-change")
+    raw = json.dumps({"source": "immutable accepted intent"})
+    record = _accepted_record(
+        raw,
+        "EFFECT_REQUEST",
+        source=source,
+        change="restore-t1-dispatch-artifact-consumption",
+        result_kind="blocked",
+        request_comment_id=6796616018,
+    )
+    effect = StagedEffect("github-mutation", "{}")
+    batch = SimpleNamespace(
+        typed_result=SimpleNamespace(
+            result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
+        ),
+        effects=(effect,) if original_count else (),
+    )
+    monkeypatch.setattr(
+        bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw
+    )
+    monkeypatch.setattr(bridge, "parse_effect_batch", lambda *_a, **_kw: batch)
+    seen: list[StagedEffect] = []
+
+    class Observer:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            assert kwargs["accepted_intent"] is True
+            assert kwargs["request_comment_id"] == 6796616018
+
+        def observe_postcondition(self, candidate: StagedEffect) -> bool:
+            seen.append(candidate)
+            return observed
+
+    monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
+    proof = bridge._observe_accepted_post_effect_result(
+        record=record,
+        source=source,
+        repository=_REPOSITORY,
+        token="token",
+        current_revision=_REVISION,
+        default_branch="main",
+    )
+    assert proof.disposition == expected
+    assert seen == ([effect] if original_count else [])
+
+
+def test_noncompletion_accepted_intent_has_no_synthetic_checkpoint_obligation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(435, "executor", "implement-change")
+    monkeypatch.setattr(
+        bridge,
+        "parse_worker_result",
+        lambda *_a, **_kw: SimpleNamespace(requested_effects=()),
+    )
+    assert not bridge._accepted_checkpoint_already_durable(
+        "{}",
+        source=source,
+        repository=_REPOSITORY,
+        token="token",
+        current_revision=_REVISION,
+        request_comment_id=6796616018,
+    )
+
+
 def test_accepted_intent_lookup_includes_indeterminate_current_issue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
