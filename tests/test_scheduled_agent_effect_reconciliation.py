@@ -78,6 +78,24 @@ def test_recovery_dag_shared_dependencies_never_authorize_successor_write() -> N
     # IR proof never calls an Effect; the shell must independently reauthorize it.
 
 
+@pytest.mark.parametrize("stage", ["FORMAL_RESULT", "SUCCESSOR"])
+def test_positive_descendant_requires_satisfied_upstream_obligation(stage: str) -> None:
+    """R8: observed later state cannot discharge an unproven predecessor."""
+    effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"effect"}')
+    missing = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", effect, None)
+    completed = replace(missing, final_postcondition=True)
+    descendant = application.RecoveryEvidenceNode(
+        cast("Literal[\"ORIGINAL_EFFECT\", \"FORMAL_RESULT\", \"SUCCESSOR\"]", stage),
+        effect,
+        True,
+        depends_on=(missing,),
+    )
+    assert application.evaluate_recovery_evidence(descendant) == "UNKNOWN"
+    assert application.evaluate_recovery_evidence(
+        replace(descendant, depends_on=(completed,))
+    ) == "SATISFIED"
+
+
 def test_recovery_dag_conflicting_provenance_blocks_positive_descendant() -> None:
     """R9: source contradiction dominates even a positive child observation."""
     effect = StagedEffect("issue-comment", '{"issue_number":138}')
