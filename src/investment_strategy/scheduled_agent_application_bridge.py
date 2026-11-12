@@ -5103,6 +5103,17 @@ _EXCEPTION_APPLY_STEP_CONTRACT: dict[str, str] = {
     "Upload final exact application recovery evidence": "skipped",
 }
 
+_POST_VALIDATION_EXCEPTION_STEP_CONTRACT: dict[str, str] = {
+    "Freshly authorize and apply repository-owned effects": "success",
+    "Upload exact application recovery evidence": "skipped",
+    "Upload pre-ACCEPT or interrupted application exception evidence": "skipped",
+    "Persist exact external carrier plan": "skipped",
+    "Upload exact external carrier plan": "skipped",
+    "Persist the derived successor after exact validation": "failure",
+    "Upload final exact application recovery evidence": "skipped",
+    "Upload post-validation application exception evidence": "success",
+}
+
 _EXCEPTION_DOCUMENT_KEYS = frozenset(
     {
         "schema",
@@ -5178,7 +5189,24 @@ def _qualified_exception_apply_run(
         if name is None or result is None or name in conclusions:
             return None
         conclusions[name] = result
-    return run if _matches_required_fields(conclusions, _EXCEPTION_APPLY_STEP_CONTRACT) else None
+    pre_exception = _matches_required_fields(conclusions, _EXCEPTION_APPLY_STEP_CONTRACT)
+    post_exception = _matches_required_fields(
+        conclusions, _POST_VALIDATION_EXCEPTION_STEP_CONTRACT
+    )
+    # Two successful exception writers or a successful recovery writer cannot
+    # identify one immutable failed Application stage.
+    competing = (
+        conclusions.get("Upload pre-ACCEPT or interrupted application exception evidence")
+        == "success"
+        and conclusions.get("Upload post-validation application exception evidence") == "success"
+    ) or any(
+        conclusions.get(name) == "success"
+        for name in (
+            "Upload exact application recovery evidence",
+            "Upload final exact application recovery evidence",
+        )
+    )
+    return run if (pre_exception != post_exception and not competing) else None
 
 
 def _qualified_exception_artifact_metadata(
