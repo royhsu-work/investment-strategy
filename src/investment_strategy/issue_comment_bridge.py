@@ -2816,7 +2816,28 @@ def _application_job(
                 steps is not None
                 and ("Upload exact application recovery evidence", "success") in steps
             )
-            if has_exception and not has_recovery:
+            accepted_effects: object = None
+            try:
+                accepted_document = json.loads(record.raw_worker_result)
+                if isinstance(accepted_document, Mapping):
+                    accepted_effects = accepted_document.get("requested_effects")
+            except json.JSONDecodeError:
+                pass
+            # Only the immutable accepted original Effect set can authorize
+            # general exception recovery. A semantic-only projection with no
+            # accepted Effect must retain its existing terminal classification.
+            # The historically stripped first-activation manifest is the
+            # pre-existing bounded compatibility case, not a new Action rule.
+            has_original_effect = isinstance(accepted_effects, list) and bool(
+                accepted_effects
+            )
+            legacy_activation = (
+                (record.role, record.action, record.change)
+                == ("lead", "propose-change", "unset")
+            )
+            if has_exception and not has_recovery and (
+                has_original_effect or legacy_activation
+            ):
                 recovery_artifact = read_application_exception_artifact(
                     repository,
                     token,
