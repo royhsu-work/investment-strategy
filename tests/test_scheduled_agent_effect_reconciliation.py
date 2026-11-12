@@ -2222,11 +2222,7 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
         return labels[effect] in durable
 
     def guard(effect: StagedEffect) -> bool:
-        if (
-            interrupted["allowed"]
-            and effect == second
-            and (pre_guard_failure or "E0" in durable)
-        ):
+        if interrupted["allowed"] and effect == second and (pre_guard_failure or "E0" in durable):
             raise OSError("transient GitHub GET failure before this write")
         return True
 

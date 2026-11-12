@@ -6483,18 +6483,14 @@ def accepted_read_only_effects_complete(
             )
             rejection_document = recovery_evidence.get("rejection")
             deterministic_suffix_rejection = (
-                (
-                    recovery_evidence.get("unfinished_boundary") == "effect-precondition"
-                    and recovery_evidence.get("mutation_status") == "not-complete"
-                    and isinstance(rejection_document, Mapping)
-                    and rejection_document.get("classification")
-                    == "effect-precondition-unsatisfied"
-                )
-                or (
-                    recovery_evidence.get("unfinished_boundary") == "effect-precondition-exception"
-                    and recovery_evidence.get("mutation_status") == "not-complete"
-                    and rejection_document is None
-                )
+                recovery_evidence.get("unfinished_boundary") == "effect-precondition"
+                and recovery_evidence.get("mutation_status") == "not-complete"
+                and isinstance(rejection_document, Mapping)
+                and rejection_document.get("classification") == "effect-precondition-unsatisfied"
+            ) or (
+                recovery_evidence.get("unfinished_boundary") == "effect-precondition-exception"
+                and recovery_evidence.get("mutation_status") == "not-complete"
+                and rejection_document is None
             )
             if deterministic_suffix_rejection:
                 # The failed Effect has not been attempted. Require the exact
