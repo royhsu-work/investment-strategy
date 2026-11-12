@@ -1207,9 +1207,7 @@ def test_application_continuation_at_r2_preserves_durable_r1_formal_result(
         lambda *_a, **_kw: active["predecessor"],
     )
     monkeypatch.setattr(application, "_authorization_revision_is_ancestor", lambda *_a: True)
-    monkeypatch.setattr(
-        application, "_accepted_worker_result_for_continuation", lambda **_kw: raw
-    )
+    monkeypatch.setattr(application, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
     monkeypatch.setattr(
         application, "read_application_recovery_artifact", lambda *_a, **_kw: predecessor
     )
@@ -1600,9 +1598,7 @@ def test_durable_formal_then_zero_write_successor_rejection_recovers_after_revis
             return True
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", Reader)
-    monkeypatch.setattr(
-        application, "_accepted_worker_result_for_continuation", lambda **_kw: raw
-    )
+    monkeypatch.setattr(application, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
     monkeypatch.setattr(
         application, "read_application_recovery_artifact", lambda *_a, **_kw: first_artifact
     )
@@ -2568,9 +2564,7 @@ def test_run_local_effect_frontier_cannot_prove_accepted_history(
                 "result_kind": "ready",
                 "evidence_ref": "issuecomment-138-qualified",
                 "result_content": "accepted",
-                "requested_effects": [
-                    {"kind": effect.kind, "payload_json": effect.payload_json}
-                ],
+                "requested_effects": [{"kind": effect.kind, "payload_json": effect.payload_json}],
             }
         ),
         reason="application accepted",
