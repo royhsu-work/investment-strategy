@@ -7836,7 +7836,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 exact_source = WorkerRequest(
                     accepted_intent.issue_number, accepted_intent.role, accepted_intent.action
                 )
-                if not accepted_read_only_effects_complete(
+                proof = classify_accepted_read_only_effects(
                     record=accepted_intent,
                     source=exact_source,
                     recovery_evidence=failure,
@@ -7849,7 +7849,12 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                         if isinstance(predecessor_evidence, ApplicationRecoveryArtifact)
                         else None
                     ),
-                ):
+                )
+                if proof.continuation == "REJECT":
+                    # Preserve the immutable accepted intent, but do not turn
+                    # a contradiction into yet another observable UNKNOWN.
+                    raise RuntimeError("accepted read-only recovery evidence conflict")
+                if proof.continuation == "OBSERVE":
                     # A dispatch-time proof may disappear before Application
                     # reauthorization. Persist only a read-only boundary with
                     # the SAME attempted identity, and never apply a newly
