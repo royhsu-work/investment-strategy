@@ -3121,6 +3121,11 @@ def _application_job(
             token=token,
             current_revision=current_revision,
             default_branch=branch,
+            recovery_artifact=(
+                recovery_artifact
+                if isinstance(recovery_artifact, ApplicationRecoveryArtifact)
+                else None
+            ),
         ):
             return ApplicationCompletion(
                 "RESUMABLE",
