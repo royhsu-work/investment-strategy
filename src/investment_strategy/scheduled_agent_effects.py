@@ -1568,16 +1568,15 @@ def apply_effect_batch(
     # may apply it (notably the original formal result and legal successor).
     # An absent boundary retains the older, more restrictive read-only mode.
     if reconcile_only:
-        valid_index = (
-            uncertain_effect_index is None
-            or (
-                type(uncertain_effect_index) is int
-                and (uncertain_effect_index >= 0 or proven_empty_original_effects)
-                and uncertain_effect_index <= len(batch.effects)
-            )
+        valid_index = uncertain_effect_index is None or (
+            type(uncertain_effect_index) is int
+            and (uncertain_effect_index >= 0 or proven_empty_original_effects)
+            and uncertain_effect_index <= len(batch.effects)
         )
-        if not accepted_intent or not valid_index or (
-            proven_empty_original_effects and uncertain_effect_index != -1
+        if (
+            not accepted_intent
+            or not valid_index
+            or (proven_empty_original_effects and uncertain_effect_index != -1)
         ):
             return ApplyResult(False, "indeterminate accepted effects require reconciliation")
         if proven_empty_original_effects:
@@ -1585,8 +1584,10 @@ def apply_effect_batch(
             # Only the Application-owned formal result may follow that empty
             # attempted frontier; no untrusted/new control write can enter.
             expected_marker = (
-                "REVIEW_RESULT" if batch.source.role == "reviewer"
-                else "MERGE_RESULT" if batch.source.action.startswith("merge-")
+                "REVIEW_RESULT"
+                if batch.source.role == "reviewer"
+                else "MERGE_RESULT"
+                if batch.source.action.startswith("merge-")
                 else "ACTION_RESULT"
             )
             if len(batch.effects) != 1 or batch.effects[0].kind != "issue-comment":
