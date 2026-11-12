@@ -5764,6 +5764,8 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
     "alteration",
     [
         "valid",
+        "post-validation-valid",
+        "post-validation-conflicting-writers",
         "bad-digest",
         "duplicate",
         "write-after-failure",
@@ -5846,6 +5848,18 @@ def test_execution_exception_is_a_distinct_verified_predecessor(
         {"name": "Persist the derived successor after exact validation", "conclusion": "skipped"},
         {"name": "Upload final exact application recovery evidence", "conclusion": "skipped"},
     ]
+    if alteration.startswith("post-validation-"):
+        steps[0]["conclusion"] = "success"
+        steps[2]["conclusion"] = "skipped"
+        steps[5]["conclusion"] = "failure"
+        steps.append(
+            {
+                "name": "Upload post-validation application exception evidence",
+                "conclusion": "success",
+            }
+        )
+        if alteration == "post-validation-conflicting-writers":
+            steps[2]["conclusion"] = "success"
     if alteration == "write-after-failure":
         steps[-2]["conclusion"] = "success"
     if alteration == "missing-upload":
@@ -5924,7 +5938,7 @@ def test_execution_exception_is_a_distinct_verified_predecessor(
         read=read,
         artifact_reader=lambda *_: raw,
     )
-    if alteration == "valid":
+    if alteration in {"valid", "post-validation-valid"}:
         assert evidence is not None
         assert type(evidence) is bridge.ApplicationExceptionArtifact
         assert evidence.artifact_id == artifact_id
