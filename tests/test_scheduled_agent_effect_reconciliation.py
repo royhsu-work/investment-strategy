@@ -2391,6 +2391,9 @@ def test_attempted_effect_exception_is_unknown_not_a_write_retry(
     assert not first.applied and first.recovery_evidence is not None
     assert first.recovery_evidence.mutation_status == "unknown"
     assert first.recovery_evidence.unfinished_boundary == "effect-postcondition"
+    assert first.recovery_evidence.operation_stage == "WRITE"
+    assert first.recovery_evidence.write_call_entered is True
+    assert first.recovery_evidence.raw_error == "lost write response for E1"
     assert first.recovery_evidence.completed_effect_indexes == (0,)
     assert writes == [batch.effects[0]]
     assert not reconcile().applied
@@ -2398,7 +2401,6 @@ def test_attempted_effect_exception_is_unknown_not_a_write_retry(
     complete.add(second)  # A later fresh GET establishes exact E1 durability.
     assert reconcile().applied
     assert writes == [batch.effects[0], successor]
-
 
 
 @pytest.mark.parametrize("completed_first", [False, True])
@@ -2446,5 +2448,8 @@ def test_initial_accepted_effect_observation_failure_has_exact_frontier(
     assert evidence.unfinished_boundary == "effect-precondition-exception"
     assert evidence.completed_effect_indexes == ((0,) if completed_first else ())
     assert evidence.mutation_status == "not-complete"  # invocation-local only
+    assert evidence.operation_stage == "READ"
+    assert evidence.write_call_entered is False
+    assert evidence.raw_error == "GitHub GET failed before any E1 write"
     assert observed == [original.effects[0], second]
     assert writes == []
