@@ -2398,3 +2398,53 @@ def test_attempted_effect_exception_is_unknown_not_a_write_retry(
     complete.add(second)  # A later fresh GET establishes exact E1 durability.
     assert reconcile().applied
     assert writes == [batch.effects[0], successor]
+
+
+
+@pytest.mark.parametrize("completed_first", [False, True])
+def test_initial_accepted_effect_observation_failure_has_exact_frontier(
+    monkeypatch: pytest.MonkeyPatch, completed_first: bool
+) -> None:
+    """RED: the initial all-Effect GET can fail before any effect guard is called."""
+
+    import investment_strategy.scheduled_agent_effects as effects
+
+    original, _source = _batch()
+    second = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "second accepted write"})
+    )
+    batch = replace(original, effects=(original.effects[0], second))
+    successor = effects.derived_transition_effect(
+        issue_number=138, change=CHANGE, successor=Action.IMPLEMENT_CHANGE
+    )
+    monkeypatch.setattr(
+        effects, "_typed_application_plan", lambda *_args: (_decision(), successor, None)
+    )
+    observed: list[StagedEffect] = []
+    writes: list[StagedEffect] = []
+
+    def read_postcondition(effect: StagedEffect) -> bool:
+        observed.append(effect)
+        if effect == second:
+            raise OSError("GitHub GET failed before any E1 write")
+        return completed_first
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: cast(DispatchPreflight, None),
+        effect_guard=lambda _effect: pytest.fail("guard ran after unqualified GET"),
+        apply_effect=lambda effect: writes.append(effect),
+        observe_postcondition=read_postcondition,
+        current_revision=REVISION,
+        accepted_intent=True,
+    )
+    assert not result.applied
+    assert result.recovery_evidence is not None
+    evidence = result.recovery_evidence
+    assert evidence.failed_effect_index == 1
+    assert evidence.failed_effect_sha256 == hashlib.sha256(second.payload_json.encode()).hexdigest()
+    assert evidence.unfinished_boundary == "effect-precondition-exception"
+    assert evidence.completed_effect_indexes == ((0,) if completed_first else ())
+    assert evidence.mutation_status == "not-complete"  # invocation-local only
+    assert observed == [original.effects[0], second]
+    assert writes == []
