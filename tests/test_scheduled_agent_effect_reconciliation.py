@@ -2764,6 +2764,58 @@ def test_initial_accepted_effect_observation_failure_has_exact_frontier(
     assert writes == []
 
 
+
+@pytest.mark.parametrize("guard_failure", ["rejected", "exception"])
+def test_prewrite_guard_preserves_observed_completed_prefix(
+    monkeypatch: pytest.MonkeyPatch, guard_failure: str
+) -> None:
+    """A pre-write E1 failure must retain the independently observed E0 frontier."""
+
+    import investment_strategy.scheduled_agent_effects as effects
+
+    original, _source = _batch()
+    first = original.effects[0]
+    second = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "second original write"})
+    )
+    batch = replace(original, effects=(first, second))
+    successor = effects.derived_transition_effect(
+        issue_number=138, change=CHANGE, successor=Action.IMPLEMENT_CHANGE
+    )
+    monkeypatch.setattr(
+        effects, "_typed_application_plan", lambda *_args: (_decision(), successor, None)
+    )
+    guarded: list[StagedEffect] = []
+
+    def guard(effect: StagedEffect) -> bool:
+        guarded.append(effect)
+        if effect != second:
+            pytest.fail("already completed E0 must not be guarded or replayed")
+        if guard_failure == "exception":
+            raise OSError("E1 pre-write GET unavailable")
+        return False
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: cast(DispatchPreflight, None),
+        effect_guard=guard,
+        apply_effect=lambda _effect: pytest.fail("no Effect write was authorized"),
+        observe_postcondition=lambda effect: effect == first,
+        current_revision=REVISION,
+        accepted_intent=True,
+    )
+    assert not result.applied and result.recovery_evidence is not None
+    recovery = result.recovery_evidence
+    assert recovery.failed_effect_index == 1
+    assert recovery.completed_effect_indexes == (0,)
+    assert recovery.completed_effect_sha256 == (
+        hashlib.sha256(first.payload_json.encode()).hexdigest(),
+    )
+    assert recovery.write_call_entered is False
+    assert recovery.operation_stage == "BEFORE-WRITE"
+    assert guarded == [second]
+
+
 def test_run_local_effect_frontier_cannot_prove_accepted_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
