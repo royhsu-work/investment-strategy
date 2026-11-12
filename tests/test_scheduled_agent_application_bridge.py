@@ -2182,17 +2182,21 @@ def test_accepted_zero_effect_source_requires_exact_original_request(
         "user": {"login": "royhsu-work"},
         "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
     }
+
     def read(_repo: str, _token: str, path: str) -> object:
         assert path == "issues/comments/102"
         return source_comment
 
-    assert bridge._verified_zero_original_accepted_effects(
-        record=record,
-        source=source,
-        repository=_REPOSITORY,
-        token=_REVISION,
-        read=read,
-    ) is verified
+    assert (
+        bridge._verified_zero_original_accepted_effects(
+            record=record,
+            source=source,
+            repository=_REPOSITORY,
+            token=_REVISION,
+            read=read,
+        )
+        is verified
+    )
 
 
 @pytest.mark.parametrize(
