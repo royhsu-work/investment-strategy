@@ -2828,16 +2828,13 @@ def _application_job(
             # accepted Effect must retain its existing terminal classification.
             # The historically stripped first-activation manifest is the
             # pre-existing bounded compatibility case, not a new Action rule.
-            has_original_effect = isinstance(accepted_effects, list) and bool(
-                accepted_effects
+            has_original_effect = isinstance(accepted_effects, list) and bool(accepted_effects)
+            legacy_activation = (record.role, record.action, record.change) == (
+                "lead",
+                "propose-change",
+                "unset",
             )
-            legacy_activation = (
-                (record.role, record.action, record.change)
-                == ("lead", "propose-change", "unset")
-            )
-            if has_exception and not has_recovery and (
-                has_original_effect or legacy_activation
-            ):
+            if has_exception and not has_recovery and (has_original_effect or legacy_activation):
                 recovery_artifact = read_application_exception_artifact(
                     repository,
                     token,
