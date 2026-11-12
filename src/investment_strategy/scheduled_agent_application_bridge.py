@@ -7828,6 +7828,11 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                     token=token,
                     current_revision=args.revision,
                     default_branch=args.default_branch,
+                    recovery_artifact=(
+                        predecessor_evidence
+                        if isinstance(predecessor_evidence, ApplicationRecoveryArtifact)
+                        else None
+                    ),
                 ):
                     # A dispatch-time proof may disappear before Application
                     # reauthorization. Persist only a read-only boundary with
