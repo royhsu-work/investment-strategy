@@ -2060,7 +2060,7 @@ def test_nonactivation_exception_proof_reconciles_original_effects_without_repla
         record=record,
         source=source,
         repository=_REPOSITORY,
-        token="token",
+        token=_REVISION,
         current_revision=_REVISION,
         default_branch="main",
     )
@@ -2081,7 +2081,7 @@ def test_noncompletion_accepted_intent_has_no_synthetic_checkpoint_obligation(
         "{}",
         source=source,
         repository=_REPOSITORY,
-        token="token",
+        token=_REVISION,
         current_revision=_REVISION,
         request_comment_id=6796616018,
     )
