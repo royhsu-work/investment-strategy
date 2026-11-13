@@ -7013,9 +7013,10 @@ def classify_accepted_read_only_effects(
         # The accepted Effect layout defines the lawful no-call frontier:
         # originals -> formal result -> derived successor. A completed
         # successor has no next Effect whose non-call can prove final routing.
-        frontier_obligations: tuple[RecoveryObligation, ...] = ("ORIGINAL_EFFECT",) * len(
-            original.effects
-        ) + ("FORMAL_RESULT", "SUCCESSOR")
+        frontier_obligations = cast(
+            tuple[RecoveryObligation, ...],
+            ("ORIGINAL_EFFECT",) * len(original.effects) + ("FORMAL_RESULT", "SUCCESSOR"),
+        )
         if historical_frontier >= len(frontier_obligations):
             return AcceptedPostEffectProof(
                 "INDETERMINATE",
