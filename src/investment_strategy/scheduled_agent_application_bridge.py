@@ -6452,8 +6452,9 @@ def _observe_accepted_post_effect_result(
                 "UNSAFE" if batch.category == "CONFLICT" else "INDETERMINATE",
                 batch.detail,
             )
-        if not batch.effects:
-            return AcceptedPostEffectProof("COMPLETE", "original empty Effect set proven")
+        # Physical-zero was positively qualified by the same original-source
+        # reader above. The empty prefix is a valid shared proof input; do not
+        # retain a competing completion decision for zero-original Effects.
         adapter = GitHubEffectAdapter(
             repository,
             token,
@@ -6473,7 +6474,7 @@ def _observe_accepted_post_effect_result(
             return AcceptedPostEffectProof(
                 "INDETERMINATE", "accepted original Effect postconditions unproven"
             )
-        return AcceptedPostEffectProof("COMPLETE", "accepted original Effects observed")
+        return AcceptedPostEffectProof("COMPLETE", "accepted original obligation proven")
     accepted_raw = _accepted_worker_result_for_continuation(
         accepted_intent=record,
         source=source,
