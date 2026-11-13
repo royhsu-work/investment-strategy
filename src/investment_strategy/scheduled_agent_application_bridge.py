@@ -6234,9 +6234,7 @@ def _recovery_obligation(effect: StagedEffect, source: WorkerRequest) -> Recover
     return "ORIGINAL_EFFECT"
 
 
-def _accepted_frontier_obligation(
-    original_count: int, index: int
-) -> RecoveryObligation | None:
+def _accepted_frontier_obligation(original_count: int, index: int) -> RecoveryObligation | None:
     """One source of truth for accepted ordinal Original/Formal/Successor slots."""
     if not 0 <= index < original_count + 2:
         return None
