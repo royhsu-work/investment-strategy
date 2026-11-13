@@ -45,6 +45,12 @@ REVISION = "a" * 40
 CHANGE = "deterministic-recovery"
 
 
+def test_s2c_no_legacy_boolean_recovery_decision_owner() -> None:
+    """RED: preserve typed proof outcomes, never a second Boolean projection."""
+    assert "accepted_read_only_effects_complete" not in vars(application)
+    assert callable(application.classify_accepted_read_only_effects)
+
+
 def test_recovery_dag_shared_dependencies_never_authorize_successor_write() -> None:
     """R2/R8: completion of one Effect is not formal/successor authority."""
     effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"effect"}')
