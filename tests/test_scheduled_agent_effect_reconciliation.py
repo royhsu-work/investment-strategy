@@ -1099,16 +1099,19 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
     )
 
     def observe() -> bool:
-        return application.classify_accepted_read_only_effects(
-            record=record,
-            source=source,
-            recovery_evidence=evidence,
-            repository="owner/repo",
-            token=REVISION,
-            current_revision=REVISION,
-            default_branch="main",
-            recovery_artifact=history_artifact,
-        ).disposition == "COMPLETE"
+        return (
+            application.classify_accepted_read_only_effects(
+                record=record,
+                source=source,
+                recovery_evidence=evidence,
+                repository="owner/repo",
+                token=REVISION,
+                current_revision=REVISION,
+                default_branch="main",
+                recovery_artifact=history_artifact,
+            ).disposition
+            == "COMPLETE"
+        )
 
     def classify(
         artifact: application.ApplicationRecoveryArtifact | None,
@@ -1384,16 +1387,19 @@ def test_archive_phase_drift_observes_original_dispatch_before_writing_new_pr(
     monkeypatch.setattr(application, "_verified_zero_original_accepted_effects", lambda **_kw: True)
 
     def original_complete() -> bool:
-        return application.classify_accepted_read_only_effects(
-            record=record,
-            source=source,
-            recovery_evidence=failure,
-            repository="owner/repo",
-            token=REVISION,
-            current_revision=advanced_revision,
-            default_branch="main",
-            recovery_artifact=history_artifact,
-        ).disposition == "COMPLETE"
+        return (
+            application.classify_accepted_read_only_effects(
+                record=record,
+                source=source,
+                recovery_evidence=failure,
+                repository="owner/repo",
+                token=REVISION,
+                current_revision=advanced_revision,
+                default_branch="main",
+                recovery_artifact=history_artifact,
+            ).disposition
+            == "COMPLETE"
+        )
 
     assert not original_complete()
     stage["original_completed"] = True
@@ -1570,16 +1576,19 @@ def test_merge_phase_drift_preserves_original_merge_before_ref_cleanup(
     # Physical worker originals are empty; the Application-owned merge write
     # is still observed at its exact historical Effect identity, not replayed.
     monkeypatch.setattr(application, "_verified_zero_original_accepted_effects", lambda **_kw: True)
-    assert application.classify_accepted_read_only_effects(
-        record=record,
-        source=source,
-        recovery_evidence=failure,
-        repository="owner/repo",
-        token=REVISION,
-        current_revision="d" * 40,
-        default_branch="main",
-        recovery_artifact=history_artifact,
-    ).disposition == "COMPLETE"
+    assert (
+        application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=failure,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision="d" * 40,
+            default_branch="main",
+            recovery_artifact=history_artifact,
+        ).disposition
+        == "COMPLETE"
+    )
     assert observed == [merge]  # No ref-delete observation or replay.
 
 
@@ -2337,16 +2346,19 @@ def test_durable_formal_then_zero_write_successor_rejection_recovers_after_revis
         continuation_eligible=True,
         document=document,
     )
-    assert application.classify_accepted_read_only_effects(
-        record=record,
-        source=source,
-        recovery_evidence=failure,
-        repository="royhsu-work/investment-strategy",
-        token=REVISION,
-        current_revision=r3,
-        default_branch="main",
-        recovery_artifact=current_artifact,
-    ).disposition == "COMPLETE"
+    assert (
+        application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=failure,
+            repository="royhsu-work/investment-strategy",
+            token=REVISION,
+            current_revision=r3,
+            default_branch="main",
+            recovery_artifact=current_artifact,
+        ).disposition
+        == "COMPLETE"
+    )
     assert observed == [formal]
 
     r3_projection = application._application_owned_worker_result(
@@ -3123,16 +3135,19 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
     )
 
     def qualified(checkpoint: dict[str, object]) -> bool:
-        return application.classify_accepted_read_only_effects(
-            record=record,
-            source=source,
-            recovery_evidence=checkpoint,
-            repository="owner/repo",
-            token=REVISION,
-            current_revision=REVISION,
-            default_branch="main",
-            recovery_artifact=native,
-        ).disposition == "COMPLETE"
+        return (
+            application.classify_accepted_read_only_effects(
+                record=record,
+                source=source,
+                recovery_evidence=checkpoint,
+                repository="owner/repo",
+                token=REVISION,
+                current_revision=REVISION,
+                default_branch="main",
+                recovery_artifact=native,
+            ).disposition
+            == "COMPLETE"
+        )
 
     assert qualified(failure)
 
@@ -3179,16 +3194,19 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
     monkeypatch.setattr(
         application, "read_application_recovery_artifact", lambda *_a, **_kw: native
     )
-    assert application.classify_accepted_read_only_effects(
-        record=record,
-        source=source,
-        recovery_evidence=deferred_document["failure_evidence"],
-        repository="owner/repo",
-        token=REVISION,
-        current_revision=REVISION,
-        default_branch="main",
-        recovery_artifact=deferred_artifact,
-    ).disposition == "COMPLETE"
+    assert (
+        application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=deferred_document["failure_evidence"],
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+            recovery_artifact=deferred_artifact,
+        ).disposition
+        == "COMPLETE"
+    )
     mutated = dict(failure, failed_effect_sha256="f" * 64)
     assert not qualified(mutated)
 
@@ -3240,16 +3258,19 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
     )
 
     def prior_attempt_satisfied() -> bool:
-        return application.classify_accepted_read_only_effects(
-            record=record,
-            source=source,
-            recovery_evidence=failure,
-            repository="owner/repo",
-            token=REVISION,
-            current_revision=REVISION,
-            default_branch="main",
-            recovery_artifact=latest,
-        ).disposition == "COMPLETE"
+        return (
+            application.classify_accepted_read_only_effects(
+                record=record,
+                source=source,
+                recovery_evidence=failure,
+                repository="owner/repo",
+                token=REVISION,
+                current_revision=REVISION,
+                default_branch="main",
+                recovery_artifact=latest,
+            ).disposition
+            == "COMPLETE"
+        )
 
     # A previous lost response cannot prove NOT_APPLIED. But once the exact
     # Effect is durably SATISFIED, continuing it is no replay.
@@ -3496,15 +3517,18 @@ def test_run_local_effect_frontier_cannot_prove_accepted_history(
     # No run / predecessor evidence was supplied. An invocation-local
     # before-write failure must not upgrade an earlier unknown write to
     # an intent-wide NOT_APPLIED permission.
-    assert application.classify_accepted_read_only_effects(
-        record=record,
-        source=source,
-        recovery_evidence=failure,
-        repository="owner/repo",
-        token=REVISION,
-        current_revision=REVISION,
-        default_branch="main",
-    ).disposition != "COMPLETE"
+    assert (
+        application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=failure,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+        ).disposition
+        != "COMPLETE"
+    )
 
 
 def _s1_history_stub(
@@ -3681,16 +3705,19 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
             return effect == first
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
-    qualified = application.classify_accepted_read_only_effects(
-        record=record,
-        source=source,
-        recovery_evidence=child_failure,
-        repository="owner/repo",
-        token=REVISION,
-        current_revision=REVISION,
-        default_branch="main",
-        recovery_artifact=child,
-    ).disposition == "COMPLETE"
+    qualified = (
+        application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=child_failure,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+            recovery_artifact=child,
+        ).disposition
+        == "COMPLETE"
+    )
     assert qualified is not earlier_e1_write
 
     if earlier_e1_write:
@@ -3747,15 +3774,18 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
             application.CompleteNeverCalledWitness,
         )
     # Omitted or conflicting history cannot become a replay permission.
-    assert application.classify_accepted_read_only_effects(
-        record=record,
-        source=source,
-        recovery_evidence=child_failure,
-        repository="owner/repo",
-        token=REVISION,
-        current_revision=REVISION,
-        default_branch="main",
-    ).disposition != "COMPLETE"
+    assert (
+        application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=child_failure,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+        ).disposition
+        != "COMPLETE"
+    )
 
 
 @pytest.mark.parametrize(
