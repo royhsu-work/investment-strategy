@@ -7133,3 +7133,87 @@ def test_original_322_pr_merge_review_gate_rejects_unreviewed_or_findings_head(
         with pytest.raises(SystemExit, match="review"):
             exec(compile(script, "<recovery-review-gate>", "exec"), {})  # noqa: S102 - trusted checked-in workflow source
         assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("zero_proven", "expected"),
+    [(False, "INDETERMINATE"), (True, "COMPLETE")],
+)
+def test_s2b_read_only_zero_original_requires_physical_source_witness(
+    monkeypatch: pytest.MonkeyPatch, zero_proven: bool, expected: str
+) -> None:
+    """R0/R2: an empty accepted semantic projection is not physical zero."""
+    source = WorkerRequest(435, "executor", "implement-change")
+    raw = '{"source":"accepted-empty-original"}'
+    record = _accepted_record(
+        raw,
+        "EFFECT_REQUEST",
+        source=source,
+        change="restore-t1-dispatch-artifact-consumption",
+        result_kind="blocked",
+        request_comment_id=6796616018,
+    )
+    formal = StagedEffect(
+        "issue-comment",
+        json.dumps({"issue_number": 435, "body": "ACTION_RESULT\nWorkflow: #435"}),
+    )
+    checkpoint: dict[str, object] = {
+        "attempted_effects": [
+            {"kind": formal.kind, "payload_json": formal.payload_json, "derived": False}
+        ],
+        "attempt_revision": _REVISION,
+        "failed_effect_index": 0,
+        "write_call_entered": True,
+    }
+    artifact = SimpleNamespace(document={"failure_evidence": checkpoint})
+    monkeypatch.setattr(bridge, "_accepted_recovery_boundary", lambda _e: "READ_ONLY")
+    monkeypatch.setattr(
+        bridge, "_verified_attempted_effect_checkpoint", lambda *_a, **_k: (formal,)
+    )
+    monkeypatch.setattr(
+        bridge,
+        "parse_effect_batch",
+        lambda *_a, **_k: SimpleNamespace(
+            typed_result=SimpleNamespace(
+                result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
+            ),
+            effects=(),
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_read_accepted_never_called_evidence",
+        lambda **_k: bridge.CompleteNeverCalledWitness(
+            6796616018, 1, "a" * 64, ((7001, 1, 7003),)
+        ),
+    )
+    zero_reads: list[int] = []
+
+    def verify_physical_zero(**_k: object) -> bool:
+        zero_reads.append(record.request_comment_id)
+        return zero_proven
+
+    monkeypatch.setattr(
+        bridge, "_verified_zero_original_accepted_effects", verify_physical_zero
+    )
+
+    class Observer:
+        def __init__(self, *_a: object, **_k: object) -> None:
+            pass
+
+        def observe_postcondition(self, _effect: StagedEffect) -> bool:
+            return True
+
+    monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
+    proof = bridge.classify_accepted_read_only_effects(
+        record=record,
+        source=source,
+        recovery_evidence=checkpoint,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+        recovery_artifact=artifact,  # type: ignore[arg-type]
+    )
+    assert proof.disposition == expected
+    assert zero_reads == [record.request_comment_id]
