@@ -3496,7 +3496,7 @@ def test_run_local_effect_frontier_cannot_prove_accepted_history(
     # No run / predecessor evidence was supplied. An invocation-local
     # before-write failure must not upgrade an earlier unknown write to
     # an intent-wide NOT_APPLIED permission.
-    assert not application.classify_accepted_read_only_effects(
+    assert application.classify_accepted_read_only_effects(
         record=record,
         source=source,
         recovery_evidence=failure,
@@ -3504,7 +3504,7 @@ def test_run_local_effect_frontier_cannot_prove_accepted_history(
         token=REVISION,
         current_revision=REVISION,
         default_branch="main",
-    ).disposition == "COMPLETE"
+    ).disposition != "COMPLETE"
 
 
 def _s1_history_stub(
@@ -3747,7 +3747,7 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
             application.CompleteNeverCalledWitness,
         )
     # Omitted or conflicting history cannot become a replay permission.
-    assert not application.classify_accepted_read_only_effects(
+    assert application.classify_accepted_read_only_effects(
         record=record,
         source=source,
         recovery_evidence=child_failure,
@@ -3755,7 +3755,7 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
         token=REVISION,
         current_revision=REVISION,
         default_branch="main",
-    ).disposition == "COMPLETE"
+    ).disposition != "COMPLETE"
 
 
 @pytest.mark.parametrize(
