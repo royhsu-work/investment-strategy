@@ -5361,12 +5361,8 @@ def _qualified_exception_artifact_metadata(
     ]
     if len(candidates) != 1:
         return None
-    artifact = candidates[0]
-    workflow_run = _as_mapping(artifact.get("workflow_run"))
-    required = {"id": run_id, "head_sha": run_head_sha}
-    if workflow_run is None or not _matches_required_fields(workflow_run, required):
-        return None
-    return artifact
+    # The shared verified-bytes reader owns exact Artifact run/head identity.
+    return candidates[0]
 
 
 def _qualified_exception_document(
