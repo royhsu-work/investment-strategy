@@ -6132,6 +6132,7 @@ _POST_EFFECT_ADMISSION: dict[
 
 
 RecoveryProofDisposition = Literal["SATISFIED", "NOT_APPLIED", "UNKNOWN", "CONFLICT"]
+RecoveryObligation = Literal["ORIGINAL_EFFECT", "FORMAL_RESULT", "SUCCESSOR"]
 
 
 @dataclass(frozen=True)
@@ -6166,7 +6167,7 @@ class RecoveryEvidenceNode:
     and a successor on formal-result proof. Evidence remains invocation-local.
     """
 
-    obligation: Literal["ORIGINAL_EFFECT", "FORMAL_RESULT", "SUCCESSOR"]
+    obligation: RecoveryObligation
     effect: StagedEffect | None
     final_postcondition: bool | None
     never_called_evidence: AcceptedNeverCalledEvidence | None = None
@@ -6222,7 +6223,7 @@ def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofDispo
 
 def _recovery_obligation(
     effect: StagedEffect, source: WorkerRequest
-) -> Literal["ORIGINAL_EFFECT", "FORMAL_RESULT", "SUCCESSOR"]:
+) -> RecoveryObligation:
     """Project an existing Effect identity into one typed DAG obligation."""
 
     if effect.derived:
@@ -7011,6 +7012,18 @@ def classify_accepted_read_only_effects(
                 return AcceptedPostEffectProof(
                     "COMPLETE", "exact accepted formal and successor already observed"
                 )
+        # The accepted Effect layout defines the lawful no-call frontier:
+        # originals -> formal result -> derived successor. A completed
+        # successor has no next Effect whose non-call can prove final routing.
+        frontier_obligations: tuple[RecoveryObligation, ...] = (
+            ("ORIGINAL_EFFECT",) * len(original.effects) + ("FORMAL_RESULT", "SUCCESSOR")
+        )
+        if historical_frontier >= len(frontier_obligations):
+            return AcceptedPostEffectProof(
+                "INDETERMINATE",
+                "accepted successor observed but final consequence not yet proven",
+                original_effect_proof=original_effect_proof,
+            )
         history = _read_accepted_never_called_evidence(
             record=record,
             source=source,
@@ -7024,7 +7037,7 @@ def classify_accepted_read_only_effects(
         # frontier; only the existing Application may reauthorize consequences.
         historical_proof = evaluate_recovery_evidence(
             RecoveryEvidenceNode(
-                "ORIGINAL_EFFECT",
+                frontier_obligations[historical_frontier],
                 None,
                 final_postcondition=False,
                 never_called_evidence=history,
