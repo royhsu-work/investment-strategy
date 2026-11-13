@@ -177,10 +177,8 @@ def test_positive_descendant_requires_satisfied_upstream_obligation(stage: str) 
         depends_on=(missing,),
     )
     assert application.evaluate_recovery_evidence(descendant).disposition == "UNKNOWN"
-    assert (
-        application.evaluate_recovery_evidence(replace(descendant, depends_on=(completed,))).disposition
-        == "SATISFIED"
-    )
+    completed_descendant = replace(descendant, depends_on=(completed,))
+    assert application.evaluate_recovery_evidence(completed_descendant).disposition == "SATISFIED"
 
 
 def test_recovery_dag_conflicting_provenance_blocks_positive_descendant() -> None:
