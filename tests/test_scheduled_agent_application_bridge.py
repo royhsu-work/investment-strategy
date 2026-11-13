@@ -7,6 +7,7 @@ import hashlib
 import importlib
 import json
 import sys
+from collections.abc import Callable, Sequence
 from dataclasses import FrozenInstanceError, replace
 from datetime import date
 from email.message import Message
@@ -2129,17 +2130,19 @@ def test_s2_post_effect_original_proof_rejects_foreign_accepted_identity(
 
 
 @pytest.mark.parametrize(
-    ("original_count", "observed", "expected"),
+    ("original_count", "observed", "zero_source_proven", "expected"),
     [
-        (1, True, "COMPLETE"),
-        (1, False, "INDETERMINATE"),
-        (0, True, "INDETERMINATE"),
+        (1, True, False, "COMPLETE"),
+        (1, False, False, "INDETERMINATE"),
+        (0, True, False, "INDETERMINATE"),
+        (0, True, True, "COMPLETE"),
     ],
 )
 def test_nonactivation_exception_proof_reconciles_original_effects_without_replay(
     monkeypatch: pytest.MonkeyPatch,
     original_count: int,
     observed: bool,
+    zero_source_proven: bool,
     expected: str,
 ) -> None:
     source = WorkerRequest(435, "executor", "implement-change")
@@ -2159,6 +2162,22 @@ def test_nonactivation_exception_proof_reconciles_original_effects_without_repla
     )
     monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
     monkeypatch.setattr(bridge, "parse_effect_batch", lambda *_a, **_kw: batch)
+    monkeypatch.setattr(
+        bridge, "_verified_zero_original_accepted_effects", lambda **_kw: zero_source_proven
+    )
+    original_observations: list[tuple[StagedEffect, ...]] = []
+    original_observer = bridge._observe_accepted_effect_prefix
+
+    def track_original_proof(
+        effects: Sequence[StagedEffect],
+        observe: Callable[[StagedEffect], bool],
+        *,
+        source: WorkerRequest,
+    ) -> tuple[bridge.RecoveryEvidenceNode, ...] | None:
+        original_observations.append(tuple(effects))
+        return original_observer(effects, observe, source=source)
+
+    monkeypatch.setattr(bridge, "_observe_accepted_effect_prefix", track_original_proof)
     seen: list[StagedEffect] = []
 
     class Observer:
@@ -2181,6 +2200,9 @@ def test_nonactivation_exception_proof_reconciles_original_effects_without_repla
     )
     assert proof.disposition == expected
     assert seen == ([effect] if original_count else [])
+    assert original_observations == (
+        [tuple(batch.effects)] if original_count or zero_source_proven else []
+    )
 
 
 @pytest.mark.parametrize(
