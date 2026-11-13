@@ -258,7 +258,9 @@ def test_staged_commit_positive_projection_across_original_effect_cardinality(
         ],
     }
     artifact = _assumed_qualified_history_for_postcondition_test(monkeypatch, record, checkpoint)
-    monkeypatch.setattr(application, "_accepted_effect_never_called_in_history", lambda **_kw: False)
+    monkeypatch.setattr(
+        application, "_accepted_effect_never_called_in_history", lambda **_kw: False
+    )
     monkeypatch.setattr(
         application, "_verified_zero_original_accepted_effects", lambda **_kw: zero_source_proven
     )
