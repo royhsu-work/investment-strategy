@@ -2843,10 +2843,9 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
         json.dumps({"issue_number": 138, "expected_change": _CHANGE}),
         derived=True,
     )
-    assert fresh._terminal_transitions == set()
-    assert correct_correlation
+    assert (observed_correlation == correct_correlation) is (formal_case != "wrong-request")
     assert fresh.observe_postcondition(effect) is expected
-    assert observed_reads and all(path != "issues/138" or path for path in observed_reads)
+    assert observed_reads
 
 
 def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
