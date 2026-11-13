@@ -184,10 +184,10 @@ def test_staged_commit_positive_projection_across_original_effect_cardinality(
     zero_source_proven: bool,
     expected: str,
 ) -> None:
-    """A durable formal + successor converges without exhaustive attempt history.
+    """Durable final projection can reconcile a lost response without attempt inventory.
 
-    Zero original Effects need *positive physical source* proof, not inference
-    from an empty accepted semantic projection. No case permits a new write.
+    Zero original Effects still require positive physical-source qualification;
+    an unattempted successor is handled by the existing no-write recovery path.
     """
     from investment_strategy.scheduled_agent_effects import derived_transition_effect
 
@@ -239,10 +239,10 @@ def test_staged_commit_positive_projection_across_original_effect_cardinality(
     )
     attempted = (*originals, formal, successor)
     checkpoint: dict[str, object] = {
-        "mutation_status": "not-complete",
-        "unfinished_boundary": "effect-precondition-exception",
-        "write_call_entered": False,
-        "operation_stage": "READ",
+        "mutation_status": "unknown",
+        "unfinished_boundary": "derived-effect-postcondition",
+        "write_call_entered": True,
+        "operation_stage": "AFTER_WRITE",
         "rejection": None,
         "failed_effect_index": len(attempted) - 1,
         "failed_effect_kind": successor.kind,
