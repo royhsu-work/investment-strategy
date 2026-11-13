@@ -7196,9 +7196,7 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
             ),
         )
     )
-    formal = StagedEffect(
-        "issue-comment", json.dumps({"issue_number": 435, "body": formal_body})
-    )
+    formal = StagedEffect("issue-comment", json.dumps({"issue_number": 435, "body": formal_body}))
     checkpoint: dict[str, object] = {
         "attempted_effects": [
             {"kind": formal.kind, "payload_json": formal.payload_json, "derived": False}
