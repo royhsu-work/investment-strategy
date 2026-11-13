@@ -1372,6 +1372,12 @@ def test_archive_phase_drift_observes_original_dispatch_before_writing_new_pr(
     history_artifact = _assumed_qualified_history_for_postcondition_test(
         monkeypatch, record, failure
     )
+    # The raw worker intent contains zero physical original worker Effects.
+    # Application's projected workflow-dispatch Effect remains separately
+    # observable and may not be rebound to a newly projected carrier.
+    monkeypatch.setattr(
+        application, "_verified_zero_original_accepted_effects", lambda **_kw: True
+    )
 
     def original_complete() -> bool:
         return application.accepted_read_only_effects_complete(
@@ -1556,6 +1562,11 @@ def test_merge_phase_drift_preserves_original_merge_before_ref_cleanup(
     monkeypatch.setattr(application, "GitHubEffectAdapter", Reader)
     history_artifact = _assumed_qualified_history_for_postcondition_test(
         monkeypatch, record, failure
+    )
+    # Physical worker originals are empty; the Application-owned merge write
+    # is still observed at its exact historical Effect identity, not replayed.
+    monkeypatch.setattr(
+        application, "_verified_zero_original_accepted_effects", lambda **_kw: True
     )
     assert application.accepted_read_only_effects_complete(
         record=record,
