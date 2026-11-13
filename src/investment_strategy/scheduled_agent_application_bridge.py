@@ -6234,6 +6234,17 @@ def _recovery_obligation(effect: StagedEffect, source: WorkerRequest) -> Recover
     return "ORIGINAL_EFFECT"
 
 
+def _accepted_frontier_obligation(
+    original_count: int, index: int
+) -> RecoveryObligation | None:
+    """One source of truth for accepted ordinal Original/Formal/Successor slots."""
+    if not 0 <= index < original_count + 2:
+        return None
+    if index < original_count:
+        return "ORIGINAL_EFFECT"
+    return "FORMAL_RESULT" if index == original_count else "SUCCESSOR"
+
+
 def _observe_accepted_effect_prefix(
     effects: Sequence[StagedEffect],
     observe_postcondition: Callable[[StagedEffect], bool],
@@ -6652,7 +6663,10 @@ def _read_accepted_never_called_evidence(
         return error("SOURCE_GET", "original accepted source read unavailable")
     except (RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return error("SOURCE", "original accepted source unqualified")
-    if original.typed_result is None or failed_index > len(original.effects) + 2:
+    if (
+        original.typed_result is None
+        or _accepted_frontier_obligation(len(original.effects), failed_index) is None
+    ):
         return error("SOURCE_IDENTITY", "immutable original result/frontier invalid", conflict=True)
     if not original.effects:
         try:
@@ -7017,14 +7031,12 @@ def classify_accepted_read_only_effects(
                 return AcceptedPostEffectProof(
                     "COMPLETE", "exact accepted formal and successor already observed"
                 )
-        # The accepted Effect layout defines the lawful no-call frontier:
-        # originals -> formal result -> derived successor. A completed
-        # successor has no next Effect whose non-call can prove final routing.
-        frontier_obligations = cast(
-            tuple[RecoveryObligation, ...],
-            ("ORIGINAL_EFFECT",) * len(original.effects) + ("FORMAL_RESULT", "SUCCESSOR"),
+        # The accepted frontier and the source reader share one ordinal owner;
+        # there is no not-called Effect after the unique derived successor.
+        frontier_obligation = _accepted_frontier_obligation(
+            len(original.effects), historical_frontier
         )
-        if historical_frontier >= len(frontier_obligations):
+        if frontier_obligation is None:
             return AcceptedPostEffectProof(
                 "INDETERMINATE",
                 "accepted successor observed but final consequence not yet proven",
@@ -7043,7 +7055,7 @@ def classify_accepted_read_only_effects(
         # frontier; only the existing Application may reauthorize consequences.
         historical_proof = evaluate_recovery_evidence(
             RecoveryEvidenceNode(
-                frontier_obligations[historical_frontier],
+                frontier_obligation,
                 None,
                 final_postcondition=False,
                 never_called_evidence=history,
