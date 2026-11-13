@@ -27,6 +27,7 @@ from investment_strategy.scheduled_agent_action_model import (
 from investment_strategy.scheduled_agent_action_model import (
     ApplicationRejection,
     ApplicationRejectionKind,
+    BoundedActionResult,
     ResultKind,
     TypedResult,
     next_action,
@@ -6873,8 +6874,8 @@ def classify_accepted_read_only_effects(
                 "UNSAFE" if original.category == "CONFLICT" else "INDETERMINATE",
                 original.detail,
             )
-        # The shared qualifier proves a typed result before returning EffectBatch.
-        assert original.typed_result is not None
+        # The qualified EffectBatch already excludes an absent typed result.
+        typed_original = cast(BoundedActionResult, original.typed_result)
         # Positive postconditions cannot rehabilitate an immutable Effect
         # identity mismatch; physical zero was already source-qualified.
         prefix_length = min(len(original.effects), len(attempted))
@@ -6970,7 +6971,7 @@ def classify_accepted_read_only_effects(
             expected_successor = derived_transition_effect(
                 issue_number=source.issue_number,
                 change=record.change,
-                successor=next_action(original.typed_result.action, original.typed_result.result),
+                successor=next_action(typed_original.action, typed_original.result),
             )
             if (
                 formal_identity is not None
