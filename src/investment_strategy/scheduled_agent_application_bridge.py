@@ -6133,7 +6133,6 @@ _POST_EFFECT_ADMISSION: dict[
 RecoveryProofDisposition = Literal["SATISFIED", "NOT_APPLIED", "UNKNOWN", "CONFLICT"]
 
 
-
 @dataclass(frozen=True)
 class CompleteNeverCalledWitness:
     """Exact accepted-intent-wide no-call chain, never a write authorization."""
@@ -6207,9 +6206,8 @@ def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofDispo
             disposition = "UNKNOWN"
         elif fact.final_postcondition is True:
             disposition = "SATISFIED"
-        elif (
-            fact.final_postcondition is False
-            and isinstance(fact.never_called_evidence, CompleteNeverCalledWitness)
+        elif fact.final_postcondition is False and isinstance(
+            fact.never_called_evidence, CompleteNeverCalledWitness
         ):
             disposition = "NOT_APPLIED"
         else:
@@ -6559,9 +6557,7 @@ def _read_accepted_never_called_evidence(
     This is a read adapter, not a policy, mutation guard, or retry permit.
     """
 
-    def error(
-        stage: str, detail: str, *, conflict: bool = False
-    ) -> TypedEvidenceError:
+    def error(stage: str, detail: str, *, conflict: bool = False) -> TypedEvidenceError:
         return TypedEvidenceError(
             "CONFLICT" if conflict else "UNKNOWN",
             stage,

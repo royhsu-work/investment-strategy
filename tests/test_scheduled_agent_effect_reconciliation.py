@@ -545,7 +545,7 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         monkeypatch.setattr(
             application,
             "_read_accepted_never_called_evidence",
-            lambda **_kw: _s1_history_stub(False)
+            lambda **_kw: _s1_history_stub(False),
         )
         monkeypatch.setattr(
             application, "consequence_postconditions_complete", lambda *_a, **_kw: True
@@ -3499,9 +3499,7 @@ def _s1_history_stub(
 ) -> application.CompleteNeverCalledWitness | application.TypedEvidenceError:
     """Native history already independently tested; caller tests supply facts only."""
     if qualifies:
-        return application.CompleteNeverCalledWitness(
-            91, 0, "a" * 64, ((7001, 1, 7003),)
-        )
+        return application.CompleteNeverCalledWitness(91, 0, "a" * 64, ((7001, 1, 7003),))
     return application.TypedEvidenceError(
         "UNKNOWN", "TEST_HISTORY", "not qualified in this test", 91
     )
@@ -3902,9 +3900,7 @@ def test_read_only_deferral_preserves_immutable_execution_frontier(
 
 def test_bare_boolean_cannot_prove_intent_wide_never_called() -> None:
     """R3/R5 RED: a caller-supplied boolean is not a qualified no-call witness."""
-    effect = StagedEffect(
-        "issue-comment", '{"issue_number":138,"body":"non-idempotent effect"}'
-    )
+    effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"non-idempotent effect"}')
     # A bare Boolean is no longer part of the typed IR contract.
     with pytest.raises(TypeError):
         application.RecoveryEvidenceNode(
