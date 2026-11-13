@@ -4909,6 +4909,50 @@ def _write_carrier_outputs(result: ApplyResult) -> None:
         output.write("\n".join(lines) + "\n")
 
 
+def _read_verified_application_artifact(
+    repository: str,
+    token: str,
+    *,
+    metadata: Mapping[str, object],
+    run_id: int,
+    run_head_sha: str,
+    download: Callable[[str, str, str], bytes],
+) -> tuple[int, str, Mapping[str, object]] | None:
+    """One exact metadata, bytes, digest and JSON reader for both native artifacts.
+
+    The recovery and exception readers retain their separate run/stage/lineage
+    contracts. This reader cannot admit a continuation or authorize a write.
+    """
+
+    artifact_id = _strict_positive_int(metadata.get("id"))
+    digest = metadata.get("digest")
+    artifact_run = metadata.get("workflow_run")
+    if (
+        artifact_id is None
+        or metadata.get("expired") is not False
+        or not isinstance(digest, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+        or not isinstance(artifact_run, Mapping)
+        or artifact_run.get("id") != run_id
+        or artifact_run.get("head_sha") != run_head_sha
+    ):
+        return None
+    raw = download(repository, token, f"actions/artifacts/{artifact_id}/zip")
+    if (
+        not raw
+        or len(raw) > _MAX_APPLICATION_RECOVERY_BYTES
+        or f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest
+    ):
+        return None
+    try:
+        decoded = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(decoded, Mapping):
+        return None
+    return artifact_id, digest, cast(Mapping[str, object], decoded)
+
+
 def read_application_recovery_artifact(
     repository: str,
     token: str,
@@ -4994,38 +5038,17 @@ def read_application_recovery_artifact(
     if len(artifacts) != 1:
         return unavailable()
     artifact = cast(Mapping[str, object], artifacts[0])
-    artifact_id = _strict_positive_int(artifact.get("id"))
-    artifact_digest = artifact.get("digest")
-    workflow_run = artifact.get("workflow_run")
-    if (
-        artifact_id is None
-        or artifact.get("expired") is not False
-        or not isinstance(artifact_digest, str)
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_digest) is None
-        or not isinstance(workflow_run, Mapping)
-        or workflow_run.get("id") != run_id
-        or workflow_run.get("head_sha") != run.get("head_sha")
-    ):
+    verified = _read_verified_application_artifact(
+        repository,
+        token,
+        metadata=artifact,
+        run_id=run_id,
+        run_head_sha=cast(str, run["head_sha"]),
+        download=download,
+    )
+    if verified is None:
         return unavailable()
-    try:
-        raw = download(repository, token, f"actions/artifacts/{artifact_id}/zip")
-    except (HTTPError, OSError, RuntimeError, ValueError):
-        # The exact artifact was observed; read refusal must survive through
-        # the application-completion consumer, not be flattened into absence.
-        raise
-    if (
-        not raw
-        or len(raw) > _MAX_APPLICATION_RECOVERY_BYTES
-        or f"sha256:{hashlib.sha256(raw).hexdigest()}" != artifact_digest
-    ):
-        return unavailable()
-    try:
-        decoded = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return unavailable()
-    if not isinstance(decoded, Mapping):
-        return unavailable()
-    document = cast(Mapping[str, object], decoded)
+    artifact_id, artifact_digest, document = verified
     expected_keys = {
         "schema",
         "repository",
@@ -5443,26 +5466,17 @@ def read_application_exception_artifact(
     )
     if artifact is None:
         return unavailable()
-    artifact_id = _strict_positive_int(artifact.get("id"))
-    digest = artifact.get("digest")
-    if (
-        artifact_id is None
-        or artifact.get("expired") is not False
-        or not isinstance(digest, str)
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
-    ):
+    verified = _read_verified_application_artifact(
+        repository,
+        token,
+        metadata=artifact,
+        run_id=run_id,
+        run_head_sha=cast(str, run["head_sha"]),
+        download=download,
+    )
+    if verified is None:
         return unavailable()
-    raw = download(repository, token, f"actions/artifacts/{artifact_id}/zip")
-    if (
-        not raw
-        or len(raw) > _MAX_APPLICATION_RECOVERY_BYTES
-        or f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest
-    ):
-        return unavailable()
-    try:
-        raw_document = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return unavailable()
+    artifact_id, digest, raw_document = verified
     document = _qualified_exception_document(
         raw_document,
         repository=repository,
