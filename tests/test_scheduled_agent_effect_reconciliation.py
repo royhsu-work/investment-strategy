@@ -620,6 +620,19 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         assert [node.obligation for node in observed_nodes if node.effect == successor] == [
             "SUCCESSOR"
         ]
+        if successor_durable:
+            # Even a never-entered successor that becomes durable must pass
+            # the shared typed DAG, not a caller-owned Boolean completion gate.
+            positive = [
+                node
+                for node in observed_nodes
+                if node.effect == successor and node.final_postcondition is True
+            ]
+            assert len(positive) == 1
+            assert [parent.effect for parent in positive[0].depends_on] == [
+                *original.effects,
+                formal,
+            ]
     # The historical no-call frontier is a typed DAG obligation, not always
     # an ORIGINAL_EFFECT. Positive already-committed successor may exit early.
     frontiers = [node.obligation for node in observed_nodes if node.effect is None]
