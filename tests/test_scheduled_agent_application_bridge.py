@@ -6658,9 +6658,7 @@ def test_native_executor_preparation_exception_source_is_qualified_without_recov
                         "id": artifact_id,
                         "name": "application-execution-exception.json",
                         "expired": False,
-                        "digest": (
-                            "sha256:" + "f" * 64 if tamper == "bad-digest" else digest
-                        ),
+                        "digest": ("sha256:" + "f" * 64 if tamper == "bad-digest" else digest),
                         "workflow_run": {"id": run_id, "head_sha": revision},
                     }
                 ],
