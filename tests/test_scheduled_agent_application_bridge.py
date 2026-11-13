@@ -2096,7 +2096,8 @@ def test_s2_post_effect_original_proof_rejects_foreign_accepted_identity(
     effect = StagedEffect("issue-comment", '{"issue_number":435,"body":"original"}')
     monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", lambda **_k: raw)
     monkeypatch.setattr(
-        bridge, "parse_effect_batch",
+        bridge,
+        "parse_effect_batch",
         lambda *_a, **_k: SimpleNamespace(
             typed_result=SimpleNamespace(
                 result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))

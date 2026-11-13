@@ -6334,9 +6334,11 @@ def _accepted_original_source_identity_error(
     source: WorkerRequest,
 ) -> TypedEvidenceError | None:
     """Exact immutable ACCEPTED identity fact, shared before any source read."""
-    if record.disposition == "ACCEPTED" and (
-        record.issue_number, record.role, record.action
-    ) == (source.issue_number, source.role, source.action):
+    if record.disposition == "ACCEPTED" and (record.issue_number, record.role, record.action) == (
+        source.issue_number,
+        source.role,
+        source.action,
+    ):
         return None
     return TypedEvidenceError(
         "CONFLICT",
@@ -6361,18 +6363,20 @@ def _qualified_accepted_original_effects(
     if source_error is not None:
         return source_error
     try:
-        batch = parse_effect_batch(
-            raw_worker_result, source, authorized_change=record.change
-        )
+        batch = parse_effect_batch(raw_worker_result, source, authorized_change=record.change)
     except (TypeError, ValueError, json.JSONDecodeError):
         return TypedEvidenceError(
-            "CONFLICT", "ORIGINAL_PARSE",
-            "accepted original Effect identity invalid", record.request_comment_id,
+            "CONFLICT",
+            "ORIGINAL_PARSE",
+            "accepted original Effect identity invalid",
+            record.request_comment_id,
         )
     if batch.typed_result is None or batch.typed_result.result.kind.value != record.result_kind:
         return TypedEvidenceError(
-            "CONFLICT", "ORIGINAL_RESULT",
-            "accepted original result identity invalid", record.request_comment_id,
+            "CONFLICT",
+            "ORIGINAL_RESULT",
+            "accepted original result identity invalid",
+            record.request_comment_id,
         )
     return batch
 
@@ -6414,9 +6418,7 @@ def _observe_accepted_post_effect_result(
                 "INDETERMINATE", "accepted original Effect source proof unavailable"
             )
         except (TypeError, ValueError, json.JSONDecodeError):
-            return AcceptedPostEffectProof(
-                "UNSAFE", "accepted original Effect identity invalid"
-            )
+            return AcceptedPostEffectProof("UNSAFE", "accepted original Effect identity invalid")
         batch = _qualified_accepted_original_effects(
             record=record, source=source, raw_worker_result=raw
         )
