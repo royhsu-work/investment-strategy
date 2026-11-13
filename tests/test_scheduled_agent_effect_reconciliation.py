@@ -7,7 +7,7 @@ import json
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -3901,9 +3901,10 @@ def test_read_only_deferral_preserves_immutable_execution_frontier(
 def test_bare_boolean_cannot_prove_intent_wide_never_called() -> None:
     """R3/R5 RED: a caller-supplied boolean is not a qualified no-call witness."""
     effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"non-idempotent effect"}')
-    # A bare Boolean is no longer part of the typed IR contract.
+    # This intentionally invalid historical call is a runtime-negative test.
+    # Cast the constructor, not the proof, so mypy still checks production types.
     with pytest.raises(TypeError):
-        application.RecoveryEvidenceNode(
+        cast(Any, application.RecoveryEvidenceNode)(
             "ORIGINAL_EFFECT",
             effect,
             final_postcondition=False,
