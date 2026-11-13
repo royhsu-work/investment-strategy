@@ -6751,6 +6751,14 @@ def classify_accepted_read_only_effects(
         # original, immutable accepted Effect identity is contradictory.
         # An empty semantic projection is not proof of zero physical Effects;
         # leave that historical qualification to its existing source reader.
+        if original is not None and not original.effects:
+            # An empty semantic projection is not proof of zero physical
+            # Effects. Bind the original ingress source before using the
+            # shared positive final-state DAG for any cardinality.
+            if not _verified_zero_original_accepted_effects(
+                record=record, source=source, repository=repository, token=token
+            ):
+                original = None
         if original is not None and original.effects:
             prefix_length = min(len(original.effects), len(attempted))
             if attempted[:prefix_length] != original.effects[:prefix_length]:
@@ -6835,7 +6843,6 @@ def classify_accepted_read_only_effects(
             attempted[-1].derived
             and original is not None
             and original.typed_result is not None
-            and bool(original.effects)
             and original.typed_result.result.kind.value == record.result_kind
             and len(attempted) == len(original.effects) + 2
             and attempted[:-2] == original.effects
