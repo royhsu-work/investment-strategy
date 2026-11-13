@@ -143,10 +143,10 @@ def test_recovery_dag_shared_dependencies_never_authorize_successor_write() -> N
         ),
         depends_on=(completed, unresolved),
     )
-    assert application.evaluate_recovery_evidence(completed) == "SATISFIED"
-    assert application.evaluate_recovery_evidence(formal_node) == "UNKNOWN"
+    assert application.evaluate_recovery_evidence(completed).disposition == "SATISFIED"
+    assert application.evaluate_recovery_evidence(formal_node).disposition == "UNKNOWN"
     ready_formal = replace(formal_node, depends_on=(completed,))
-    assert application.evaluate_recovery_evidence(ready_formal) == "NOT_APPLIED"
+    assert application.evaluate_recovery_evidence(ready_formal).disposition == "NOT_APPLIED"
     waiting_successor = application.RecoveryEvidenceNode(
         "SUCCESSOR",
         successor,
@@ -156,11 +156,11 @@ def test_recovery_dag_shared_dependencies_never_authorize_successor_write() -> N
         ),
         depends_on=(completed, ready_formal, completed),
     )
-    assert application.evaluate_recovery_evidence(waiting_successor) == "UNKNOWN"
+    assert application.evaluate_recovery_evidence(waiting_successor).disposition == "UNKNOWN"
     complete_formal = replace(ready_formal, final_postcondition=True)
-    assert application.evaluate_recovery_evidence(complete_formal) == "SATISFIED"
+    assert application.evaluate_recovery_evidence(complete_formal).disposition == "SATISFIED"
     eligible_successor = replace(waiting_successor, depends_on=(completed, complete_formal))
-    assert application.evaluate_recovery_evidence(eligible_successor) == "NOT_APPLIED"
+    assert application.evaluate_recovery_evidence(eligible_successor).disposition == "NOT_APPLIED"
     # IR proof never calls an Effect; the shell must independently reauthorize it.
 
 
@@ -176,9 +176,9 @@ def test_positive_descendant_requires_satisfied_upstream_obligation(stage: str) 
         True,
         depends_on=(missing,),
     )
-    assert application.evaluate_recovery_evidence(descendant) == "UNKNOWN"
+    assert application.evaluate_recovery_evidence(descendant).disposition == "UNKNOWN"
     assert (
-        application.evaluate_recovery_evidence(replace(descendant, depends_on=(completed,)))
+        application.evaluate_recovery_evidence(replace(descendant, depends_on=(completed,))).disposition
         == "SATISFIED"
     )
 
@@ -198,8 +198,8 @@ def test_recovery_dag_conflicting_provenance_blocks_positive_descendant() -> Non
         True,
         depends_on=(contradiction,),
     )
-    assert application.evaluate_recovery_evidence(contradiction) == "CONFLICT"
-    assert application.evaluate_recovery_evidence(proven) == "CONFLICT"
+    assert application.evaluate_recovery_evidence(contradiction).disposition == "CONFLICT"
+    assert application.evaluate_recovery_evidence(proven).disposition == "CONFLICT"
 
 
 @pytest.mark.parametrize("second_satisfied", [False, True])
@@ -225,7 +225,7 @@ def test_shared_original_effect_prefix_observation(
         assert nodes is not None
         assert len(nodes) == 2
         assert all(not node.depends_on for node in nodes)
-        assert application.evaluate_recovery_evidence(nodes[-1]) == "SATISFIED"
+        assert application.evaluate_recovery_evidence(nodes[-1]).disposition == "SATISFIED"
 
 
 def test_positive_original_effects_are_shared_flat_leaves() -> None:
@@ -250,7 +250,7 @@ def test_positive_original_effects_are_shared_flat_leaves() -> None:
     assert (
         application.evaluate_recovery_evidence(
             application.RecoveryEvidenceNode("FORMAL_RESULT", original[0], True, depends_on=leaves)
-        )
+        ).disposition
         == "SATISFIED"
     )
 
@@ -454,7 +454,8 @@ def test_r9_conflicting_immutable_effect_is_unsafe_even_if_current_postcondition
     )
     assert proof.disposition == "UNSAFE"
     assert proof.continuation == "REJECT"
-    assert proof.original_effect_proof == "CONFLICT"
+    assert proof.original_effect_proof is not None
+    assert proof.original_effect_proof.disposition == "CONFLICT"
 
 
 @pytest.mark.parametrize("malformed_slot", ["FORMAL_RESULT", "SUCCESSOR"])
@@ -745,7 +746,7 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
     observed_nodes: list[application.RecoveryEvidenceNode] = []
     original_evaluator = application.evaluate_recovery_evidence
 
-    def capture(node: application.RecoveryEvidenceNode) -> application.RecoveryProofDisposition:
+    def capture(node: application.RecoveryEvidenceNode) -> application.RecoveryProofResult:
         observed_nodes.append(node)
         return original_evaluator(node)
 
