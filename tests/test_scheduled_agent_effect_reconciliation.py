@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import sys
 from dataclasses import replace
@@ -49,6 +50,13 @@ def test_s2c_no_legacy_boolean_recovery_decision_owner() -> None:
     """RED: preserve typed proof outcomes, never a second Boolean projection."""
     assert "accepted_read_only_effects_complete" not in vars(application)
     assert callable(application.classify_accepted_read_only_effects)
+
+
+def test_s2o_r9_original_prefix_identity_has_one_qualification_owner() -> None:
+    """R9 must reuse the exact checkpoint prefix gate, not compare it again."""
+    source = inspect.getsource(application.classify_accepted_read_only_effects)
+    assert "attempted[:prefix_length] != original.effects[:prefix_length]" in source
+    assert "attempted[: index + 1] == original.effects[: index + 1]" not in source
 
 
 @pytest.mark.parametrize(
