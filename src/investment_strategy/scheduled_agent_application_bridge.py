@@ -6984,7 +6984,10 @@ def classify_accepted_read_only_effects(
                 # Commit of the formal result does not prove the final
                 # routing/terminal projection. Only the existing authoritative
                 # Effect adapter can observe that later durable consequence.
-                and adapter.observe_postcondition(expected_successor)
+                and (
+                    attempted_proof == "SATISFIED"
+                    or (non_entry and adapter.observe_postcondition(expected_successor))
+                )
                 and consequence_postconditions_complete(
                     record.raw_worker_result,
                     source=source,
