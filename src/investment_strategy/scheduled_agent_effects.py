@@ -73,6 +73,7 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
     qualify_current_formal_consequence,
 )
+from investment_strategy.scheduled_agent_formal_result import FormalLifecycleEvent
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     WorkerRequest,
@@ -3210,9 +3211,11 @@ class GitHubEffectAdapter:
                 return tuple(events)
             page += 1
 
-    def _formal_transition_is_qualified(self, effect: StagedEffect) -> bool:
+    def _formal_transition_is_qualified(
+        self, effect: StagedEffect, *, terminal_postcondition: bool = False
+    ) -> bool:
         if self.authorized_change == "unset":
-            return True
+            return not terminal_postcondition
         payload = _effect_payload(effect)
         current = self._current_issue()
         observation = None if current is None else normalize_github_issue(current)
@@ -3221,7 +3224,7 @@ class GitHubEffectAdapter:
             or observation is None
             or not observation.authoritative
             or observation.issue_number != self.source.issue_number
-            or observation.state != "open"
+            or observation.state != ("closed" if terminal_postcondition else "open")
             or observation.change != self.authorized_change
             or self.current_revision is None
         ):
@@ -3244,7 +3247,10 @@ class GitHubEffectAdapter:
             and observation.routing == expected_routing
             and expected_routing == self._accepted_successor_routing()
         )
-        if not at_source_frontier and not at_accepted_successor_frontier:
+        if terminal_postcondition:
+            if not self.accepted_intent or not expected_terminal or observation.routing is not None:
+                return False
+        elif not at_source_frontier and not at_accepted_successor_frontier:
             return False
         formal_comments = self._formal_comments()
         lifecycle_events = self._formal_lifecycle_events() if formal_comments else ()
@@ -3255,7 +3261,7 @@ class GitHubEffectAdapter:
             current_routing=observation.routing,
             comments=formal_comments,
             current_revision=self.current_revision,
-            mode="pending",
+            mode="current" if terminal_postcondition else "pending",
             expected_routing=expected_routing,
             expected_terminal=expected_terminal,
             source_routing=(self.source.role, self.source.action),
@@ -3317,7 +3323,19 @@ class GitHubEffectAdapter:
                     qualification_input,
                     authorization_ancestry=tuple(ancestry),
                 )
-        return qualify_current_formal_consequence(qualification_input).qualified
+        qualified = qualify_current_formal_consequence(qualification_input)
+        if not terminal_postcondition:
+            return qualified.qualified
+        # A closed Issue is attributable to this accepted request only when
+        # the exact formal result and terminal lifecycle are also qualified.
+        formal = qualified.event
+        return bool(
+            qualified.qualified
+            and isinstance(formal, FormalLifecycleEvent)
+            and (formal.role, formal.action) == (self.source.role, self.source.action)
+            and formal.result_kind == self.expected_result_kind
+            and formal.application_correlation == self._expected_formal_correlation()
+        )
 
     def guard(self, effect: StagedEffect) -> bool:
         self._last_rejection = None
@@ -4118,7 +4136,15 @@ class GitHubEffectAdapter:
             current = self._current_issue()
             observation = None if current is None else normalize_github_issue(current)
             return bool(
-                effect in self._terminal_transitions
+                (
+                    effect in self._terminal_transitions
+                    or (
+                        self.accepted_intent
+                        and self._formal_transition_is_qualified(
+                            effect, terminal_postcondition=True
+                        )
+                    )
+                )
                 and payload is not None
                 and observation is not None
                 and observation.authoritative
