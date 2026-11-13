@@ -3869,6 +3869,27 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
     assert isinstance(phantom, application.TypedEvidenceError)
     assert (phantom.category, phantom.stage) == ("CONFLICT", "SOURCE_IDENTITY")
 
+    # The native history witness must consume the same accepted original
+    # result identity proof as the READ_ONLY classifier. A re-read of this
+    # exact source with a different semantic result kind is a contradiction,
+    # even when the immutable Effect list and Artifact chain are unchanged.
+    changed_result = dict(json.loads(raw), result_kind="blocked")
+    monkeypatch.setattr(
+        application,
+        "_accepted_worker_result_for_continuation",
+        lambda **_kw: json.dumps(changed_result),
+    )
+    mismatch = application._read_accepted_never_called_evidence(
+        record=record,
+        source=source,
+        artifact=child,
+        failed_index=1,
+        repository="owner/repo",
+        token=REVISION,
+    )
+    assert isinstance(mismatch, application.TypedEvidenceError)
+    assert (mismatch.category, mismatch.stage) == ("CONFLICT", "ORIGINAL_RESULT")
+
 
 @pytest.mark.parametrize(
     ("boundary", "mutation_status", "entered", "classification"),
