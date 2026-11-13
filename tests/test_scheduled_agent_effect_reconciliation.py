@@ -405,7 +405,6 @@ def test_r9_conflicting_immutable_effect_is_unsafe_even_if_current_postcondition
     assert proof.original_effect_proof == "CONFLICT"
 
 
-
 @pytest.mark.parametrize("malformed_slot", ["FORMAL_RESULT", "SUCCESSOR"])
 def test_accepted_derived_slot_must_match_immutable_formal_and_successor_identity(
     monkeypatch: pytest.MonkeyPatch, malformed_slot: str
