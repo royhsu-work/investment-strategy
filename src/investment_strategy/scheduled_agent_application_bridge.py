@@ -6656,25 +6656,22 @@ def _read_accepted_never_called_evidence(
             token=token,
             request_comment_id=record.request_comment_id,
         )
-        original = parse_effect_batch(original_raw, source, authorized_change=record.change)
     except (HTTPError, OSError):
         return error("SOURCE_GET", "original accepted source read unavailable")
     except (RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return error("SOURCE", "original accepted source unqualified")
-    if (
-        original.typed_result is None
-        or _accepted_frontier_obligation(len(original.effects), failed_index) is None
-    ):
+    original = _qualified_accepted_original_effects(
+        record=record,
+        source=source,
+        raw_worker_result=original_raw,
+        repository=repository,
+        token=token,
+    )
+    if isinstance(original, TypedEvidenceError):
+        return original
+    if _accepted_frontier_obligation(len(original.effects), failed_index) is None:
         return error("SOURCE_IDENTITY", "immutable original result/frontier invalid", conflict=True)
-    if not original.effects:
-        try:
-            verified_zero = _verified_zero_original_accepted_effects(
-                record=record, source=source, repository=repository, token=token
-            )
-        except (HTTPError, OSError, RuntimeError, TypeError, ValueError):
-            return error("ZERO_ORIGINAL_GET", "original physical Effect count unavailable")
-        if not verified_zero:
-            return error("ZERO_ORIGINAL", "zero physical original Effects not proven")
+    typed_original = cast(BoundedActionResult, original.typed_result)
 
     current = artifact
     seen: set[tuple[int, int, int]] = set()
@@ -6723,7 +6720,7 @@ def _read_accepted_never_called_evidence(
                     issue_number=source.issue_number,
                     change=record.change,
                     successor=next_action(
-                        original.typed_result.action, original.typed_result.result
+                        typed_original.action, typed_original.result
                     ),
                 )
             except (RuntimeError, TypeError, ValueError):
