@@ -6329,6 +6329,41 @@ def _accepted_activation_effect_identity(
     return AcceptedActivationEffectIdentity("EXACT", original, matches[0])
 
 
+def _qualified_accepted_original_effects(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    raw_worker_result: str,
+) -> EffectBatch | TypedEvidenceError:
+    """One source-identity reader shared by accepted original proof stages.
+
+    Source qualification is evidence, not a mutation or Action decision.
+    The caller preserves the native read-only or post-effect stage boundary.
+    """
+    if record.disposition != "ACCEPTED" or (
+        record.issue_number, record.role, record.action
+    ) != (source.issue_number, source.role, source.action):
+        return TypedEvidenceError(
+            "CONFLICT", "ORIGINAL_SOURCE",
+            "accepted original source identity conflicts", record.request_comment_id,
+        )
+    try:
+        batch = parse_effect_batch(
+            raw_worker_result, source, authorized_change=record.change
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return TypedEvidenceError(
+            "CONFLICT", "ORIGINAL_PARSE",
+            "accepted original Effect identity invalid", record.request_comment_id,
+        )
+    if batch.typed_result is None or batch.typed_result.result.kind.value != record.result_kind:
+        return TypedEvidenceError(
+            "CONFLICT", "ORIGINAL_RESULT",
+            "accepted original result identity invalid", record.request_comment_id,
+        )
+    return batch
+
+
 def _observe_accepted_post_effect_result(
     *,
     record: ApplicationDecisionRecord,
@@ -6361,15 +6396,18 @@ def _observe_accepted_post_effect_result(
                 token=token,
                 request_comment_id=record.request_comment_id,
             )
-            batch = parse_effect_batch(raw, source, authorized_change=record.change)
         except OSError:
             return AcceptedPostEffectProof(
                 "INDETERMINATE", "accepted original Effect source proof unavailable"
             )
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return AcceptedPostEffectProof("UNSAFE", "accepted original Effect identity invalid")
-        if batch.typed_result is None or batch.typed_result.result.kind.value != record.result_kind:
-            return AcceptedPostEffectProof("UNSAFE", "accepted original result identity invalid")
+        batch = _qualified_accepted_original_effects(
+            record=record, source=source, raw_worker_result=raw
+        )
+        if isinstance(batch, TypedEvidenceError):
+            return AcceptedPostEffectProof(
+                "UNSAFE" if batch.category == "CONFLICT" else "INDETERMINATE",
+                batch.detail,
+            )
         if not batch.effects:
             # The signed accepted semantic projection may have omitted a
             # physical Effect. Verify its original request specifically at
@@ -6755,13 +6793,6 @@ def classify_accepted_read_only_effects(
     one. Neither outcome licenses a GitHub write or a synthetic Action.
     """
 
-    if (
-        record.disposition != "ACCEPTED"
-        or record.issue_number != source.issue_number
-        or record.role != source.role
-        or record.action != source.action
-    ):
-        return AcceptedPostEffectProof("UNSAFE", "read-only accepted source identity conflicts")
     boundary = _accepted_recovery_boundary(recovery_evidence)
     if boundary not in {"READ_ONLY", "POST_EFFECT_RESULT"}:
         return AcceptedPostEffectProof("UNSAFE", "read-only failure boundary is invalid")
@@ -6803,17 +6834,17 @@ def classify_accepted_read_only_effects(
         if type(index) is not int:
             return AcceptedPostEffectProof("UNSAFE", "read-only Effect index is invalid")
         non_entry = recovery_evidence.get("write_call_entered") is False
-        try:
-            original = parse_effect_batch(
-                record.raw_worker_result, source, authorized_change=record.change
+        original = _qualified_accepted_original_effects(
+            record=record, source=source, raw_worker_result=record.raw_worker_result
+        )
+        if isinstance(original, TypedEvidenceError):
+            return AcceptedPostEffectProof(
+                "UNSAFE" if original.category == "CONFLICT" else "INDETERMINATE",
+                original.detail,
             )
-        except (TypeError, ValueError, RuntimeError, json.JSONDecodeError):
-            original = None
-        # A witnessed postcondition cannot rehabilitate a checkpoint whose
-        # original, immutable accepted Effect identity is contradictory.
-        # An empty semantic projection is not proof of zero physical Effects;
-        # leave that historical qualification to its existing source reader.
-        if original is not None and original.effects:
+        # A witnessed postcondition cannot rehabilitate an immutable Effect
+        # identity contradiction, even if the current GitHub state is positive.
+        if original.effects:
             prefix_length = min(len(original.effects), len(attempted))
             if attempted[:prefix_length] != original.effects[:prefix_length]:
                 conflict = RecoveryEvidenceNode(
@@ -6878,8 +6909,7 @@ def classify_accepted_read_only_effects(
         # This uses the already-accepted source, not optional historic Runs.
         original_effect_proof: RecoveryProofDisposition | None = None
         if (
-            original is not None
-            and 0 <= index < len(original.effects)
+            0 <= index < len(original.effects)
             and attempted[: index + 1] == original.effects[: index + 1]
         ):
             original_effect_proof = attempted_proof
@@ -6895,7 +6925,6 @@ def classify_accepted_read_only_effects(
         # A missing result/route still requires the no-replay gate below.
         if (
             attempted[-1].derived
-            and original is not None
             and original.typed_result is not None
             and original.typed_result.result.kind.value == record.result_kind
             and (
