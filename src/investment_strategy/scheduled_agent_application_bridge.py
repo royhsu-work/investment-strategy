@@ -6763,15 +6763,11 @@ def _read_accepted_never_called_evidence(
                 attempted_revision=failure.get("attempt_revision"),
             )
         except (RuntimeError, TypeError, ValueError):
-            return error(
-                "FORMAL_IDENTITY", "Application-derived Effect mismatch", conflict=True
-            )
+            return error("FORMAL_IDENTITY", "Application-derived Effect mismatch", conflict=True)
         # An Application-owned control does not become a no-call witness
         # merely because its physical postcondition could be read elsewhere.
         if len(attempted) > len(original.effects) and qualified_suffix is None:
-            return error(
-                "FORMAL_IDENTITY", "Application-derived Effect mismatch", conflict=True
-            )
+            return error("FORMAL_IDENTITY", "Application-derived Effect mismatch", conflict=True)
         if index == failed_index and not (
             failure.get("mutation_status") == "not-complete"
             and failure.get("unfinished_boundary")
