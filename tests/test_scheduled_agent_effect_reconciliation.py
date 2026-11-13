@@ -51,6 +51,30 @@ def test_s2c_no_legacy_boolean_recovery_decision_owner() -> None:
     assert callable(application.classify_accepted_read_only_effects)
 
 
+@pytest.mark.parametrize(
+    ("category", "disposition", "admission"),
+    [
+        ("UNKNOWN", "INDETERMINATE", "OBSERVE"),
+        ("CONFLICT", "UNSAFE", "REJECT"),
+    ],
+)
+def test_s2e_typed_error_uses_existing_single_proof_presentation_owner(
+    category: Literal["UNKNOWN", "CONFLICT"],
+    disposition: str,
+    admission: str,
+) -> None:
+    """A qualified Result.Err is not NOT_APPLIED or permission to replay."""
+    error = application.TypedEvidenceError(
+        category, "ORIGINAL_GET", "source-qualified read failure", 91, 7003
+    )
+    proof = application.AcceptedPostEffectProof.from_evidence_error(error)
+    assert proof.disposition == disposition
+    assert proof.continuation == admission
+    assert proof.reason == error.detail
+    assert proof.carrier_plan is None
+    assert proof.original_effect_proof is None
+
+
 def test_recovery_dag_shared_dependencies_never_authorize_successor_write() -> None:
     """R2/R8: completion of one Effect is not formal/successor authority."""
     effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"effect"}')
