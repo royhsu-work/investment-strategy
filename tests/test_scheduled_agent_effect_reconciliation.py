@@ -209,8 +209,7 @@ def test_staged_commit_positive_projection_across_original_effect_cardinality(
             "evidence_ref": "issuecomment-138-qualified",
             "result_content": "accepted",
             "requested_effects": [
-                {"kind": effect.kind, "payload_json": effect.payload_json}
-                for effect in originals
+                {"kind": effect.kind, "payload_json": effect.payload_json} for effect in originals
             ],
         }
     )
