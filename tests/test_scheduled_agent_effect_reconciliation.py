@@ -629,7 +629,9 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         assert frontiers == ["SUCCESSOR" if successor_failed or formal_durable else "FORMAL_RESULT"]
     if formal_durable:
         successor_frontiers = [
-            node for node in observed_nodes if node.effect is None and node.obligation == "SUCCESSOR"
+            node
+            for node in observed_nodes
+            if node.effect is None and node.obligation == "SUCCESSOR"
         ]
         assert len(successor_frontiers) == 1
         assert [parent.effect for parent in successor_frontiers[0].depends_on] == [
