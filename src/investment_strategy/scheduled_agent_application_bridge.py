@@ -6329,6 +6329,23 @@ def _accepted_activation_effect_identity(
     return AcceptedActivationEffectIdentity("EXACT", original, matches[0])
 
 
+def _accepted_original_source_identity_error(
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+) -> TypedEvidenceError | None:
+    """Exact immutable ACCEPTED identity fact, shared before any source read."""
+    if record.disposition == "ACCEPTED" and (
+        record.issue_number, record.role, record.action
+    ) == (source.issue_number, source.role, source.action):
+        return None
+    return TypedEvidenceError(
+        "CONFLICT",
+        "ORIGINAL_SOURCE",
+        "accepted original source identity conflicts",
+        record.request_comment_id,
+    )
+
+
 def _qualified_accepted_original_effects(
     *,
     record: ApplicationDecisionRecord,
@@ -6340,13 +6357,9 @@ def _qualified_accepted_original_effects(
     Source qualification is evidence, not a mutation or Action decision.
     The caller preserves the native read-only or post-effect stage boundary.
     """
-    if record.disposition != "ACCEPTED" or (
-        record.issue_number, record.role, record.action
-    ) != (source.issue_number, source.role, source.action):
-        return TypedEvidenceError(
-            "CONFLICT", "ORIGINAL_SOURCE",
-            "accepted original source identity conflicts", record.request_comment_id,
-        )
+    source_error = _accepted_original_source_identity_error(record, source)
+    if source_error is not None:
+        return source_error
     try:
         batch = parse_effect_batch(
             raw_worker_result, source, authorized_change=record.change
@@ -6399,6 +6412,10 @@ def _observe_accepted_post_effect_result(
         except OSError:
             return AcceptedPostEffectProof(
                 "INDETERMINATE", "accepted original Effect source proof unavailable"
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return AcceptedPostEffectProof(
+                "UNSAFE", "accepted original Effect identity invalid"
             )
         batch = _qualified_accepted_original_effects(
             record=record, source=source, raw_worker_result=raw
@@ -6793,6 +6810,9 @@ def classify_accepted_read_only_effects(
     one. Neither outcome licenses a GitHub write or a synthetic Action.
     """
 
+    source_error = _accepted_original_source_identity_error(record, source)
+    if source_error is not None:
+        return AcceptedPostEffectProof("UNSAFE", source_error.detail)
     boundary = _accepted_recovery_boundary(recovery_evidence)
     if boundary not in {"READ_ONLY", "POST_EFFECT_RESULT"}:
         return AcceptedPostEffectProof("UNSAFE", "read-only failure boundary is invalid")
