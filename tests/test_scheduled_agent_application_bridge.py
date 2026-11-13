@@ -2275,18 +2275,30 @@ def test_accepted_original_source_captures_only_operational_failures(
 
 
 @pytest.mark.parametrize(
-    ("postcondition", "expected"),
-    [(True, "SATISFIED"), (False, "UNKNOWN")],
+    ("native_state", "expected"),
+    [
+        ("qualified", "SATISFIED"),
+        ("absent", "UNKNOWN"),
+        ("mismatched-object", "UNKNOWN"),
+        ("foreign-actor", "UNKNOWN"),
+    ],
 )
 def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_history(
-    monkeypatch: pytest.MonkeyPatch, postcondition: bool, expected: str
+    monkeypatch: pytest.MonkeyPatch, native_state: str, expected: str
 ) -> None:
-    """R2/R5: original-Effect completion is independent of past Run inventory.
+    """An accepted Effect is SATISFIED only after an exact native source GET.
 
-    This concerns the immutable original Effect only; formal result and
-    successor are distinct obligations, not permissions to replay writes.
+    A bool-only test double has no native object provenance. Reuse the real
+    GitHubEffectAdapter observer: exact comment identity, body, and Actions
+    attribution must be verified before the existing DAG receives True.
+    Historical Run inventory is irrelevant to a qualified positive source.
     """
     source = WorkerRequest(435, "executor", "implement-change")
+    native_body = "unique immutable accepted original Effect"
+    effect = StagedEffect(
+        "issue-comment",
+        json.dumps({"issue_number": source.issue_number, "body": native_body}),
+    )
     raw = json.dumps({"source": "immutable accepted effect"})
     record = _accepted_record(
         raw,
@@ -2296,7 +2308,6 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
         result_kind="blocked",
         request_comment_id=6796616018,
     )
-    effect = StagedEffect("github-mutation", "{}")
     checkpoint: dict[str, object] = {
         "attempted_effects": [{"kind": effect.kind, "payload_json": effect.payload_json}],
         "attempt_revision": _REVISION,
@@ -2306,41 +2317,81 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
     artifact = SimpleNamespace(document={"failure_evidence": checkpoint})
     monkeypatch.setattr(bridge, "_accepted_recovery_boundary", lambda _e: "READ_ONLY")
     monkeypatch.setattr(
-        bridge,
-        "_verified_attempted_effect_checkpoint",
-        lambda *_a, **_kw: (effect,),
+        bridge, "_verified_attempted_effect_checkpoint", lambda *_a, **_kw: (effect,)
     )
     monkeypatch.setattr(
         bridge,
         "_read_accepted_never_called_evidence",
         lambda **_kw: bridge.TypedEvidenceError(
-            "UNKNOWN", "TEST_HISTORY", "unavailable", 6796616018
+            "UNKNOWN", "TEST_HISTORY", "unavailable", record.request_comment_id
         ),
     )
     monkeypatch.setattr(
-        bridge,
-        "_accepted_worker_result_for_continuation",
-        lambda **_kw: raw,
+        bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw
     )
-    monkeypatch.setattr(
-        bridge,
-        "parse_effect_batch",
-        lambda *_a, **_kw: SimpleNamespace(
+
+    def accepted_original(
+        original_raw: str, original_source: WorkerRequest, *, authorized_change: str
+    ) -> object:
+        assert original_raw == record.raw_worker_result
+        assert original_source == source
+        assert authorized_change == record.change
+        return SimpleNamespace(
             typed_result=SimpleNamespace(
-                result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
+                result=SimpleNamespace(kind=SimpleNamespace(value=record.result_kind))
             ),
             effects=(effect,),
-        ),
+        )
+
+    monkeypatch.setattr(bridge, "parse_effect_batch", accepted_original)
+    native_id = 992001
+    original_comment: dict[str, object] = {
+        "id": native_id,
+        "body": native_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    observed_reads: list[str] = []
+    comment_list = (
+        []
+        if native_state == "absent"
+        else [
+            {
+                **original_comment,
+                "user": (
+                    {"login": "unrelated-user"}
+                    if native_state == "foreign-actor"
+                    else original_comment["user"]
+                ),
+            }
+        ]
     )
 
-    class Observer:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
+    def native_read(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        **_kwargs: object,
+    ) -> object:
+        assert method == "GET", "reconciliation must not retry the original write"
+        assert _repository == _REPOSITORY
+        observed_reads.append(api_path)
+        if api_path == "issues/435/comments?per_page=100&sort=created&direction=desc":
+            return comment_list
+        if api_path == f"issues/comments/{native_id}":
+            assert native_state in {"qualified", "mismatched-object"}
+            return (
+                original_comment
+                if native_state == "qualified"
+                else {**original_comment, "body": "unrelated native object"}
+            )
+        raise AssertionError(f"unexpected native recovery read: {api_path}")
 
-        def observe_postcondition(self, _effect: StagedEffect) -> bool:
-            return postcondition
-
-    monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
+    monkeypatch.setattr(
+        "investment_strategy.scheduled_agent_effects._github_json", native_read
+    )
     proof = bridge.classify_accepted_read_only_effects(
         record=record,
         source=source,
@@ -2351,23 +2402,21 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
         default_branch="main",
         recovery_artifact=artifact,  # type: ignore[arg-type]
     )
-    # A positive original Effect proof is not the formal-result/successor gate.
-    # Historical uncertainty may still block the *next write* independently.
     assert proof.original_effect_proof is not None
     assert proof.original_effect_proof.disposition == expected
-    assert proof.disposition == "INDETERMINATE"
-    if postcondition:
-        # S2r RED: a successful bool callback does not itself identify a
-        # source-qualified native GitHub observation. A positive accepted
-        # proof must retain the immutable accepted request/result/revision
-        # AND the real observed source-object identity in one witness.
-        witness = proof.original_effect_proof.witness
-        assert witness.request_comment_id == record.request_comment_id
-        assert witness.worker_result_sha256 == record.worker_result_sha256
-        assert witness.authorization_revision == record.authorization_revision
-        assert witness.repository == _REPOSITORY
-        assert witness.observed_revision == _REVISION
-        assert witness.source_object_ref is not None
+    assert proof.disposition == "INDETERMINATE"  # Formal/Successor remain separate.
+    assert record.worker_result_sha256 == hashlib.sha256(raw.encode()).hexdigest()
+    assert record.authorization_revision == _REVISION
+
+    witness = proof.original_effect_proof.witness
+    assert isinstance(witness, bridge.RecoveryEvidenceNode)
+    assert witness.effect == effect
+    assert witness.final_postcondition is (native_state == "qualified")
+    listing = "issues/435/comments?per_page=100&sort=created&direction=desc"
+    assert observed_reads.count(listing) == 2  # complete stable inventory twice
+    assert observed_reads.count(f"issues/comments/{native_id}") == (
+        1 if native_state in {"qualified", "mismatched-object"} else 0
+    )
 
 
 def test_noncompletion_accepted_intent_has_no_synthetic_checkpoint_obligation(
