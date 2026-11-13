@@ -3873,3 +3873,17 @@ def test_read_only_deferral_preserves_immutable_execution_frontier(
     bad_path = tmp_path / "forged-checkpoint.json"
     assert not persist(bad_path, forged)
     assert not bad_path.exists()
+
+
+def test_bare_boolean_cannot_prove_intent_wide_never_called() -> None:
+    """R3/R5 RED: a caller-supplied boolean is not a qualified no-call witness."""
+    effect = StagedEffect(
+        "issue-comment", '{"issue_number":138,"body":"non-idempotent effect"}'
+    )
+    unqualified = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT",
+        effect,
+        final_postcondition=False,
+        positive_never_called=True,
+    )
+    assert application.evaluate_recovery_evidence(unqualified) == "UNKNOWN"
