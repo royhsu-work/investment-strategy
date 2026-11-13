@@ -2326,9 +2326,7 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
             "UNKNOWN", "TEST_HISTORY", "unavailable", record.request_comment_id
         ),
     )
-    monkeypatch.setattr(
-        bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw
-    )
+    monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
 
     def accepted_original(
         original_raw: str, original_source: WorkerRequest, *, authorized_change: str
@@ -2389,9 +2387,7 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
             )
         raise AssertionError(f"unexpected native recovery read: {api_path}")
 
-    monkeypatch.setattr(
-        "investment_strategy.scheduled_agent_effects._github_json", native_read
-    )
+    monkeypatch.setattr("investment_strategy.scheduled_agent_effects._github_json", native_read)
     proof = bridge.classify_accepted_read_only_effects(
         record=record,
         source=source,
