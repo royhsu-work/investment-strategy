@@ -56,7 +56,9 @@ def test_recovery_dag_shared_dependencies_never_authorize_successor_write() -> N
         "FORMAL_RESULT",
         formal,
         False,
-        positive_never_called=True,
+        never_called_evidence=application.CompleteNeverCalledWitness(
+            91, 0, "a" * 64, ((7001, 1, 7003),)
+        ),
         depends_on=(completed, unresolved),
     )
     assert application.evaluate_recovery_evidence(completed) == "SATISFIED"
@@ -67,7 +69,9 @@ def test_recovery_dag_shared_dependencies_never_authorize_successor_write() -> N
         "SUCCESSOR",
         successor,
         False,
-        positive_never_called=True,
+        never_called_evidence=application.CompleteNeverCalledWitness(
+            91, 0, "a" * 64, ((7001, 1, 7003),)
+        ),
         depends_on=(completed, ready_formal, completed),
     )
     assert application.evaluate_recovery_evidence(waiting_successor) == "UNKNOWN"
@@ -258,7 +262,7 @@ def test_staged_commit_positive_projection_across_original_effect_cardinality(
     }
     artifact = _assumed_qualified_history_for_postcondition_test(monkeypatch, record, checkpoint)
     monkeypatch.setattr(
-        application, "_accepted_effect_never_called_in_history", lambda **_kw: False
+        application, "_read_accepted_never_called_evidence", lambda **_kw: _s1_history_stub(False)
     )
     monkeypatch.setattr(
         application, "_verified_zero_original_accepted_effects", lambda **_kw: zero_source_proven
@@ -438,8 +442,8 @@ def _assumed_qualified_history_for_postcondition_test(
     )
     monkeypatch.setattr(
         application,
-        "_accepted_effect_never_called_in_history",
-        lambda **kw: (
+        "_read_accepted_never_called_evidence",
+        lambda **kw: _s1_history_stub(
             kw["artifact"] is artifact
             and kw["record"].request_comment_id == record.request_comment_id
         ),
@@ -539,7 +543,7 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         # Even an already committed formal result is not a completed projection.
         # The final routing must also be authoritative and positive.
         monkeypatch.setattr(
-            application, "_accepted_effect_never_called_in_history", lambda **_kw: False
+            application, "_read_accepted_never_called_evidence", lambda **_kw: _s1_history_stub(False)
         )
         monkeypatch.setattr(
             application, "consequence_postconditions_complete", lambda *_a, **_kw: True
@@ -2692,8 +2696,8 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
     # intent-wide historical proof has independent positive/negative tests.
     monkeypatch.setattr(
         application,
-        "_accepted_effect_never_called_in_history",
-        lambda **kw: (
+        "_read_accepted_never_called_evidence",
+        lambda **kw: _s1_history_stub(
             kw["artifact"] == second_qualified
             and kw["record"].request_comment_id == record.request_comment_id
         ),
@@ -3488,6 +3492,19 @@ def test_run_local_effect_frontier_cannot_prove_accepted_history(
     )
 
 
+def _s1_history_stub(
+    qualifies: bool,
+) -> application.CompleteNeverCalledWitness | application.TypedEvidenceError:
+    """Native history already independently tested; caller tests supply facts only."""
+    if qualifies:
+        return application.CompleteNeverCalledWitness(
+            91, 0, "a" * 64, ((7001, 1, 7003),)
+        )
+    return application.TypedEvidenceError(
+        "UNKNOWN", "TEST_HISTORY", "not qualified in this test", 91
+    )
+
+
 @pytest.mark.parametrize("earlier_e1_write", [False, True])
 def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
     monkeypatch: pytest.MonkeyPatch, earlier_e1_write: bool
@@ -3693,22 +3710,28 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
         assert observed == [first, second]
 
     # A locally non-entered E1 does not override the earlier lost response.
-    assert not application._accepted_effect_never_called_in_history(
-        record=record,
-        source=source,
-        artifact=child,
-        failed_index=0,
-        repository="owner/repo",
-        token=REVISION,
-    )
-    if not earlier_e1_write:
-        assert application._accepted_effect_never_called_in_history(
+    assert isinstance(
+        application._read_accepted_never_called_evidence(
             record=record,
             source=source,
             artifact=child,
-            failed_index=1,
+            failed_index=0,
             repository="owner/repo",
             token=REVISION,
+        ),
+        application.TypedEvidenceError,
+    )
+    if not earlier_e1_write:
+        assert isinstance(
+            application._read_accepted_never_called_evidence(
+                record=record,
+                source=source,
+                artifact=child,
+                failed_index=1,
+                repository="owner/repo",
+                token=REVISION,
+            ),
+            application.CompleteNeverCalledWitness,
         )
     # Omitted or conflicting history cannot become a replay permission.
     assert not application.accepted_read_only_effects_complete(
@@ -3880,10 +3903,11 @@ def test_bare_boolean_cannot_prove_intent_wide_never_called() -> None:
     effect = StagedEffect(
         "issue-comment", '{"issue_number":138,"body":"non-idempotent effect"}'
     )
-    unqualified = application.RecoveryEvidenceNode(
-        "ORIGINAL_EFFECT",
-        effect,
-        final_postcondition=False,
-        positive_never_called=True,
-    )
-    assert application.evaluate_recovery_evidence(unqualified) == "UNKNOWN"
+    # A bare Boolean is no longer part of the typed IR contract.
+    with pytest.raises(TypeError):
+        application.RecoveryEvidenceNode(
+            "ORIGINAL_EFFECT",
+            effect,
+            final_postcondition=False,
+            positive_never_called=True,
+        )

@@ -2235,8 +2235,10 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
     )
     monkeypatch.setattr(
         bridge,
-        "_accepted_effect_never_called_in_history",
-        lambda **_kw: False,
+        "_read_accepted_never_called_evidence",
+        lambda **_kw: bridge.TypedEvidenceError(
+            "UNKNOWN", "TEST_HISTORY", "unavailable", 6796616018
+        ),
     )
     monkeypatch.setattr(
         bridge,

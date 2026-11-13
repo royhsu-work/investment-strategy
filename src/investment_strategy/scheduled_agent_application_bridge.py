@@ -6133,6 +6133,30 @@ _POST_EFFECT_ADMISSION: dict[
 RecoveryProofDisposition = Literal["SATISFIED", "NOT_APPLIED", "UNKNOWN", "CONFLICT"]
 
 
+
+@dataclass(frozen=True)
+class CompleteNeverCalledWitness:
+    """Exact accepted-intent-wide no-call chain, never a write authorization."""
+
+    request_comment_id: int
+    target_index: int
+    accepted_decision_sha256: str
+    artifact_chain: tuple[tuple[int, int, int], ...]
+
+
+@dataclass(frozen=True)
+class TypedEvidenceError:
+    """Operational evidence Result.Err, not domain proof of non-application."""
+
+    category: Literal["UNKNOWN", "CONFLICT"]
+    stage: str
+    detail: str
+    request_comment_id: int
+    artifact_id: int | None = None
+
+
+AcceptedNeverCalledEvidence = CompleteNeverCalledWitness | TypedEvidenceError
+
 @dataclass(frozen=True)
 class RecoveryEvidenceNode:
     """Typed per-obligation IR fact, never an Action or write authorization.
@@ -6142,9 +6166,9 @@ class RecoveryEvidenceNode:
     """
 
     obligation: Literal["ORIGINAL_EFFECT", "FORMAL_RESULT", "SUCCESSOR"]
-    effect: StagedEffect
+    effect: StagedEffect | None
     final_postcondition: bool | None
-    positive_never_called: bool | None = None
+    never_called_evidence: AcceptedNeverCalledEvidence | None = None
     source_conflict: bool = False
     depends_on: tuple[RecoveryEvidenceNode, ...] = ()
 
@@ -6170,14 +6194,23 @@ def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofDispo
         visiting.add(identity)
         dependencies = tuple(evaluate(parent) for parent in fact.depends_on)
         visiting.remove(identity)
-        if fact.source_conflict or "CONFLICT" in dependencies:
+        if (
+            fact.source_conflict
+            or "CONFLICT" in dependencies
+            or (
+                isinstance(fact.never_called_evidence, TypedEvidenceError)
+                and fact.never_called_evidence.category == "CONFLICT"
+            )
+        ):
             disposition: RecoveryProofDisposition = "CONFLICT"
         elif any(result != "SATISFIED" for result in dependencies):
-            # An observed descendant alone cannot discharge upstream work.
             disposition = "UNKNOWN"
         elif fact.final_postcondition is True:
             disposition = "SATISFIED"
-        elif fact.final_postcondition is False and fact.positive_never_called is True:
+        elif (
+            fact.final_postcondition is False
+            and isinstance(fact.never_called_evidence, CompleteNeverCalledWitness)
+        ):
             disposition = "NOT_APPLIED"
         else:
             disposition = "UNKNOWN"
@@ -6510,7 +6543,7 @@ def _accepted_reconciliation_effect_projection(
     return json.dumps(decoded, sort_keys=True, separators=(",", ":")), len(originals)
 
 
-def _accepted_effect_never_called_in_history(
+def _read_accepted_never_called_evidence(
     *,
     record: ApplicationDecisionRecord,
     source: WorkerRequest,
@@ -6518,17 +6551,29 @@ def _accepted_effect_never_called_in_history(
     failed_index: int,
     repository: str,
     token: str,
-) -> bool:
-    """Prove a non-entry frontier over the *whole* native accepted attempt chain.
+) -> AcceptedNeverCalledEvidence:
+    """Qualify historical facts; only the shared DAG decides NOT_APPLIED.
 
-    A checkpoint proves only its own invocation. Each predecessor must be
-    content-addressed and independently re-read; missing history remains
-    UNKNOWN. This is read-only proof in the existing Application evidence
-    owner, not a second recovery state or permission to skip fresh guards.
+    Each predecessor is independently content-addressed and re-read. A
+    run-local pre-call flag is never an accepted-intent-wide witness.
+    This is a read adapter, not a policy, mutation guard, or retry permit.
     """
 
-    if artifact is None or failed_index < 0:
-        return False
+    def error(
+        stage: str, detail: str, *, conflict: bool = False
+    ) -> TypedEvidenceError:
+        return TypedEvidenceError(
+            "CONFLICT" if conflict else "UNKNOWN",
+            stage,
+            detail,
+            record.request_comment_id,
+            None if artifact is None else artifact.artifact_id,
+        )
+
+    if artifact is None:
+        return error("ARTIFACT", "qualified recovery artifact unavailable")
+    if failed_index < 0:
+        return error("FRONTIER", "invalid negative target index", conflict=True)
     try:
         original_raw = _accepted_worker_result_for_continuation(
             accepted_intent=record,
@@ -6538,34 +6583,33 @@ def _accepted_effect_never_called_in_history(
             request_comment_id=record.request_comment_id,
         )
         original = parse_effect_batch(original_raw, source, authorized_change=record.change)
-    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
-        return False
+    except (HTTPError, OSError):
+        return error("SOURCE_GET", "original accepted source read unavailable")
+    except (RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return error("SOURCE", "original accepted source unqualified")
     if original.typed_result is None or failed_index > len(original.effects) + 2:
-        return False
+        return error("SOURCE_IDENTITY", "immutable original result/frontier invalid", conflict=True)
     if not original.effects:
-        # A semantic-only ACCEPTED projection may have stripped physical
-        # worker Effects. Reuse the existing original-transport proof rather
-        # than equating an empty array with zero immutable obligations.
         try:
-            if not _verified_zero_original_accepted_effects(
-                record=record,
-                source=source,
-                repository=repository,
-                token=token,
-            ):
-                return False
+            verified_zero = _verified_zero_original_accepted_effects(
+                record=record, source=source, repository=repository, token=token
+            )
         except (HTTPError, OSError, RuntimeError, TypeError, ValueError):
-            return False
+            return error("ZERO_ORIGINAL_GET", "original physical Effect count unavailable")
+        if not verified_zero:
+            return error("ZERO_ORIGINAL", "zero physical original Effects not proven")
 
     current = artifact
     seen: set[tuple[int, int, int]] = set()
+    chain: list[tuple[int, int, int]] = []
     while True:
         identity = (current.run_id, current.run_attempt, current.artifact_id)
         document = current.document
         failure = document.get("failure_evidence")
+        if identity in seen:
+            return error("CHAIN", "repeated native attempt identity", conflict=True)
         if (
-            identity in seen
-            or current.request_comment_id != record.request_comment_id
+            current.request_comment_id != record.request_comment_id
             or document.get("issue_number") != record.issue_number
             or document.get("role") != record.role
             or document.get("action") != record.action
@@ -6573,27 +6617,21 @@ def _accepted_effect_never_called_in_history(
             or not isinstance(failure, Mapping)
             or _accepted_recovery_boundary(failure) != "READ_ONLY"
         ):
-            return False
+            return error("CHAIN_IDENTITY", "accepted source/stage contradicts chain", conflict=True)
         seen.add(identity)
+        chain.append(identity)
         attempted = _verified_attempted_effect_checkpoint(failure, source=source)
         index = failure.get("failed_effect_index")
-        if (
-            attempted is None
-            or type(index) is not int
-            or index > failed_index
-            or any(
-                effect != original.effects[position]
-                for position, effect in enumerate(attempted)
-                if position < len(original.effects)
-            )
+        if attempted is None or type(index) is not int:
+            return error("CHECKPOINT", "attempted Effect checkpoint invalid", conflict=True)
+        if index > failed_index:
+            return error("ATTEMPTED", "a prior attempt crossed the claimed uncalled frontier")
+        if any(
+            effect != original.effects[position]
+            for position, effect in enumerate(attempted)
+            if position < len(original.effects)
         ):
-            # An earlier attempt reached this Effect, or its original identity
-            # cannot be independently established.
-            return False
-        # The immutable worker owns original Effects, while the Application
-        # owns exactly one later formal result and one derived transition.
-        # Their identities are already defined by the accepted Action model;
-        # they must never become a second source of user-requested Effects.
+            return error("ORIGINAL_IDENTITY", "immutable original Effect mismatch", conflict=True)
         derived_tail = attempted[len(original.effects) :]
         if derived_tail:
             try:
@@ -6612,21 +6650,21 @@ def _accepted_effect_never_called_in_history(
                     ),
                 )
             except (RuntimeError, TypeError, ValueError):
-                return False
+                return error("FORMAL_IDENTITY", "formal or successor identity invalid", conflict=True)
             if (
                 formal_identity is None
                 or failure.get("attempt_revision") != formal_identity[1]
                 or len(derived_tail) > 2
                 or (len(derived_tail) == 2 and derived_tail[1] != expected_derived)
             ):
-                return False
+                return error("FORMAL_IDENTITY", "Application-derived Effect mismatch", conflict=True)
         if index == failed_index and not (
             failure.get("mutation_status") == "not-complete"
             and failure.get("unfinished_boundary")
             in {"effect-precondition", "effect-precondition-exception"}
             and failure.get("write_call_entered") is False
         ):
-            return False
+            return error("CALL_ENTRY", "target Effect may already have been called")
 
         if current.recovery_attempt == 1:
             if (
@@ -6635,10 +6673,7 @@ def _accepted_effect_never_called_in_history(
                 or document.get("trigger_comment_id") != record.request_comment_id
                 or document.get("prior_failure_evidence_sha256") != []
             ):
-                return False
-            # Use the existing exhaustive native run-history reader. A first
-            # artifact is not an accepted-history certificate if an earlier
-            # attempt or another source run is visible.
+                return error("ROOT", "first native attempt identity invalid", conflict=True)
             from investment_strategy.issue_comment_bridge import _application_runs
 
             try:
@@ -6646,18 +6681,25 @@ def _accepted_effect_never_called_in_history(
                     repository, token, record.request_comment_id, read=_github_json
                 )
             except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
-                return False
-            return (
+                return error("RUN_INVENTORY", "complete original run inventory unavailable")
+            if not (
                 runs is not None
                 and len(runs) == 1
                 and runs[0].get("id") == current.run_id
                 and runs[0].get("run_attempt") == 1
+            ):
+                return error("RUN_INVENTORY", "other or incomplete native attempt history")
+            return CompleteNeverCalledWitness(
+                record.request_comment_id,
+                failed_index,
+                artifact.accepted_decision_sha256,
+                tuple(chain),
             )
 
         predecessor = document.get("predecessor")
         previous_hashes = document.get("prior_failure_evidence_sha256")
         if not isinstance(predecessor, Mapping) or not isinstance(previous_hashes, list):
-            return False
+            return error("PREDECESSOR", "prior chain pointers are missing")
         try:
             previous = read_application_recovery_artifact(
                 repository,
@@ -6670,10 +6712,11 @@ def _accepted_effect_never_called_in_history(
                 strict_read=True,
             )
         except (HTTPError, OSError, RuntimeError, KeyError, TypeError, ValueError):
-            return False
+            return error("PREDECESSOR_GET", "prior native Artifact unavailable")
+        if previous is None:
+            return error("PREDECESSOR_GET", "prior native Artifact missing")
         if (
-            previous is None
-            or previous.recovery_attempt != current.recovery_attempt - 1
+            previous.recovery_attempt != current.recovery_attempt - 1
             or previous.artifact_id != predecessor.get("artifact_id")
             or previous.artifact_digest != predecessor.get("artifact_digest")
             or previous.failure_evidence_sha256 != predecessor.get("failure_evidence_sha256")
@@ -6685,7 +6728,7 @@ def _accepted_effect_never_called_in_history(
                 previous.failure_evidence_sha256,
             ]
         ):
-            return False
+            return error("PREDECESSOR_IDENTITY", "prior hash/correlation mismatch", conflict=True)
         current = previous
 
 
@@ -6906,20 +6949,34 @@ def classify_accepted_read_only_effects(
                 return AcceptedPostEffectProof(
                     "COMPLETE", "exact accepted formal and successor already observed"
                 )
-        if not _accepted_effect_never_called_in_history(
+        history = _read_accepted_never_called_evidence(
             record=record,
             source=source,
             artifact=recovery_artifact,
             failed_index=historical_frontier,
             repository=repository,
             token=token,
-        ):
-            # An original may be SATISFIED while the next non-idempotent
-            # formal/derived write is still unqualified. Preserve both facts:
-            # neither a history gap nor a positive Effect creates write power.
+        )
+        # Evidence Result is a leaf fact, never a caller-side Boolean decision.
+        # No physical Effect object is invented for the future formal/successor
+        # frontier; only the existing Application may reauthorize consequences.
+        historical_proof = evaluate_recovery_evidence(
+            RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT",
+                None,
+                final_postcondition=False,
+                never_called_evidence=history,
+                depends_on=tuple(proven_prefix),
+            )
+        )
+        if historical_proof != "NOT_APPLIED":
             return AcceptedPostEffectProof(
-                "INDETERMINATE",
-                "accepted historical write frontier is not proven",
+                "UNSAFE" if historical_proof == "CONFLICT" else "INDETERMINATE",
+                (
+                    "accepted historical write frontier contradicts source"
+                    if historical_proof == "CONFLICT"
+                    else "accepted historical write frontier is not proven"
+                ),
                 original_effect_proof=original_effect_proof,
             )
         return AcceptedPostEffectProof(
