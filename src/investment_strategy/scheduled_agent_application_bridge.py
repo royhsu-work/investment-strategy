@@ -6873,6 +6873,8 @@ def classify_accepted_read_only_effects(
                 "UNSAFE" if original.category == "CONFLICT" else "INDETERMINATE",
                 original.detail,
             )
+        # The shared qualifier proves a typed result before returning EffectBatch.
+        assert original.typed_result is not None
         # Positive postconditions cannot rehabilitate an immutable Effect
         # identity mismatch; physical zero was already source-qualified.
         prefix_length = min(len(original.effects), len(attempted))
