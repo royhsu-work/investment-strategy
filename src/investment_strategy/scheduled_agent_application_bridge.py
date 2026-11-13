@@ -6985,7 +6985,18 @@ def classify_accepted_read_only_effects(
                 # Effect adapter can observe that later durable consequence.
                 and (
                     attempted_proof == "SATISFIED"
-                    or (non_entry and adapter.observe_postcondition(expected_successor))
+                    or (
+                        non_entry
+                        and evaluate_recovery_evidence(
+                            replace(
+                                attempted_fact,
+                                final_postcondition=adapter.observe_postcondition(
+                                    expected_successor
+                                ),
+                            )
+                        )
+                        == "SATISFIED"
+                    )
                 )
                 and consequence_postconditions_complete(
                     record.raw_worker_result,
