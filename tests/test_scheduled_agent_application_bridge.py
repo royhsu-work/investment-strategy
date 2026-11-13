@@ -2356,6 +2356,18 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
     assert proof.original_effect_proof is not None
     assert proof.original_effect_proof.disposition == expected
     assert proof.disposition == "INDETERMINATE"
+    if postcondition:
+        # S2r RED: a successful bool callback does not itself identify a
+        # source-qualified native GitHub observation. A positive accepted
+        # proof must retain the immutable accepted request/result/revision
+        # AND the real observed source-object identity in one witness.
+        witness = proof.original_effect_proof.witness
+        assert witness.request_comment_id == record.request_comment_id
+        assert witness.worker_result_sha256 == record.worker_result_sha256
+        assert witness.authorization_revision == record.authorization_revision
+        assert witness.repository == _REPOSITORY
+        assert witness.observed_revision == _REVISION
+        assert witness.source_object_ref is not None
 
 
 def test_noncompletion_accepted_intent_has_no_synthetic_checkpoint_obligation(
