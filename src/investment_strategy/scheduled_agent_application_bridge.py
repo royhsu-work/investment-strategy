@@ -6249,6 +6249,10 @@ def _qualified_accepted_derived_suffix_identity(
     tail = attempted[original_count:]
     if not tail:
         return None
+    # Application-owned control Effects have their own positive postcondition
+    # owner. They are not Formal/Successor identities or historical no-call facts.
+    if all(effect.kind == GITHUB_MUTATION_KIND and not effect.derived for effect in tail):
+        return None
     if len(tail) > 2:
         raise ValueError("accepted derived suffix exceeds Formal and Successor")
     formal_identity = _attempted_formal_identity(
@@ -6748,7 +6752,7 @@ def _read_accepted_never_called_evidence(
         ):
             return error("ORIGINAL_IDENTITY", "immutable original Effect mismatch", conflict=True)
         try:
-            _qualified_accepted_derived_suffix_identity(
+            qualified_suffix = _qualified_accepted_derived_suffix_identity(
                 attempted,
                 original_count=len(original.effects),
                 typed_original=typed_original,
@@ -6759,6 +6763,12 @@ def _read_accepted_never_called_evidence(
                 attempted_revision=failure.get("attempt_revision"),
             )
         except (RuntimeError, TypeError, ValueError):
+            return error(
+                "FORMAL_IDENTITY", "Application-derived Effect mismatch", conflict=True
+            )
+        # An Application-owned control does not become a no-call witness
+        # merely because its physical postcondition could be read elsewhere.
+        if len(attempted) > len(original.effects) and qualified_suffix is None:
             return error(
                 "FORMAL_IDENTITY", "Application-derived Effect mismatch", conflict=True
             )
