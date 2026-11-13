@@ -6650,14 +6650,22 @@ def _read_accepted_never_called_evidence(
                     ),
                 )
             except (RuntimeError, TypeError, ValueError):
-                return error("FORMAL_IDENTITY", "formal or successor identity invalid", conflict=True)
+                return error(
+                    "FORMAL_IDENTITY",
+                    "formal or successor identity invalid",
+                    conflict=True,
+                )
             if (
                 formal_identity is None
                 or failure.get("attempt_revision") != formal_identity[1]
                 or len(derived_tail) > 2
                 or (len(derived_tail) == 2 and derived_tail[1] != expected_derived)
             ):
-                return error("FORMAL_IDENTITY", "Application-derived Effect mismatch", conflict=True)
+                return error(
+                    "FORMAL_IDENTITY",
+                    "Application-derived Effect mismatch",
+                    conflict=True,
+                )
         if index == failed_index and not (
             failure.get("mutation_status") == "not-complete"
             and failure.get("unfinished_boundary")

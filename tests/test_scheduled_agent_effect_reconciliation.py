@@ -543,7 +543,9 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         # Even an already committed formal result is not a completed projection.
         # The final routing must also be authoritative and positive.
         monkeypatch.setattr(
-            application, "_read_accepted_never_called_evidence", lambda **_kw: _s1_history_stub(False)
+            application,
+            "_read_accepted_never_called_evidence",
+            lambda **_kw: _s1_history_stub(False)
         )
         monkeypatch.setattr(
             application, "consequence_postconditions_complete", lambda *_a, **_kw: True
