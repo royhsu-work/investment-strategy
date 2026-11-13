@@ -6234,6 +6234,47 @@ def _recovery_obligation(effect: StagedEffect, source: WorkerRequest) -> Recover
     return "ORIGINAL_EFFECT"
 
 
+def _qualified_accepted_derived_suffix_identity(
+    attempted: Sequence[StagedEffect],
+    *,
+    original_count: int,
+    typed_original: BoundedActionResult,
+    source: WorkerRequest,
+    change: str,
+    result_kind: str,
+    request_comment_id: int,
+    attempted_revision: object,
+) -> tuple[StagedEffect, str, str] | None:
+    """One immutable Formal/Successor ordinal identity proof for R9 and native history."""
+    tail = attempted[original_count:]
+    if not tail:
+        return None
+    if len(tail) > 2:
+        raise ValueError("accepted derived suffix exceeds Formal and Successor")
+    formal_identity = _attempted_formal_identity(
+        attempted,
+        source=source,
+        change=change,
+        result_kind=result_kind,
+        request_comment_id=request_comment_id,
+    )
+    if (
+        formal_identity is None
+        or formal_identity[0] != tail[0]
+        or formal_identity[1] != attempted_revision
+    ):
+        raise ValueError("accepted Formal Result ordinal/revision mismatch")
+    if len(tail) == 2:
+        expected_successor = derived_transition_effect(
+            issue_number=source.issue_number,
+            change=change,
+            successor=next_action(typed_original.action, typed_original.result),
+        )
+        if tail[1] != expected_successor:
+            raise ValueError("accepted Successor identity mismatch")
+    return formal_identity
+
+
 def _accepted_frontier_obligation(original_count: int, index: int) -> RecoveryObligation | None:
     """One source of truth for accepted ordinal Original/Formal/Successor slots."""
     if not 0 <= index < original_count + 2:
@@ -6706,38 +6747,21 @@ def _read_accepted_never_called_evidence(
             if position < len(original.effects)
         ):
             return error("ORIGINAL_IDENTITY", "immutable original Effect mismatch", conflict=True)
-        derived_tail = attempted[len(original.effects) :]
-        if derived_tail:
-            try:
-                formal_identity = _attempted_formal_identity(
-                    attempted,
-                    source=source,
-                    change=record.change,
-                    result_kind=record.result_kind,
-                    request_comment_id=record.request_comment_id,
-                )
-                expected_derived = derived_transition_effect(
-                    issue_number=source.issue_number,
-                    change=record.change,
-                    successor=next_action(typed_original.action, typed_original.result),
-                )
-            except (RuntimeError, TypeError, ValueError):
-                return error(
-                    "FORMAL_IDENTITY",
-                    "formal or successor identity invalid",
-                    conflict=True,
-                )
-            if (
-                formal_identity is None
-                or failure.get("attempt_revision") != formal_identity[1]
-                or len(derived_tail) > 2
-                or (len(derived_tail) == 2 and derived_tail[1] != expected_derived)
-            ):
-                return error(
-                    "FORMAL_IDENTITY",
-                    "Application-derived Effect mismatch",
-                    conflict=True,
-                )
+        try:
+            _qualified_accepted_derived_suffix_identity(
+                attempted,
+                original_count=len(original.effects),
+                typed_original=typed_original,
+                source=source,
+                change=record.change,
+                result_kind=record.result_kind,
+                request_comment_id=record.request_comment_id,
+                attempted_revision=failure.get("attempt_revision"),
+            )
+        except (RuntimeError, TypeError, ValueError):
+            return error(
+                "FORMAL_IDENTITY", "Application-derived Effect mismatch", conflict=True
+            )
         if index == failed_index and not (
             failure.get("mutation_status") == "not-complete"
             and failure.get("unfinished_boundary")
@@ -6897,6 +6921,21 @@ def classify_accepted_read_only_effects(
                 "immutable accepted original Effect prefix contradicts checkpoint",
                 original_effect_proof=evaluate_recovery_evidence(conflict),
             )
+        try:
+            formal_identity = _qualified_accepted_derived_suffix_identity(
+                attempted,
+                original_count=len(original.effects),
+                typed_original=typed_original,
+                source=source,
+                change=record.change,
+                result_kind=record.result_kind,
+                request_comment_id=record.request_comment_id,
+                attempted_revision=attempted_revision,
+            )
+        except (RuntimeError, TypeError, ValueError):
+            return AcceptedPostEffectProof(
+                "UNSAFE", "immutable accepted Formal/Successor Effect identity invalid"
+            )
         adapter = GitHubEffectAdapter(
             repository,
             token,
@@ -6963,30 +7002,13 @@ def classify_accepted_read_only_effects(
         # No history-of-nonentry gate is needed when no write remains.
         # A missing result/route still requires the no-replay gate below.
         if (
-            attempted[-1].derived
-            # The same source qualifier already proved immutable result
-            # identity and physically zero originals, where applicable.
+            formal_identity is not None
+            and attempted[-1].derived
+            # The shared qualifier has already verified the Formal/Successor
+            # ordinal, immutable identity, source and historical revision.
             and (bool(original.effects) or not non_entry)
-            and len(attempted) == len(original.effects) + 2
-            and attempted[:-2] == original.effects
         ):
-            formal_identity = _attempted_formal_identity(
-                attempted,
-                source=source,
-                change=record.change,
-                result_kind=record.result_kind,
-                request_comment_id=record.request_comment_id,
-            )
-            expected_successor = derived_transition_effect(
-                issue_number=source.issue_number,
-                change=record.change,
-                successor=next_action(typed_original.action, typed_original.result),
-            )
             if (
-                formal_identity is not None
-                and formal_identity[0] == attempted[-2]
-                and formal_identity[1] == attempted_revision
-                and attempted[-1] == expected_successor
                 # Commit of the formal result does not prove the final
                 # routing/terminal projection. Only the existing authoritative
                 # Effect adapter can observe that later durable consequence.
