@@ -7183,9 +7183,7 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
     monkeypatch.setattr(
         bridge,
         "_read_accepted_never_called_evidence",
-        lambda **_k: bridge.CompleteNeverCalledWitness(
-            6796616018, 1, "a" * 64, ((7001, 1, 7003),)
-        ),
+        lambda **_k: bridge.CompleteNeverCalledWitness(6796616018, 1, "a" * 64, ((7001, 1, 7003),)),
     )
     zero_reads: list[int] = []
 
@@ -7193,9 +7191,7 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
         zero_reads.append(record.request_comment_id)
         return zero_proven
 
-    monkeypatch.setattr(
-        bridge, "_verified_zero_original_accepted_effects", verify_physical_zero
-    )
+    monkeypatch.setattr(bridge, "_verified_zero_original_accepted_effects", verify_physical_zero)
 
     class Observer:
         def __init__(self, *_a: object, **_k: object) -> None:

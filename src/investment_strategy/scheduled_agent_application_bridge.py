@@ -6380,30 +6380,25 @@ def _qualified_accepted_original_effects(
             "accepted original result identity invalid",
             record.request_comment_id,
         )
-    if not batch.effects:
-        # Semantic projection can omit the physical original Effect manifest.
-        # This source witness is shared by READ_ONLY and POST_EFFECT_RESULT,
-        # not inferred from the current attempted/derived checkpoint.
-        try:
-            physically_empty = _verified_zero_original_accepted_effects(
-                record=record, source=source, repository=repository, token=token
-            )
-        except OSError:
-            return TypedEvidenceError(
-                "UNKNOWN", "ZERO_ORIGINAL_GET",
-                "accepted zero-Effect source not proven", record.request_comment_id,
-            )
-        except (TypeError, ValueError):
-            return TypedEvidenceError(
-                "CONFLICT", "ZERO_ORIGINAL_IDENTITY",
-                "accepted zero-Effect source identity invalid", record.request_comment_id,
-            )
-        if not physically_empty:
-            return TypedEvidenceError(
-                "UNKNOWN", "ZERO_ORIGINAL",
-                "accepted zero-Effect source not proven", record.request_comment_id,
-            )
-    return batch
+    if batch.effects:
+        return batch
+    # Physical-zero truth is a source qualification, not a projection shape.
+    # Only a positive native source witness returns an empty qualified batch.
+    category: Literal["UNKNOWN", "CONFLICT"] = "UNKNOWN"
+    stage = "ZERO_ORIGINAL"
+    detail = "accepted zero-Effect source not proven"
+    try:
+        if _verified_zero_original_accepted_effects(
+            record=record, source=source, repository=repository, token=token
+        ):
+            return batch
+    except OSError:
+        stage = "ZERO_ORIGINAL_GET"
+    except (TypeError, ValueError):
+        category = "CONFLICT"
+        stage = "ZERO_ORIGINAL_IDENTITY"
+        detail = "accepted zero-Effect source identity invalid"
+    return TypedEvidenceError(category, stage, detail, record.request_comment_id)
 
 
 def _observe_accepted_post_effect_result(
