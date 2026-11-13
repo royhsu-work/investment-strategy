@@ -301,11 +301,14 @@ def test_staged_commit_positive_projection_across_original_effect_cardinality(
         application, "consequence_postconditions_complete", lambda *_args, **_kw: True
     )
 
+    observed_effects: list[StagedEffect] = []
+
     class Observer:
         def __init__(self, *_args: object, **_kw: object) -> None:
             pass
 
-        def observe_postcondition(self, _effect: StagedEffect) -> bool:
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            observed_effects.append(effect)
             return True
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
@@ -321,6 +324,9 @@ def test_staged_commit_positive_projection_across_original_effect_cardinality(
     )
     assert proof.disposition == expected
     assert proof.continuation == ("CONTINUE" if expected == "COMPLETE" else "OBSERVE")
+    # The canonical DAG already observed the exact successor's postcondition.
+    # A second identical GET adds no proof and can introduce transient drift.
+    assert observed_effects == (list(attempted) if expected == "COMPLETE" else [])
 
 
 def test_r9_conflicting_immutable_effect_is_unsafe_even_if_current_postcondition_is_true(
