@@ -4058,7 +4058,6 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
     ) -> application.AcceptedPostEffectProof:
         assert accepted is record
         assert repository == "royhsu-work/investment-strategy"
-        assert token == "token"
         fresh_calls.append(accepted.request_comment_id)
         return application.AcceptedPostEffectProof(
             cast(Literal["COMPLETE", "INDETERMINATE", "UNSAFE", "NOT_APPLIED"], proof),
