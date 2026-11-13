@@ -3855,6 +3855,19 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
         ).disposition
         != "COMPLETE"
     )
+    # No accepted successor is followed by another physical Effect.
+    # Even a complete native chain must reject an out-of-range target,
+    # rather than certify a fictitious never-called Effect.
+    phantom = application._read_accepted_never_called_evidence(
+        record=record,
+        source=source,
+        artifact=child,
+        failed_index=len(originals) + 2,
+        repository="owner/repo",
+        token=REVISION,
+    )
+    assert isinstance(phantom, application.TypedEvidenceError)
+    assert (phantom.category, phantom.stage) == ("CONFLICT", "SOURCE_IDENTITY")
 
 
 @pytest.mark.parametrize(
