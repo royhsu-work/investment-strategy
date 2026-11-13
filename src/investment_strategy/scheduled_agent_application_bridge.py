@@ -7040,7 +7040,11 @@ def classify_accepted_read_only_effects(
                 None,
                 final_postcondition=False,
                 never_called_evidence=history,
-                depends_on=tuple(proven_prefix),
+                depends_on=(
+                    (*proven_prefix, attempted_fact)
+                    if attempted_proof == "SATISFIED"
+                    else tuple(proven_prefix)
+                ),
             )
         )
         if historical_proof != "NOT_APPLIED":
