@@ -488,12 +488,13 @@ def _assumed_qualified_history_for_postcondition_test(
 
 
 @pytest.mark.parametrize(
-    ("successor_failed", "successor_durable", "history_qualified", "expected"),
+    ("successor_failed", "successor_durable", "history_qualified", "formal_durable", "expected"),
     [
-        (False, False, True, "COMPLETE"),
-        (True, False, True, "COMPLETE"),
-        (True, True, False, "COMPLETE"),
-        (True, False, False, "INDETERMINATE"),
+        (False, False, True, False, "COMPLETE"),
+        (False, False, True, True, "COMPLETE"),
+        (True, False, True, False, "COMPLETE"),
+        (True, True, False, False, "COMPLETE"),
+        (True, False, False, False, "INDETERMINATE"),
     ],
 )
 def test_read_only_ir_identifies_formal_result_and_successor_nodes(
@@ -501,6 +502,7 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
     successor_failed: bool,
     successor_durable: bool,
     history_qualified: bool,
+    formal_durable: bool,
     expected: str,
 ) -> None:
     """R8: real read-only classification must distinguish Application obligations."""
@@ -573,7 +575,11 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
             pass
 
         def observe_postcondition(self, effect: StagedEffect) -> bool:
-            return effect in attempted[:-1] or (successor_durable and effect == successor)
+            return (
+                effect in attempted[:-1]
+                or (formal_durable and effect == formal)
+                or (successor_durable and effect == successor)
+            )
 
     if not history_qualified:
         # Even an already committed formal result is not a completed projection.
@@ -621,6 +627,15 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         assert frontiers == []
     else:
         assert frontiers == ["SUCCESSOR" if successor_failed else "FORMAL_RESULT"]
+    if formal_durable:
+        successor_frontiers = [
+            node for node in observed_nodes if node.effect is None and node.obligation == "SUCCESSOR"
+        ]
+        assert len(successor_frontiers) == 1
+        assert [parent.effect for parent in successor_frontiers[0].depends_on] == [
+            *original.effects,
+            formal,
+        ]
 
 
 @pytest.mark.parametrize(
