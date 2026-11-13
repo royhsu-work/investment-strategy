@@ -1134,6 +1134,71 @@ def test_preflight_get_failure_exhaustion_never_returns_partial_issue_state(
     assert delays == ([0.25, 0.5] if expected_attempts == 3 else [])
 
 
+@pytest.mark.parametrize(
+    ("variant", "expected_downloads"),
+    [
+        ("valid", 1),
+        ("digest-mismatch", 1),
+        ("wrong-run", 0),
+        ("expired", 0),
+        ("bad-artifact-id", 0),
+        ("bad-json", 1),
+        ("bad-utf8", 1),
+        ("oversized", 1),
+    ],
+)
+def test_application_artifact_shared_verified_bytes_contract(
+    variant: str, expected_downloads: int
+) -> None:
+    """Recovery and execution-exception readers must use identical byte proof.
+
+    Metadata never authorizes a download if run identity is contradictory;
+    integrity/size/JSON checks use the same single source of truth.
+    """
+    raw = b'{"schema":"native-application-evidence"}'
+    if variant == "bad-json":
+        raw = b"not valid json"
+    elif variant == "bad-utf8":
+        raw = b"\xff"
+    elif variant == "oversized":
+        raw = b"x" * (bridge._MAX_APPLICATION_RECOVERY_BYTES + 1)
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    metadata: dict[str, object] = {
+        "id": 7401,
+        "digest": digest,
+        "expired": False,
+        "workflow_run": {"id": 7001, "head_sha": _REVISION},
+    }
+    if variant == "wrong-run":
+        metadata["workflow_run"] = {"id": 7002, "head_sha": _REVISION}
+    elif variant == "expired":
+        metadata["expired"] = True
+    elif variant == "bad-artifact-id":
+        metadata["id"] = False
+    elif variant == "digest-mismatch":
+        metadata["digest"] = "sha256:" + "0" * 64
+    downloads: list[str] = []
+
+    def download(repository: str, token: str, path: str) -> bytes:
+        assert (repository, token) == (_REPOSITORY, "test-token")
+        downloads.append(path)
+        return raw
+
+    proven = bridge._read_verified_application_artifact(
+        _REPOSITORY,
+        "test-token",
+        metadata=metadata,
+        run_id=7001,
+        run_head_sha=_REVISION,
+        download=download,
+    )
+    if variant == "valid":
+        assert proven == (7401, digest, {"schema": "native-application-evidence"})
+    else:
+        assert proven is None
+    assert downloads == ["actions/artifacts/7401/zip"] * expected_downloads
+
+
 def test_application_artifact_reader_uses_github_api_media_type_for_raw_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
