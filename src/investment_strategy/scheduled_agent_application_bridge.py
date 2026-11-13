@@ -6353,6 +6353,8 @@ def _qualified_accepted_original_effects(
     record: ApplicationDecisionRecord,
     source: WorkerRequest,
     raw_worker_result: str,
+    repository: str,
+    token: str,
 ) -> EffectBatch | TypedEvidenceError:
     """One source-identity reader shared by accepted original proof stages.
 
@@ -6378,6 +6380,29 @@ def _qualified_accepted_original_effects(
             "accepted original result identity invalid",
             record.request_comment_id,
         )
+    if not batch.effects:
+        # Semantic projection can omit the physical original Effect manifest.
+        # This source witness is shared by READ_ONLY and POST_EFFECT_RESULT,
+        # not inferred from the current attempted/derived checkpoint.
+        try:
+            physically_empty = _verified_zero_original_accepted_effects(
+                record=record, source=source, repository=repository, token=token
+            )
+        except OSError:
+            return TypedEvidenceError(
+                "UNKNOWN", "ZERO_ORIGINAL_GET",
+                "accepted zero-Effect source not proven", record.request_comment_id,
+            )
+        except (TypeError, ValueError):
+            return TypedEvidenceError(
+                "CONFLICT", "ZERO_ORIGINAL_IDENTITY",
+                "accepted zero-Effect source identity invalid", record.request_comment_id,
+            )
+        if not physically_empty:
+            return TypedEvidenceError(
+                "UNKNOWN", "ZERO_ORIGINAL",
+                "accepted zero-Effect source not proven", record.request_comment_id,
+            )
     return batch
 
 
@@ -6420,7 +6445,11 @@ def _observe_accepted_post_effect_result(
         except (TypeError, ValueError, json.JSONDecodeError):
             return AcceptedPostEffectProof("UNSAFE", "accepted original Effect identity invalid")
         batch = _qualified_accepted_original_effects(
-            record=record, source=source, raw_worker_result=raw
+            record=record,
+            source=source,
+            raw_worker_result=raw,
+            repository=repository,
+            token=token,
         )
         if isinstance(batch, TypedEvidenceError):
             return AcceptedPostEffectProof(
@@ -6428,26 +6457,7 @@ def _observe_accepted_post_effect_result(
                 batch.detail,
             )
         if not batch.effects:
-            # The signed accepted semantic projection may have omitted a
-            # physical Effect. Verify its original request specifically at
-            # this recovery gate, not during normal accepted continuation.
-            try:
-                verified_empty = _verified_zero_original_accepted_effects(
-                    record=record, source=source, repository=repository, token=token
-                )
-            except OSError:
-                verified_empty = False
-            except (TypeError, ValueError):
-                return AcceptedPostEffectProof(
-                    "UNSAFE", "accepted zero-Effect source identity invalid"
-                )
-            return (
-                AcceptedPostEffectProof("COMPLETE", "original empty Effect set proven")
-                if verified_empty
-                else AcceptedPostEffectProof(
-                    "INDETERMINATE", "accepted zero-Effect source not proven"
-                )
-            )
+            return AcceptedPostEffectProof("COMPLETE", "original empty Effect set proven")
         adapter = GitHubEffectAdapter(
             repository,
             token,
@@ -6857,29 +6867,29 @@ def classify_accepted_read_only_effects(
             return AcceptedPostEffectProof("UNSAFE", "read-only Effect index is invalid")
         non_entry = recovery_evidence.get("write_call_entered") is False
         original = _qualified_accepted_original_effects(
-            record=record, source=source, raw_worker_result=record.raw_worker_result
+            record=record,
+            source=source,
+            raw_worker_result=record.raw_worker_result,
+            repository=repository,
+            token=token,
         )
         if isinstance(original, TypedEvidenceError):
             return AcceptedPostEffectProof(
                 "UNSAFE" if original.category == "CONFLICT" else "INDETERMINATE",
                 original.detail,
             )
-        # A witnessed postcondition cannot rehabilitate an immutable Effect
-        # identity contradiction, even if the current GitHub state is positive.
-        if original.effects:
-            prefix_length = min(len(original.effects), len(attempted))
-            if attempted[:prefix_length] != original.effects[:prefix_length]:
-                conflict = RecoveryEvidenceNode(
-                    "ORIGINAL_EFFECT",
-                    attempted[0],
-                    final_postcondition=None,
-                    source_conflict=True,
-                )
-                return AcceptedPostEffectProof(
-                    "UNSAFE",
-                    "immutable accepted original Effect prefix contradicts checkpoint",
-                    original_effect_proof=evaluate_recovery_evidence(conflict),
-                )
+        # Positive postconditions cannot rehabilitate an immutable Effect
+        # identity mismatch; physical zero was already source-qualified.
+        prefix_length = min(len(original.effects), len(attempted))
+        if attempted[:prefix_length] != original.effects[:prefix_length]:
+            conflict = RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT", attempted[0], final_postcondition=None, source_conflict=True
+            )
+            return AcceptedPostEffectProof(
+                "UNSAFE",
+                "immutable accepted original Effect prefix contradicts checkpoint",
+                original_effect_proof=evaluate_recovery_evidence(conflict),
+            )
         adapter = GitHubEffectAdapter(
             repository,
             token,
@@ -6947,17 +6957,9 @@ def classify_accepted_read_only_effects(
         # A missing result/route still requires the no-replay gate below.
         if (
             attempted[-1].derived
-            and original.typed_result is not None
-            and original.typed_result.result.kind.value == record.result_kind
-            and (
-                bool(original.effects)
-                or (
-                    not non_entry
-                    and _verified_zero_original_accepted_effects(
-                        record=record, source=source, repository=repository, token=token
-                    )
-                )
-            )
+            # The same source qualifier already proved immutable result
+            # identity and physically zero originals, where applicable.
+            and (bool(original.effects) or not non_entry)
             and len(attempted) == len(original.effects) + 2
             and attempted[:-2] == original.effects
         ):
