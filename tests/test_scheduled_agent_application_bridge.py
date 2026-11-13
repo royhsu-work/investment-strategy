@@ -6554,6 +6554,142 @@ def test_execution_exception_is_a_distinct_verified_predecessor(
         assert evidence is None
 
 
+@pytest.mark.parametrize(
+    ("tamper", "qualified"),
+    [("none", True), ("wrong-source", False), ("bad-digest", False)],
+)
+def test_native_executor_preparation_exception_source_is_qualified_without_recovery_artifact(
+    tamper: str, qualified: bool
+) -> None:
+    """One real-shaped #435 executor failure: exception upload, recovery skipped.
+
+    Test the existing *reader*, not an invented repair entry or never-called
+    effect proof. The native run/step/artifact IDs were independently observed;
+    the document content is a synthetic, sanitized contract fixture.
+    """
+    source = WorkerRequest(435, "executor", "implement-change")
+    record = _accepted_record(
+        json.dumps({"_semantic_intent_version": 2, "requested_effects": [{}]}),
+        "EFFECT_REQUEST",
+        source=source,
+        change="restore-t1-dispatch-artifact-consumption",
+        result_kind="blocked",
+        request_comment_id=6796616018,
+    )
+    run_id, job_id, artifact_id = 43029179128, 130551485662, 13860996180
+    trigger_id = 6797071043
+    revision = "3d0d1da5905f9f91f15da6af7e70d9173d4b06b3"
+    document: dict[str, object] = {
+        "schema": "scheduled-agent-execution-exception/v1",
+        "repository": _REPOSITORY,
+        "issue_number": 435 if tamper != "wrong-source" else 436,
+        "role": source.role,
+        "action": source.action,
+        "change": record.change,
+        "revision": revision,
+        "request_comment_id": record.request_comment_id,
+        "trigger_comment_id": trigger_id,
+        "run_id": run_id,
+        "run_attempt": 1,
+        "attempted_operation": "application-effect-preparation",
+        "exception_type": "RuntimeError",
+        "raw_error": "accepted implementation checkpoint identity is incomplete",
+        "raw_traceback": "sanitized source-shaped exception",
+        "mutation_status": "NO_APPLICATION_WRITE_ATTEMPTED",
+        "unfinished_boundary": "application-effect-preparation",
+        "classification": "UNCLASSIFIED_EXECUTION_EXCEPTION",
+    }
+    raw = json.dumps(document, sort_keys=True).encode()
+    digest = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+    native_steps = [
+        {"name": "Freshly authorize and apply repository-owned effects", "conclusion": "failure"},
+        {"name": "Upload exact application recovery evidence", "conclusion": "skipped"},
+        {
+            "name": "Upload pre-ACCEPT or interrupted application exception evidence",
+            "conclusion": "success",
+        },
+        {"name": "Persist exact external carrier plan", "conclusion": "skipped"},
+        {"name": "Upload exact external carrier plan", "conclusion": "skipped"},
+        {"name": "Persist the derived successor after exact validation", "conclusion": "skipped"},
+        {"name": "Upload final exact application recovery evidence", "conclusion": "skipped"},
+    ]
+    observed_reads: list[str] = []
+
+    def native_read(_repo: str, _token: str, path: str) -> object:
+        assert _repo == _REPOSITORY
+        observed_reads.append(path)
+        if path == f"actions/runs/{run_id}":
+            return {
+                "id": run_id,
+                "run_attempt": 1,
+                "status": "completed",
+                "conclusion": "failure",
+                "head_sha": revision,
+                "display_title": f"Scheduled Agent Application {trigger_id}",
+            }
+        if path in {
+            f"actions/runs/{run_id}/attempts/1/jobs",
+            f"actions/runs/{run_id}/attempts/1/jobs?per_page=100&page=1",
+        }:
+            return {
+                "total_count": 2,
+                "jobs": [
+                    {
+                        "id": job_id,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "steps": native_steps,
+                    },
+                    {
+                        "id": job_id + 1,
+                        "name": "idle-admission",
+                        "status": "completed",
+                        "conclusion": "skipped",
+                        "steps": [],
+                    },
+                ],
+            }
+        if path == f"actions/runs/{run_id}/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": artifact_id,
+                        "name": "application-execution-exception.json",
+                        "expired": False,
+                        "digest": (
+                            "sha256:" + "f" * 64 if tamper == "bad-digest" else digest
+                        ),
+                        "workflow_run": {"id": run_id, "head_sha": revision},
+                    }
+                ],
+            }
+        raise AssertionError(f"unexpected GitHub read: {path}")
+
+    def read_bytes(_repo: str, _token: str, path: str) -> bytes:
+        assert path == f"actions/artifacts/{artifact_id}/zip"
+        return raw
+
+    proof = bridge.read_application_exception_artifact(
+        _REPOSITORY,
+        "token",
+        run_id=run_id,
+        run_attempt=1,
+        job_id=job_id,
+        record=record,
+        accepted_decision_sha256="a" * 64,
+        read=native_read,
+        artifact_reader=read_bytes,
+    )
+    assert (proof is not None) is qualified
+    if qualified:
+        assert isinstance(proof, bridge.ApplicationExceptionArtifact)
+        assert proof.document["mutation_status"] == "NO_APPLICATION_WRITE_ATTEMPTED"
+        assert proof.request_comment_id == record.request_comment_id
+    assert f"actions/runs/{run_id}/artifacts?per_page=100" in observed_reads
+
+
 def test_native_application_artifact_stage_preserves_phase_order() -> None:
     def steps(*completed: str) -> tuple[tuple[str, str], ...]:
         return tuple((name, "success") for name in completed)
