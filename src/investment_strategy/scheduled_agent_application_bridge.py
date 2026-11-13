@@ -6156,6 +6156,7 @@ class TypedEvidenceError:
 
 AcceptedNeverCalledEvidence = CompleteNeverCalledWitness | TypedEvidenceError
 
+
 @dataclass(frozen=True)
 class RecoveryEvidenceNode:
     """Typed per-obligation IR fact, never an Action or write authorization.
