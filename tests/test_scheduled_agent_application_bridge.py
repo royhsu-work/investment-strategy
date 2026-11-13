@@ -7175,9 +7175,29 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
         result_kind="blocked",
         request_comment_id=6796616018,
     )
+    # Build the exact correlated Formal identity; this test isolates
+    # the physical-zero original witness rather than invalid Formal metadata.
+    formal_body = "\n".join(
+        (
+            bridge._expected_formal_marker(source),
+            "Workflow: #435",
+            "Change: restore-t1-dispatch-artifact-consumption",
+            "Action: implement-change",
+            "Role: executor",
+            "Result: BLOCKED",
+            f"Default-Branch-Revision: {_REVISION}",
+            "Application-Correlation: "
+            + bridge.formal_application_correlation(
+                source,
+                change="restore-t1-dispatch-artifact-consumption",
+                result_kind="blocked",
+                current_revision=_REVISION,
+                request_comment_id=6796616018,
+            ),
+        )
+    )
     formal = StagedEffect(
-        "issue-comment",
-        json.dumps({"issue_number": 435, "body": "ACTION_RESULT\nWorkflow: #435"}),
+        "issue-comment", json.dumps({"issue_number": 435, "body": formal_body})
     )
     checkpoint: dict[str, object] = {
         "attempted_effects": [
