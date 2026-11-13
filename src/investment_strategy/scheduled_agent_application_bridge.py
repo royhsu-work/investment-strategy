@@ -6320,7 +6320,7 @@ def _observe_accepted_post_effect_result(
                 request_comment_id=record.request_comment_id,
             )
             batch = parse_effect_batch(raw, source, authorized_change=record.change)
-        except (HTTPError, OSError, RuntimeError):
+        except OSError:
             return AcceptedPostEffectProof(
                 "INDETERMINATE", "accepted original Effect source proof unavailable"
             )
@@ -6336,8 +6336,12 @@ def _observe_accepted_post_effect_result(
                 verified_empty = _verified_zero_original_accepted_effects(
                     record=record, source=source, repository=repository, token=token
                 )
-            except (HTTPError, OSError, RuntimeError, TypeError, ValueError):
+            except OSError:
                 verified_empty = False
+            except (TypeError, ValueError):
+                return AcceptedPostEffectProof(
+                    "UNSAFE", "accepted zero-Effect source identity invalid"
+                )
             return (
                 AcceptedPostEffectProof("COMPLETE", "original empty Effect set proven")
                 if verified_empty
