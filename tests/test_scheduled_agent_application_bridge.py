@@ -2353,7 +2353,8 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
     )
     # A positive original Effect proof is not the formal-result/successor gate.
     # Historical uncertainty may still block the *next write* independently.
-    assert proof.original_effect_proof == expected
+    assert proof.original_effect_proof is not None
+    assert proof.original_effect_proof.disposition == expected
     assert proof.disposition == "INDETERMINATE"
 
 
