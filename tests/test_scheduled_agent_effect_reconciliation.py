@@ -614,6 +614,13 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         assert [node.obligation for node in observed_nodes if node.effect == successor] == [
             "SUCCESSOR"
         ]
+    # The historical no-call frontier is a typed DAG obligation, not always
+    # an ORIGINAL_EFFECT. Positive already-committed successor may exit early.
+    frontiers = [node.obligation for node in observed_nodes if node.effect is None]
+    if successor_failed and successor_durable and not history_qualified:
+        assert frontiers == []
+    else:
+        assert frontiers == ["SUCCESSOR" if successor_failed else "FORMAL_RESULT"]
 
 
 @pytest.mark.parametrize(
