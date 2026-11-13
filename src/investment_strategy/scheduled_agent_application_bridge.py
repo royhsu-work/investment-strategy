@@ -6987,13 +6987,9 @@ def classify_accepted_read_only_effects(
                     attempted_proof == "SATISFIED"
                     or (
                         non_entry
+                        and adapter.observe_postcondition(expected_successor)
                         and evaluate_recovery_evidence(
-                            replace(
-                                attempted_fact,
-                                final_postcondition=adapter.observe_postcondition(
-                                    expected_successor
-                                ),
-                            )
+                            replace(attempted_fact, final_postcondition=True)
                         )
                         == "SATISFIED"
                     )
