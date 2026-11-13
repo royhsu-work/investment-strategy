@@ -6221,9 +6221,7 @@ def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofDispo
     return evaluate(node)
 
 
-def _recovery_obligation(
-    effect: StagedEffect, source: WorkerRequest
-) -> RecoveryObligation:
+def _recovery_obligation(effect: StagedEffect, source: WorkerRequest) -> RecoveryObligation:
     """Project an existing Effect identity into one typed DAG obligation."""
 
     if effect.derived:
@@ -7015,9 +7013,9 @@ def classify_accepted_read_only_effects(
         # The accepted Effect layout defines the lawful no-call frontier:
         # originals -> formal result -> derived successor. A completed
         # successor has no next Effect whose non-call can prove final routing.
-        frontier_obligations: tuple[RecoveryObligation, ...] = (
-            ("ORIGINAL_EFFECT",) * len(original.effects) + ("FORMAL_RESULT", "SUCCESSOR")
-        )
+        frontier_obligations: tuple[RecoveryObligation, ...] = ("ORIGINAL_EFFECT",) * len(
+            original.effects
+        ) + ("FORMAL_RESULT", "SUCCESSOR")
         if historical_frontier >= len(frontier_obligations):
             return AcceptedPostEffectProof(
                 "INDETERMINATE",
