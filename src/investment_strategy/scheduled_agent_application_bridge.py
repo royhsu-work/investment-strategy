@@ -6992,10 +6992,9 @@ def classify_accepted_read_only_effects(
         # accepted source before attributing a positive postcondition.
         # This uses the already-accepted source, not optional historic Runs.
         original_effect_proof: RecoveryProofDisposition | None = None
-        if (
-            0 <= index < len(original.effects)
-            and attempted[: index + 1] == original.effects[: index + 1]
-        ):
+        # The checked full-overlap prefix already proves this identity;
+        # the exact checkpoint has len(attempted) == index + 1.
+        if 0 <= index < len(original.effects):
             original_effect_proof = attempted_proof
         if attempted_proof != "SATISFIED" and not non_entry:
             return AcceptedPostEffectProof(
