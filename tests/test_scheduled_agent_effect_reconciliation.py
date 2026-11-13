@@ -52,6 +52,50 @@ def test_s2c_no_legacy_boolean_recovery_decision_owner() -> None:
     assert callable(application.classify_accepted_read_only_effects)
 
 
+def test_s2p_proof_result_carries_witness_and_remaining_obligation() -> None:
+    """Proof outcome is not a bare string; retain the exact fact and unfinished node."""
+    effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"effect"}')
+    positive = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", effect, True)
+    accepted_never_called = application.CompleteNeverCalledWitness(
+        91, 0, "a" * 64, ((7001, 1, 7003),)
+    )
+    absent = application.RecoveryEvidenceNode(
+        "FORMAL_RESULT", effect, False, never_called_evidence=accepted_never_called,
+        depends_on=(positive,),
+    )
+    read_error = application.TypedEvidenceError(
+        "UNKNOWN", "HISTORY_GET", "missing qualified predecessor", 91, 7003
+    )
+    unknown = application.RecoveryEvidenceNode(
+        "SUCCESSOR", effect, None, never_called_evidence=read_error,
+        depends_on=(positive,),
+    )
+    contradictory = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT", effect, True, source_conflict=True,
+    )
+    satisfied_result = application.evaluate_recovery_evidence(positive)
+    assert not isinstance(satisfied_result, str)
+    assert satisfied_result.disposition == "SATISFIED"
+    assert satisfied_result.obligation == "ORIGINAL_EFFECT"
+    assert satisfied_result.witness is positive
+    assert satisfied_result.remaining_obligation is None
+
+    never_called_result = application.evaluate_recovery_evidence(absent)
+    assert never_called_result.disposition == "NOT_APPLIED"
+    assert never_called_result.witness is accepted_never_called
+    assert never_called_result.remaining_obligation == "FORMAL_RESULT"
+
+    unknown_result = application.evaluate_recovery_evidence(unknown)
+    assert unknown_result.disposition == "UNKNOWN"
+    assert unknown_result.witness is read_error
+    assert unknown_result.remaining_obligation == "SUCCESSOR"
+
+    conflict_result = application.evaluate_recovery_evidence(contradictory)
+    assert conflict_result.disposition == "CONFLICT"
+    assert conflict_result.witness is contradictory
+    assert conflict_result.remaining_obligation == "ORIGINAL_EFFECT"
+
+
 def test_s2o_r9_original_prefix_identity_has_one_qualification_owner() -> None:
     """R9 must reuse the exact checkpoint prefix gate, not compare it again."""
     source = inspect.getsource(application.classify_accepted_read_only_effects)
