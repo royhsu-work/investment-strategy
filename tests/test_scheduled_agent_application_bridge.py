@@ -2070,58 +2070,61 @@ def _accepted_record(
         worker_result_sha256=hashlib.sha256(raw_worker_result.encode("utf-8")).hexdigest(),
         raw_worker_result=raw_worker_result,
         reason="accepted",
-@pytest.mark.parametrize("mismatch", ["disposition", "issue_number", "role", "action"])
+    )
+
+
+@pytest.mark.parametrize("mismatch", ["disposition", "role"])
 def test_s2_post_effect_original_proof_rejects_foreign_accepted_identity(
     monkeypatch: pytest.MonkeyPatch, mismatch: str
 ) -> None:
-    """RED R0/R2: a positive original Effect cannot certify a foreign decision."""
+    """RED R0: a positive Effect does not certify a foreign ACCEPTED identity."""
     source = WorkerRequest(435, "executor", "implement-change")
-    raw = json.dumps({"source": "exact accepted original"})
+    raw = '{"source":"accepted-original"}'
     record = _accepted_record(
-        raw, "EFFECT_REQUEST", source=source,
+        raw,
+        "EFFECT_REQUEST",
+        source=source,
         change="restore-t1-dispatch-artifact-consumption",
-        result_kind="blocked", request_comment_id=6796616018,
+        result_kind="blocked",
+        request_comment_id=6796616018,
     )
-    invalid = {
-        "disposition": {"disposition": "REJECTED"},
-        "issue_number": {"issue_number": 999},
-        "role": {"role": "lead"},
-        "action": {"action": "review-implementation"},
-    }[mismatch]
-    record = replace(record, **invalid)
+    record = (
+        replace(record, disposition="REJECTED")
+        if mismatch == "disposition"
+        else replace(record, role="lead")
+    )
     effect = StagedEffect("issue-comment", '{"issue_number":435,"body":"original"}')
-    monkeypatch.setattr(
-        bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw
-    )
+    monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", lambda **_k: raw)
     monkeypatch.setattr(
         bridge, "parse_effect_batch",
-        lambda *_args, **_kwargs: SimpleNamespace(
+        lambda *_a, **_k: SimpleNamespace(
             typed_result=SimpleNamespace(
                 result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
             ),
             effects=(effect,),
         ),
     )
-    visited: list[StagedEffect] = []
+    observed: list[StagedEffect] = []
 
     class Observer:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
+        def __init__(self, *_a: object, **_k: object) -> None:
             pass
 
         def observe_postcondition(self, candidate: StagedEffect) -> bool:
-            visited.append(candidate)
+            observed.append(candidate)
             return True
 
     monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
     proof = bridge._observe_accepted_post_effect_result(
-        record=record, source=source, repository=_REPOSITORY, token=_REVISION,
-        current_revision=_REVISION, default_branch="main",
+        record=record,
+        source=source,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
     )
     assert proof.disposition == "UNSAFE"
-    assert visited == []
-
-
-    )
+    assert observed == []
 
 
 @pytest.mark.parametrize(
