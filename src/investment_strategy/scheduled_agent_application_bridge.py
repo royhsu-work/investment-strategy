@@ -7014,48 +7014,44 @@ def classify_accepted_read_only_effects(
         if (
             formal_identity is not None
             and attempted[-1].derived
-            # The shared qualifier has already verified the Formal/Successor
-            # ordinal, immutable identity, source and historical revision.
+            # One qualified suffix owner has already proved the immutable
+            # Formal/Successor identity, ordinal and historical revision.
             and (bool(original.effects) or not non_entry)
-        ):
-            if (
-                # Commit of the formal result does not prove the final
-                # routing/terminal projection. Only the existing authoritative
-                # Effect adapter can observe that later durable consequence.
-                (
-                    attempted_proof == "SATISFIED"
-                    or (
-                        non_entry
-                        and adapter.observe_postcondition(attempted[-1])
-                        and evaluate_recovery_evidence(
-                            replace(attempted_fact, final_postcondition=True)
-                        )
-                        == "SATISFIED"
+            # A durable Formal Result alone does not prove final routing.
+            and (
+                attempted_proof == "SATISFIED"
+                or (
+                    non_entry
+                    and adapter.observe_postcondition(attempted[-1])
+                    and evaluate_recovery_evidence(
+                        replace(attempted_fact, final_postcondition=True)
                     )
+                    == "SATISFIED"
                 )
-                and consequence_postconditions_complete(
-                    record.raw_worker_result,
-                    source=source,
-                    repository=repository,
-                    token=token,
-                    current_revision=current_revision,
-                    authorized_change=record.change,
+            )
+            and consequence_postconditions_complete(
+                record.raw_worker_result,
+                source=source,
+                repository=repository,
+                token=token,
+                current_revision=current_revision,
+                authorized_change=record.change,
+                request_comment_id=record.request_comment_id,
+                accepted_intent=True,
+                allow_accepted_successor=True,
+                observed_application_correlation=formal_application_correlation(
+                    source,
+                    change=record.change,
+                    result_kind=record.result_kind,
+                    current_revision=formal_identity[1],
                     request_comment_id=record.request_comment_id,
-                    accepted_intent=True,
-                    allow_accepted_successor=True,
-                    observed_application_correlation=formal_application_correlation(
-                        source,
-                        change=record.change,
-                        result_kind=record.result_kind,
-                        current_revision=formal_identity[1],
-                        request_comment_id=record.request_comment_id,
-                    ),
-                    formal_result_observed=True,
-                )
-            ):
-                return AcceptedPostEffectProof(
-                    "COMPLETE", "exact accepted formal and successor already observed"
-                )
+                ),
+                formal_result_observed=True,
+            )
+        ):
+            return AcceptedPostEffectProof(
+                "COMPLETE", "exact accepted formal and successor already observed"
+            )
         # The accepted frontier and the source reader share one ordinal owner;
         # there is no not-called Effect after the unique derived successor.
         frontier_obligation = _accepted_frontier_obligation(
