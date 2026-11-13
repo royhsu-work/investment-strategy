@@ -617,9 +617,11 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         "FORMAL_RESULT"
     ]
     if successor_failed:
+        # One attempted DAG fact; a later positively observed Successor
+        # adds one typed proof of the same exact Effect and its ancestry.
         assert [node.obligation for node in observed_nodes if node.effect == successor] == [
             "SUCCESSOR"
-        ]
+        ] * (2 if successor_durable else 1)
         if successor_durable:
             # Even a never-entered successor that becomes durable must pass
             # the shared typed DAG, not a caller-owned Boolean completion gate.
