@@ -60,18 +60,27 @@ def test_s2p_proof_result_carries_witness_and_remaining_obligation() -> None:
         91, 0, "a" * 64, ((7001, 1, 7003),)
     )
     absent = application.RecoveryEvidenceNode(
-        "FORMAL_RESULT", effect, False, never_called_evidence=accepted_never_called,
+        "FORMAL_RESULT",
+        effect,
+        False,
+        never_called_evidence=accepted_never_called,
         depends_on=(positive,),
     )
     read_error = application.TypedEvidenceError(
         "UNKNOWN", "HISTORY_GET", "missing qualified predecessor", 91, 7003
     )
     unknown = application.RecoveryEvidenceNode(
-        "SUCCESSOR", effect, None, never_called_evidence=read_error,
+        "SUCCESSOR",
+        effect,
+        None,
+        never_called_evidence=read_error,
         depends_on=(positive,),
     )
     contradictory = application.RecoveryEvidenceNode(
-        "ORIGINAL_EFFECT", effect, True, source_conflict=True,
+        "ORIGINAL_EFFECT",
+        effect,
+        True,
+        source_conflict=True,
     )
     satisfied_result = application.evaluate_recovery_evidence(positive)
     assert not isinstance(satisfied_result, str)
