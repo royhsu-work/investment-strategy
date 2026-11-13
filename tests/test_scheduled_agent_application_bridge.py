@@ -7,7 +7,7 @@ import hashlib
 import importlib
 import json
 import sys
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import date
 from email.message import Message
 from io import BytesIO
@@ -2070,6 +2070,57 @@ def _accepted_record(
         worker_result_sha256=hashlib.sha256(raw_worker_result.encode("utf-8")).hexdigest(),
         raw_worker_result=raw_worker_result,
         reason="accepted",
+@pytest.mark.parametrize("mismatch", ["disposition", "issue_number", "role", "action"])
+def test_s2_post_effect_original_proof_rejects_foreign_accepted_identity(
+    monkeypatch: pytest.MonkeyPatch, mismatch: str
+) -> None:
+    """RED R0/R2: a positive original Effect cannot certify a foreign decision."""
+    source = WorkerRequest(435, "executor", "implement-change")
+    raw = json.dumps({"source": "exact accepted original"})
+    record = _accepted_record(
+        raw, "EFFECT_REQUEST", source=source,
+        change="restore-t1-dispatch-artifact-consumption",
+        result_kind="blocked", request_comment_id=6796616018,
+    )
+    invalid = {
+        "disposition": {"disposition": "REJECTED"},
+        "issue_number": {"issue_number": 999},
+        "role": {"role": "lead"},
+        "action": {"action": "review-implementation"},
+    }[mismatch]
+    record = replace(record, **invalid)
+    effect = StagedEffect("issue-comment", '{"issue_number":435,"body":"original"}')
+    monkeypatch.setattr(
+        bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw
+    )
+    monkeypatch.setattr(
+        bridge, "parse_effect_batch",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            typed_result=SimpleNamespace(
+                result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
+            ),
+            effects=(effect,),
+        ),
+    )
+    visited: list[StagedEffect] = []
+
+    class Observer:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def observe_postcondition(self, candidate: StagedEffect) -> bool:
+            visited.append(candidate)
+            return True
+
+    monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
+    proof = bridge._observe_accepted_post_effect_result(
+        record=record, source=source, repository=_REPOSITORY, token=_REVISION,
+        current_revision=_REVISION, default_branch="main",
+    )
+    assert proof.disposition == "UNSAFE"
+    assert visited == []
+
+
     )
 
 
