@@ -6266,6 +6266,14 @@ class AcceptedPostEffectProof:
     # Independent leaf proof. It never grants continuation or replay authority.
     original_effect_proof: RecoveryProofDisposition | None = None
 
+    @classmethod
+    def from_evidence_error(cls, error: TypedEvidenceError) -> AcceptedPostEffectProof:
+        """One typed error-to-presentation projection; never replay authority."""
+        return cls(
+            "UNSAFE" if error.category == "CONFLICT" else "INDETERMINATE",
+            error.detail,
+        )
+
     def __post_init__(self) -> None:
         if (self.disposition == "MISSING_PR") != (self.carrier_plan is not None):
             raise ValueError("only an exact missing-PR recovery may carry a CarrierPlan")
@@ -6448,10 +6456,7 @@ def _observe_accepted_post_effect_result(
             token=token,
         )
         if isinstance(batch, TypedEvidenceError):
-            return AcceptedPostEffectProof(
-                "UNSAFE" if batch.category == "CONFLICT" else "INDETERMINATE",
-                batch.detail,
-            )
+            return AcceptedPostEffectProof.from_evidence_error(batch)
         # Physical-zero was positively qualified by the same original-source
         # reader above. The empty prefix is a valid shared proof input; do not
         # retain a competing completion decision for zero-original Effects.
@@ -6871,10 +6876,7 @@ def classify_accepted_read_only_effects(
             token=token,
         )
         if isinstance(original, TypedEvidenceError):
-            return AcceptedPostEffectProof(
-                "UNSAFE" if original.category == "CONFLICT" else "INDETERMINATE",
-                original.detail,
-            )
+            return AcceptedPostEffectProof.from_evidence_error(original)
         # The qualified EffectBatch already excludes an absent typed result.
         typed_original = cast(BoundedActionResult, original.typed_result)
         # Positive postconditions cannot rehabilitate an immutable Effect
