@@ -6719,9 +6719,7 @@ def _read_accepted_never_called_evidence(
                 expected_derived = derived_transition_effect(
                     issue_number=source.issue_number,
                     change=record.change,
-                    successor=next_action(
-                        typed_original.action, typed_original.result
-                    ),
+                    successor=next_action(typed_original.action, typed_original.result),
                 )
             except (RuntimeError, TypeError, ValueError):
                 return error(
