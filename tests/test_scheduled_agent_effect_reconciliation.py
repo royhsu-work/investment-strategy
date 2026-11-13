@@ -626,7 +626,7 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
     if successor_failed and successor_durable and not history_qualified:
         assert frontiers == []
     else:
-        assert frontiers == ["SUCCESSOR" if successor_failed else "FORMAL_RESULT"]
+        assert frontiers == ["SUCCESSOR" if successor_failed or formal_durable else "FORMAL_RESULT"]
     if formal_durable:
         successor_frontiers = [
             node for node in observed_nodes if node.effect is None and node.obligation == "SUCCESSOR"
