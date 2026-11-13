@@ -7049,34 +7049,6 @@ def classify_accepted_read_only_effects(
         return AcceptedPostEffectProof("INDETERMINATE", "accepted GitHub observation unavailable")
 
 
-def accepted_read_only_effects_complete(
-    *,
-    record: ApplicationDecisionRecord,
-    source: WorkerRequest,
-    recovery_evidence: Mapping[str, object],
-    repository: str,
-    token: str,
-    current_revision: str,
-    default_branch: str,
-    recovery_artifact: ApplicationRecoveryArtifact | None = None,
-) -> bool:
-    """Boolean compatibility projection; typed proof is the sole owner."""
-
-    return (
-        classify_accepted_read_only_effects(
-            record=record,
-            source=source,
-            recovery_evidence=recovery_evidence,
-            repository=repository,
-            token=token,
-            current_revision=current_revision,
-            default_branch=default_branch,
-            recovery_artifact=recovery_artifact,
-        ).disposition
-        == "COMPLETE"
-    )
-
-
 def classify_post_effect_result_recovery(
     *,
     record: ApplicationDecisionRecord,
