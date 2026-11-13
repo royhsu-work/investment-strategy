@@ -6175,48 +6175,77 @@ class RecoveryEvidenceNode:
     depends_on: tuple[RecoveryEvidenceNode, ...] = ()
 
 
-def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofDisposition:
-    """Pure DAG proof: shared facts once; conflicts dominate; no write permission.
+@dataclass(frozen=True)
+class RecoveryProofResult:
+    """Proof-carrying pure DAG output, never write or routing authority.
 
-    A positive exact final state does not require historical attempt inventory,
-    but a provenance contradiction cannot be ignored. A *missing* descendant
-    is NOT_APPLIED only when all prerequisites are SATISFIED and the descendant
-    has its own positive never-called witness. Cycles are invalid evidence.
+    The witness is the already-observed positive fact, source-qualified
+    never-called chain, or precise unresolved/contradictory evidence.
     """
 
-    memo: dict[int, RecoveryProofDisposition] = {}
+    disposition: RecoveryProofDisposition
+    obligation: RecoveryObligation
+    witness: RecoveryEvidenceNode | CompleteNeverCalledWitness | TypedEvidenceError
+    remaining_obligation: RecoveryObligation | None
+
+
+def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofResult:
+    """One pure DAG proof evaluator retaining evidence and unfinished obligations.
+
+    Positive current state does not require attempt-history enumeration.
+    A missing write is NOT_APPLIED only with a complete never-called witness;
+    no domain proof can authorize an Effect, Action, successor, or retry.
+    """
+
+    memo: dict[int, RecoveryProofResult] = {}
     visiting: set[int] = set()
 
-    def evaluate(fact: RecoveryEvidenceNode) -> RecoveryProofDisposition:
+    def evaluate(fact: RecoveryEvidenceNode) -> RecoveryProofResult:
         identity = id(fact)
         if identity in visiting:
-            return "CONFLICT"
+            return RecoveryProofResult("CONFLICT", fact.obligation, fact, fact.obligation)
         if identity in memo:
             return memo[identity]
         visiting.add(identity)
         dependencies = tuple(evaluate(parent) for parent in fact.depends_on)
         visiting.remove(identity)
-        if (
-            fact.source_conflict
-            or "CONFLICT" in dependencies
-            or (
-                isinstance(fact.never_called_evidence, TypedEvidenceError)
-                and fact.never_called_evidence.category == "CONFLICT"
-            )
+        conflicting = next((p for p in dependencies if p.disposition == "CONFLICT"), None)
+        incomplete = next((p for p in dependencies if p.disposition != "SATISFIED"), None)
+
+        if fact.source_conflict:
+            result = RecoveryProofResult("CONFLICT", fact.obligation, fact, fact.obligation)
+        elif (
+            isinstance(fact.never_called_evidence, TypedEvidenceError)
+            and fact.never_called_evidence.category == "CONFLICT"
         ):
-            disposition: RecoveryProofDisposition = "CONFLICT"
-        elif any(result != "SATISFIED" for result in dependencies):
-            disposition = "UNKNOWN"
+            result = RecoveryProofResult(
+                "CONFLICT", fact.obligation, fact.never_called_evidence, fact.obligation
+            )
+        elif conflicting is not None:
+            result = RecoveryProofResult(
+                "CONFLICT", fact.obligation, conflicting.witness, conflicting.remaining_obligation
+            )
+        elif incomplete is not None:
+            result = RecoveryProofResult(
+                "UNKNOWN", fact.obligation, incomplete.witness, incomplete.remaining_obligation
+            )
         elif fact.final_postcondition is True:
-            disposition = "SATISFIED"
+            result = RecoveryProofResult("SATISFIED", fact.obligation, fact, None)
         elif fact.final_postcondition is False and isinstance(
             fact.never_called_evidence, CompleteNeverCalledWitness
         ):
-            disposition = "NOT_APPLIED"
+            result = RecoveryProofResult(
+                "NOT_APPLIED", fact.obligation, fact.never_called_evidence, fact.obligation
+            )
         else:
-            disposition = "UNKNOWN"
-        memo[identity] = disposition
-        return disposition
+            witness = (
+                fact.never_called_evidence
+                if isinstance(fact.never_called_evidence, TypedEvidenceError)
+                else fact
+            )
+            result = RecoveryProofResult("UNKNOWN", fact.obligation, witness, fact.obligation)
+        memo[identity] = result
+        return result
 
     return evaluate(node)
 
@@ -6303,7 +6332,7 @@ def _observe_accepted_effect_prefix(
             effect,
             final_postcondition=observe_postcondition(effect),
         )
-        if evaluate_recovery_evidence(fact) != "SATISFIED":
+        if evaluate_recovery_evidence(fact).disposition != "SATISFIED":
             return None
         nodes.append(fact)
     return tuple(nodes)
@@ -6317,7 +6346,7 @@ class AcceptedPostEffectProof:
     reason: str
     carrier_plan: CarrierPlan | None = None
     # Independent leaf proof. It never grants continuation or replay authority.
-    original_effect_proof: RecoveryProofDisposition | None = None
+    original_effect_proof: RecoveryProofResult | None = None
 
     @classmethod
     def from_evidence_error(cls, error: TypedEvidenceError) -> AcceptedPostEffectProof:
@@ -6986,17 +7015,17 @@ def classify_accepted_read_only_effects(
             depends_on=tuple(proven_prefix),
         )
         attempted_proof = evaluate_recovery_evidence(attempted_fact)
-        historical_frontier = index + 1 if attempted_proof == "SATISFIED" else index
+        historical_frontier = index + 1 if attempted_proof.disposition == "SATISFIED" else index
         # Original Effect proof is separate from *authorization of the next*
         # formal/result/successor write. Bind its leaf to the immutable
         # accepted source before attributing a positive postcondition.
         # This uses the already-accepted source, not optional historic Runs.
-        original_effect_proof: RecoveryProofDisposition | None = None
+        original_effect_proof: RecoveryProofResult | None = None
         # The checked full-overlap prefix already proves this identity;
         # the exact checkpoint has len(attempted) == index + 1.
         if 0 <= index < len(original.effects):
             original_effect_proof = attempted_proof
-        if attempted_proof != "SATISFIED" and not non_entry:
+        if attempted_proof.disposition != "SATISFIED" and not non_entry:
             return AcceptedPostEffectProof(
                 "INDETERMINATE",
                 "attempted accepted Effect is not yet proven complete",
@@ -7014,13 +7043,13 @@ def classify_accepted_read_only_effects(
             and (bool(original.effects) or not non_entry)
             # A durable Formal Result alone does not prove final routing.
             and (
-                attempted_proof == "SATISFIED"
+                attempted_proof.disposition == "SATISFIED"
                 or (
                     non_entry
                     and adapter.observe_postcondition(attempted[-1])
                     and evaluate_recovery_evidence(
                         replace(attempted_fact, final_postcondition=True)
-                    )
+                    ).disposition
                     == "SATISFIED"
                 )
             )
@@ -7077,17 +7106,17 @@ def classify_accepted_read_only_effects(
                 never_called_evidence=history,
                 depends_on=(
                     (*proven_prefix, attempted_fact)
-                    if attempted_proof == "SATISFIED"
+                    if attempted_proof.disposition == "SATISFIED"
                     else tuple(proven_prefix)
                 ),
             )
         )
-        if historical_proof != "NOT_APPLIED":
+        if historical_proof.disposition != "NOT_APPLIED":
             return AcceptedPostEffectProof(
-                "UNSAFE" if historical_proof == "CONFLICT" else "INDETERMINATE",
+                "UNSAFE" if historical_proof.disposition == "CONFLICT" else "INDETERMINATE",
                 (
                     "accepted historical write frontier contradicts source"
-                    if historical_proof == "CONFLICT"
+                    if historical_proof.disposition == "CONFLICT"
                     else "accepted historical write frontier is not proven"
                 ),
                 original_effect_proof=original_effect_proof,
