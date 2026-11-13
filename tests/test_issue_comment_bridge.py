@@ -3937,6 +3937,7 @@ def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
 )
 @pytest.mark.parametrize("source_kind", ["activation", "implementation"])
 @pytest.mark.parametrize("exception_stage", ["pre", "post"])
+@pytest.mark.parametrize("artifact_identity_valid", [True, False])
 def test_exception_only_application_completion_requires_fresh_original_proof(
     monkeypatch: pytest.MonkeyPatch,
     proof: str,
@@ -3944,6 +3945,7 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
     expected_reason: str,
     source_kind: str,
     exception_stage: str,
+    artifact_identity_valid: bool,
 ) -> None:
     record = (
         replace(
@@ -3989,7 +3991,7 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
         failure_evidence_sha256="c" * 64,
         recovery_episode_sha256="d" * 64,
         document={
-            "issue_number": record.issue_number,
+            "issue_number": record.issue_number if artifact_identity_valid else 436,
             "role": record.role,
             "action": record.action,
             "change": record.change,
@@ -4049,14 +4051,23 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
         "read_application_recovery_artifact",
         lambda *_a, **_kw: pytest.fail("wrong artifact type selected"),
     )
-    monkeypatch.setattr(
-        bridge,
-        "classify_application_exception_recovery",
-        lambda **_kw: application.AcceptedPostEffectProof(
+    fresh_calls: list[int] = []
+
+    def fresh_original(
+        accepted: application.ApplicationDecisionRecord, *, repository: str, token: str
+    ) -> application.AcceptedPostEffectProof:
+        assert accepted is record
+        assert repository == "royhsu-work/investment-strategy"
+        assert token == "token"
+        fresh_calls.append(accepted.request_comment_id)
+        return application.AcceptedPostEffectProof(
             cast(Literal["COMPLETE", "INDETERMINATE", "UNSAFE", "NOT_APPLIED"], proof),
             "observed",
-        ),
-    )
+        )
+
+    # Do not mock the classifier: exercise the actual immutable-source admission
+    # boundary and its existing non-authorizing Bridge projection.
+    monkeypatch.setattr(application, "_fresh_accepted_activation_proof", fresh_original)
     result = bridge._application_job(
         "royhsu-work/investment-strategy",
         "token",
@@ -4065,9 +4076,12 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
         record=record,
         accepted_decision_sha256=evidence.accepted_decision_sha256,
     )
-    assert result.state == expected_state
-    assert result.reason == expected_reason
+    assert result.state == (expected_state if artifact_identity_valid else "INVALID")
+    assert result.reason == (
+        expected_reason if artifact_identity_valid else "application-completion-exception-unsafe"
+    )
     assert result.recovery_artifact is evidence
+    assert fresh_calls == ([record.request_comment_id] if artifact_identity_valid else [])
 
 
 def test_exception_continuation_uses_existing_wire_and_cross_shard_no_replay(
