@@ -2064,6 +2064,75 @@ def test_nonactivation_exception_proof_reconciles_original_effects_without_repla
 
 
 @pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (OSError, "INDETERMINATE"),
+        (ValueError, "UNSAFE"),
+        (RuntimeError, "RAISE"),
+    ],
+)
+@pytest.mark.parametrize("empty_original", [False, True])
+def test_accepted_original_source_captures_only_operational_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: type[Exception],
+    expected: str,
+    empty_original: bool,
+) -> None:
+    """R9: a deterministic proof defect must reach the existing outer owner.
+
+    A GitHub read fault remains observable; an invalid input is unsafe, while
+    an unexpected programming/contract fault must never become endless UNKNOWN.
+    """
+    source = WorkerRequest(435, "executor", "implement-change")
+    raw = json.dumps({"source": "immutable accepted intent"})
+    record = _accepted_record(
+        raw,
+        "EFFECT_REQUEST",
+        source=source,
+        change="restore-t1-dispatch-artifact-consumption",
+        result_kind="blocked",
+        request_comment_id=6796616018,
+    )
+
+    def fail(**_kwargs: object) -> str:
+        raise failure("proof boundary fault")
+
+    if empty_original:
+        monkeypatch.setattr(
+            bridge, "_accepted_worker_result_for_continuation", lambda **_kwargs: raw
+        )
+        monkeypatch.setattr(
+            bridge,
+            "parse_effect_batch",
+            lambda *_args, **_kwargs: SimpleNamespace(
+                typed_result=SimpleNamespace(
+                    result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
+                ),
+                effects=(),
+            ),
+        )
+        monkeypatch.setattr(bridge, "_verified_zero_original_accepted_effects", fail)
+    else:
+        monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", fail)
+
+    def observe() -> bridge.AcceptedPostEffectProof:
+        return bridge._observe_accepted_post_effect_result(
+            record=record,
+            source=source,
+            repository=_REPOSITORY,
+            token=_REVISION,
+            current_revision=_REVISION,
+            default_branch="main",
+        )
+
+    if expected == "RAISE":
+        with pytest.raises(RuntimeError, match="proof boundary fault"):
+            observe()
+    else:
+        assert observe().disposition == expected
+
+
+@pytest.mark.parametrize(
     ("postcondition", "expected"),
     [(True, "SATISFIED"), (False, "UNKNOWN")],
 )
