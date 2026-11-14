@@ -3906,6 +3906,7 @@ def test_accepted_recovery_proof_has_one_non_authorizing_completion_projection(
             cast(Literal["RESUMABLE", "INVALID"], state),
             cast(str, reason),
             request_comment_id=90,
+            accepted_proof=proof,
         )
 
 
