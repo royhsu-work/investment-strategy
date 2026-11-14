@@ -7086,10 +7086,14 @@ def classify_accepted_read_only_effects(
                 "UNSAFE" if proven_prefix.disposition == "CONFLICT" else "INDETERMINATE",
                 "accepted historical prefix is not yet satisfied",
                 original_effect_proof=(
-                    proven_prefix if proven_prefix.remaining_obligation == "ORIGINAL_EFFECT" else None
+                    proven_prefix
+                    if proven_prefix.remaining_obligation == "ORIGINAL_EFFECT"
+                    else None
                 ),
                 pending_frontier_proof=(
-                    proven_prefix if proven_prefix.remaining_obligation != "ORIGINAL_EFFECT" else None
+                    proven_prefix
+                    if proven_prefix.remaining_obligation != "ORIGINAL_EFFECT"
+                    else None
                 ),
             )
         # A never-called derived Effect is not independently observed here:
