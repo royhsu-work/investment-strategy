@@ -9067,6 +9067,12 @@ def _native_runtime_repair_sources() -> tuple[
         ("ordinary-continuation", False),
         ("completed", False),
         ("unknown-original", True),
+        ("unqualified-proof", False),
+        ("wrong-completion-request", False),
+        ("wrong-proof-state", False),
+        ("positive-proof", False),
+        ("never-called-proof", False),
+        ("missing-proof-frontier", False),
     ],
 )
 def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
@@ -9140,13 +9146,62 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             )
         if fault == "completed":
             return bridge.ApplicationCompletion("COMPLETE", "already complete", 6796616018)
-        if fault == "unknown-original":
+        if fault == "unqualified-proof":
             return bridge.ApplicationCompletion(
-                "RESUMABLE", "application-completion-read-only-observing", 6796616018
+                "INVALID", "application-completion-read-only-proof-conflict", 6796616018
             )
-        return bridge.ApplicationCompletion(
-            "INVALID", "application-completion-read-only-proof-conflict", 6796616018
+
+        # Exercise the real Application DAG/Result and Application→Bridge
+        # projection rather than blessing arbitrary status/reason strings.
+        if fault == "valid":
+            fact = application.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT", None, None, source_conflict=True
+            )
+        elif fault == "positive-proof":
+            fact = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, True)
+        elif fault == "never-called-proof":
+            fact = application.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT",
+                None,
+                False,
+                never_called_evidence=application.CompleteNeverCalledWitness(
+                    6796616018, 0, "b" * 64, ((1, 1, 1),)
+                ),
+            )
+        else:
+            fact = application.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT",
+                None,
+                None,
+                never_called_evidence=application.TypedEvidenceError(
+                    "UNKNOWN", "NATIVE_GET", "read-only observation unavailable", 6796616018
+                ),
+            )
+        typed = application.evaluate_recovery_evidence(fact)
+        if fault == "missing-proof-frontier":
+            typed = application.RecoveryProofResult(
+                "UNKNOWN", "ORIGINAL_EFFECT", typed.witness, None
+            )
+        proof = application.AcceptedPostEffectProof(
+            "UNSAFE" if fault == "valid" else "INDETERMINATE",
+            "qualified Application typed proof",
+            original_effect_proof=typed,
         )
+        completion = bridge._unresolved_accepted_proof_completion(
+            proof,
+            origin="READ_ONLY",
+            request_comment_id=(
+                6796616019 if fault == "wrong-completion-request" else 6796616018
+            ),
+            recovery_artifact=None,
+        )
+        if completion is None:
+            return bridge.ApplicationCompletion(
+                "RESUMABLE", "application-completion-continuation-required", 6796616018
+            )
+        if fault == "wrong-proof-state":
+            return replace(completion, state="COMPLETE")
+        return completion
 
     result = bridge.qualify_runtime_repair_admission(
         event,
@@ -9162,7 +9217,9 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
         assert result.source == bridge.WorkerRequest(435, "executor", "implement-change")
         assert result.accepted_request_comment_id == 6796616018
         assert result.repair_pr == 443 and result.repair_head == REVISION
-        assert result.frontier == "unverified"  # no fabricated positive proof
+        assert result.frontier == (
+            "ORIGINAL_EFFECT:CONFLICT" if fault == "valid" else "ORIGINAL_EFFECT:UNKNOWN"
+        )
         parsed = bridge.parse_application_decision(cast(str, accepted["body"]))
         assert parsed is not None
         assert result.accepted_worker_sha256 == parsed.worker_result_sha256

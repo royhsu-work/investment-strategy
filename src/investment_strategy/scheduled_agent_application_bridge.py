@@ -6399,6 +6399,25 @@ class AcceptedPostEffectProof:
 
         return _POST_EFFECT_ADMISSION[self.disposition]
 
+    @property
+    def runtime_repair_frontier(self) -> RecoveryProofResult | None:
+        """Expose only an unresolved, typed obligation already qualified by Application.
+
+        This is not a new decision policy or write permission. Absent typed
+        evidence, positive completion, and a proven never-called suffix are
+        not irreducible UNKNOWN/CONFLICT maintenance admissions.
+        """
+
+        proof = self.original_effect_proof
+        if (
+            self.disposition not in {"INDETERMINATE", "UNSAFE"}
+            or proof is None
+            or proof.disposition not in {"UNKNOWN", "CONFLICT"}
+            or proof.remaining_obligation is None
+        ):
+            return None
+        return proof
+
 
 def _accepted_activation_effect_identity(
     accepted_raw: str,

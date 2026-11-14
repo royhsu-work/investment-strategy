@@ -166,6 +166,8 @@ class ApplicationCompletion:
     job_id: int | None = None
     qualified_carrier: QualifiedCarrierPlan | None = None
     recovery_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None = None
+    # Only the Application's actual accepted proof can propose an R9 intake.
+    accepted_proof: AcceptedPostEffectProof | None = None
 
 
 # The canonical proof owns permission. This Bridge-only table preserves the
@@ -205,6 +207,7 @@ def _unresolved_accepted_proof_completion(
         _ACCEPTED_PROOF_FAILURE_REASONS[origin][proof.disposition],
         request_comment_id=request_comment_id,
         recovery_artifact=recovery_artifact,
+        accepted_proof=proof,
     )
 
 
@@ -6038,30 +6041,21 @@ def qualify_runtime_repair_admission(
         current_revision=current_revision,
         read=read,
     )
-    # An executable ordinary continuation is not a maintenance intake.
+    # Eligibility comes from the Application-owned typed proof, not a
+    # Bridge status/reason allowlist. A missing or mismatched accepted source
+    # cannot become a positive repair admission just because it is INVALID.
+    proof = completion.accepted_proof
+    if proof is None:
+        return None
+    repair_frontier = proof.runtime_repair_frontier
     if (
-        completion.state not in {"INVALID", "RESUMABLE", "AMBIGUOUS"}
-        or completion.reason
-        in {
-            "application-completion-continuation-required",
-            "application-completion-carrier-required",
-            "application-completion-rerun-limit",
-            "application-completion-preaccept-in-progress",
-        }
-        or completion.request_comment_id not in {None, request_comment_id}
+        repair_frontier is None
+        or completion.request_comment_id != request_comment_id
+        or completion.state
+        != ("RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID")
     ):
         return None
-    artifact = completion.recovery_artifact
-    failure = (
-        artifact.document.get("failure_evidence")
-        if isinstance(artifact, ApplicationRecoveryArtifact)
-        else None
-    )
-    frontier = (
-        f"{failure.get('failed_effect_index')}:{failure.get('failed_effect_kind')}"
-        if isinstance(failure, Mapping)
-        else "unverified"
-    )
+    frontier = f"{repair_frontier.remaining_obligation}:{repair_frontier.disposition}"
     return RuntimeRepairAdmission(
         source=source,
         trigger_comment_id=trigger_comment_id,
