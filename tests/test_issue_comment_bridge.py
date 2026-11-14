@@ -9068,6 +9068,8 @@ def _native_runtime_repair_sources() -> tuple[
         ("ordinary-continuation", False),
         ("completed", False),
         ("unknown-original", True),
+        ("pending-formal", True),
+        ("pending-successor", True),
         ("unqualified-proof", False),
         ("wrong-completion-request", False),
         ("wrong-proof-state", False),
@@ -9183,10 +9185,33 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             typed = application.RecoveryProofResult(
                 "UNKNOWN", "ORIGINAL_EFFECT", typed.witness, None
             )
+        pending = None
+        if fault in {"pending-formal", "pending-successor"}:
+            # Preserve the independently satisfied Original witness while the
+            # real pending Application frontier is a later typed DAG node.
+            original = application.evaluate_recovery_evidence(
+                application.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, True)
+            )
+            obligation = "FORMAL_RESULT" if fault == "pending-formal" else "SUCCESSOR"
+            pending = application.evaluate_recovery_evidence(
+                application.RecoveryEvidenceNode(
+                    obligation,
+                    None,
+                    None,
+                    never_called_evidence=application.TypedEvidenceError(
+                        "UNKNOWN", "HISTORY", "native history unresolved", 6796616018
+                    ),
+                    depends_on=(
+                        application.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, True),
+                    ),
+                )
+            )
+            typed = original
         proof = application.AcceptedPostEffectProof(
             "UNSAFE" if fault == "valid" else "INDETERMINATE",
             "qualified Application typed proof",
             original_effect_proof=typed,
+            pending_frontier_proof=pending,
         )
         completion = bridge._unresolved_accepted_proof_completion(
             proof,
@@ -9216,9 +9241,12 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
         assert result.source == bridge.WorkerRequest(435, "executor", "implement-change")
         assert result.accepted_request_comment_id == 6796616018
         assert result.repair_pr == 443 and result.repair_head == REVISION
-        assert result.frontier == (
-            "ORIGINAL_EFFECT:CONFLICT" if fault == "valid" else "ORIGINAL_EFFECT:UNKNOWN"
-        )
+        expected_frontier = {
+            "valid": "ORIGINAL_EFFECT:CONFLICT",
+            "pending-formal": "FORMAL_RESULT:UNKNOWN",
+            "pending-successor": "SUCCESSOR:UNKNOWN",
+        }.get(fault, "ORIGINAL_EFFECT:UNKNOWN")
+        assert result.frontier == expected_frontier
         parsed = bridge.parse_application_decision(cast(str, accepted["body"]))
         assert parsed is not None
         assert result.accepted_worker_sha256 == parsed.worker_result_sha256

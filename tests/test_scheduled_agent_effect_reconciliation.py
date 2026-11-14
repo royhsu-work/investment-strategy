@@ -707,6 +707,7 @@ def _assumed_qualified_history_for_postcondition_test(
     return artifact
 
 
+@pytest.mark.parametrize("original_count", [0, 1, 2])
 @pytest.mark.parametrize(
     ("successor_failed", "successor_durable", "history_qualified", "formal_durable", "expected"),
     [
@@ -719,6 +720,7 @@ def _assumed_qualified_history_for_postcondition_test(
 )
 def test_read_only_ir_identifies_formal_result_and_successor_nodes(
     monkeypatch: pytest.MonkeyPatch,
+    original_count: int,
     successor_failed: bool,
     successor_durable: bool,
     history_qualified: bool,
@@ -726,9 +728,21 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
     expected: str,
 ) -> None:
     """R8: real read-only classification must distinguish Application obligations."""
-    original, source = _batch()
+    _, source = _batch()
+    original_effects = tuple(
+        StagedEffect(
+            "issue-comment",
+            json.dumps({"issue_number": source.issue_number, "body": f"accepted original {n}"}),
+        )
+        for n in range(original_count)
+    )
+    if not original_effects:
+        # Zero accepted worker Effects still require a positive native source
+        # witness, which is qualified at its separate source-reader boundary.
+        monkeypatch.setattr(application, "_verified_zero_original_accepted_effects", lambda **_kw: True)
     raw = json.dumps(
         {
+            **({"_semantic_intent_version": 2} if not original_effects else {}),
             "issue_number": source.issue_number,
             "role": source.role,
             "action": source.action,
@@ -738,7 +752,7 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
             "result_content": "accepted",
             "requested_effects": [
                 {"kind": effect.kind, "payload_json": effect.payload_json}
-                for effect in original.effects
+                for effect in original_effects
             ],
         }
     )
@@ -767,7 +781,7 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
     successor = derived_transition_effect(
         issue_number=source.issue_number, change=CHANGE, successor=Action.IMPLEMENT_CHANGE
     )
-    attempted = (*original.effects, formal, *((successor,) if successor_failed else ()))
+    attempted = (*original_effects, formal, *((successor,) if successor_failed else ()))
     failed = attempted[-1]
     checkpoint: dict[str, object] = {
         "mutation_status": "not-complete",
@@ -836,6 +850,18 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         recovery_artifact=artifact,
     )
     assert proof.disposition == expected
+    if expected == "INDETERMINATE":
+        # The actual Formal/Successor UNKNOWN must survive beyond the
+        # Original source witness, including physical-zero accepted intent.
+        frontier = proof.pending_frontier_proof
+        assert frontier is not None
+        assert frontier.disposition == "UNKNOWN"
+        assert frontier.remaining_obligation == (
+            "SUCCESSOR" if successor_failed or formal_durable else "FORMAL_RESULT"
+        )
+        assert proof.runtime_repair_frontier is frontier
+    else:
+        assert proof.pending_frontier_proof is None
     assert [node.obligation for node in observed_nodes if node.effect == formal] == [
         "FORMAL_RESULT"
     ]
@@ -855,7 +881,7 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
             ]
             assert len(positive) == 1
             assert [parent.effect for parent in positive[0].depends_on] == [
-                *original.effects,
+                *original_effects,
                 formal,
             ]
     # The historical no-call frontier is a typed DAG obligation, not always
@@ -873,7 +899,7 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         ]
         assert len(successor_frontiers) == 1
         assert [parent.effect for parent in successor_frontiers[0].depends_on] == [
-            *original.effects,
+            *original_effects,
             formal,
         ]
 

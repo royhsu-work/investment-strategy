@@ -6378,8 +6378,10 @@ class AcceptedPostEffectProof:
     disposition: Literal["COMPLETE", "MISSING_PR", "NOT_APPLIED", "INDETERMINATE", "UNSAFE"]
     reason: str
     carrier_plan: CarrierPlan | None = None
-    # Independent leaf proof. It never grants continuation or replay authority.
+    # Positive Original witness remains separate from the actual pending
+    # Original/Formal/Successor frontier. Both come from this Application DAG.
     original_effect_proof: RecoveryProofResult | None = None
+    pending_frontier_proof: RecoveryProofResult | None = None
 
     @classmethod
     def from_evidence_error(cls, error: TypedEvidenceError) -> AcceptedPostEffectProof:
@@ -6408,7 +6410,7 @@ class AcceptedPostEffectProof:
         not irreducible UNKNOWN/CONFLICT maintenance admissions.
         """
 
-        proof = self.original_effect_proof
+        proof = self.pending_frontier_proof or self.original_effect_proof
         if (
             self.disposition not in {"INDETERMINATE", "UNSAFE"}
             or proof is None
@@ -7081,6 +7083,9 @@ def classify_accepted_read_only_effects(
                 "INDETERMINATE",
                 "attempted accepted Effect is not yet proven complete",
                 original_effect_proof=original_effect_proof,
+                pending_frontier_proof=(
+                    attempted_proof if index >= len(original.effects) else None
+                ),
             )
         # R9: an unentered successor is independently re-observed only
         # when its exact Formal/Successor identity can qualify. No second DAG
@@ -7090,7 +7095,6 @@ def classify_accepted_read_only_effects(
             if formal_identity is not None
             and attempted[-1].derived
             and non_entry
-            and bool(original.effects)
             else None
         )
         qualified_derived = bool(
@@ -7107,7 +7111,6 @@ def classify_accepted_read_only_effects(
             and attempted[-1].derived
             # One qualified suffix owner has already proved the immutable
             # Formal/Successor identity, ordinal and historical revision.
-            and (bool(original.effects) or not non_entry)
             and (attempted_proof.disposition == "SATISFIED" or qualified_derived)
             and consequence_postconditions_complete(
                 record.raw_worker_result,
@@ -7176,6 +7179,7 @@ def classify_accepted_read_only_effects(
                     else "accepted historical write frontier is not proven"
                 ),
                 original_effect_proof=original_effect_proof,
+                pending_frontier_proof=historical_proof,
             )
         return AcceptedPostEffectProof(
             "COMPLETE",
