@@ -3978,9 +3978,7 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
                 assert effect in originals
                 return True
 
-            def observe_issue_comment_source_ref(
-                self, effect: StagedEffect
-            ) -> str | None:
+            def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
                 return "issues/comments/992001" if self.observe_postcondition(effect) else None
 
         monkeypatch.setattr(application, "GitHubEffectAdapter", LaterObserved)
