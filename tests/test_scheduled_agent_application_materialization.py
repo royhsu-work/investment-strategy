@@ -3753,8 +3753,9 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     assert observe().disposition == "INDETERMINATE"  # Missing original Git effect.
     witness = proof_git.commit(desired, proof_git.message, (base,))
     proof_git.set_head(witness)
-    assert proof_git.comparison(base, witness)["ahead_by"] == 1
-    assert len(proof_git.comparison(base, witness)["files"]) == 7
+    comparison = proof_git.comparison(base, witness)
+    assert comparison["ahead_by"] == 1
+    assert len(cast(list[dict[str, object]], comparison["files"])) == 7
     canonical = materialization.prove_materialization(
         payload,
         original,
