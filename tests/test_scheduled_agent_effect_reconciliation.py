@@ -129,10 +129,10 @@ def test_activation_and_recovery_comments_share_one_write_postcondition_owner(
         "bad-get": 3,
     }.get(scenario)
     if error_index is None:
-        assert persist(body, repository="owner/repo", token="test", issue_number=138) == 9011
+        assert persist(body, repository="owner/repo", token=REVISION, issue_number=138) == 9011
     else:
         with pytest.raises(RuntimeError, match=messages[error_index]):
-            persist(body, repository="owner/repo", token="test", issue_number=138)
+            persist(body, repository="owner/repo", token=REVISION, issue_number=138)
     assert invoked == [True]
     assert observed[0] == ("LIST", "issues/138/comments?sort=created")
     assert sum(method == "POST" for method, _path in observed) == (
