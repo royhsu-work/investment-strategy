@@ -3727,7 +3727,9 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         repository: str, token: str, api_path: str, **kwargs: object
     ) -> object:
         if api_path == "issues/435":
-            issue = cast(dict[str, object], proof_git.api(repository, token, "issues/322", **kwargs))
+            issue = cast(
+                dict[str, object], proof_git.api(repository, token, "issues/322", **kwargs)
+            )
             return {**issue, "number": 435, "body": f"Change: {change}"}
         if api_path == "pulls/437/files?per_page=100":
             return [{"filename": proposal_path, "status": "modified"}] + [
