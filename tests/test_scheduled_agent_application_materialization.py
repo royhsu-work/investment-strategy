@@ -3779,19 +3779,21 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     # Original-effect completion is not a Formal result. Reuse the already
     # source-proven Git witness as the fresh carrier revision and exercise the
     # real Application-owned formal projection, not a mocked Formal status.
-    monkeypatch.setattr(
-        application_bridge, "_machine_result_revision", lambda *_a, **_kw: witness
-    )
-    args = {
-        "source": original,
-        "change": change,
-        "repository": proof_git.repository,
-        "token": _TOKEN,
-        "current_revision": proof_git.main,
-        "default_branch": "main",
-        "request_comment_id": accepted.request_comment_id,
-    }
-    projection = application_bridge._fresh_application_worker_result(raw, **args)
+    monkeypatch.setattr(application_bridge, "_machine_result_revision", lambda *_a, **_kw: witness)
+
+    def project_formal() -> str:
+        return application_bridge._fresh_application_worker_result(
+            raw,
+            source=original,
+            change=change,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            default_branch="main",
+            request_comment_id=accepted.request_comment_id,
+        )
+
+    projection = project_formal()
     projected = application_bridge.parse_effect_batch(
         projection, original, authorized_change=change
     )
@@ -3815,7 +3817,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     )
     assert f"Application-Correlation: {correlation}" in formal.splitlines()
     assert "SLICE_CHECKPOINT" not in projection
-    assert application_bridge._fresh_application_worker_result(raw, **args) == projection
+    assert project_formal() == projection
     assert proof_git.mutations == []
 
     # A durable original is not a durable Formal or Successor.
