@@ -9035,15 +9035,20 @@ def _native_runtime_repair_sources() -> tuple[
         **comment,
         "issue_url": f"https://api.github.com/repos/{repository}/issues/435",
     }
-    return event, native, decision, {
-        "number": 435,
-        "title": "T1 recovery",
-        "state": "open",
-        "created_at": "2026-11-10T01:00:00Z",
-        "closed_at": None,
-        "body": f"Change: {change}",
-        "labels": [{"name": "action:implement-change"}],
-    }
+    return (
+        event,
+        native,
+        decision,
+        {
+            "number": 435,
+            "title": "T1 recovery",
+            "state": "open",
+            "created_at": "2026-11-10T01:00:00Z",
+            "closed_at": None,
+            "body": f"Change: {change}",
+            "labels": [{"name": "action:implement-change"}],
+        },
+    )
 
 
 @pytest.mark.parametrize(
@@ -9091,10 +9096,9 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
     if fault == "changed-route":
         issue["labels"] = [{"name": "action:resolve-question"}]
     if fault == "invalid-action":
-        cast(dict[str, object], event["comment"])["body"] = (
-            cast(str, cast(dict[str, object], event["comment"])["body"])
-            .replace("Action: implement-change", "Action: fake-action")
-        )
+        cast(dict[str, object], event["comment"])["body"] = cast(
+            str, cast(dict[str, object], event["comment"])["body"]
+        ).replace("Action: implement-change", "Action: fake-action")
         native["body"] = cast(dict[str, object], event["comment"])["body"]
     all_decisions = (accepted, accepted) if fault == "duplicate-decision" else (accepted,)
     observed_calls: list[str] = []
@@ -9193,11 +9197,10 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
         reason="application-completion-read-only-proof-conflict",
         frontier="0:github-mutation",
     )
+    monkeypatch.setattr(bridge, "qualify_runtime_repair_admission", lambda *_a, **_kw: admission)
     monkeypatch.setattr(
-        bridge, "qualify_runtime_repair_admission", lambda *_a, **_kw: admission
-    )
-    monkeypatch.setattr(
-        bridge, "acquire_current_github_preflight",
+        bridge,
+        "acquire_current_github_preflight",
         lambda *_a, **_kw: pytest.fail("R9 intake must not enter normal dispatch"),
     )
     monkeypatch.setenv("GITHUB_REPOSITORY", "royhsu-work/investment-strategy")

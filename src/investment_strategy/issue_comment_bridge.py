@@ -5879,7 +5879,6 @@ def _write_result_payload(path: Path, plan: BridgePlan) -> None:
         path.write_text(plan.result_body + "\n", encoding="utf-8")
 
 
-
 @dataclass(frozen=True)
 class RuntimeRepairAdmission:
     """A native-Human-qualified, non-writing maintenance handoff only."""
