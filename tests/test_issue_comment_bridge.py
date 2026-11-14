@@ -9192,7 +9192,9 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             original = application.evaluate_recovery_evidence(
                 application.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, True)
             )
-            obligation = "FORMAL_RESULT" if fault == "pending-formal" else "SUCCESSOR"
+            obligation: application.RecoveryObligation = (
+                "FORMAL_RESULT" if fault == "pending-formal" else "SUCCESSOR"
+            )
             pending = application.evaluate_recovery_evidence(
                 application.RecoveryEvidenceNode(
                     obligation,
