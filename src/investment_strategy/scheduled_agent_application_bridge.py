@@ -6365,14 +6365,18 @@ def _observe_accepted_effect_prefix(
     adapter: GitHubEffectAdapter,
     *,
     source: WorkerRequest,
-) -> tuple[RecoveryEvidenceNode, ...] | None:
-    """One positive proof reader for original and Application-owned obligations."""
+) -> tuple[RecoveryEvidenceNode, ...] | RecoveryProofResult:
+    """Return qualified leaves or the first incomplete typed DAG proof.
+
+    No caller may reinterpret an absent prefix as a different proof outcome.
+    """
 
     nodes: list[RecoveryEvidenceNode] = []
     for effect in effects:
         fact = _observe_accepted_effect_fact(effect, adapter, source=source)
-        if evaluate_recovery_evidence(fact).disposition != "SATISFIED":
-            return None
+        proof = evaluate_recovery_evidence(fact)
+        if proof.disposition != "SATISFIED":
+            return proof
         nodes.append(fact)
     return tuple(nodes)
 
@@ -6629,9 +6633,11 @@ def _observe_accepted_post_effect_result(
             accepted_intent=True,
         )
         observed_originals = _observe_accepted_effect_prefix(batch.effects, adapter, source=source)
-        if observed_originals is None:
+        if isinstance(observed_originals, RecoveryProofResult):
             return AcceptedPostEffectProof(
-                "INDETERMINATE", "accepted original Effect postconditions unproven"
+                "UNSAFE" if observed_originals.disposition == "CONFLICT" else "INDETERMINATE",
+                "accepted original Effect postconditions unproven",
+                original_effect_proof=observed_originals,
             )
         return AcceptedPostEffectProof("COMPLETE", "accepted original obligation proven")
     accepted_raw = _accepted_worker_result_for_continuation(
@@ -7075,9 +7081,16 @@ def classify_accepted_read_only_effects(
         # prove it was never called. Only an absent, invocation-local
         # never-called Effect requires the full historical NOT_APPLIED proof.
         proven_prefix = _observe_accepted_effect_prefix(attempted[:-1], adapter, source=source)
-        if proven_prefix is None:
+        if isinstance(proven_prefix, RecoveryProofResult):
             return AcceptedPostEffectProof(
-                "INDETERMINATE", "accepted historical prefix is not yet satisfied"
+                "UNSAFE" if proven_prefix.disposition == "CONFLICT" else "INDETERMINATE",
+                "accepted historical prefix is not yet satisfied",
+                original_effect_proof=(
+                    proven_prefix if proven_prefix.remaining_obligation == "ORIGINAL_EFFECT" else None
+                ),
+                pending_frontier_proof=(
+                    proven_prefix if proven_prefix.remaining_obligation != "ORIGINAL_EFFECT" else None
+                ),
             )
         # A never-called derived Effect is not independently observed here:
         # its final state has a canonical consequence owner below. This
