@@ -4070,31 +4070,37 @@ class GitHubEffectAdapter:
             )
         return False
 
+    def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+        """Return the native object ref only after full postcondition qualification."""
+        if effect.kind != "issue-comment":
+            return None
+        payload = _effect_payload(effect)
+        if payload is None:
+            return None
+        bound_body = self._application_bound_comment_body(cast(str, payload["body"]))
+        comment_id = self._comment_ids.get(effect)
+        if comment_id is None:
+            # A later invocation has no process-local write receipt.
+            comment_id = self._existing_issue_comment(bound_body)
+        if comment_id is None:
+            return None
+        response = _github_json(
+            self.repository,
+            self.token,
+            f"issues/comments/{comment_id}",
+        )
+        if (
+            isinstance(response, Mapping)
+            and response.get("body") == bound_body
+            and response.get("id") == comment_id
+            and is_github_actions_comment(response)
+        ):
+            return f"issues/comments/{comment_id}"
+        return None
+
     def observe_postcondition(self, effect: StagedEffect) -> bool:
         if effect.kind == "issue-comment":
-            payload = _effect_payload(effect)
-            if payload is None:
-                return False
-            bound_body = self._application_bound_comment_body(cast(str, payload["body"]))
-            comment_id = self._comment_ids.get(effect)
-            if comment_id is None:
-                # An interrupted application has no process-local receipt.
-                # Reconstruct the exact durable comment by read-only GitHub
-                # observation, then verify its individual source object.
-                comment_id = self._existing_issue_comment(bound_body)
-            if comment_id is None:
-                return False
-            response = _github_json(
-                self.repository,
-                self.token,
-                f"issues/comments/{comment_id}",
-            )
-            return bool(
-                isinstance(response, Mapping)
-                and response.get("body") == bound_body
-                and response.get("id") == comment_id
-                and is_github_actions_comment(response)
-            )
+            return self.observe_issue_comment_source_ref(effect) is not None
 
         if effect.kind == "routing-transition":
             # A successor route can be committed just before interruption.

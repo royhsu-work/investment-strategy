@@ -2408,6 +2408,10 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
     assert isinstance(witness, bridge.RecoveryEvidenceNode)
     assert witness.effect == effect
     assert witness.final_postcondition is (native_state == "qualified")
+    # Exact native source ref is part of the proof, not merely a mocked bool.
+    assert witness.source_object_ref == (
+        f"issues/comments/{native_id}" if native_state == "qualified" else None
+    )
     listing = "issues/435/comments?per_page=100&sort=created&direction=desc"
     assert observed_reads.count(listing) == 2  # complete stable inventory twice
     assert observed_reads.count(f"issues/comments/{native_id}") == (

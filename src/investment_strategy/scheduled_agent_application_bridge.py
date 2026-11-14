@@ -6173,6 +6173,8 @@ class RecoveryEvidenceNode:
     never_called_evidence: AcceptedNeverCalledEvidence | None = None
     source_conflict: bool = False
     depends_on: tuple[RecoveryEvidenceNode, ...] = ()
+    # A verified native GitHub object, not a standalone Boolean assertion.
+    source_object_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -7003,16 +7005,24 @@ def classify_accepted_read_only_effects(
         # A never-called derived Effect is not independently observed here:
         # its final state has a canonical consequence owner below. This
         # preserves the producer's no-write checkpoint observation boundary.
-        failed_satisfied = (
-            adapter.observe_postcondition(attempted[-1])
-            if not non_entry or not attempted[-1].derived
-            else False
-        )
+        if index < len(original.effects) and attempted[-1].kind == "issue-comment":
+            # The witness must carry the very object ref that satisfied the
+            # positive native GET; do not promote a bare Boolean into proof.
+            positive_source_ref = adapter.observe_issue_comment_source_ref(attempted[-1])
+            failed_satisfied = positive_source_ref is not None
+        else:
+            positive_source_ref = None
+            failed_satisfied = (
+                adapter.observe_postcondition(attempted[-1])
+                if not non_entry or not attempted[-1].derived
+                else False
+            )
         attempted_fact = RecoveryEvidenceNode(
             _recovery_obligation(attempted[-1], source),
             attempted[-1],
             final_postcondition=failed_satisfied,
             depends_on=tuple(proven_prefix),
+            source_object_ref=positive_source_ref,
         )
         attempted_proof = evaluate_recovery_evidence(attempted_fact)
         historical_frontier = index + 1 if attempted_proof.disposition == "SATISFIED" else index
