@@ -9299,7 +9299,7 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
                     "UNKNOWN", "NATIVE_GET", "read-only observation unavailable", 6796616018
                 ),
             )
-        typed = application.evaluate_recovery_evidence(fact)
+        typed = replace(application.evaluate_recovery_evidence(fact), frontier_index=0)
         if fault == "missing-proof-frontier":
             typed = application.RecoveryProofResult(
                 "UNKNOWN", "ORIGINAL_EFFECT", typed.witness, None
@@ -9335,6 +9335,7 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
                     depends_on=(application.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, True),),
                 )
             )
+            pending = replace(pending, frontier_index=1 if obligation == "FORMAL_RESULT" else 2)
             typed = original
         proof_disposition: Literal["UNSAFE", "INDETERMINATE"] = (
             "UNSAFE" if typed.disposition == "CONFLICT" else "INDETERMINATE"
@@ -9385,6 +9386,9 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             "pending-successor": "SUCCESSOR:UNKNOWN",
         }.get(fault, "ORIGINAL_EFFECT:UNKNOWN")
         assert result.frontier == expected_frontier
+        assert result.frontier_proof.frontier_index == (
+            1 if fault == "pending-formal" else 2 if fault == "pending-successor" else 0
+        )
         parsed = bridge.parse_application_decision(cast(str, accepted["body"]))
         assert parsed is not None
         assert result.accepted_worker_sha256 == parsed.worker_result_sha256
@@ -9562,7 +9566,24 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
         repair_head=REVISION,
         result_state="INVALID",
         reason="application-completion-read-only-proof-conflict",
-        frontier="ORIGINAL_EFFECT:CONFLICT",
+        frontier_proof=replace(
+            application.evaluate_recovery_evidence(
+                application.RecoveryEvidenceNode(
+                    "ORIGINAL_EFFECT",
+                    None,
+                    None,
+                    never_called_evidence=application.TypedEvidenceError(
+                        "UNKNOWN",
+                        "CALL_ENTRY",
+                        "native historical write uncertain",
+                        6796616018,
+                        7003,
+                        intervention_required=True,
+                    ),
+                )
+            ),
+            frontier_index=0,
+        ),
         source_artifact=source_artifact,
     )
     monkeypatch.setattr(bridge, "qualify_runtime_repair_admission", lambda *_a, **_kw: admission)
@@ -9599,4 +9620,7 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
     assert "Native evidence kind: recovery" in summary.read_text()
     assert "Evidence Artifact ID: 7003" in summary.read_text()
     assert "Evidence Artifact digest: sha256:" + "d" * 64 in summary.read_text()
+    assert "Verified Effect ordinal: 0" in summary.read_text()
+    assert "Evidence error stage: CALL_ENTRY" in summary.read_text()
+    assert "Typed witness: TypedEvidenceError" in summary.read_text()
     assert "authorizes NO Effect" in summary.read_text()
