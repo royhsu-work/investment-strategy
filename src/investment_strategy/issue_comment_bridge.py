@@ -252,13 +252,6 @@ def _recovery_predicate_result(
     raise ValueError("recovery predicate state is invalid")
 
 
-def _strictest_recovery_status(*statuses: RecoveryPredicate) -> RecoveryPredicate:
-    for status in ("CONFLICT", "UNKNOWN", "INCOMPLETE", "COMPLETE"):
-        if status in statuses:
-            return cast(RecoveryPredicate, status)
-    raise ValueError("recovery predicate state is invalid")
-
-
 def _recovery_task_disposition(raw_tasks: object) -> RecoveryPredicate:
     """Classify task progress only; a checked marker is never effect proof."""
 
@@ -273,22 +266,6 @@ def _recovery_task_disposition(raw_tasks: object) -> RecoveryPredicate:
     return "COMPLETE"
 
 
-_RECOVERY_CORRECTION_FILES = frozenset(
-    {
-        ".github/workflows/scheduled-agent-application.yml",
-        "openspec/changes/restore-no-work-idle-discovery/tasks.md",
-        "src/investment_strategy/issue_comment_bridge.py",
-        "src/investment_strategy/scheduled_agent_effects.py",
-        "src/investment_strategy/scheduled_agent_formal_qualification.py",
-        "src/investment_strategy/scheduled_agent_idle_admission.py",
-        "src/investment_strategy/scheduled_agent_merge_acceptance.py",
-        "tests/fixtures/issue322-application-recovery.json",
-        "tests/test_issue_comment_bridge.py",
-        "tests/test_scheduled_agent_effects.py",
-        "tests/test_scheduled_agent_formal_qualification.py",
-        "tests/test_scheduled_agent_idle_admission.py",
-    }
-)
 _RECOVERY_NECESSARY_EXECUTABLE_FILES = frozenset(
     {
         "src/investment_strategy/issue_comment_bridge.py",
@@ -297,106 +274,6 @@ _RECOVERY_NECESSARY_EXECUTABLE_FILES = frozenset(
         "tests/test_scheduled_agent_effects.py",
     }
 )
-
-
-def _recovery_correction_disposition(
-    repository: str,
-    token: str,
-    *,
-    reviewed_revision: str | None,
-    head_sha: str,
-    task_blob_sha: str,
-    read: GitHubReader,
-) -> RecoveryPredicate:
-    """Observe the actual corrective Git consequence, not its task checkbox.
-
-    The separately Human-authorized, content-addressed corrections have no
-    new normal Action/worker manifest. The immutable reviewed revision is the
-    source preimage, the PR head/tree is T_new, and the complete Git compare
-    plus exact tree blob identities is W_new. This does not certify old effects.
-    """
-    if reviewed_revision is None or _SHA.fullmatch(reviewed_revision) is None:
-        return "UNKNOWN"
-    if reviewed_revision == head_sha:
-        return "INCOMPLETE"
-    comparison = read(repository, token, f"compare/{reviewed_revision}...{head_sha}")
-    commit = read(repository, token, f"git/commits/{head_sha}")
-    if not isinstance(comparison, Mapping) or not isinstance(commit, Mapping):
-        return "UNKNOWN"
-    parents = commit.get("parents")
-    tree_ref = commit.get("tree")
-    tree_sha = tree_ref.get("sha") if isinstance(tree_ref, Mapping) else None
-    if (
-        commit.get("sha") != head_sha
-        or not isinstance(parents, list)
-        or not parents
-        or not all(
-            isinstance(parent, Mapping)
-            and isinstance(parent.get("sha"), str)
-            and _SHA.fullmatch(parent["sha"]) is not None
-            for parent in parents
-        )
-        or not isinstance(tree_sha, str)
-        or _SHA.fullmatch(tree_sha) is None
-    ):
-        return "CONFLICT"
-    listing = read(repository, token, f"git/trees/{tree_sha}?recursive=1")
-    if (
-        not isinstance(listing, Mapping)
-        or listing.get("truncated") is not False
-        or not isinstance(listing.get("tree"), list)
-    ):
-        return "UNKNOWN"
-    blobs: dict[str, str] = {}
-    for item in listing["tree"]:
-        if not isinstance(item, Mapping):
-            return "UNKNOWN"
-        path, sha = item.get("path"), item.get("sha")
-        if item.get("type") == "blob" and isinstance(path, str):
-            if path in blobs or not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
-                return "CONFLICT"
-            blobs[path] = sha
-    if blobs.get("openspec/changes/restore-no-work-idle-discovery/tasks.md") != task_blob_sha:
-        return "CONFLICT"
-    files = comparison.get("files")
-    commits = comparison.get("commits")
-    ahead = comparison.get("ahead_by")
-    base = comparison.get("base_commit")
-    if (
-        comparison.get("status") != "ahead"
-        or not isinstance(base, Mapping)
-        or base.get("sha") != reviewed_revision
-    ):
-        return "CONFLICT"
-    if (
-        not isinstance(files, list)
-        or not isinstance(commits, list)
-        or not isinstance(ahead, int)
-        or ahead < 1
-        or ahead > 250
-        or len(commits) != ahead
-        or len(files) >= 300  # GitHub compare truncates changed files at 300.
-    ):
-        return "UNKNOWN"
-    changed: set[str] = set()
-    for file in files:
-        if not isinstance(file, Mapping):
-            return "UNKNOWN"
-        path, sha = file.get("filename"), file.get("sha")
-        if not isinstance(path, str) or not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
-            return "UNKNOWN"
-        if path in changed or file.get("status") != "modified":
-            return "CONFLICT"
-        if blobs.get(path) != sha:
-            return "CONFLICT"
-        changed.add(path)
-    # Verified disjoint descendant changes are not obsolete-SHA blockers.
-    # Only the bounded correction paths count as its materialization witness;
-    # this recovery writes no repository files and cannot overwrite others.
-    correction_changes = changed & _RECOVERY_CORRECTION_FILES
-    if not _RECOVERY_NECESSARY_EXECUTABLE_FILES.issubset(correction_changes):
-        return "INCOMPLETE"
-    return "COMPLETE"
 
 
 _RECOVERY_REVIEW_MARKER = "RECOVERY_OPENSPEC_REVIEW"
