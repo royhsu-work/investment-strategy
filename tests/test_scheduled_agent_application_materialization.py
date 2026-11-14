@@ -3663,8 +3663,12 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         ".github/workflows/quality.yml",
         ".github/scripts/diagnose_dispatch_artifact.py",
     )
+    proposal_path = f"openspec/changes/{change}/proposal.md"
     preimage = {path: f"historical preimage {index}" for index, path in enumerate(paths[:-1])}
-    base = proof_git.commit(preimage, "Existing T1 carrier baseline", (proof_git.base,))
+    preimage[proposal_path] = "Approved T1 OpenSpec proposal"
+    # The accepted implementation commit is a child of an existing Change
+    # carrier; its historical PR already contains the OpenSpec definition.
+    base = proof_git.commit(preimage, "Existing T1 carrier baseline", ())
     proof_git.base = base
     proof_git.authorization = base
     proof_git.main = base
@@ -3725,6 +3729,10 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         if api_path == "issues/435":
             issue = cast(dict[str, object], proof_git.api(repository, token, "issues/322", **kwargs))
             return {**issue, "number": 435, "body": f"Change: {change}"}
+        if api_path == "pulls/437/files?per_page=100":
+            return [{"filename": proposal_path, "status": "modified"}] + [
+                {"filename": item, "status": "modified"} for item in paths
+            ]
         return proof_git.api(repository, token, api_path, **kwargs)
 
     monkeypatch.setattr(materialization, "_github_json", native_read)
