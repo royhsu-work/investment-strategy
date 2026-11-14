@@ -35,6 +35,8 @@ from investment_strategy.scheduled_agent_application_bridge import (
     ApplicationExceptionArtifact,
     ApplicationRecoveryArtifact,
     ApplicationRequest,
+    RecoveryProofResult,
+    TypedEvidenceError,
     _accepted_recovery_boundary,
     _application_owned_worker_result,
     _materialization_effects,
@@ -5895,10 +5897,15 @@ class RuntimeRepairAdmission:
     repair_head: str
     result_state: str
     reason: str
-    frontier: str
+    frontier_proof: RecoveryProofResult
     # Existing Application-validated native Run/Job/Artifact identity; this
     # handoff cannot be upgraded from a bare status or a synthetic DAG proof.
     source_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact
+
+    @property
+    def frontier(self) -> str:
+        proof = self.frontier_proof
+        return f"{proof.remaining_obligation}:{proof.disposition}"
 
 
 def qualify_runtime_repair_admission(
@@ -6083,7 +6090,6 @@ def qualify_runtime_repair_admission(
         or completion.state != ("RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID")
     ):
         return None
-    frontier = f"{repair_frontier.remaining_obligation}:{repair_frontier.disposition}"
     return RuntimeRepairAdmission(
         source=source,
         trigger_comment_id=trigger_comment_id,
@@ -6094,7 +6100,7 @@ def qualify_runtime_repair_admission(
         repair_head=fields["Repair-HEAD"],
         result_state=completion.state,
         reason=completion.reason,
-        frontier=frontier,
+        frontier_proof=repair_frontier,
         source_artifact=artifact,
     )
 
@@ -6109,6 +6115,9 @@ def _present_runtime_repair_admission(
         if isinstance(admission.source_artifact, ApplicationRecoveryArtifact)
         else "exception"
     )
+    proof = admission.frontier_proof
+    witness = proof.witness
+    stage = witness.stage if isinstance(witness, TypedEvidenceError) else None
     body = "\n".join(
         (
             "## Non-writing R9 Human/Runtime repair intake",
@@ -6130,6 +6139,9 @@ def _present_runtime_repair_admission(
             f"- Recovery episode SHA256: {admission.source_artifact.recovery_episode_sha256}",
             f"- Read-only proof: {admission.result_state}/{admission.reason}",
             f"- Pending original/formal/successor frontier: {admission.frontier}",
+            f"- Verified Effect ordinal: {proof.frontier_index if proof.frontier_index is not None else 'unverified'}",
+            f"- Typed witness: {type(witness).__name__}",
+            f"- Evidence error stage: {stage if stage is not None else 'not-an-operational-error'}",
             "",
             "This native event was consumed by the existing Bridge. It authorizes NO "
             "Effect, Action, routing, merge, direct workflow run, or PR mutation. "
