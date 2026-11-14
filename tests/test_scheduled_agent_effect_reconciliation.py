@@ -123,12 +123,15 @@ def test_r9_unresolved_entered_write_requires_exact_witness(
 ) -> None:
     effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"original"}')
     fact = application.RecoveryEvidenceNode(
-        "ORIGINAL_EFFECT", effect, final_postcondition,
+        "ORIGINAL_EFFECT",
+        effect,
+        final_postcondition,
         write_call_entered=entered,
         source_object_ref="issues/comments/992001" if final_postcondition else None,
     )
     decision = application.AcceptedPostEffectProof(
-        "INDETERMINATE", "native accepted attempt remains uncertain",
+        "INDETERMINATE",
+        "native accepted attempt remains uncertain",
         original_effect_proof=application.evaluate_recovery_evidence(fact),
     )
     assert (decision.runtime_repair_frontier is not None) is expected
