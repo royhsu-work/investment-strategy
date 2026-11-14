@@ -3719,6 +3719,9 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         reason="accepted",
     )
 
+    formal_comments: list[dict[str, object]] = []
+    formal_comment_posts: list[str] = []
+
     def native_read(repository: str, token: str, api_path: str, **kwargs: object) -> object:
         if api_path == "issues/435":
             issue = cast(
@@ -3729,6 +3732,26 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             return [{"filename": proposal_path, "status": "modified"}] + [
                 {"filename": item, "status": "modified"} for item in paths
             ]
+        if api_path == "issues/435/comments?per_page=100&sort=created&direction=desc":
+            return list(reversed(formal_comments))
+        if api_path == "issues/435/timeline?per_page=100&page=1":
+            return [
+                {"id": 90001, "event": "commented", "created_at": "2026-11-11T08:33:00Z"}
+            ] if formal_comments else []
+        if api_path == "issues/435/comments" and kwargs.get("method") == "POST":
+            request = cast(dict[str, str], kwargs["payload"])
+            formal_comment_posts.append(request["body"])
+            comment: dict[str, object] = {
+                "id": 90001,
+                "body": request["body"],
+                "created_at": "2026-11-11T08:33:00Z",
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+            }
+            formal_comments.append(comment)
+            return comment
+        if api_path == "issues/comments/90001":
+            return formal_comments[0] if formal_comments else None
         return proof_git.api(repository, token, api_path, **kwargs)
 
     monkeypatch.setattr(materialization, "_github_json", native_read)
@@ -3818,6 +3841,48 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     assert f"Application-Correlation: {correlation}" in formal.splitlines()
     assert "SLICE_CHECKPOINT" not in projection
     assert project_formal() == projection
+    assert proof_git.mutations == []
+
+    # First Application owns only the missing Formal write. A later fresh
+    # adapter has no process-local comment receipt and must reconstruct the
+    # same source-qualified postcondition, without reissuing that write.
+    def new_application() -> effects.GitHubEffectAdapter:
+        return effects.GitHubEffectAdapter(
+            proof_git.repository,
+            _TOKEN,
+            original,
+            authorized_change=change,
+            current_revision=proof_git.main,
+            expected_result_kind="blocked",
+            request_comment_id=accepted.request_comment_id,
+            authorization_revision=accepted.authorization_revision,
+            allow_pending_continuation=True,
+            accepted_intent=True,
+        )
+
+    first = new_application()
+    assert first.observe_postcondition(original_effect)
+    assert first.guard(formal_effect)
+    assert not first.observe_postcondition(formal_effect)
+    first.apply(formal_effect)
+    assert first.observe_postcondition(formal_effect)
+    assert formal_comment_posts == [formal]
+    assert len(formal_comments) == 1
+
+    fresh = new_application()
+    assert fresh.observe_postcondition(original_effect)
+    assert fresh.observe_postcondition(formal_effect)
+    fresh.apply(formal_effect)  # Interrupted response: reconcile, do not post again.
+    assert formal_comment_posts == [formal]
+    successor = effects.StagedEffect(
+        "routing-transition",
+        json.dumps({"issue_number": 435, "action": "implement-change"}),
+        derived=True,
+    )
+    assert fresh.guard(successor)
+    fresh.apply(successor)
+    assert new_application().observe_postcondition(successor)
+    assert formal_comment_posts == [formal]
     assert proof_git.mutations == []
 
     # A durable original is not a durable Formal or Successor.
