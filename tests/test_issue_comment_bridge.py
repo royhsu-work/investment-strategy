@@ -9201,9 +9201,7 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
                     never_called_evidence=application.TypedEvidenceError(
                         "UNKNOWN", "HISTORY", "native history unresolved", 6796616018
                     ),
-                    depends_on=(
-                        application.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, True),
-                    ),
+                    depends_on=(application.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, True),),
                 )
             )
             typed = original
