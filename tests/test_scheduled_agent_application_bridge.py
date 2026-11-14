@@ -7,7 +7,8 @@ import hashlib
 import importlib
 import json
 import sys
-from dataclasses import FrozenInstanceError
+from collections.abc import Sequence
+from dataclasses import FrozenInstanceError, replace
 from datetime import date
 from email.message import Message
 from io import BytesIO
@@ -1134,6 +1135,71 @@ def test_preflight_get_failure_exhaustion_never_returns_partial_issue_state(
     assert delays == ([0.25, 0.5] if expected_attempts == 3 else [])
 
 
+@pytest.mark.parametrize(
+    ("variant", "expected_downloads"),
+    [
+        ("valid", 1),
+        ("digest-mismatch", 1),
+        ("wrong-run", 0),
+        ("expired", 0),
+        ("bad-artifact-id", 0),
+        ("bad-json", 1),
+        ("bad-utf8", 1),
+        ("oversized", 1),
+    ],
+)
+def test_application_artifact_shared_verified_bytes_contract(
+    variant: str, expected_downloads: int
+) -> None:
+    """Recovery and execution-exception readers must use identical byte proof.
+
+    Metadata never authorizes a download if run identity is contradictory;
+    integrity/size/JSON checks use the same single source of truth.
+    """
+    raw = b'{"schema":"native-application-evidence"}'
+    if variant == "bad-json":
+        raw = b"not valid json"
+    elif variant == "bad-utf8":
+        raw = b"\xff"
+    elif variant == "oversized":
+        raw = b"x" * (bridge._MAX_APPLICATION_RECOVERY_BYTES + 1)
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    metadata: dict[str, object] = {
+        "id": 7401,
+        "digest": digest,
+        "expired": False,
+        "workflow_run": {"id": 7001, "head_sha": _REVISION},
+    }
+    if variant == "wrong-run":
+        metadata["workflow_run"] = {"id": 7002, "head_sha": _REVISION}
+    elif variant == "expired":
+        metadata["expired"] = True
+    elif variant == "bad-artifact-id":
+        metadata["id"] = False
+    elif variant == "digest-mismatch":
+        metadata["digest"] = "sha256:" + "0" * 64
+    downloads: list[str] = []
+
+    def download(repository: str, token: str, path: str) -> bytes:
+        assert (repository, token) == (_REPOSITORY, "test-token")
+        downloads.append(path)
+        return raw
+
+    proven = bridge._read_verified_application_artifact(
+        _REPOSITORY,
+        "test-token",
+        metadata=metadata,
+        run_id=7001,
+        run_head_sha=_REVISION,
+        download=download,
+    )
+    if variant == "valid":
+        assert proven == (7401, digest, {"schema": "native-application-evidence"})
+    else:
+        assert proven is None
+    assert downloads == ["actions/artifacts/7401/zip"] * expected_downloads
+
+
 def test_application_artifact_reader_uses_github_api_media_type_for_raw_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2006,6 +2072,598 @@ def _accepted_record(
         raw_worker_result=raw_worker_result,
         reason="accepted",
     )
+
+
+@pytest.mark.parametrize("mismatch", ["disposition", "role"])
+def test_s2_post_effect_original_proof_rejects_foreign_accepted_identity(
+    monkeypatch: pytest.MonkeyPatch, mismatch: str
+) -> None:
+    """RED R0: a positive Effect does not certify a foreign ACCEPTED identity."""
+    source = WorkerRequest(435, "executor", "implement-change")
+    raw = '{"source":"accepted-original"}'
+    record = _accepted_record(
+        raw,
+        "EFFECT_REQUEST",
+        source=source,
+        change="restore-t1-dispatch-artifact-consumption",
+        result_kind="blocked",
+        request_comment_id=6796616018,
+    )
+    record = (
+        replace(record, disposition="REJECTED")
+        if mismatch == "disposition"
+        else replace(record, role="lead")
+    )
+    effect = StagedEffect("issue-comment", '{"issue_number":435,"body":"original"}')
+    monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", lambda **_k: raw)
+    monkeypatch.setattr(
+        bridge,
+        "parse_effect_batch",
+        lambda *_a, **_k: SimpleNamespace(
+            typed_result=SimpleNamespace(
+                result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
+            ),
+            effects=(effect,),
+        ),
+    )
+    observed: list[StagedEffect] = []
+
+    class Observer:
+        def __init__(self, *_a: object, **_k: object) -> None:
+            pass
+
+        def observe_postcondition(self, candidate: StagedEffect) -> bool:
+            observed.append(candidate)
+            return True
+
+    monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
+    proof = bridge._observe_accepted_post_effect_result(
+        record=record,
+        source=source,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+    )
+    assert proof.disposition == "UNSAFE"
+    assert observed == []
+
+
+@pytest.mark.parametrize(
+    ("original_count", "observed", "zero_source_proven", "expected"),
+    [
+        (1, True, False, "COMPLETE"),
+        (1, False, False, "INDETERMINATE"),
+        (0, True, False, "INDETERMINATE"),
+        (0, True, True, "COMPLETE"),
+    ],
+)
+def test_nonactivation_exception_proof_reconciles_original_effects_without_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    original_count: int,
+    observed: bool,
+    zero_source_proven: bool,
+    expected: str,
+) -> None:
+    source = WorkerRequest(435, "executor", "implement-change")
+    raw = json.dumps({"source": "immutable accepted intent"})
+    record = _accepted_record(
+        raw,
+        "EFFECT_REQUEST",
+        source=source,
+        change="restore-t1-dispatch-artifact-consumption",
+        result_kind="blocked",
+        request_comment_id=6796616018,
+    )
+    effect = StagedEffect("github-mutation", "{}")
+    batch = SimpleNamespace(
+        typed_result=SimpleNamespace(result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))),
+        effects=(effect,) if original_count else (),
+    )
+    monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
+    monkeypatch.setattr(bridge, "parse_effect_batch", lambda *_a, **_kw: batch)
+    monkeypatch.setattr(
+        bridge, "_verified_zero_original_accepted_effects", lambda **_kw: zero_source_proven
+    )
+    original_observations: list[tuple[StagedEffect, ...]] = []
+    original_observer = bridge._observe_accepted_effect_prefix
+
+    def track_original_proof(
+        effects: Sequence[StagedEffect],
+        adapter: bridge.GitHubEffectAdapter,
+        *,
+        source: WorkerRequest,
+    ) -> tuple[bridge.RecoveryEvidenceNode, ...] | bridge.RecoveryProofResult:
+        original_observations.append(tuple(effects))
+        return original_observer(effects, adapter, source=source)
+
+    monkeypatch.setattr(bridge, "_observe_accepted_effect_prefix", track_original_proof)
+    seen: list[StagedEffect] = []
+
+    class Observer:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            assert kwargs["accepted_intent"] is True
+            assert kwargs["request_comment_id"] == 6796616018
+
+        def observe_postcondition(self, candidate: StagedEffect) -> bool:
+            seen.append(candidate)
+            return observed
+
+    monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
+    proof = bridge._observe_accepted_post_effect_result(
+        record=record,
+        source=source,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+    )
+    assert proof.disposition == expected
+    if original_count and not observed:
+        assert proof.original_effect_proof is not None
+        assert proof.original_effect_proof.disposition == "UNKNOWN"
+        assert proof.original_effect_proof.remaining_obligation == "ORIGINAL_EFFECT"
+        assert proof.runtime_repair_frontier is None
+    assert seen == ([effect] if original_count else [])
+    assert original_observations == (
+        [tuple(batch.effects)] if original_count or zero_source_proven else []
+    )
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (OSError, "INDETERMINATE"),
+        (ValueError, "UNSAFE"),
+        (RuntimeError, "RAISE"),
+    ],
+)
+@pytest.mark.parametrize("empty_original", [False, True])
+def test_accepted_original_source_captures_only_operational_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: type[Exception],
+    expected: str,
+    empty_original: bool,
+) -> None:
+    """R9: a deterministic proof defect must reach the existing outer owner.
+
+    A GitHub read fault remains observable; an invalid input is unsafe, while
+    an unexpected programming/contract fault must never become endless UNKNOWN.
+    """
+    source = WorkerRequest(435, "executor", "implement-change")
+    raw = json.dumps({"source": "immutable accepted intent"})
+    record = _accepted_record(
+        raw,
+        "EFFECT_REQUEST",
+        source=source,
+        change="restore-t1-dispatch-artifact-consumption",
+        result_kind="blocked",
+        request_comment_id=6796616018,
+    )
+
+    def fail(**_kwargs: object) -> str:
+        raise failure("proof boundary fault")
+
+    if empty_original:
+        monkeypatch.setattr(
+            bridge, "_accepted_worker_result_for_continuation", lambda **_kwargs: raw
+        )
+        monkeypatch.setattr(
+            bridge,
+            "parse_effect_batch",
+            lambda *_args, **_kwargs: SimpleNamespace(
+                typed_result=SimpleNamespace(
+                    result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
+                ),
+                effects=(),
+            ),
+        )
+        monkeypatch.setattr(bridge, "_verified_zero_original_accepted_effects", fail)
+    else:
+        monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", fail)
+
+    def observe() -> bridge.AcceptedPostEffectProof:
+        return bridge._observe_accepted_post_effect_result(
+            record=record,
+            source=source,
+            repository=_REPOSITORY,
+            token=_REVISION,
+            current_revision=_REVISION,
+            default_branch="main",
+        )
+
+    if expected == "RAISE":
+        with pytest.raises(RuntimeError, match="proof boundary fault"):
+            observe()
+    else:
+        assert observe().disposition == expected
+
+
+@pytest.mark.parametrize(
+    ("native_state", "expected"),
+    [
+        ("qualified", "SATISFIED"),
+        ("absent", "UNKNOWN"),
+        ("mismatched-object", "UNKNOWN"),
+        ("foreign-actor", "UNKNOWN"),
+    ],
+)
+def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_history(
+    monkeypatch: pytest.MonkeyPatch, native_state: str, expected: str
+) -> None:
+    """An accepted Effect is SATISFIED only after an exact native source GET.
+
+    A bool-only test double has no native object provenance. Reuse the real
+    GitHubEffectAdapter observer: exact comment identity, body, and Actions
+    attribution must be verified before the existing DAG receives True.
+    Historical Run inventory is irrelevant to a qualified positive source.
+    """
+    source = WorkerRequest(435, "executor", "implement-change")
+    native_body = "unique immutable accepted original Effect"
+    effect = StagedEffect(
+        "issue-comment",
+        json.dumps({"issue_number": source.issue_number, "body": native_body}),
+    )
+    raw = json.dumps({"source": "immutable accepted effect"})
+    record = _accepted_record(
+        raw,
+        "EFFECT_REQUEST",
+        source=source,
+        change="restore-t1-dispatch-artifact-consumption",
+        result_kind="blocked",
+        request_comment_id=6796616018,
+    )
+    checkpoint: dict[str, object] = {
+        "attempted_effects": [{"kind": effect.kind, "payload_json": effect.payload_json}],
+        "attempt_revision": _REVISION,
+        "failed_effect_index": 0,
+        "write_call_entered": True,
+    }
+    artifact = SimpleNamespace(document={"failure_evidence": checkpoint})
+    monkeypatch.setattr(bridge, "_accepted_recovery_boundary", lambda _e: "READ_ONLY")
+    monkeypatch.setattr(
+        bridge, "_verified_attempted_effect_checkpoint", lambda *_a, **_kw: (effect,)
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_read_accepted_never_called_evidence",
+        lambda **_kw: bridge.TypedEvidenceError(
+            "UNKNOWN", "TEST_HISTORY", "unavailable", record.request_comment_id
+        ),
+    )
+    monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
+
+    def accepted_original(
+        original_raw: str, original_source: WorkerRequest, *, authorized_change: str
+    ) -> object:
+        assert original_raw == record.raw_worker_result
+        assert original_source == source
+        assert authorized_change == record.change
+        return SimpleNamespace(
+            typed_result=SimpleNamespace(
+                result=SimpleNamespace(kind=SimpleNamespace(value=record.result_kind))
+            ),
+            effects=(effect,),
+        )
+
+    monkeypatch.setattr(bridge, "parse_effect_batch", accepted_original)
+    native_id = 992001
+    original_comment: dict[str, object] = {
+        "id": native_id,
+        "body": native_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    observed_reads: list[str] = []
+    comment_list = (
+        []
+        if native_state == "absent"
+        else [
+            {
+                **original_comment,
+                "user": (
+                    {"login": "unrelated-user"}
+                    if native_state == "foreign-actor"
+                    else original_comment["user"]
+                ),
+            }
+        ]
+    )
+
+    def native_read(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        **_kwargs: object,
+    ) -> object:
+        assert method == "GET", "reconciliation must not retry the original write"
+        assert _repository == _REPOSITORY
+        observed_reads.append(api_path)
+        if api_path == "issues/435/comments?per_page=100&sort=created&direction=desc":
+            return comment_list
+        if api_path == f"issues/comments/{native_id}":
+            assert native_state in {"qualified", "mismatched-object"}
+            return (
+                original_comment
+                if native_state == "qualified"
+                else {**original_comment, "body": "unrelated native object"}
+            )
+        raise AssertionError(f"unexpected native recovery read: {api_path}")
+
+    monkeypatch.setattr("investment_strategy.scheduled_agent_effects._github_json", native_read)
+    proof = bridge.classify_accepted_read_only_effects(
+        record=record,
+        source=source,
+        recovery_evidence=checkpoint,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+        recovery_artifact=artifact,  # type: ignore[arg-type]
+    )
+    assert proof.original_effect_proof is not None
+    assert proof.original_effect_proof.disposition == expected
+    assert proof.disposition == "INDETERMINATE"  # Formal/Successor remain separate.
+    assert record.worker_result_sha256 == hashlib.sha256(raw.encode()).hexdigest()
+    assert record.authorization_revision == _REVISION
+
+    witness = proof.original_effect_proof.witness
+    assert isinstance(witness, bridge.RecoveryEvidenceNode)
+    assert witness.effect == effect
+    assert witness.final_postcondition is (native_state == "qualified")
+    # Exact native source ref is part of the proof, not merely a mocked bool.
+    assert witness.source_object_ref == (
+        f"issues/comments/{native_id}" if native_state == "qualified" else None
+    )
+    listing = "issues/435/comments?per_page=100&sort=created&direction=desc"
+    assert observed_reads.count(listing) == 2  # complete stable inventory twice
+    assert observed_reads.count(f"issues/comments/{native_id}") == (
+        1 if native_state in {"qualified", "mismatched-object"} else 0
+    )
+
+
+@pytest.mark.parametrize(
+    ("projection", "allowed"),
+    [
+        ((), True),
+        ((0, 1), True),
+        ((1, 0), False),
+        ((0, 2), False),
+    ],
+)
+def test_accepted_projection_preserves_immutable_completed_effects(
+    projection: tuple[int, ...], allowed: bool
+) -> None:
+    # Use the actual typed worker parser: a fresh planner may omit completed
+    # effects, but cannot replace or reorder their immutable identities.
+    source = WorkerRequest(138, "lead", "explore-change")
+    original = _worker_result(action=source.action, role=source.role, result_kind="blocked")
+    effects = [
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps({"issue_number": 138, "body": f"original-{n}"}),
+        }
+        for n in range(3)
+    ]
+    formal = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\nformal"}),
+    }
+    original["requested_effects"] = effects[:2]
+    projected = dict(
+        original, requested_effects=[effects[index] for index in projection] + [formal]
+    )
+    raw = json.dumps(original, sort_keys=True)
+    changed = json.dumps(projected, sort_keys=True)
+    if not allowed:
+        with pytest.raises(RuntimeError, match="accepted recovery"):
+            bridge._accepted_reconciliation_effect_projection(
+                accepted_raw=raw, projected_raw=changed, source=source, change="unset"
+            )
+        return
+    reconciled, count = bridge._accepted_reconciliation_effect_projection(
+        accepted_raw=raw, projected_raw=changed, source=source, change="unset"
+    )
+    assert count == 2
+    assert json.loads(reconciled)["requested_effects"] == effects[:2] + [formal]
+
+
+def test_empty_original_projection_preserves_application_formal_obligation() -> None:
+    source = WorkerRequest(138, "lead", "explore-change")
+    original = _worker_result(action=source.action, role=source.role, result_kind="blocked")
+    formal = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\nformal"}),
+    }
+    raw = json.dumps(original, sort_keys=True)
+    projected = json.dumps(dict(original, requested_effects=[formal]), sort_keys=True)
+    reconciled, count = bridge._accepted_reconciliation_effect_projection(
+        accepted_raw=raw, projected_raw=projected, source=source, change="unset"
+    )
+    assert count == 0
+    assert json.loads(reconciled)["requested_effects"] == [formal]
+
+
+@pytest.mark.parametrize(
+    ("has_physical_effect", "mutated", "verified"),
+    [
+        (False, False, True),
+        (True, False, False),
+        (False, True, False),
+    ],
+)
+def test_accepted_zero_effect_source_requires_exact_original_request(
+    has_physical_effect: bool, mutated: bool, verified: bool
+) -> None:
+    source = WorkerRequest(138, "lead", "explore-change")
+    original = _worker_result(action=source.action, role=source.role, result_kind="blocked")
+    if has_physical_effect:
+        original["requested_effects"] = [
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps(
+                    {"issue_number": 138, "body": "historical physical Effect"}
+                ),
+            }
+        ]
+    request_body = _effect_request(original)
+    semantic = dict(original, _semantic_intent_version=2, requested_effects=[])
+    record = _accepted_record(
+        json.dumps(semantic),
+        request_body,
+        source=source,
+        change="unset",
+        result_kind="blocked",
+        request_comment_id=102,
+    )
+    source_comment = {
+        "id": record.request_comment_id,
+        "body": request_body + (" " if mutated else ""),
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        assert path == "issues/comments/102"
+        return source_comment
+
+    assert (
+        bridge._verified_zero_original_accepted_effects(
+            record=record,
+            source=source,
+            repository=_REPOSITORY,
+            token=_REVISION,
+            read=read,
+        )
+        is verified
+    )
+
+
+@pytest.mark.parametrize(
+    ("observed", "expected"),
+    [(True, "COMPLETE"), (False, "INDETERMINATE")],
+)
+def test_incident_435_accepted_blocked_materialization_is_read_only_proven(
+    monkeypatch: pytest.MonkeyPatch, observed: bool, expected: str
+) -> None:
+    """Incident source shape: the one accepted Effect is seven exact PR blobs."""
+
+    source = WorkerRequest(435, "executor", "implement-change")
+    change = "restore-t1-dispatch-artifact-consumption"
+    targets = [
+        (
+            "src/investment_strategy/scheduled_agent_carrier.py",
+            "fa63766cc353d9f3c4a1e11b30ddd64ad53b0bda",
+            "a6b802e2409fadf52fab3aee3c5f79e25ac96575",
+        ),
+        (
+            "src/investment_strategy/scheduled_agent_dispatch_result.py",
+            "e5c8de3b034f31b53dab76d56826249dc215e8e0",
+            "b9188f580caf6dcad93bc1cbca111bea440713e2",
+        ),
+        (
+            "src/investment_strategy/scheduled_agent_idle_admission.py",
+            "bef6073228b46e07e89f828c5615b3e5518df95f",
+            "b7e8a7f472dd992799eecb5233611b8b0410bd24",
+        ),
+        (
+            "tests/test_scheduled_agent_dispatch_result.py",
+            "5a781a964897e248626bd2d8e3fce3369693fa49",
+            "cc7aecb0e65ed41c0a0be4619dfa1b07a90a8709",
+        ),
+        (
+            "tests/test_scheduled_agent_idle_admission.py",
+            "2c391fc3dd516259d06a64b3492a4e43dbbf83dc",
+            "5111748a42de52b3f6d5e59c42bcf4a3a35c9ed2",
+        ),
+        (
+            ".github/workflows/quality.yml",
+            "ab7bb278bfc22fa3e9b2e6867ca2d0ea1d3c29f0",
+            "b7028b01d10d967ee6339274ba6d45f43b9d7cab",
+        ),
+        (
+            ".github/scripts/diagnose_dispatch_artifact.py",
+            "37da19717c32b0ba323ffe50b511ab6ba5d2112b",
+            None,
+        ),
+    ]
+    materialization = {
+        "issue_number": 435,
+        "operation": "application-materialize",
+        "change": change,
+        "expected_change": change,
+        "branch": "agent/restore-t1-dispatch-artifact-consumption",
+        "base_sha": "6f97d0fc53742221f411ceee808938d701d6069f",
+        "pr_number": 437,
+        "message": (
+            "test: qualify exact T1 Artifact reads [t1-native-artifact-diagnostic] (Refs #435)"
+        ),
+        "files": [
+            {"path": path, "blob_sha": sha, "expected_sha": old} for path, sha, old in targets
+        ],
+    }
+    raw = json.dumps(
+        {
+            "_semantic_intent_version": 2,
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": change,
+            "result_kind": "blocked",
+            "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/437",
+            "result_content": "Bounded blocked implementation, no checkpoint obligation.",
+            "requested_effects": [
+                {"kind": "github-mutation", "payload_json": json.dumps(materialization)}
+            ],
+        },
+        sort_keys=True,
+    )
+    record = _accepted_record(
+        raw,
+        "EFFECT_REQUEST",
+        source=source,
+        change=change,
+        result_kind="blocked",
+        request_comment_id=6796616018,
+    )
+    # Reproduce the real ACCEPTED #435 blocked/materialization intent through
+    # the production parser, not a mocked empty requested_effects projection.
+    # Incident 43029179128 failed before writes on a synthetic checkpoint
+    # obligation; the seven-file original is NOT a SLICE_CHECKPOINT.
+    assert not bridge._accepted_checkpoint_already_durable(
+        raw,
+        source=source,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        request_comment_id=record.request_comment_id,
+    )
+    checked: list[StagedEffect] = []
+
+    class Observer:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            assert kwargs["accepted_intent"] is True
+            assert kwargs["request_comment_id"] == record.request_comment_id
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            checked.append(effect)
+            payload = json.loads(effect.payload_json)
+            assert payload == materialization
+            return observed
+
+    monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
+    proof = bridge._observe_accepted_post_effect_result(
+        record=record,
+        source=source,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+    )
+    assert proof.disposition == expected
+    assert len(checked) == 1
 
 
 def test_accepted_intent_lookup_includes_indeterminate_current_issue(
@@ -5690,6 +6348,11 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
     "alteration",
     [
         "valid",
+        "post-validation-valid",
+        "post-validation-earlier-recovery",
+        "post-validation-earlier-recovery-unqualified",
+        "post-validation-final-recovery-conflict",
+        "post-validation-conflicting-writers",
         "bad-digest",
         "duplicate",
         "write-after-failure",
@@ -5760,6 +6423,20 @@ def test_execution_exception_is_a_distinct_verified_predecessor(
         artifacts.append(dict(artifact, id=artifact_id + 1))
     if alteration == "recovery-present":
         artifacts.append({"name": "application-recovery-evidence"})
+    if alteration in {
+        "post-validation-earlier-recovery",
+        "post-validation-earlier-recovery-unqualified",
+        "post-validation-final-recovery-conflict",
+    }:
+        artifacts.append(
+            {
+                "id": artifact_id + 1,
+                "name": "application-recovery-evidence",
+                "expired": alteration == "post-validation-earlier-recovery-unqualified",
+                "digest": "sha256:" + "b" * 64,
+                "workflow_run": {"id": run_id, "head_sha": revision},
+            }
+        )
     steps = [
         {"name": "Freshly authorize and apply repository-owned effects", "conclusion": "failure"},
         {"name": "Upload exact application recovery evidence", "conclusion": "skipped"},
@@ -5772,6 +6449,26 @@ def test_execution_exception_is_a_distinct_verified_predecessor(
         {"name": "Persist the derived successor after exact validation", "conclusion": "skipped"},
         {"name": "Upload final exact application recovery evidence", "conclusion": "skipped"},
     ]
+    if alteration.startswith("post-validation-"):
+        steps[0]["conclusion"] = "success"
+        steps[2]["conclusion"] = "skipped"
+        steps[5]["conclusion"] = "failure"
+        steps.append(
+            {
+                "name": "Upload post-validation application exception evidence",
+                "conclusion": "success",
+            }
+        )
+        if alteration in {
+            "post-validation-earlier-recovery",
+            "post-validation-earlier-recovery-unqualified",
+            "post-validation-final-recovery-conflict",
+        }:
+            steps[1]["conclusion"] = "success"
+        if alteration == "post-validation-final-recovery-conflict":
+            steps[6]["conclusion"] = "success"
+        if alteration == "post-validation-conflicting-writers":
+            steps[2]["conclusion"] = "success"
     if alteration == "write-after-failure":
         steps[-2]["conclusion"] = "success"
     if alteration == "missing-upload":
@@ -5850,13 +6547,164 @@ def test_execution_exception_is_a_distinct_verified_predecessor(
         read=read,
         artifact_reader=lambda *_: raw,
     )
-    if alteration == "valid":
+    if alteration in {"valid", "post-validation-valid", "post-validation-earlier-recovery"}:
         assert evidence is not None
         assert type(evidence) is bridge.ApplicationExceptionArtifact
         assert evidence.artifact_id == artifact_id
         assert evidence.failure_evidence_sha256 == bridge._canonical_sha256(document)
     else:
         assert evidence is None
+
+
+@pytest.mark.parametrize(
+    ("tamper", "qualified"),
+    [("none", True), ("wrong-source", False), ("bad-digest", False)],
+)
+def test_native_executor_preparation_exception_source_is_qualified_without_recovery_artifact(
+    tamper: str, qualified: bool
+) -> None:
+    """One real-shaped #435 executor failure: exception upload, recovery skipped.
+
+    Test the existing *reader*, not an invented repair entry or never-called
+    effect proof. The native run/step/artifact IDs were independently observed;
+    the document content is a synthetic, sanitized contract fixture.
+    """
+    source = WorkerRequest(435, "executor", "implement-change")
+    record = _accepted_record(
+        json.dumps({"_semantic_intent_version": 2, "requested_effects": [{}]}),
+        "EFFECT_REQUEST",
+        source=source,
+        change="restore-t1-dispatch-artifact-consumption",
+        result_kind="blocked",
+        request_comment_id=6796616018,
+    )
+    run_id, job_id, artifact_id = 43029179128, 130551485662, 13860996180
+    trigger_id = 6797071043
+    revision = "3d0d1da5905f9f91f15da6af7e70d9173d4b06b3"
+    document: dict[str, object] = {
+        "schema": "scheduled-agent-execution-exception/v1",
+        "repository": _REPOSITORY,
+        "issue_number": 435 if tamper != "wrong-source" else 436,
+        "role": source.role,
+        "action": source.action,
+        "change": record.change,
+        "revision": revision,
+        "request_comment_id": record.request_comment_id,
+        "trigger_comment_id": trigger_id,
+        "run_id": run_id,
+        "run_attempt": 1,
+        "attempted_operation": "application-effect-preparation",
+        "exception_type": "RuntimeError",
+        "raw_error": "accepted implementation checkpoint identity is incomplete",
+        "raw_traceback": "sanitized source-shaped exception",
+        "mutation_status": "NO_APPLICATION_WRITE_ATTEMPTED",
+        "unfinished_boundary": "application-effect-preparation",
+        "classification": "UNCLASSIFIED_EXECUTION_EXCEPTION",
+    }
+    raw = json.dumps(document, sort_keys=True).encode()
+    digest = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+    native_steps = [
+        {"name": "Freshly authorize and apply repository-owned effects", "conclusion": "failure"},
+        {"name": "Upload exact application recovery evidence", "conclusion": "skipped"},
+        {
+            "name": "Upload pre-ACCEPT or interrupted application exception evidence",
+            "conclusion": "success",
+        },
+        {"name": "Persist exact external carrier plan", "conclusion": "skipped"},
+        {"name": "Upload exact external carrier plan", "conclusion": "skipped"},
+        {"name": "Persist the derived successor after exact validation", "conclusion": "skipped"},
+        {"name": "Upload final exact application recovery evidence", "conclusion": "skipped"},
+    ]
+    observed_reads: list[str] = []
+
+    def native_read(_repo: str, _token: str, path: str) -> object:
+        assert _repo == _REPOSITORY
+        observed_reads.append(path)
+        if path == f"actions/runs/{run_id}":
+            return {
+                "id": run_id,
+                "run_attempt": 1,
+                "status": "completed",
+                "conclusion": "failure",
+                "head_sha": revision,
+                "display_title": f"Scheduled Agent Application {trigger_id}",
+            }
+        if path in {
+            f"actions/runs/{run_id}/attempts/1/jobs",
+            f"actions/runs/{run_id}/attempts/1/jobs?per_page=100&page=1",
+        }:
+            return {
+                "total_count": 2,
+                "jobs": [
+                    {
+                        "id": job_id,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "steps": native_steps,
+                    },
+                    {
+                        "id": job_id + 1,
+                        "name": "idle-admission",
+                        "status": "completed",
+                        "conclusion": "skipped",
+                        "steps": [],
+                    },
+                ],
+            }
+        if path == f"actions/runs/{run_id}/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": artifact_id,
+                        "name": "application-execution-exception.json",
+                        "expired": False,
+                        "digest": ("sha256:" + "f" * 64 if tamper == "bad-digest" else digest),
+                        "workflow_run": {"id": run_id, "head_sha": revision},
+                    }
+                ],
+            }
+        raise AssertionError(f"unexpected GitHub read: {path}")
+
+    def read_bytes(_repo: str, _token: str, path: str) -> bytes:
+        assert path == f"actions/artifacts/{artifact_id}/zip"
+        return raw
+
+    proof = bridge.read_application_exception_artifact(
+        _REPOSITORY,
+        "token",
+        run_id=run_id,
+        run_attempt=1,
+        job_id=job_id,
+        record=record,
+        accepted_decision_sha256="a" * 64,
+        read=native_read,
+        artifact_reader=read_bytes,
+    )
+    assert (proof is not None) is qualified
+    if qualified:
+        assert isinstance(proof, bridge.ApplicationExceptionArtifact)
+        assert proof.document["mutation_status"] == "NO_APPLICATION_WRITE_ATTEMPTED"
+        assert proof.request_comment_id == record.request_comment_id
+    assert f"actions/runs/{run_id}/artifacts?per_page=100" in observed_reads
+
+
+def test_native_application_artifact_stage_preserves_phase_order() -> None:
+    def steps(*completed: str) -> tuple[tuple[str, str], ...]:
+        return tuple((name, "success") for name in completed)
+
+    early = "Upload exact application recovery evidence"
+    final = "Upload final exact application recovery evidence"
+    pre = "Upload pre-ACCEPT or interrupted application exception evidence"
+    post = "Upload post-validation application exception evidence"
+    assert bridge.application_artifact_stage(steps(early, post)) == "POST_EXCEPTION"
+    assert bridge.application_artifact_stage(steps(early, final)) == "FINAL_RECOVERY"
+    assert bridge.application_artifact_stage(steps(pre)) == "PRE_EXCEPTION"
+    assert bridge.application_artifact_stage(steps(pre, early)) == "INVALID"
+    assert bridge.application_artifact_stage(steps(pre, post)) == "INVALID"
+    assert bridge.application_artifact_stage(steps(post, final)) == "INVALID"
+    assert bridge.application_artifact_stage(steps(early, early)) == "INVALID"
 
 
 @pytest.mark.parametrize(
@@ -5966,6 +6814,13 @@ def test_application_exception_continuation_requalifies_at_native_ingress(
 
 
 @pytest.mark.parametrize(
+    "upload_stage",
+    [
+        "Upload exact application recovery evidence",
+        "Upload final exact application recovery evidence",
+    ],
+)
+@pytest.mark.parametrize(
     ("run_attempt", "comparison_status", "comparison_base", "expected_qualified"),
     [
         (3, "ahead", "4" * 40, True),
@@ -5976,6 +6831,7 @@ def test_application_exception_continuation_requalifies_at_native_ingress(
     ],
 )
 def test_recovery_reader_binds_rerun_checkout_to_immutable_original_run_head(
+    upload_stage: str,
     run_attempt: int,
     comparison_status: str | None,
     comparison_base: str,
@@ -6045,7 +6901,7 @@ def test_recovery_reader_binds_rerun_checkout_to_immutable_original_run_head(
                         "conclusion": "success",
                         "steps": [
                             {
-                                "name": "Upload exact application recovery evidence",
+                                "name": upload_stage,
                                 "conclusion": "success",
                             }
                         ],
@@ -6169,15 +7025,16 @@ def test_cli_checkpoint_revision_is_bound_to_fresh_proven_target_not_unverified_
 
     main_source = inspect.getsource(bridge._main_unprotected)
     assert "validated_materialization_revision=args.validated_revision" not in main_source
+    # Only one guarded Effect call owns both validated first activation
+    # and ordinary accepted continuation. Neither trusts CLI revision input.
+    assert main_source.count("batch, result = run_guarded_effect_application(") == 1
+    assert main_source.count("validated_materialization_revision=(") == 1
+    assert "activation_validated = first_activation and args.validation_passed" in main_source
     assert (
-        main_source.count(
-            "validated_materialization_revision=(None if target is None else target.revision)"
-        )
-        == 1
+        "if target is None or (not activation_validated and checkpoint_already_durable)"
+        in main_source
     )
-    assert (
-        "None if target is None or checkpoint_already_durable else target.revision" in main_source
-    )
+    assert "else target.revision" in main_source
 
 
 def test_accepted_checkpoint_and_formal_projection_rebind_only_after_proven_target() -> None:
@@ -6493,3 +7350,104 @@ def test_original_322_pr_merge_review_gate_rejects_unreviewed_or_findings_head(
         with pytest.raises(SystemExit, match="review"):
             exec(compile(script, "<recovery-review-gate>", "exec"), {})  # noqa: S102 - trusted checked-in workflow source
         assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("zero_proven", "expected"),
+    [(False, "INDETERMINATE"), (True, "COMPLETE")],
+)
+def test_s2b_read_only_zero_original_requires_physical_source_witness(
+    monkeypatch: pytest.MonkeyPatch, zero_proven: bool, expected: str
+) -> None:
+    """R0/R2: an empty accepted semantic projection is not physical zero."""
+    source = WorkerRequest(435, "executor", "implement-change")
+    raw = '{"source":"accepted-empty-original"}'
+    record = _accepted_record(
+        raw,
+        "EFFECT_REQUEST",
+        source=source,
+        change="restore-t1-dispatch-artifact-consumption",
+        result_kind="blocked",
+        request_comment_id=6796616018,
+    )
+    # Build the exact correlated Formal identity; this test isolates
+    # the physical-zero original witness rather than invalid Formal metadata.
+    formal_body = "\n".join(
+        (
+            bridge._expected_formal_marker(source),
+            "Workflow: #435",
+            "Change: restore-t1-dispatch-artifact-consumption",
+            "Action: implement-change",
+            "Role: executor",
+            "Result: BLOCKED",
+            f"Default-Branch-Revision: {_REVISION}",
+            "Application-Correlation: "
+            + bridge.formal_application_correlation(
+                source,
+                change="restore-t1-dispatch-artifact-consumption",
+                result_kind="blocked",
+                current_revision=_REVISION,
+                request_comment_id=6796616018,
+            ),
+        )
+    )
+    formal = StagedEffect("issue-comment", json.dumps({"issue_number": 435, "body": formal_body}))
+    checkpoint: dict[str, object] = {
+        "attempted_effects": [
+            {"kind": formal.kind, "payload_json": formal.payload_json, "derived": False}
+        ],
+        "attempt_revision": _REVISION,
+        "failed_effect_index": 0,
+        "write_call_entered": True,
+    }
+    artifact = SimpleNamespace(document={"failure_evidence": checkpoint})
+    monkeypatch.setattr(bridge, "_accepted_recovery_boundary", lambda _e: "READ_ONLY")
+    monkeypatch.setattr(
+        bridge, "_verified_attempted_effect_checkpoint", lambda *_a, **_k: (formal,)
+    )
+    monkeypatch.setattr(
+        bridge,
+        "parse_effect_batch",
+        lambda *_a, **_k: SimpleNamespace(
+            typed_result=SimpleNamespace(
+                result=SimpleNamespace(kind=SimpleNamespace(value="blocked"))
+            ),
+            effects=(),
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_read_accepted_never_called_evidence",
+        lambda **_k: bridge.CompleteNeverCalledWitness(6796616018, 1, "a" * 64, ((7001, 1, 7003),)),
+    )
+    zero_reads: list[int] = []
+
+    def verify_physical_zero(**_k: object) -> bool:
+        zero_reads.append(record.request_comment_id)
+        return zero_proven
+
+    monkeypatch.setattr(bridge, "_verified_zero_original_accepted_effects", verify_physical_zero)
+
+    class Observer:
+        def __init__(self, *_a: object, **_k: object) -> None:
+            pass
+
+        def observe_postcondition(self, _effect: StagedEffect) -> bool:
+            return True
+
+        def observe_issue_comment_source_ref(self, _effect: StagedEffect) -> str | None:
+            return "issues/comments/992001"
+
+    monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
+    proof = bridge.classify_accepted_read_only_effects(
+        record=record,
+        source=source,
+        recovery_evidence=checkpoint,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+        recovery_artifact=artifact,  # type: ignore[arg-type]
+    )
+    assert proof.disposition == expected
+    assert zero_reads == [record.request_comment_id]

@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -29,16 +30,21 @@ from investment_strategy.human_authority import (
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import next_action, role_for
 from investment_strategy.scheduled_agent_application_bridge import (
+    AcceptedPostEffectProof,
     ApplicationContinuationRequest,
     ApplicationExceptionArtifact,
     ApplicationRecoveryArtifact,
     ApplicationRequest,
+    RecoveryProofResult,
+    TypedEvidenceError,
     _accepted_recovery_boundary,
     _application_owned_worker_result,
     _materialization_effects,
+    _verified_zero_original_accepted_effects,
     _worker_semantic_projection,
-    accepted_read_only_effects_complete,
+    application_artifact_stage,
     application_continuation_correlation,
+    classify_accepted_read_only_effects,
     classify_application_exception_recovery,
     classify_post_effect_result_recovery,
     dispatch_correlation_for,
@@ -97,6 +103,7 @@ from investment_strategy.scheduled_agent_runtime import (
     is_github_actions_comment,
     normalize_github_issue,
 )
+from investment_strategy.scheduled_agent_wire import RUNTIME_REPAIR_REQUEST_WIRE
 from investment_strategy.scheduled_agent_worker import (
     WorkerActionResult,
     parse_worker_result,
@@ -161,6 +168,49 @@ class ApplicationCompletion:
     job_id: int | None = None
     qualified_carrier: QualifiedCarrierPlan | None = None
     recovery_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None = None
+    # Only the Application's actual accepted proof can propose an R9 intake.
+    accepted_proof: AcceptedPostEffectProof | None = None
+
+
+# The canonical proof owns permission. This Bridge-only table preserves the
+# existing reason vocabulary without inventing a second recovery decision.
+_ACCEPTED_PROOF_FAILURE_REASONS = {
+    "EXCEPTION": {
+        "INDETERMINATE": "application-completion-exception-observing",
+        "NOT_APPLIED": "application-completion-exception-unsafe",
+        "UNSAFE": "application-completion-exception-unsafe",
+    },
+    "POST_EFFECT": {
+        "INDETERMINATE": "application-completion-post-effect-observing",
+        "NOT_APPLIED": "application-completion-original-effect-incomplete",
+        "UNSAFE": "application-completion-original-effect-unsafe",
+    },
+    "READ_ONLY": {
+        "INDETERMINATE": "application-completion-read-only-observing",
+        "NOT_APPLIED": "application-completion-read-only-proof-conflict",
+        "UNSAFE": "application-completion-read-only-proof-conflict",
+    },
+}
+
+
+def _unresolved_accepted_proof_completion(
+    proof: AcceptedPostEffectProof,
+    *,
+    origin: Literal["EXCEPTION", "POST_EFFECT", "READ_ONLY"],
+    request_comment_id: int,
+    recovery_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None,
+) -> ApplicationCompletion | None:
+    """Project one proof into a non-authorizing read/repair consequence."""
+
+    if proof.continuation == "CONTINUE":
+        return None
+    return ApplicationCompletion(
+        "RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID",
+        _ACCEPTED_PROOF_FAILURE_REASONS[origin][proof.disposition],
+        request_comment_id=request_comment_id,
+        recovery_artifact=recovery_artifact,
+        accepted_proof=proof,
+    )
 
 
 RecoveryPredicate = Literal["COMPLETE", "INCOMPLETE", "UNKNOWN", "CONFLICT"]
@@ -202,13 +252,6 @@ def _recovery_predicate_result(
     raise ValueError("recovery predicate state is invalid")
 
 
-def _strictest_recovery_status(*statuses: RecoveryPredicate) -> RecoveryPredicate:
-    for status in ("CONFLICT", "UNKNOWN", "INCOMPLETE", "COMPLETE"):
-        if status in statuses:
-            return cast(RecoveryPredicate, status)
-    raise ValueError("recovery predicate state is invalid")
-
-
 def _recovery_task_disposition(raw_tasks: object) -> RecoveryPredicate:
     """Classify task progress only; a checked marker is never effect proof."""
 
@@ -223,22 +266,6 @@ def _recovery_task_disposition(raw_tasks: object) -> RecoveryPredicate:
     return "COMPLETE"
 
 
-_RECOVERY_CORRECTION_FILES = frozenset(
-    {
-        ".github/workflows/scheduled-agent-application.yml",
-        "openspec/changes/restore-no-work-idle-discovery/tasks.md",
-        "src/investment_strategy/issue_comment_bridge.py",
-        "src/investment_strategy/scheduled_agent_effects.py",
-        "src/investment_strategy/scheduled_agent_formal_qualification.py",
-        "src/investment_strategy/scheduled_agent_idle_admission.py",
-        "src/investment_strategy/scheduled_agent_merge_acceptance.py",
-        "tests/fixtures/issue322-application-recovery.json",
-        "tests/test_issue_comment_bridge.py",
-        "tests/test_scheduled_agent_effects.py",
-        "tests/test_scheduled_agent_formal_qualification.py",
-        "tests/test_scheduled_agent_idle_admission.py",
-    }
-)
 _RECOVERY_NECESSARY_EXECUTABLE_FILES = frozenset(
     {
         "src/investment_strategy/issue_comment_bridge.py",
@@ -247,106 +274,6 @@ _RECOVERY_NECESSARY_EXECUTABLE_FILES = frozenset(
         "tests/test_scheduled_agent_effects.py",
     }
 )
-
-
-def _recovery_correction_disposition(
-    repository: str,
-    token: str,
-    *,
-    reviewed_revision: str | None,
-    head_sha: str,
-    task_blob_sha: str,
-    read: GitHubReader,
-) -> RecoveryPredicate:
-    """Observe the actual corrective Git consequence, not its task checkbox.
-
-    The separately Human-authorized, content-addressed corrections have no
-    new normal Action/worker manifest. The immutable reviewed revision is the
-    source preimage, the PR head/tree is T_new, and the complete Git compare
-    plus exact tree blob identities is W_new. This does not certify old effects.
-    """
-    if reviewed_revision is None or _SHA.fullmatch(reviewed_revision) is None:
-        return "UNKNOWN"
-    if reviewed_revision == head_sha:
-        return "INCOMPLETE"
-    comparison = read(repository, token, f"compare/{reviewed_revision}...{head_sha}")
-    commit = read(repository, token, f"git/commits/{head_sha}")
-    if not isinstance(comparison, Mapping) or not isinstance(commit, Mapping):
-        return "UNKNOWN"
-    parents = commit.get("parents")
-    tree_ref = commit.get("tree")
-    tree_sha = tree_ref.get("sha") if isinstance(tree_ref, Mapping) else None
-    if (
-        commit.get("sha") != head_sha
-        or not isinstance(parents, list)
-        or not parents
-        or not all(
-            isinstance(parent, Mapping)
-            and isinstance(parent.get("sha"), str)
-            and _SHA.fullmatch(parent["sha"]) is not None
-            for parent in parents
-        )
-        or not isinstance(tree_sha, str)
-        or _SHA.fullmatch(tree_sha) is None
-    ):
-        return "CONFLICT"
-    listing = read(repository, token, f"git/trees/{tree_sha}?recursive=1")
-    if (
-        not isinstance(listing, Mapping)
-        or listing.get("truncated") is not False
-        or not isinstance(listing.get("tree"), list)
-    ):
-        return "UNKNOWN"
-    blobs: dict[str, str] = {}
-    for item in listing["tree"]:
-        if not isinstance(item, Mapping):
-            return "UNKNOWN"
-        path, sha = item.get("path"), item.get("sha")
-        if item.get("type") == "blob" and isinstance(path, str):
-            if path in blobs or not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
-                return "CONFLICT"
-            blobs[path] = sha
-    if blobs.get("openspec/changes/restore-no-work-idle-discovery/tasks.md") != task_blob_sha:
-        return "CONFLICT"
-    files = comparison.get("files")
-    commits = comparison.get("commits")
-    ahead = comparison.get("ahead_by")
-    base = comparison.get("base_commit")
-    if (
-        comparison.get("status") != "ahead"
-        or not isinstance(base, Mapping)
-        or base.get("sha") != reviewed_revision
-    ):
-        return "CONFLICT"
-    if (
-        not isinstance(files, list)
-        or not isinstance(commits, list)
-        or not isinstance(ahead, int)
-        or ahead < 1
-        or ahead > 250
-        or len(commits) != ahead
-        or len(files) >= 300  # GitHub compare truncates changed files at 300.
-    ):
-        return "UNKNOWN"
-    changed: set[str] = set()
-    for file in files:
-        if not isinstance(file, Mapping):
-            return "UNKNOWN"
-        path, sha = file.get("filename"), file.get("sha")
-        if not isinstance(path, str) or not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
-            return "UNKNOWN"
-        if path in changed or file.get("status") != "modified":
-            return "CONFLICT"
-        if blobs.get(path) != sha:
-            return "CONFLICT"
-        changed.add(path)
-    # Verified disjoint descendant changes are not obsolete-SHA blockers.
-    # Only the bounded correction paths count as its materialization witness;
-    # this recovery writes no repository files and cannot overwrite others.
-    correction_changes = changed & _RECOVERY_CORRECTION_FILES
-    if not _RECOVERY_NECESSARY_EXECUTABLE_FILES.issubset(correction_changes):
-        return "INCOMPLETE"
-    return "COMPLETE"
 
 
 _RECOVERY_REVIEW_MARKER = "RECOVERY_OPENSPEC_REVIEW"
@@ -2804,23 +2731,51 @@ def _application_job(
     ):
         try:
             steps = job.steps
-            has_exception = (
-                steps is not None
-                and (
-                    "Upload pre-ACCEPT or interrupted application exception evidence",
-                    "success",
+            # Both native Application stages can fail after ACCEPT. The
+            # complete attempt-scoped job inventory selects the evidence type,
+            # not the Role, error message or the historical request shape.
+            stage = application_artifact_stage(steps)
+            if stage == "INVALID":
+                return ApplicationCompletion(
+                    "INVALID",
+                    "application-completion-artifact-writers-ambiguous",
+                    request_comment_id=request_comment_id,
                 )
-                in steps
+            has_exception = stage in {"PRE_EXCEPTION", "POST_EXCEPTION"}
+            accepted_effects: object = None
+            try:
+                accepted_document = json.loads(record.raw_worker_result)
+                if isinstance(accepted_document, Mapping):
+                    accepted_effects = accepted_document.get("requested_effects")
+            except json.JSONDecodeError:
+                pass
+            # Only the immutable accepted original Effect set can authorize
+            # general exception recovery. A semantic-only projection with no
+            # accepted Effect must retain its existing terminal classification.
+            # The historically stripped first-activation manifest is the
+            # pre-existing bounded compatibility case, not a new Action rule.
+            has_original_effect = isinstance(accepted_effects, list) and bool(accepted_effects)
+            legacy_activation = (record.role, record.action, record.change) == (
+                "lead",
+                "propose-change",
+                "unset",
             )
-            has_recovery = (
-                steps is not None
-                and ("Upload exact application recovery evidence", "success") in steps
-            )
-            if (
-                has_exception
-                and not has_recovery
-                and (record.role, record.action, record.change)
-                == ("lead", "propose-change", "unset")
+            verified_empty_original = False
+            if has_exception and accepted_effects == [] and not legacy_activation:
+                try:
+                    verified_empty_original = _verified_zero_original_accepted_effects(
+                        record=record,
+                        source=WorkerRequest(record.issue_number, record.role, record.action),
+                        repository=repository,
+                        token=token,
+                        read=read,
+                    )
+                except (HTTPError, OSError, RuntimeError, TypeError, ValueError):
+                    # A signed semantic projection cannot independently prove
+                    # that an older accepted request had zero physical Effects.
+                    verified_empty_original = False
+            if has_exception and (
+                has_original_effect or legacy_activation or verified_empty_original
             ):
                 recovery_artifact = read_application_exception_artifact(
                     repository,
@@ -2894,18 +2849,17 @@ def _application_job(
         proof = classify_application_exception_recovery(
             record=record, artifact=recovery_artifact, repository=repository, token=token
         )
-        if proof.continuation == "CONTINUE":
-            return ApplicationCompletion(
-                "RESUMABLE",
-                "application-completion-continuation-required",
-                request_comment_id=request_comment_id,
-                recovery_artifact=recovery_artifact,
-            )
+        unresolved = _unresolved_accepted_proof_completion(
+            proof,
+            origin="EXCEPTION",
+            request_comment_id=request_comment_id,
+            recovery_artifact=recovery_artifact,
+        )
+        if unresolved is not None:
+            return unresolved
         return ApplicationCompletion(
-            "RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID",
-            "application-completion-exception-observing"
-            if proof.continuation == "OBSERVE"
-            else "application-completion-exception-unsafe",
+            "RESUMABLE",
+            "application-completion-continuation-required",
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
         )
@@ -2941,24 +2895,22 @@ def _application_job(
     post_effect_proven = bool(
         post_effect_proof is not None and post_effect_proof.continuation == "CONTINUE"
     )
-    if post_effect_candidate and not post_effect_proven:
-        # A transient GET failure can be observed on a later wake. A proven
-        # contradictory original is a distinct governed-resolution boundary;
-        # neither status authorizes a GitHub write or a semantic rerun.
-        disposition = None if post_effect_proof is None else post_effect_proof.disposition
-        status, reason = {
-            "INDETERMINATE": ("RESUMABLE", "application-completion-post-effect-observing"),
-            "NOT_APPLIED": ("INVALID", "application-completion-original-effect-incomplete"),
-            "UNSAFE": ("INVALID", "application-completion-original-effect-unsafe"),
-        }.get(
-            disposition or "INVALID", ("INVALID", "application-completion-recovery-proof-missing")
-        )
-        return ApplicationCompletion(
-            cast(Literal["RESUMABLE", "INVALID"], status),
-            reason,
+    if post_effect_candidate:
+        if post_effect_proof is None:
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-recovery-proof-missing",
+                request_comment_id=request_comment_id,
+                recovery_artifact=recovery_artifact,
+            )
+        unresolved = _unresolved_accepted_proof_completion(
+            post_effect_proof,
+            origin="POST_EFFECT",
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
         )
+        if unresolved is not None:
+            return unresolved
 
     if record is not None:
         try:
@@ -3053,7 +3005,11 @@ def _application_job(
     if (
         isinstance(failure_evidence, Mapping)
         and _accepted_recovery_boundary(failure_evidence) == "READ_ONLY"
-        and failure_evidence.get("unfinished_boundary") == "effect-reconciliation"
+        and failure_evidence.get("unfinished_boundary")
+        in {
+            "effect-reconciliation",
+            "effect-precondition-exception",
+        }
     ):
         # The previous read-only invocation obtained no sufficient proof.
         # Re-observe the *same* immutable accepted effects in each fresh
@@ -3079,7 +3035,7 @@ def _application_job(
                 recovery_artifact=recovery_artifact,
             )
         source = WorkerRequest(record.issue_number, record.role, record.action)
-        if not accepted_read_only_effects_complete(
+        proof = classify_accepted_read_only_effects(
             record=record,
             source=source,
             recovery_evidence=failure_evidence,
@@ -3087,13 +3043,20 @@ def _application_job(
             token=token,
             current_revision=current_revision,
             default_branch=branch,
-        ):
-            return ApplicationCompletion(
-                "RESUMABLE",
-                "application-completion-read-only-observing",
-                request_comment_id=request_comment_id,
-                recovery_artifact=recovery_artifact,
-            )
+            recovery_artifact=(
+                recovery_artifact
+                if isinstance(recovery_artifact, ApplicationRecoveryArtifact)
+                else None
+            ),
+        )
+        unresolved = _unresolved_accepted_proof_completion(
+            proof,
+            origin="READ_ONLY",
+            request_comment_id=request_comment_id,
+            recovery_artifact=recovery_artifact,
+        )
+        if unresolved is not None:
+            return unresolved
     return ApplicationCompletion(
         "RESUMABLE",
         "application-completion-continuation-required",
@@ -5798,6 +5761,281 @@ def _write_result_payload(path: Path, plan: BridgePlan) -> None:
         path.write_text(plan.result_body + "\n", encoding="utf-8")
 
 
+@dataclass(frozen=True)
+class RuntimeRepairAdmission:
+    """A native-Human-qualified, non-writing maintenance handoff only."""
+
+    source: WorkerRequest
+    trigger_comment_id: int
+    accepted_request_comment_id: int
+    accepted_decision_sha256: str
+    accepted_worker_sha256: str
+    repair_pr: int
+    repair_head: str
+    result_state: str
+    reason: str
+    frontier_proof: RecoveryProofResult
+    # Existing Application-validated native Run/Job/Artifact identity; this
+    # handoff cannot be upgraded from a bare status or a synthetic DAG proof.
+    source_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact
+
+    @property
+    def frontier(self) -> str:
+        proof = self.frontier_proof
+        return f"{proof.remaining_obligation}:{proof.disposition}"
+
+
+def qualify_runtime_repair_admission(
+    event: Mapping[str, object],
+    *,
+    repository: str,
+    token: str,
+    current_revision: str,
+    read: GitHubReader = _github_json,
+    qualify: Callable[..., ApplicationCompletion] = qualify_application_completion,
+) -> RuntimeRepairAdmission | None:
+    """Consume a native Human issue_comment without emitting any repository Effect.
+
+    The existing Application remains the one accepted-intent/evidence owner.
+    This qualified intake is not approval to patch a PR or replay an Effect.
+    The external Human maintenance interaction must fresh-reauthorize writes.
+    """
+
+    comment = event.get("comment")
+    event_issue = event.get("issue")
+    sender = event.get("sender")
+    event_repo = event.get("repository")
+    if (
+        repository != "royhsu-work/investment-strategy"
+        or _SHA.fullmatch(current_revision) is None
+        or event.get("action") != "created"
+        or not isinstance(comment, Mapping)
+        or not isinstance(event_issue, Mapping)
+        or "pull_request" in event_issue
+        or not isinstance(sender, Mapping)
+        or not isinstance(event_repo, Mapping)
+        or event_repo.get("full_name") != repository
+        or event_repo.get("default_branch") != "main"
+    ):
+        return None
+    raw_body = comment.get("body")
+    if not isinstance(raw_body, str):
+        return None
+    fields = RUNTIME_REPAIR_REQUEST_WIRE.parse(raw_body)
+    if fields is None:
+        return None
+    issue_number = _positive_int_string(fields["Issue"])
+    request_comment_id = _positive_int_string(fields["Accepted-Request-Comment"])
+    repair_pr = _positive_int_string(fields["Repair-PR"])
+    trigger_comment_id = _positive_int(comment.get("id"))
+    actor = comment.get("user")
+    native_actor = actor.get("login") if isinstance(actor, Mapping) else None
+    owner = repository.split("/", 1)[0]
+    if (
+        issue_number is None
+        or request_comment_id is None
+        or repair_pr is None
+        or trigger_comment_id is None
+        or issue_number != event_issue.get("number")
+        or not isinstance(actor, Mapping)
+        or native_actor != owner
+        or actor.get("type") != "User"
+        or sender.get("login") != owner
+        or sender.get("id") != actor.get("id")
+        or _positive_int(actor.get("id")) is None
+        or comment.get("performed_via_github_app") is not None
+        or _SHA.fullmatch(fields["Repair-HEAD"]) is None
+        or re.fullmatch(r"[0-9a-f]{64}", fields["Accepted-Decision-SHA256"]) is None
+    ):
+        return None
+    try:
+        role = role_for(ModelAction(fields["Action"])).value
+    except ValueError:
+        return None
+    source = WorkerRequest(issue_number, role, fields["Action"])
+    native = read(repository, token, f"issues/comments/{trigger_comment_id}")
+    main_ref = read(repository, token, "git/ref/heads/main")
+    current_issue = read(repository, token, f"issues/{issue_number}")
+    pr = read(repository, token, f"pulls/{repair_pr}")
+    if not all(isinstance(value, Mapping) for value in (native, main_ref, current_issue, pr)):
+        return None
+    native = cast(Mapping[str, object], native)
+    main_ref = cast(Mapping[str, object], main_ref)
+    current_issue = cast(Mapping[str, object], current_issue)
+    pr = cast(Mapping[str, object], pr)
+    native_user = native.get("user")
+    main_object = main_ref.get("object")
+    pr_head = pr.get("head")
+    pr_base = pr.get("base")
+    head_repo = pr_head.get("repo") if isinstance(pr_head, Mapping) else None
+    base_repo = pr_base.get("repo") if isinstance(pr_base, Mapping) else None
+    if (
+        native.get("id") != trigger_comment_id
+        or native.get("body") != comment.get("body")
+        or native.get("issue_url")
+        != f"https://api.github.com/repos/{repository}/issues/{issue_number}"
+        or not isinstance(native_user, Mapping)
+        or native_user.get("login") != owner
+        or native_user.get("id") != actor.get("id")
+        or native.get("performed_via_github_app") is not None
+        or not isinstance(main_object, Mapping)
+        or main_object.get("sha") != current_revision
+        or pr.get("number") != repair_pr
+        or pr.get("state") != "open"
+        or pr.get("merged") is True
+        or not isinstance(pr_head, Mapping)
+        or pr_head.get("sha") != fields["Repair-HEAD"]
+        or not isinstance(head_repo, Mapping)
+        or head_repo.get("full_name") != repository
+        or not isinstance(pr_base, Mapping)
+        or pr_base.get("ref") != "main"
+        or not isinstance(base_repo, Mapping)
+        or base_repo.get("full_name") != repository
+    ):
+        return None
+    observation = normalize_github_issue(current_issue)
+    if (
+        observation is None
+        or not observation.authoritative
+        or observation.state != "open"
+        or observation.change != fields["Change"]
+        or observation.routing != (source.role, source.action)
+    ):
+        return None
+    query = f"issues/{issue_number}/comments?sort=created&direction=asc"
+    comments = _paged_list(repository, token, query, read=read)
+    if comments != _paged_list(repository, token, query, read=read):
+        return None
+    matching = [
+        record
+        for item in comments
+        if is_github_actions_comment(item)
+        and isinstance(item.get("body"), str)
+        and hashlib.sha256(cast(str, item["body"]).encode()).hexdigest()
+        == fields["Accepted-Decision-SHA256"]
+        and (record := parse_application_decision(cast(str, item["body"]))) is not None
+        and record.disposition == "ACCEPTED"
+        and record.request_comment_id == request_comment_id
+        and (record.issue_number, record.change, record.role, record.action)
+        == (issue_number, fields["Change"], source.role, source.action)
+    ]
+    if len(matching) != 1:
+        return None
+    completion = qualify(
+        repository,
+        token,
+        source=source,
+        current_revision=current_revision,
+        read=read,
+    )
+    # Eligibility comes from the Application-owned typed proof, not a
+    # Bridge status/reason allowlist. A missing or mismatched accepted source
+    # cannot become a positive repair admission just because it is INVALID.
+    proof = completion.accepted_proof
+    if proof is None:
+        return None
+    repair_frontier = proof.runtime_repair_frontier
+    artifact = completion.recovery_artifact
+    # Both Application artifact readers independently qualify the native
+    # Run/Job/Artifact, but their documents use distinct stage schemas:
+    # recovery carries authorization_revision; exception carries change.
+    # Compare the common accepted identity once, then its typed schema field.
+    if repair_frontier is None or not isinstance(
+        artifact, (ApplicationRecoveryArtifact, ApplicationExceptionArtifact)
+    ):
+        return None
+    if (
+        artifact.request_comment_id != request_comment_id
+        or artifact.accepted_decision_sha256 != fields["Accepted-Decision-SHA256"]
+        or (
+            artifact.document.get("issue_number"),
+            artifact.document.get("role"),
+            artifact.document.get("action"),
+        )
+        != (matching[0].issue_number, matching[0].role, matching[0].action)
+        or (
+            artifact.document.get("authorization_revision")
+            if isinstance(artifact, ApplicationRecoveryArtifact)
+            else artifact.document.get("change")
+        )
+        != (
+            matching[0].authorization_revision
+            if isinstance(artifact, ApplicationRecoveryArtifact)
+            else matching[0].change
+        )
+        or completion.request_comment_id != request_comment_id
+        or completion.state != ("RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID")
+    ):
+        return None
+    return RuntimeRepairAdmission(
+        source=source,
+        trigger_comment_id=trigger_comment_id,
+        accepted_request_comment_id=request_comment_id,
+        accepted_decision_sha256=fields["Accepted-Decision-SHA256"],
+        accepted_worker_sha256=matching[0].worker_result_sha256,
+        repair_pr=repair_pr,
+        repair_head=fields["Repair-HEAD"],
+        result_state=completion.state,
+        reason=completion.reason,
+        frontier_proof=repair_frontier,
+        source_artifact=artifact,
+    )
+
+
+def _present_runtime_repair_admission(
+    admission: RuntimeRepairAdmission, *, repository: str
+) -> None:
+    """Surface the actual native consumer result without dispatch/effect output."""
+
+    evidence_kind = (
+        "recovery"
+        if isinstance(admission.source_artifact, ApplicationRecoveryArtifact)
+        else "exception"
+    )
+    proof = admission.frontier_proof
+    witness = proof.witness
+    stage = witness.stage if isinstance(witness, TypedEvidenceError) else None
+    ordinal = proof.frontier_index if proof.frontier_index is not None else "unverified"
+    body = "\n".join(
+        (
+            "## Non-writing R9 Human/Runtime repair intake",
+            "",
+            f"- Exact source: {repository} Issue #{admission.source.issue_number}",
+            f"- Original Action: {admission.source.role}/{admission.source.action}",
+            f"- Native Human trigger: issuecomment-{admission.trigger_comment_id}",
+            f"- Immutable accepted request: issuecomment-{admission.accepted_request_comment_id}",
+            f"- Accepted decision SHA256: {admission.accepted_decision_sha256}",
+            f"- Accepted worker SHA256: {admission.accepted_worker_sha256}",
+            f"- Existing maintenance PR: #{admission.repair_pr}",
+            f"- Exact PR HEAD: {admission.repair_head}",
+            f"- Native Application run: {admission.source_artifact.run_id}"
+            f" / attempt {admission.source_artifact.run_attempt}",
+            f"- Native Application job: {admission.source_artifact.job_id}",
+            f"- Native evidence kind: {evidence_kind}",
+            f"- Evidence Artifact ID: {admission.source_artifact.artifact_id}",
+            f"- Evidence Artifact digest: {admission.source_artifact.artifact_digest}",
+            f"- Recovery episode SHA256: {admission.source_artifact.recovery_episode_sha256}",
+            f"- Read-only proof: {admission.result_state}/{admission.reason}",
+            f"- Pending original/formal/successor frontier: {admission.frontier}",
+            f"- Verified Effect ordinal: {ordinal}",
+            f"- Typed witness: {type(witness).__name__}",
+            f"- Evidence error stage: {stage if stage is not None else 'not-an-operational-error'}",
+            "",
+            "This native event was consumed by the existing Bridge. It authorizes NO "
+            "Effect, Action, routing, merge, direct workflow run, or PR mutation. "
+            "A separately authorized Human/Runtime maintainer must fresh-qualify "
+            "the exact source, target and gates before any repair; only a later "
+            "ordinary fresh wake may re-observe the accepted obligation.",
+            "",
+        )
+    )
+    print(body)
+    destination = os.environ.get("GITHUB_STEP_SUMMARY")
+    if destination:
+        with Path(destination).open("a", encoding="utf-8") as output:
+            output.write(body)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Plan one run-scoped dispatch result")
     parser.add_argument("--event-path", type=Path)
@@ -5858,6 +6096,33 @@ def main() -> int:
         parser.error("dispatch requires --event-path, --github-output and --result-payload")
 
     event = _require_mapping(json.loads(args.event_path.read_text(encoding="utf-8")), "event")
+    event_comment = event.get("comment")
+    event_body = event_comment.get("body") if isinstance(event_comment, Mapping) else None
+    if isinstance(event_body, str) and event_body.splitlines()[:1] == [
+        RUNTIME_REPAIR_REQUEST_WIRE.marker
+    ]:
+        repository = os.environ.get("GITHUB_REPOSITORY")
+        token = os.environ.get("GITHUB_TOKEN")
+        if not repository or not token or os.environ.get("GITHUB_EVENT_NAME") != "issue_comment":
+            return 1
+        try:
+            admission = qualify_runtime_repair_admission(
+                event,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+            )
+        except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+            admission = None
+        if admission is None:
+            print(
+                "Native R9 repair intake is not source-qualified; no work emitted.",
+                file=sys.stderr,
+            )
+            return 1
+        _present_runtime_repair_admission(admission, repository=repository)
+        _write_outputs(args.github_output, BridgePlan(False))
+        return 0
     identity = _request_identity(event)
     if identity is None:
         plan = BridgePlan(False)
@@ -5869,18 +6134,34 @@ def main() -> int:
         preflight = acquire_current_github_preflight(repository, token)
         decision = classify_dispatch(preflight)
         source = _completion_source(preflight, decision)
-        completion = (
-            ApplicationCompletion("NONE", "application-completion-none")
-            if source is None
-            else qualify_application_completion(
-                repository,
-                token,
-                source=source,
-                current_revision=args.revision,
-                current_dispatch_request_comment_id=identity[1],
-                current_dispatch_issue_number=identity[0],
-            )
-        )
+        if source is None:
+            completion = ApplicationCompletion("NONE", "application-completion-none")
+        else:
+            try:
+                completion = qualify_application_completion(
+                    repository,
+                    token,
+                    source=source,
+                    current_revision=args.revision,
+                    current_dispatch_request_comment_id=identity[1],
+                    current_dispatch_issue_number=identity[0],
+                )
+            except Exception as exc:
+                # The run-scoped dispatch result is the existing durable
+                # pre-dispatch repair entry. Preserve exact source identity
+                # without exposing exception text, replaying accepted effects,
+                # or manufacturing a repository-dispatched successor Action.
+                print(
+                    "Pre-dispatch accepted-completion proof exception: "
+                    f"issue={source.issue_number} action={source.action} "
+                    f"type={type(exc).__qualname__}",
+                    file=sys.stderr,
+                )
+                completion = ApplicationCompletion(
+                    "INVALID",
+                    "application-completion-proof-exception:"
+                    f"issue-{source.issue_number}:{source.action}",
+                )
         continuation_body = None
         if completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
             if (

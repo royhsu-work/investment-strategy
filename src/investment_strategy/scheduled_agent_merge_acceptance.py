@@ -768,6 +768,7 @@ def run_effect_application(
     accepted_intent: bool = False,
     reconcile_only: bool = False,
     uncertain_effect_index: int | None = None,
+    proven_empty_original_effects: bool = False,
     original_322_recovery: bool = False,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Apply through shared effect guards plus an optional mutation-adjacent guard."""
@@ -844,6 +845,7 @@ def run_effect_application(
             accepted_intent=accepted_intent,
             reconcile_only=reconcile_only,
             uncertain_effect_index=uncertain_effect_index,
+            proven_empty_original_effects=proven_empty_original_effects,
             durable_checkpoint_revision=(
                 validated_materialization_revision if accepted_intent else None
             ),
@@ -875,6 +877,7 @@ def run_guarded_effect_application(
     accepted_intent: bool = False,
     reconcile_only: bool = False,
     uncertain_effect_index: int | None = None,
+    proven_empty_original_effects: bool = False,
     original_322_recovery: bool = False,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Reject stale merge acceptance before and immediately adjacent to merge application."""
@@ -923,6 +926,7 @@ def run_guarded_effect_application(
         accepted_intent=accepted_intent,
         reconcile_only=reconcile_only,
         uncertain_effect_index=uncertain_effect_index,
+        proven_empty_original_effects=proven_empty_original_effects,
         original_322_recovery=original_322_recovery,
         pre_apply_guard=lambda effect: _merge_effect_allows(
             effect,

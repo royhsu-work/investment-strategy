@@ -27,6 +27,7 @@ from investment_strategy.scheduled_agent_action_model import (
 from investment_strategy.scheduled_agent_action_model import (
     ApplicationRejection,
     ApplicationRejectionKind,
+    BoundedActionResult,
     ResultKind,
     TypedResult,
     next_action,
@@ -1289,6 +1290,68 @@ def _accepted_worker_result_for_continuation(
         }
     ]
     return json.dumps(recovered, sort_keys=True, separators=(",", ":"))
+
+
+def _verified_zero_original_accepted_effects(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    read: Callable[[str, str, str], object] | None = None,
+) -> bool:
+    """Prove zero *physical* original Effects, not an empty semantic projection.
+
+    This additional proof is required only at exception reconciliation; normal
+    accepted continuations remain independent of mutable ingress transport.
+    """
+
+    if record.disposition != "ACCEPTED" or (record.issue_number, record.role, record.action) != (
+        source.issue_number,
+        source.role,
+        source.action,
+    ):
+        return False
+    decoded = json.loads(record.raw_worker_result)
+    if not isinstance(decoded, dict) or decoded.get("requested_effects") != []:
+        return False
+    reader = _github_json if read is None else read
+    source_comment = _as_mapping(
+        reader(repository, token, f"issues/comments/{record.request_comment_id}")
+    )
+    body = None if source_comment is None else source_comment.get("body")
+    if (
+        source_comment is None
+        or source_comment.get("id") != record.request_comment_id
+        or not isinstance(body, str)
+        or not _trusted_connector_comment(source_comment, repository.split("/", 1)[0])
+        or hashlib.sha256(body.encode()).hexdigest() != record.request_body_sha256
+    ):
+        return False
+    original = parse_application_request(body)
+    if (
+        original is None
+        or original.authorization_revision != record.authorization_revision
+        or (
+            original.dispatch_correlation is not None
+            and original.dispatch_correlation
+            != dispatch_correlation_for(repository, source, original.authorization_revision)
+        )
+        or _claimed_source(original.raw_worker_result) != source
+    ):
+        return False
+    parsed = parse_worker_result(
+        original.raw_worker_result, source, authorized_change=record.change
+    )
+    original_decoded = json.loads(original.raw_worker_result)
+    return bool(
+        isinstance(original_decoded, dict)
+        and original_decoded.get("requested_effects") == []
+        and parsed.change == record.change
+        and parsed.typed_result.result.kind.value == record.result_kind
+        and _worker_semantic_projection(original.raw_worker_result)
+        == _worker_semantic_projection(record.raw_worker_result)
+    )
 
 
 def _github_timestamp(value: object) -> datetime:
@@ -3309,6 +3372,10 @@ def _accepted_checkpoint_already_durable(
         and isinstance(payload.get("body"), str)
         and _marker(cast(str, payload["body"])) == "SLICE_CHECKPOINT"
     ]
+    if not checkpoints:
+        # A non-completion ACCEPTED result has no checkpoint obligation.
+        # Its original Effect remains separately qualified and read-only.
+        return False
     if len(checkpoints) != 1:
         raise RuntimeError("accepted implementation checkpoint identity is incomplete")
     adapter = GitHubEffectAdapter(
@@ -3425,13 +3492,20 @@ def _fresh_preactivation_source(
         raise RuntimeError("first activation source identity is no longer preactivation")
 
 
-def _persist_activation_result(
+def _persist_application_evidence_comment(
     body: str,
     *,
     repository: str,
     token: str,
     issue_number: int,
+    errors: tuple[str, str, str, str],
 ) -> int:
+    """The single native comment write/reconcile/postcondition owner.
+
+    Both first activation and partial recovery retain their existing purpose,
+    caller authorization and diagnostic messages, not separate write logic.
+    """
+
     comments = _paged_github_list(repository, token, f"issues/{issue_number}/comments?sort=created")
     matches = tuple(
         comment
@@ -3439,11 +3513,11 @@ def _persist_activation_result(
         if comment.get("body") == body and is_github_actions_comment(comment)
     )
     if len(matches) > 1:
-        raise RuntimeError("first activation has duplicate application result evidence")
+        raise RuntimeError(errors[0])
     if len(matches) == 1:
         comment_id = _positive_int(matches[0].get("id"))
         if comment_id is None:
-            raise RuntimeError("first activation result comment id is invalid")
+            raise RuntimeError(errors[1])
         return comment_id
 
     response = _as_mapping(
@@ -3462,7 +3536,7 @@ def _persist_activation_result(
         or response.get("body") != body
         or not is_github_actions_comment(response)
     ):
-        raise RuntimeError("first activation result postcondition was not observed")
+        raise RuntimeError(errors[2])
     observed = _as_mapping(_github_json(repository, token, f"issues/comments/{comment_id}"))
     if (
         observed is None
@@ -3470,8 +3544,29 @@ def _persist_activation_result(
         or observed.get("body") != body
         or not is_github_actions_comment(observed)
     ):
-        raise RuntimeError("first activation result fresh postcondition was not observed")
+        raise RuntimeError(errors[3])
     return comment_id
+
+
+def _persist_activation_result(
+    body: str,
+    *,
+    repository: str,
+    token: str,
+    issue_number: int,
+) -> int:
+    return _persist_application_evidence_comment(
+        body,
+        repository=repository,
+        token=token,
+        issue_number=issue_number,
+        errors=(
+            "first activation has duplicate application result evidence",
+            "first activation result comment id is invalid",
+            "first activation result postcondition was not observed",
+            "first activation result fresh postcondition was not observed",
+        ),
+    )
 
 
 def _formal_qualification(
@@ -3877,45 +3972,18 @@ def _persist_recovery_comment(
     token: str,
     issue_number: int,
 ) -> int:
-    comments = _paged_github_list(repository, token, f"issues/{issue_number}/comments?sort=created")
-    matches = tuple(
-        comment
-        for comment in comments
-        if comment.get("body") == body and is_github_actions_comment(comment)
+    return _persist_application_evidence_comment(
+        body,
+        repository=repository,
+        token=token,
+        issue_number=issue_number,
+        errors=(
+            "partial activation recovery evidence is duplicated",
+            "partial activation recovery comment id is invalid",
+            "partial activation recovery comment postcondition was not observed",
+            "partial activation recovery fresh comment was not observed",
+        ),
     )
-    if len(matches) > 1:
-        raise RuntimeError("partial activation recovery evidence is duplicated")
-    if len(matches) == 1:
-        comment_id = _positive_int(matches[0].get("id"))
-        if comment_id is None:
-            raise RuntimeError("partial activation recovery comment id is invalid")
-        return comment_id
-    response = _as_mapping(
-        _github_json(
-            repository,
-            token,
-            f"issues/{issue_number}/comments",
-            method="POST",
-            payload={"body": body},
-        )
-    )
-    comment_id = None if response is None else _positive_int(response.get("id"))
-    if (
-        response is None
-        or comment_id is None
-        or response.get("body") != body
-        or not is_github_actions_comment(response)
-    ):
-        raise RuntimeError("partial activation recovery comment postcondition was not observed")
-    observed = _as_mapping(_github_json(repository, token, f"issues/comments/{comment_id}"))
-    if (
-        observed is None
-        or observed.get("body") != body
-        or observed.get("id") != comment_id
-        or not is_github_actions_comment(observed)
-    ):
-        raise RuntimeError("partial activation recovery fresh comment was not observed")
-    return comment_id
 
 
 def _unbound_first_activation_result_matches(
@@ -4843,6 +4911,50 @@ def _write_carrier_outputs(result: ApplyResult) -> None:
         output.write("\n".join(lines) + "\n")
 
 
+def _read_verified_application_artifact(
+    repository: str,
+    token: str,
+    *,
+    metadata: Mapping[str, object],
+    run_id: int,
+    run_head_sha: str,
+    download: Callable[[str, str, str], bytes],
+) -> tuple[int, str, Mapping[str, object]] | None:
+    """One exact metadata, bytes, digest and JSON reader for both native artifacts.
+
+    The recovery and exception readers retain their separate run/stage/lineage
+    contracts. This reader cannot admit a continuation or authorize a write.
+    """
+
+    artifact_id = _strict_positive_int(metadata.get("id"))
+    digest = metadata.get("digest")
+    artifact_run = metadata.get("workflow_run")
+    if (
+        artifact_id is None
+        or metadata.get("expired") is not False
+        or not isinstance(digest, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+        or not isinstance(artifact_run, Mapping)
+        or artifact_run.get("id") != run_id
+        or artifact_run.get("head_sha") != run_head_sha
+    ):
+        return None
+    raw = download(repository, token, f"actions/artifacts/{artifact_id}/zip")
+    if (
+        not raw
+        or len(raw) > _MAX_APPLICATION_RECOVERY_BYTES
+        or f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest
+    ):
+        return None
+    try:
+        decoded = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(decoded, Mapping):
+        return None
+    return artifact_id, digest, cast(Mapping[str, object], decoded)
+
+
 def read_application_recovery_artifact(
     repository: str,
     token: str,
@@ -4897,18 +5009,18 @@ def read_application_recovery_artifact(
     steps = job.steps
     if steps is None:
         return unavailable()
-    uploads = [
-        conclusion
-        for name, conclusion in steps
-        if name == "Upload exact application recovery evidence"
-    ]
-    if len(uploads) != 1 or uploads[0] != "success":
-        if not uploads and not any(
-            name == "Upload final exact application recovery evidence" for name, _ in steps
+    upload_stage = application_artifact_stage(steps)
+    if upload_stage not in {"PRE_RECOVERY", "FINAL_RECOVERY"}:
+        if upload_stage == "NONE" and not any(
+            name
+            in {
+                "Upload exact application recovery evidence",
+                "Upload final exact application recovery evidence",
+            }
+            for name, _ in steps
         ):
-            # A completed legacy job without an upload step really cannot
-            # supply this artifact. Its separate caller still proves legacy
-            # identity and does not infer zero writes.
+            # A completed legacy job with no writer step is distinct from a
+            # missing artifact after a successful native upload.
             return None
         return unavailable()
     artifacts_payload = api_read(
@@ -4928,38 +5040,17 @@ def read_application_recovery_artifact(
     if len(artifacts) != 1:
         return unavailable()
     artifact = cast(Mapping[str, object], artifacts[0])
-    artifact_id = _strict_positive_int(artifact.get("id"))
-    artifact_digest = artifact.get("digest")
-    workflow_run = artifact.get("workflow_run")
-    if (
-        artifact_id is None
-        or artifact.get("expired") is not False
-        or not isinstance(artifact_digest, str)
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_digest) is None
-        or not isinstance(workflow_run, Mapping)
-        or workflow_run.get("id") != run_id
-        or workflow_run.get("head_sha") != run.get("head_sha")
-    ):
+    verified = _read_verified_application_artifact(
+        repository,
+        token,
+        metadata=artifact,
+        run_id=run_id,
+        run_head_sha=cast(str, run["head_sha"]),
+        download=download,
+    )
+    if verified is None:
         return unavailable()
-    try:
-        raw = download(repository, token, f"actions/artifacts/{artifact_id}/zip")
-    except (HTTPError, OSError, RuntimeError, ValueError):
-        # The exact artifact was observed; read refusal must survive through
-        # the application-completion consumer, not be flattened into absence.
-        raise
-    if (
-        not raw
-        or len(raw) > _MAX_APPLICATION_RECOVERY_BYTES
-        or f"sha256:{hashlib.sha256(raw).hexdigest()}" != artifact_digest
-    ):
-        return unavailable()
-    try:
-        decoded = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return unavailable()
-    if not isinstance(decoded, Mapping):
-        return unavailable()
-    document = cast(Mapping[str, object], decoded)
+    artifact_id, artifact_digest, document = verified
     expected_keys = {
         "schema",
         "repository",
@@ -5099,6 +5190,49 @@ _EXCEPTION_APPLY_STEP_CONTRACT: dict[str, str] = {
     "Upload final exact application recovery evidence": "skipped",
 }
 
+_POST_VALIDATION_EXCEPTION_STEP_CONTRACT: dict[str, str] = {
+    "Freshly authorize and apply repository-owned effects": "success",
+    "Upload pre-ACCEPT or interrupted application exception evidence": "skipped",
+    "Persist exact external carrier plan": "skipped",
+    "Upload exact external carrier plan": "skipped",
+    "Persist the derived successor after exact validation": "failure",
+    "Upload final exact application recovery evidence": "skipped",
+    "Upload post-validation application exception evidence": "success",
+}
+
+
+def application_artifact_stage(
+    steps: Sequence[tuple[str | None, str | None]] | None,
+) -> Literal[
+    "PRE_EXCEPTION", "POST_EXCEPTION", "PRE_RECOVERY", "FINAL_RECOVERY", "INVALID", "NONE"
+]:
+    """Select one native output phase; a prior checkpoint is not a same-stage conflict."""
+
+    if steps is None:
+        return "NONE"
+    names = [name for name, _ in steps]
+    if any(not isinstance(name, str) for name in names) or len(names) != len(set(names)):
+        return "INVALID"
+    completed = {name for name, conclusion in steps if conclusion == "success"}
+    pre_exception = "Upload pre-ACCEPT or interrupted application exception evidence" in completed
+    post_exception = "Upload post-validation application exception evidence" in completed
+    early_recovery = "Upload exact application recovery evidence" in completed
+    final_recovery = "Upload final exact application recovery evidence" in completed
+    if (pre_exception and (post_exception or early_recovery or final_recovery)) or (
+        post_exception and final_recovery
+    ):
+        return "INVALID"
+    if post_exception:
+        return "POST_EXCEPTION"
+    if pre_exception:
+        return "PRE_EXCEPTION"
+    if final_recovery:
+        return "FINAL_RECOVERY"
+    if early_recovery:
+        return "PRE_RECOVERY"
+    return "NONE"
+
+
 _EXCEPTION_DOCUMENT_KEYS = frozenset(
     {
         "schema",
@@ -5139,8 +5273,8 @@ def _qualified_exception_apply_run(
     run_attempt: int,
     job_id: int,
     read: Callable[[str, str, str], object],
-) -> Mapping[str, object] | None:
-    """Prove this run failed before every later writer, without inferring zero writes."""
+) -> tuple[Mapping[str, object], bool] | None:
+    """Prove one failed native stage and its earlier-phase recovery writer."""
 
     run = _as_mapping(read(repository, token, f"actions/runs/{run_id}"))
     required_run = {
@@ -5174,13 +5308,30 @@ def _qualified_exception_apply_run(
         if name is None or result is None or name in conclusions:
             return None
         conclusions[name] = result
-    return run if _matches_required_fields(conclusions, _EXCEPTION_APPLY_STEP_CONTRACT) else None
+    stage = application_artifact_stage(steps)
+    pre_exception = stage == "PRE_EXCEPTION" and _matches_required_fields(
+        conclusions, _EXCEPTION_APPLY_STEP_CONTRACT
+    )
+    post_exception = stage == "POST_EXCEPTION" and _matches_required_fields(
+        conclusions, _POST_VALIDATION_EXCEPTION_STEP_CONTRACT
+    )
+    if post_exception and conclusions.get("Upload exact application recovery evidence") not in {
+        "success",
+        "skipped",
+    }:
+        return None
+    if pre_exception == post_exception:
+        return None
+    return run, bool(
+        post_exception
+        and conclusions.get("Upload exact application recovery evidence") == "success"
+    )
 
 
 def _qualified_exception_artifact_metadata(
-    inventory: object, *, run_id: int, run_head_sha: str
+    inventory: object, *, run_id: int, run_head_sha: str, predecessor_recovery: bool
 ) -> Mapping[str, object] | None:
-    """One complete artifact inventory, with neither carrier nor recovery writer."""
+    """Qualify a later exception without discarding a prior-phase checkpoint."""
 
     payload = _as_mapping(inventory)
     artifacts = None if payload is None else payload.get("artifacts")
@@ -5190,12 +5341,21 @@ def _qualified_exception_artifact_metadata(
         return None
     if any(not isinstance(item, Mapping) for item in artifacts):
         return None
-    if any(
-        item.get("name") in {_APPLICATION_RECOVERY_ARTIFACT, "carrier-plan.json"}
-        for item in artifacts
-        if isinstance(item, Mapping)
-    ):
+    if any(item.get("name") == "carrier-plan.json" for item in artifacts):
         return None
+    prior = [item for item in artifacts if item.get("name") == _APPLICATION_RECOVERY_ARTIFACT]
+    if len(prior) != (1 if predecessor_recovery else 0):
+        return None
+    if prior:
+        prior_run = _as_mapping(prior[0].get("workflow_run"))
+        if (
+            prior_run is None
+            or not _matches_required_fields(prior_run, {"id": run_id, "head_sha": run_head_sha})
+            or prior[0].get("expired") is not False
+            or not isinstance(prior[0].get("digest"), str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", cast(str, prior[0]["digest"])) is None
+        ):
+            return None
     candidates = [
         item
         for item in artifacts
@@ -5203,12 +5363,8 @@ def _qualified_exception_artifact_metadata(
     ]
     if len(candidates) != 1:
         return None
-    artifact = candidates[0]
-    workflow_run = _as_mapping(artifact.get("workflow_run"))
-    required = {"id": run_id, "head_sha": run_head_sha}
-    if workflow_run is None or not _matches_required_fields(workflow_run, required):
-        return None
-    return artifact
+    # The shared verified-bytes reader owns exact Artifact run/head identity.
+    return candidates[0]
 
 
 def _qualified_exception_document(
@@ -5289,7 +5445,7 @@ def read_application_exception_artifact(
         or re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256) is None
     ):
         return unavailable()
-    run = _qualified_exception_apply_run(
+    qualified = _qualified_exception_apply_run(
         repository,
         token,
         run_id=run_id,
@@ -5297,35 +5453,28 @@ def read_application_exception_artifact(
         job_id=job_id,
         read=api_read,
     )
-    if run is None:
+    if qualified is None:
         return unavailable()
+    run, predecessor_recovery = qualified
     artifact = _qualified_exception_artifact_metadata(
         api_read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100"),
         run_id=run_id,
         run_head_sha=cast(str, run["head_sha"]),
+        predecessor_recovery=predecessor_recovery,
     )
     if artifact is None:
         return unavailable()
-    artifact_id = _strict_positive_int(artifact.get("id"))
-    digest = artifact.get("digest")
-    if (
-        artifact_id is None
-        or artifact.get("expired") is not False
-        or not isinstance(digest, str)
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
-    ):
+    verified = _read_verified_application_artifact(
+        repository,
+        token,
+        metadata=artifact,
+        run_id=run_id,
+        run_head_sha=cast(str, run["head_sha"]),
+        download=download,
+    )
+    if verified is None:
         return unavailable()
-    raw = download(repository, token, f"actions/artifacts/{artifact_id}/zip")
-    if (
-        not raw
-        or len(raw) > _MAX_APPLICATION_RECOVERY_BYTES
-        or f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest
-    ):
-        return unavailable()
-    try:
-        raw_document = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return unavailable()
+    artifact_id, digest, raw_document = verified
     document = _qualified_exception_document(
         raw_document,
         repository=repository,
@@ -5598,7 +5747,7 @@ def _recovery_failure_document(result: ApplyResult) -> dict[str, object]:
             "expected": recovery.rejection.expected,
             "observed": recovery.rejection.observed,
         }
-    return {
+    failure: dict[str, object] = {
         "reason": result.reason,
         "failed_effect_index": recovery.failed_effect_index,
         "failed_effect_kind": recovery.failed_effect_kind,
@@ -5609,6 +5758,14 @@ def _recovery_failure_document(result: ApplyResult) -> dict[str, object]:
         "unfinished_boundary": recovery.unfinished_boundary,
         "rejection": rejection_document,
     }
+    # Capture only observed operational failure facts. This does not decide
+    # whether the same accepted Effect was called in an earlier native run.
+    if recovery.operation_stage is not None:
+        failure["operation_stage"] = recovery.operation_stage
+        failure["write_call_entered"] = recovery.write_call_entered
+    if recovery.raw_error is not None:
+        failure["raw_error"] = recovery.raw_error
+    return failure
 
 
 def _attempted_effect_checkpoint(
@@ -5714,34 +5871,34 @@ def _verified_attempted_effect_checkpoint(
     return tuple(attempted)
 
 
-def _attempted_formal_revision(
+def _attempted_formal_identity(
     attempted: Sequence[StagedEffect],
     *,
     source: WorkerRequest,
     change: str,
     result_kind: str,
     request_comment_id: int,
-) -> str | None:
-    """Read a formal result's original revision from its exact Effect payload.
+) -> tuple[StagedEffect, str, str] | None:
+    """Read one exact original formal Effect, revision and body from its checkpoint.
 
     A later continuation's default-branch HEAD is not the revision of an
     already-committed formal comment. This identity must survive *subsequent*
     interrupted or zero-write-rejected successor attempts as well.
     """
 
-    formal_bodies: list[str] = []
+    formals: list[tuple[StagedEffect, str]] = []
     for effect in attempted:
         if effect.kind != "issue-comment":
             continue
         payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
         body = None if payload is None else payload.get("body")
         if isinstance(body, str) and _marker(body) in _FORMAL_RESULT_MARKERS:
-            formal_bodies.append(body)
-    if not formal_bodies:
+            formals.append((effect, body))
+    if not formals:
         return None
-    if len(formal_bodies) != 1:
+    if len(formals) != 1:
         raise RuntimeError("accepted attempted prefix has ambiguous formal result")
-    body = formal_bodies[0]
+    formal_effect, body = formals[0]
     revision = _field(body, "Default-Branch-Revision")
     if (
         not isinstance(revision, str)
@@ -5762,7 +5919,7 @@ def _attempted_formal_revision(
         )
     ):
         raise RuntimeError("accepted attempted formal identity is invalid")
-    return revision
+    return formal_effect, revision, body
 
 
 def _retain_completed_accepted_formal_effect(
@@ -5785,34 +5942,18 @@ def _retain_completed_accepted_formal_effect(
     attempted = _verified_attempted_effect_checkpoint(failure, source=source)
     if attempted is None:
         return None
-    original_revision = _attempted_formal_revision(
+    formal_identity = _attempted_formal_identity(
         attempted,
         source=source,
         change=change,
         result_kind=result_kind,
         request_comment_id=request_comment_id,
     )
-    if original_revision is None:
+    if formal_identity is None:
         return None
+    original, original_revision, original_body = formal_identity
     if failure.get("attempt_revision") != original_revision:
         raise RuntimeError("accepted attempted formal revision is inconsistent")
-    formal: list[StagedEffect] = []
-    for effect in attempted:
-        if effect.kind != "issue-comment":
-            continue
-        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
-        body = None if payload is None else payload.get("body")
-        if isinstance(body, str) and _marker(body) in _FORMAL_RESULT_MARKERS:
-            formal.append(effect)
-    if not formal:
-        return None
-    if len(formal) != 1:
-        raise RuntimeError("accepted attempted prefix has ambiguous formal result")
-    original = formal[0]
-    payload = _effect_payload({"kind": original.kind, "payload_json": original.payload_json})
-    original_body = None if payload is None else payload.get("body")
-    if not isinstance(original_body, str):
-        raise RuntimeError("accepted attempted formal body is invalid")
     original_correlation = formal_application_correlation(
         source,
         change=change,
@@ -5922,10 +6063,18 @@ def _accepted_recovery_boundary(
         and isinstance(evidence.get("failed_effect_sha256"), str)
         and re.fullmatch(r"[0-9a-f]{64}", cast(str, evidence["failed_effect_sha256"])) is not None
     )
+    # A catchable guard/read exception proves this Effect was *not called*
+    # by the sequential engine. It does not prove the preceding writes;
+    # those still require fresh exact postconditions on every continuation.
+    unattempted_exception = (
+        evidence.get("unfinished_boundary") == "effect-precondition-exception"
+        and evidence.get("mutation_status") == "not-complete"
+        and evidence.get("rejection") is None
+    )
     if known_rejection and exact_frontier and exact_failure and not indexes:
         return "ZERO_WRITE_REJECTION"
     if exact_frontier and exact_failure:
-        if known_rejection and indexes:
+        if unattempted_exception or (known_rejection and indexes):
             return "READ_ONLY"
         if evidence.get("mutation_status") == "unknown" and evidence.get("unfinished_boundary") in {
             "effect-postcondition",
@@ -5983,6 +6132,258 @@ _POST_EFFECT_ADMISSION: dict[
 }
 
 
+RecoveryProofDisposition = Literal["SATISFIED", "NOT_APPLIED", "UNKNOWN", "CONFLICT"]
+RecoveryObligation = Literal["ORIGINAL_EFFECT", "FORMAL_RESULT", "SUCCESSOR"]
+
+
+@dataclass(frozen=True)
+class CompleteNeverCalledWitness:
+    """Exact accepted-intent-wide no-call chain, never a write authorization."""
+
+    request_comment_id: int
+    target_index: int
+    accepted_decision_sha256: str
+    artifact_chain: tuple[tuple[int, int, int], ...]
+
+
+@dataclass(frozen=True)
+class TypedEvidenceError:
+    """Operational evidence Result.Err, not domain proof of non-application."""
+
+    category: Literal["UNKNOWN", "CONFLICT"]
+    stage: str
+    detail: str
+    request_comment_id: int
+    artifact_id: int | None = None
+    # Source-qualified uncertainty that cannot safely be resolved by merely
+    # retrying the original write. Missing GET evidence stays re-observable.
+    intervention_required: bool = False
+
+
+AcceptedNeverCalledEvidence = CompleteNeverCalledWitness | TypedEvidenceError
+
+
+@dataclass(frozen=True)
+class RecoveryEvidenceNode:
+    """Typed per-obligation IR fact, never an Action or write authorization.
+
+    A later formal-result node can depend on shared original-Effect nodes,
+    and a successor on formal-result proof. Evidence remains invocation-local.
+    """
+
+    obligation: RecoveryObligation
+    effect: StagedEffect | None
+    final_postcondition: bool | None
+    never_called_evidence: AcceptedNeverCalledEvidence | None = None
+    source_conflict: bool = False
+    depends_on: tuple[RecoveryEvidenceNode, ...] = ()
+    # A verified native GitHub object, not a standalone Boolean assertion.
+    source_object_ref: str | None = None
+    # Original native checkpoint fact; never a write or replay permission.
+    write_call_entered: bool | None = None
+
+
+@dataclass(frozen=True)
+class RecoveryProofResult:
+    """Proof-carrying pure DAG output, never write or routing authority.
+
+    The witness is the already-observed positive fact, source-qualified
+    never-called chain, or precise unresolved/contradictory evidence.
+    """
+
+    disposition: RecoveryProofDisposition
+    obligation: RecoveryObligation
+    witness: RecoveryEvidenceNode | CompleteNeverCalledWitness | TypedEvidenceError
+    remaining_obligation: RecoveryObligation | None
+    # Native source-owned Effect position, not a new policy or write authority.
+    # Unknown until the accepted Effect sequence and checkpoint qualify it.
+    frontier_index: int | None = None
+
+
+def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofResult:
+    """One pure DAG proof evaluator retaining evidence and unfinished obligations.
+
+    Positive current state does not require attempt-history enumeration.
+    A missing write is NOT_APPLIED only with a complete never-called witness;
+    no domain proof can authorize an Effect, Action, successor, or retry.
+    """
+
+    memo: dict[int, RecoveryProofResult] = {}
+    visiting: set[int] = set()
+
+    def evaluate(fact: RecoveryEvidenceNode) -> RecoveryProofResult:
+        identity = id(fact)
+        if identity in visiting:
+            return RecoveryProofResult("CONFLICT", fact.obligation, fact, fact.obligation)
+        if identity in memo:
+            return memo[identity]
+        visiting.add(identity)
+        dependencies = tuple(evaluate(parent) for parent in fact.depends_on)
+        visiting.remove(identity)
+        conflicting = next((p for p in dependencies if p.disposition == "CONFLICT"), None)
+        incomplete = next((p for p in dependencies if p.disposition != "SATISFIED"), None)
+
+        if fact.source_conflict:
+            result = RecoveryProofResult("CONFLICT", fact.obligation, fact, fact.obligation)
+        elif (
+            isinstance(fact.never_called_evidence, TypedEvidenceError)
+            and fact.never_called_evidence.category == "CONFLICT"
+        ):
+            result = RecoveryProofResult(
+                "CONFLICT", fact.obligation, fact.never_called_evidence, fact.obligation
+            )
+        elif conflicting is not None:
+            result = RecoveryProofResult(
+                "CONFLICT", fact.obligation, conflicting.witness, conflicting.remaining_obligation
+            )
+        elif incomplete is not None:
+            result = RecoveryProofResult(
+                "UNKNOWN", fact.obligation, incomplete.witness, incomplete.remaining_obligation
+            )
+        elif (
+            fact.final_postcondition is True
+            and fact.effect is not None
+            and fact.effect.kind == "issue-comment"
+            and (
+                fact.source_object_ref is None
+                or re.fullmatch(r"issues/comments/[1-9][0-9]*", fact.source_object_ref) is None
+            )
+        ):
+            # The adapter already checked the native source. An unqualified
+            # bool (or malformed source identity) is not positive proof.
+            result = RecoveryProofResult("UNKNOWN", fact.obligation, fact, fact.obligation)
+        elif fact.final_postcondition is True:
+            result = RecoveryProofResult("SATISFIED", fact.obligation, fact, None)
+        elif fact.final_postcondition is False and isinstance(
+            fact.never_called_evidence, CompleteNeverCalledWitness
+        ):
+            result = RecoveryProofResult(
+                "NOT_APPLIED", fact.obligation, fact.never_called_evidence, fact.obligation
+            )
+        else:
+            witness = (
+                fact.never_called_evidence
+                if isinstance(fact.never_called_evidence, TypedEvidenceError)
+                else fact
+            )
+            result = RecoveryProofResult("UNKNOWN", fact.obligation, witness, fact.obligation)
+        memo[identity] = result
+        return result
+
+    return evaluate(node)
+
+
+def _recovery_obligation(effect: StagedEffect, source: WorkerRequest) -> RecoveryObligation:
+    """Project an existing Effect identity into one typed DAG obligation."""
+
+    if effect.derived:
+        return "SUCCESSOR"
+    if effect.kind == "issue-comment":
+        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
+        body = None if payload is None else payload.get("body")
+        if isinstance(body, str) and _marker(body) == _expected_formal_marker(source):
+            return "FORMAL_RESULT"
+    return "ORIGINAL_EFFECT"
+
+
+def _qualified_accepted_derived_suffix_identity(
+    attempted: Sequence[StagedEffect],
+    *,
+    original_count: int,
+    typed_original: BoundedActionResult,
+    source: WorkerRequest,
+    change: str,
+    result_kind: str,
+    request_comment_id: int,
+    attempted_revision: object,
+) -> tuple[StagedEffect, str, str] | None:
+    """One immutable Formal/Successor ordinal identity proof for R9 and native history."""
+    tail = attempted[original_count:]
+    if not tail:
+        return None
+    # Application-owned control Effects have their own positive postcondition
+    # owner. They are not Formal/Successor identities or historical no-call facts.
+    if all(effect.kind == GITHUB_MUTATION_KIND and not effect.derived for effect in tail):
+        return None
+    if len(tail) > 2:
+        raise ValueError("accepted derived suffix exceeds Formal and Successor")
+    formal_identity = _attempted_formal_identity(
+        attempted,
+        source=source,
+        change=change,
+        result_kind=result_kind,
+        request_comment_id=request_comment_id,
+    )
+    if (
+        formal_identity is None
+        or formal_identity[0] != tail[0]
+        or formal_identity[1] != attempted_revision
+    ):
+        raise ValueError("accepted Formal Result ordinal/revision mismatch")
+    if len(tail) == 2:
+        expected_successor = derived_transition_effect(
+            issue_number=source.issue_number,
+            change=change,
+            successor=next_action(typed_original.action, typed_original.result),
+        )
+        if tail[1] != expected_successor:
+            raise ValueError("accepted Successor identity mismatch")
+    return formal_identity
+
+
+def _accepted_frontier_obligation(original_count: int, index: int) -> RecoveryObligation | None:
+    """One source of truth for accepted ordinal Original/Formal/Successor slots."""
+    if not 0 <= index < original_count + 2:
+        return None
+    if index < original_count:
+        return "ORIGINAL_EFFECT"
+    return "FORMAL_RESULT" if index == original_count else "SUCCESSOR"
+
+
+def _observe_accepted_effect_fact(
+    effect: StagedEffect,
+    adapter: GitHubEffectAdapter,
+    *,
+    source: WorkerRequest,
+) -> RecoveryEvidenceNode:
+    """Project one canonical native observation into a source-qualified fact."""
+
+    if effect.kind == "issue-comment":
+        source_ref = adapter.observe_issue_comment_source_ref(effect)
+        return RecoveryEvidenceNode(
+            _recovery_obligation(effect, source),
+            effect,
+            final_postcondition=source_ref is not None,
+            source_object_ref=source_ref,
+        )
+    return RecoveryEvidenceNode(
+        _recovery_obligation(effect, source),
+        effect,
+        final_postcondition=adapter.observe_postcondition(effect),
+    )
+
+
+def _observe_accepted_effect_prefix(
+    effects: Sequence[StagedEffect],
+    adapter: GitHubEffectAdapter,
+    *,
+    source: WorkerRequest,
+) -> tuple[RecoveryEvidenceNode, ...] | RecoveryProofResult:
+    """Return qualified leaves or the first incomplete typed DAG proof.
+
+    No caller may reinterpret an absent prefix as a different proof outcome.
+    """
+
+    nodes: list[RecoveryEvidenceNode] = []
+    for index, effect in enumerate(effects):
+        fact = _observe_accepted_effect_fact(effect, adapter, source=source)
+        proof = evaluate_recovery_evidence(fact)
+        if proof.disposition != "SATISFIED":
+            return replace(proof, frontier_index=index)
+        nodes.append(fact)
+    return tuple(nodes)
+
+
 @dataclass(frozen=True)
 class AcceptedPostEffectProof:
     """Read-only recovery outcome from the canonical materialization owner."""
@@ -5990,6 +6391,18 @@ class AcceptedPostEffectProof:
     disposition: Literal["COMPLETE", "MISSING_PR", "NOT_APPLIED", "INDETERMINATE", "UNSAFE"]
     reason: str
     carrier_plan: CarrierPlan | None = None
+    # Positive Original witness remains separate from the actual pending
+    # Original/Formal/Successor frontier. Both come from this Application DAG.
+    original_effect_proof: RecoveryProofResult | None = None
+    pending_frontier_proof: RecoveryProofResult | None = None
+
+    @classmethod
+    def from_evidence_error(cls, error: TypedEvidenceError) -> AcceptedPostEffectProof:
+        """One typed error-to-presentation projection; never replay authority."""
+        return cls(
+            "UNSAFE" if error.category == "CONFLICT" else "INDETERMINATE",
+            error.detail,
+        )
 
     def __post_init__(self) -> None:
         if (self.disposition == "MISSING_PR") != (self.carrier_plan is not None):
@@ -6000,6 +6413,39 @@ class AcceptedPostEffectProof:
         """One contract decision table for dispatch and continuation admission."""
 
         return _POST_EFFECT_ADMISSION[self.disposition]
+
+    @property
+    def runtime_repair_frontier(self) -> RecoveryProofResult | None:
+        """Expose only an unresolved, typed obligation already qualified by Application.
+
+        This is not write permission. An observation error or a naked UNKNOWN
+        cannot prove an irreducible repair obligation; only the canonical
+        witness of an entered write, an unprovable history boundary, or an
+        actual source conflict may be presented for Human maintenance.
+        """
+
+        proof = self.pending_frontier_proof or self.original_effect_proof
+        if (
+            self.disposition not in {"INDETERMINATE", "UNSAFE"}
+            or proof is None
+            or proof.disposition not in {"UNKNOWN", "CONFLICT"}
+            or proof.remaining_obligation is None
+        ):
+            return None
+        if proof.disposition == "UNKNOWN":
+            witness = proof.witness
+            if isinstance(witness, TypedEvidenceError):
+                return proof if witness.intervention_required else None
+            if isinstance(witness, RecoveryEvidenceNode):
+                return (
+                    proof
+                    if witness.write_call_entered is True
+                    and witness.final_postcondition is False
+                    and witness.effect is not None
+                    else None
+                )
+            return None
+        return proof
 
 
 def _accepted_activation_effect_identity(
@@ -6055,6 +6501,78 @@ def _accepted_activation_effect_identity(
     return AcceptedActivationEffectIdentity("EXACT", original, matches[0])
 
 
+def _accepted_original_source_identity_error(
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+) -> TypedEvidenceError | None:
+    """Exact immutable ACCEPTED identity fact, shared before any source read."""
+    if record.disposition == "ACCEPTED" and (record.issue_number, record.role, record.action) == (
+        source.issue_number,
+        source.role,
+        source.action,
+    ):
+        return None
+    return TypedEvidenceError(
+        "CONFLICT",
+        "ORIGINAL_SOURCE",
+        "accepted original source identity conflicts",
+        record.request_comment_id,
+    )
+
+
+def _qualified_accepted_original_effects(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    raw_worker_result: str,
+    repository: str,
+    token: str,
+) -> EffectBatch | TypedEvidenceError:
+    """One source-identity reader shared by accepted original proof stages.
+
+    Source qualification is evidence, not a mutation or Action decision.
+    The caller preserves the native read-only or post-effect stage boundary.
+    """
+    source_error = _accepted_original_source_identity_error(record, source)
+    if source_error is not None:
+        return source_error
+    try:
+        batch = parse_effect_batch(raw_worker_result, source, authorized_change=record.change)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return TypedEvidenceError(
+            "CONFLICT",
+            "ORIGINAL_PARSE",
+            "accepted original Effect identity invalid",
+            record.request_comment_id,
+        )
+    if batch.typed_result is None or batch.typed_result.result.kind.value != record.result_kind:
+        return TypedEvidenceError(
+            "CONFLICT",
+            "ORIGINAL_RESULT",
+            "accepted original result identity invalid",
+            record.request_comment_id,
+        )
+    if batch.effects:
+        return batch
+    # Physical-zero truth is a source qualification, not a projection shape.
+    # Only a positive native source witness returns an empty qualified batch.
+    category: Literal["UNKNOWN", "CONFLICT"] = "UNKNOWN"
+    stage = "ZERO_ORIGINAL"
+    detail = "accepted zero-Effect source not proven"
+    try:
+        if _verified_zero_original_accepted_effects(
+            record=record, source=source, repository=repository, token=token
+        ):
+            return batch
+    except OSError:
+        stage = "ZERO_ORIGINAL_GET"
+    except (TypeError, ValueError):
+        category = "CONFLICT"
+        stage = "ZERO_ORIGINAL_IDENTITY"
+        detail = "accepted zero-Effect source identity invalid"
+    return TypedEvidenceError(category, stage, detail, record.request_comment_id)
+
+
 def _observe_accepted_post_effect_result(
     *,
     record: ApplicationDecisionRecord,
@@ -6077,7 +6595,54 @@ def _observe_accepted_post_effect_result(
         "unset",
         _FIRST_ACTIVATION_RESULT,
     ):
-        return AcceptedPostEffectProof("UNSAFE", "original activation contract mismatch")
+        # Reuse the existing original Effect postcondition owner for every
+        # other accepted Action, without classifying by the exception string.
+        try:
+            raw = _accepted_worker_result_for_continuation(
+                accepted_intent=record,
+                source=source,
+                repository=repository,
+                token=token,
+                request_comment_id=record.request_comment_id,
+            )
+        except OSError:
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", "accepted original Effect source proof unavailable"
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return AcceptedPostEffectProof("UNSAFE", "accepted original Effect identity invalid")
+        batch = _qualified_accepted_original_effects(
+            record=record,
+            source=source,
+            raw_worker_result=raw,
+            repository=repository,
+            token=token,
+        )
+        if isinstance(batch, TypedEvidenceError):
+            return AcceptedPostEffectProof.from_evidence_error(batch)
+        # Physical-zero was positively qualified by the same original-source
+        # reader above. The empty prefix is a valid shared proof input; do not
+        # retain a competing completion decision for zero-original Effects.
+        adapter = GitHubEffectAdapter(
+            repository,
+            token,
+            source,
+            authorized_change=record.change,
+            current_revision=current_revision,
+            expected_result_kind=record.result_kind,
+            request_comment_id=record.request_comment_id,
+            authorization_revision=record.authorization_revision,
+            allow_pending_continuation=True,
+            accepted_intent=True,
+        )
+        observed_originals = _observe_accepted_effect_prefix(batch.effects, adapter, source=source)
+        if isinstance(observed_originals, RecoveryProofResult):
+            return AcceptedPostEffectProof(
+                "UNSAFE" if observed_originals.disposition == "CONFLICT" else "INDETERMINATE",
+                "accepted original Effect postconditions unproven",
+                original_effect_proof=observed_originals,
+            )
+        return AcceptedPostEffectProof("COMPLETE", "accepted original obligation proven")
     accepted_raw = _accepted_worker_result_for_continuation(
         accepted_intent=record,
         source=source,
@@ -6134,7 +6699,269 @@ def _observe_accepted_post_effect_result(
     return outcomes[proof.disposition]
 
 
-def accepted_read_only_effects_complete(
+def _accepted_reconciliation_effect_projection(
+    *,
+    accepted_raw: str,
+    projected_raw: str,
+    source: WorkerRequest,
+    change: str,
+) -> tuple[str, int]:
+    """Keep proven immutable originals ahead of fresh Application-owned formal work.
+
+    The ordinary fresh planner may drop already-applied labels/updates. Its
+    mutable list is not an immutable original Effect identity. This pure
+    projection retains the original order; unexpected or reordered effects
+    are never inferred to be a lawful successor.
+    """
+
+    original = parse_effect_batch(accepted_raw, source, authorized_change=change)
+    projected = parse_effect_batch(projected_raw, source, authorized_change=change)
+    if (
+        original.typed_result is None
+        or projected.typed_result is None
+        or original.typed_result != projected.typed_result
+    ):
+        raise RuntimeError("accepted recovery semantic result has changed")
+    originals = original.effects
+    expected_index = 0
+    suffix: list[StagedEffect] = []
+    for candidate in projected.effects:
+        if candidate in originals:
+            index = originals.index(candidate)
+            if index < expected_index:
+                raise RuntimeError("accepted recovery original Effect order has changed")
+            expected_index = index + 1
+            if suffix:
+                raise RuntimeError("accepted recovery Effect appears after a new suffix")
+            continue
+        payload = _effect_payload({"kind": candidate.kind, "payload_json": candidate.payload_json})
+        body = None if payload is None else payload.get("body")
+        if (
+            candidate.kind != "issue-comment"
+            or not isinstance(body, str)
+            or _marker(body) not in _FORMAL_RESULT_MARKERS
+            or suffix
+        ):
+            raise RuntimeError("accepted recovery has unqualified new Effect")
+        suffix.append(candidate)
+    if len(suffix) != 1:
+        raise RuntimeError("accepted recovery formal consequence is not unique")
+    # A semantic worker never owns a formal result. Its immutable Effects
+    # are distinct from the single Application-derived consequence.
+    if any(
+        effect.kind == "issue-comment"
+        and isinstance(
+            (
+                payload := _effect_payload(
+                    {"kind": effect.kind, "payload_json": effect.payload_json}
+                )
+            ),
+            Mapping,
+        )
+        and isinstance(payload.get("body"), str)
+        and _marker(cast(str, payload["body"])) in _FORMAL_RESULT_MARKERS
+        for effect in originals
+    ):
+        raise RuntimeError("accepted recovery includes a worker-owned formal result")
+
+    decoded = json.loads(projected_raw)
+    if not isinstance(decoded, dict):
+        raise RuntimeError("accepted recovery projected result is not an object")
+    decoded["requested_effects"] = [
+        {"kind": effect.kind, "payload_json": effect.payload_json}
+        for effect in (*originals, *suffix)
+    ]
+    return json.dumps(decoded, sort_keys=True, separators=(",", ":")), len(originals)
+
+
+def _read_accepted_never_called_evidence(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    artifact: ApplicationRecoveryArtifact | None,
+    failed_index: int,
+    repository: str,
+    token: str,
+) -> AcceptedNeverCalledEvidence:
+    """Qualify historical facts; only the shared DAG decides NOT_APPLIED.
+
+    Each predecessor is independently content-addressed and re-read. A
+    run-local pre-call flag is never an accepted-intent-wide witness.
+    This is a read adapter, not a policy, mutation guard, or retry permit.
+    """
+
+    def error(
+        stage: str, detail: str, *, conflict: bool = False, intervention: bool = False
+    ) -> TypedEvidenceError:
+        return TypedEvidenceError(
+            "CONFLICT" if conflict else "UNKNOWN",
+            stage,
+            detail,
+            record.request_comment_id,
+            None if artifact is None else artifact.artifact_id,
+            intervention_required=intervention,
+        )
+
+    if artifact is None:
+        return error("ARTIFACT", "qualified recovery artifact unavailable")
+    if failed_index < 0:
+        return error("FRONTIER", "invalid negative target index", conflict=True)
+    try:
+        original_raw = _accepted_worker_result_for_continuation(
+            accepted_intent=record,
+            source=source,
+            repository=repository,
+            token=token,
+            request_comment_id=record.request_comment_id,
+        )
+    except (HTTPError, OSError):
+        return error("SOURCE_GET", "original accepted source read unavailable")
+    except (RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return error("SOURCE", "original accepted source unqualified")
+    original = _qualified_accepted_original_effects(
+        record=record,
+        source=source,
+        raw_worker_result=original_raw,
+        repository=repository,
+        token=token,
+    )
+    if isinstance(original, TypedEvidenceError):
+        return original
+    if _accepted_frontier_obligation(len(original.effects), failed_index) is None:
+        return error("SOURCE_IDENTITY", "immutable original result/frontier invalid", conflict=True)
+    typed_original = cast(BoundedActionResult, original.typed_result)
+
+    current = artifact
+    seen: set[tuple[int, int, int]] = set()
+    chain: list[tuple[int, int, int]] = []
+    while True:
+        identity = (current.run_id, current.run_attempt, current.artifact_id)
+        document = current.document
+        failure = document.get("failure_evidence")
+        if identity in seen:
+            return error("CHAIN", "repeated native attempt identity", conflict=True)
+        if (
+            current.request_comment_id != record.request_comment_id
+            or document.get("issue_number") != record.issue_number
+            or document.get("role") != record.role
+            or document.get("action") != record.action
+            or document.get("authorization_revision") != record.authorization_revision
+            or not isinstance(failure, Mapping)
+            or _accepted_recovery_boundary(failure) != "READ_ONLY"
+        ):
+            return error("CHAIN_IDENTITY", "accepted source/stage contradicts chain", conflict=True)
+        seen.add(identity)
+        chain.append(identity)
+        attempted = _verified_attempted_effect_checkpoint(failure, source=source)
+        index = failure.get("failed_effect_index")
+        if attempted is None or type(index) is not int:
+            return error("CHECKPOINT", "attempted Effect checkpoint invalid", conflict=True)
+        if index > failed_index:
+            return error(
+                "ATTEMPTED",
+                "a prior attempt crossed the claimed uncalled frontier",
+                intervention=True,
+            )
+        if any(
+            effect != original.effects[position]
+            for position, effect in enumerate(attempted)
+            if position < len(original.effects)
+        ):
+            return error("ORIGINAL_IDENTITY", "immutable original Effect mismatch", conflict=True)
+        try:
+            qualified_suffix = _qualified_accepted_derived_suffix_identity(
+                attempted,
+                original_count=len(original.effects),
+                typed_original=typed_original,
+                source=source,
+                change=record.change,
+                result_kind=record.result_kind,
+                request_comment_id=record.request_comment_id,
+                attempted_revision=failure.get("attempt_revision"),
+            )
+        except (RuntimeError, TypeError, ValueError):
+            return error("FORMAL_IDENTITY", "Application-derived Effect mismatch", conflict=True)
+        # An Application-owned control does not become a no-call witness
+        # merely because its physical postcondition could be read elsewhere.
+        if len(attempted) > len(original.effects) and qualified_suffix is None:
+            return error("FORMAL_IDENTITY", "Application-derived Effect mismatch", conflict=True)
+        if index == failed_index and not (
+            failure.get("mutation_status") == "not-complete"
+            and failure.get("unfinished_boundary")
+            in {"effect-precondition", "effect-precondition-exception"}
+            and failure.get("write_call_entered") is False
+        ):
+            return error(
+                "CALL_ENTRY", "target Effect may already have been called", intervention=True
+            )
+
+        if current.recovery_attempt == 1:
+            if (
+                current.run_attempt != 1
+                or document.get("predecessor") is not None
+                or document.get("trigger_comment_id") != record.request_comment_id
+                or document.get("prior_failure_evidence_sha256") != []
+            ):
+                return error("ROOT", "first native attempt identity invalid", conflict=True)
+            from investment_strategy.issue_comment_bridge import _application_runs
+
+            try:
+                runs = _application_runs(
+                    repository, token, record.request_comment_id, read=_github_json
+                )
+            except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+                return error("RUN_INVENTORY", "complete original run inventory unavailable")
+            if not (
+                runs is not None
+                and len(runs) == 1
+                and runs[0].get("id") == current.run_id
+                and runs[0].get("run_attempt") == 1
+            ):
+                return error("RUN_INVENTORY", "other or incomplete native attempt history")
+            return CompleteNeverCalledWitness(
+                record.request_comment_id,
+                failed_index,
+                artifact.accepted_decision_sha256,
+                tuple(chain),
+            )
+
+        predecessor = document.get("predecessor")
+        previous_hashes = document.get("prior_failure_evidence_sha256")
+        if not isinstance(predecessor, Mapping) or not isinstance(previous_hashes, list):
+            return error("PREDECESSOR", "prior chain pointers are missing")
+        try:
+            previous = read_application_recovery_artifact(
+                repository,
+                token,
+                run_id=cast(int, predecessor["run_id"]),
+                run_attempt=cast(int, predecessor["run_attempt"]),
+                job_id=cast(int, predecessor["job_id"]),
+                request_comment_id=record.request_comment_id,
+                accepted_decision_sha256=current.accepted_decision_sha256,
+                strict_read=True,
+            )
+        except (HTTPError, OSError, RuntimeError, KeyError, TypeError, ValueError):
+            return error("PREDECESSOR_GET", "prior native Artifact unavailable")
+        if previous is None:
+            return error("PREDECESSOR_GET", "prior native Artifact missing")
+        if (
+            previous.recovery_attempt != current.recovery_attempt - 1
+            or previous.artifact_id != predecessor.get("artifact_id")
+            or previous.artifact_digest != predecessor.get("artifact_digest")
+            or previous.failure_evidence_sha256 != predecessor.get("failure_evidence_sha256")
+            or previous.recovery_episode_sha256 != current.recovery_episode_sha256
+            or previous.accepted_decision_sha256 != current.accepted_decision_sha256
+            or previous_hashes
+            != [
+                *cast(list[str], previous.document["prior_failure_evidence_sha256"]),
+                previous.failure_evidence_sha256,
+            ]
+        ):
+            return error("PREDECESSOR_IDENTITY", "prior hash/correlation mismatch", conflict=True)
+        current = previous
+
+
+def classify_accepted_read_only_effects(
     *,
     record: ApplicationDecisionRecord,
     source: WorkerRequest,
@@ -6143,174 +6970,284 @@ def accepted_read_only_effects_complete(
     token: str,
     current_revision: str,
     default_branch: str,
-) -> bool:
-    """Freshly observe *only* the effects of one immutable ACCEPTED intent.
+    recovery_artifact: ApplicationRecoveryArtifact | None = None,
+) -> AcceptedPostEffectProof:
+    """Classify accepted read-only evidence at the existing proof owner.
 
-    This is a read-only projection of the same GitHubEffectAdapter postcondition
-    owner that the actual Application uses. Dispatch may use the observation to
-    decide whether another read-only continuation is useful; it must not apply
-    an effect, persist a result, or authorize a successor on this predicate.
-    The Application independently requalifies everything before any mutation.
+    A missing history read may be observed later. A contradictory immutable
+    Effect identity is not an observation delay and must not be requeued as
+    one. Neither outcome licenses a GitHub write or a synthetic Action.
     """
 
-    if (
-        record.disposition != "ACCEPTED"
-        or record.issue_number != source.issue_number
-        or record.role != source.role
-        or record.action != source.action
-        or _accepted_recovery_boundary(recovery_evidence) not in {"READ_ONLY", "POST_EFFECT_RESULT"}
-        or _SHA.fullmatch(current_revision) is None
-        or not default_branch
-    ):
-        return False
+    source_error = _accepted_original_source_identity_error(record, source)
+    if source_error is not None:
+        return AcceptedPostEffectProof("UNSAFE", source_error.detail)
+    boundary = _accepted_recovery_boundary(recovery_evidence)
+    if boundary not in {"READ_ONLY", "POST_EFFECT_RESULT"}:
+        return AcceptedPostEffectProof("UNSAFE", "read-only failure boundary is invalid")
+    if _SHA.fullmatch(current_revision) is None or not default_branch:
+        return AcceptedPostEffectProof("INDETERMINATE", "fresh revision evidence unavailable")
     try:
-        if _accepted_recovery_boundary(recovery_evidence) == "POST_EFFECT_RESULT":
-            return (
-                _observe_accepted_post_effect_result(
-                    record=record,
-                    source=source,
-                    repository=repository,
-                    token=token,
-                    current_revision=current_revision,
-                    default_branch=default_branch,
-                ).disposition
-                == "COMPLETE"
-            )
-        # Prefer the immutable attempted prefix emitted by the actual
-        # Application run. A fresh projection may legitimately switch from
-        # workflow-dispatch to PR-create, or merge to ref-delete, and must
-        # never become the identity of the *previously attempted* write.
-        if "attempted_effects" in recovery_evidence:
-            attempted = _verified_attempted_effect_checkpoint(recovery_evidence, source=source)
-            if attempted is None:
-                return False
-            attempted_revision = recovery_evidence.get("attempt_revision")
-            if (
-                not isinstance(attempted_revision, str)
-                or _SHA.fullmatch(attempted_revision) is None
-            ):
-                return False
-            adapter = GitHubEffectAdapter(
-                repository,
-                token,
-                source,
-                authorized_change=record.change,
+        if boundary == "POST_EFFECT_RESULT":
+            return _observe_accepted_post_effect_result(
+                record=record,
+                source=source,
+                repository=repository,
+                token=token,
                 current_revision=current_revision,
-                expected_result_kind=record.result_kind,
-                request_comment_id=record.request_comment_id,
-                authorization_revision=record.authorization_revision,
-                allow_pending_continuation=True,
-                accepted_intent=True,
-                pending_application_correlation=formal_application_correlation(
-                    source,
-                    change=record.change,
-                    result_kind=record.result_kind,
-                    current_revision=attempted_revision,
-                    request_comment_id=record.request_comment_id,
-                ),
+                default_branch=default_branch,
             )
-            rejection_document = recovery_evidence.get("rejection")
-            deterministic_suffix_rejection = (
-                recovery_evidence.get("unfinished_boundary") == "effect-precondition"
-                and recovery_evidence.get("mutation_status") == "not-complete"
-                and isinstance(rejection_document, Mapping)
-                and rejection_document.get("classification") == "effect-precondition-unsatisfied"
+        if "attempted_effects" not in recovery_evidence:
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", "immutable attempted Effect checkpoint unavailable"
             )
-            if deterministic_suffix_rejection:
-                # The failed Effect has not been attempted. Require the exact
-                # ordered completed prefix to be independently observed, then
-                # return to ordinary fresh guards for the missing suffix.
-                # Requiring the failed guard's postcondition would deadlock:
-                # no actor has ever made that write.
-                failed_index = recovery_evidence.get("failed_effect_index")
-                if (
-                    type(failed_index) is not int
-                    or failed_index < 1
-                    or recovery_evidence.get("completed_effect_indexes")
-                    != list(range(failed_index))
-                ):
-                    return False
-                return all(adapter.observe_postcondition(effect) for effect in attempted[:-1])
-            return all(adapter.observe_postcondition(effect) for effect in attempted)
-        # Reuse the accepted-intent projection used by the actual Application,
-        # including current, application-owned control effects. Never treat an
-        # empty/missing projection as vacuous proof of an old unknown write.
-        raw = _fresh_application_worker_result(
-            record.raw_worker_result,
+        attempted = _verified_attempted_effect_checkpoint(recovery_evidence, source=source)
+        attempted_revision = recovery_evidence.get("attempt_revision")
+        if (
+            attempted is None
+            or not isinstance(attempted_revision, str)
+            or _SHA.fullmatch(attempted_revision) is None
+        ):
+            return AcceptedPostEffectProof(
+                "UNSAFE", "immutable attempted Effect identity contradicts checkpoint"
+            )
+        if recovery_artifact is None:
+            return AcceptedPostEffectProof(
+                "INDETERMINATE", "qualified recovery artifact unavailable"
+            )
+        if recovery_artifact.document.get("failure_evidence") != recovery_evidence:
+            return AcceptedPostEffectProof(
+                "UNSAFE", "recovery artifact and attempted Effect checkpoint disagree"
+            )
+        index = recovery_evidence.get("failed_effect_index")
+        if type(index) is not int:
+            return AcceptedPostEffectProof("UNSAFE", "read-only Effect index is invalid")
+        non_entry = recovery_evidence.get("write_call_entered") is False
+        original = _qualified_accepted_original_effects(
+            record=record,
             source=source,
-            change=record.change,
+            raw_worker_result=record.raw_worker_result,
             repository=repository,
             token=token,
-            current_revision=current_revision,
-            default_branch=default_branch,
-            request_comment_id=record.request_comment_id,
         )
-        batch = parse_effect_batch(raw, source, authorized_change=record.change)
-        if batch.typed_result is None or not batch.effects:
-            return False
-        failed_index = recovery_evidence.get("failed_effect_index")
-        completed_indexes = recovery_evidence.get("completed_effect_indexes")
-        if (
-            type(failed_index) is not int
-            or failed_index > len(batch.effects)
-            or not isinstance(completed_indexes, list)
-            or any(
-                type(index) is not int or index >= len(batch.effects) for index in completed_indexes
+        if isinstance(original, TypedEvidenceError):
+            return AcceptedPostEffectProof.from_evidence_error(original)
+        # The qualified EffectBatch already excludes an absent typed result.
+        typed_original = cast(BoundedActionResult, original.typed_result)
+        # Positive postconditions cannot rehabilitate an immutable Effect
+        # identity mismatch; physical zero was already source-qualified.
+        prefix_length = min(len(original.effects), len(attempted))
+        if attempted[:prefix_length] != original.effects[:prefix_length]:
+            conflict = RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT", attempted[0], final_postcondition=None, source_conflict=True
             )
-        ):
-            return False
-        completed_hashes = recovery_evidence.get("completed_effect_sha256")
-        if not isinstance(completed_hashes, list) or len(completed_hashes) != len(
-            completed_indexes
-        ):
-            return False
-        if any(
-            hashlib.sha256(batch.effects[index].payload_json.encode()).hexdigest() != digest
-            for index, digest in zip(completed_indexes, completed_hashes, strict=True)
-        ):
-            return False
-        failed_effect = (
-            batch.effects[failed_index]
-            if failed_index < len(batch.effects)
-            else derived_transition_effect(
-                issue_number=source.issue_number,
+            return AcceptedPostEffectProof(
+                "UNSAFE",
+                "immutable accepted original Effect prefix contradicts checkpoint",
+                original_effect_proof=evaluate_recovery_evidence(conflict),
+            )
+        try:
+            formal_identity = _qualified_accepted_derived_suffix_identity(
+                attempted,
+                original_count=len(original.effects),
+                typed_original=typed_original,
+                source=source,
                 change=record.change,
-                successor=next_action(batch.typed_result.action, batch.typed_result.result),
+                result_kind=record.result_kind,
+                request_comment_id=record.request_comment_id,
+                attempted_revision=attempted_revision,
             )
-        )
-        if (
-            recovery_evidence.get("failed_effect_kind") != failed_effect.kind
-            or recovery_evidence.get("failed_effect_sha256")
-            != hashlib.sha256(failed_effect.payload_json.encode()).hexdigest()
-        ):
-            return False
+        except (RuntimeError, TypeError, ValueError):
+            return AcceptedPostEffectProof(
+                "UNSAFE", "immutable accepted Formal/Successor Effect identity invalid"
+            )
         adapter = GitHubEffectAdapter(
             repository,
             token,
             source,
             authorized_change=record.change,
             current_revision=current_revision,
-            expected_result_kind=batch.typed_result.result.kind.value,
+            expected_result_kind=record.result_kind,
             request_comment_id=record.request_comment_id,
             authorization_revision=record.authorization_revision,
             allow_pending_continuation=True,
             accepted_intent=True,
+            pending_application_correlation=formal_application_correlation(
+                source,
+                change=record.change,
+                result_kind=record.result_kind,
+                current_revision=attempted_revision,
+                request_comment_id=record.request_comment_id,
+            ),
         )
-        # Only the attempted prefix is uncertain. Effects after the failure
-        # could not yet have been written by the sequential Application; their
-        # missing formal result must NOT prevent a safe continuation.
-        if not all(
-            adapter.observe_postcondition(effect)
-            for index, effect in enumerate(batch.effects)
-            if index <= failed_index
+        # One proof table: a positively SATISFIED Effect does not have to
+        # prove it was never called. Only an absent, invocation-local
+        # never-called Effect requires the full historical NOT_APPLIED proof.
+        proven_prefix = _observe_accepted_effect_prefix(attempted[:-1], adapter, source=source)
+        if isinstance(proven_prefix, RecoveryProofResult):
+            return AcceptedPostEffectProof(
+                "UNSAFE" if proven_prefix.disposition == "CONFLICT" else "INDETERMINATE",
+                "accepted historical prefix is not yet satisfied",
+                original_effect_proof=(
+                    proven_prefix
+                    if proven_prefix.remaining_obligation == "ORIGINAL_EFFECT"
+                    else None
+                ),
+                pending_frontier_proof=(
+                    proven_prefix
+                    if proven_prefix.remaining_obligation != "ORIGINAL_EFFECT"
+                    else None
+                ),
+            )
+        # A never-called derived Effect is not independently observed here:
+        # its final state has a canonical consequence owner below. This
+        # preserves the producer's no-write checkpoint observation boundary.
+        attempted_fact = (
+            RecoveryEvidenceNode(
+                _recovery_obligation(attempted[-1], source),
+                attempted[-1],
+                final_postcondition=False,
+                depends_on=tuple(proven_prefix),
+            )
+            if non_entry and attempted[-1].derived
+            else replace(
+                _observe_accepted_effect_fact(attempted[-1], adapter, source=source),
+                depends_on=tuple(proven_prefix),
+                write_call_entered=(
+                    True if recovery_evidence.get("write_call_entered") is True else None
+                ),
+            )
+        )
+        failed_satisfied = attempted_fact.final_postcondition is True
+        attempted_proof = replace(evaluate_recovery_evidence(attempted_fact), frontier_index=index)
+        historical_frontier = index + 1 if attempted_proof.disposition == "SATISFIED" else index
+        # Original Effect proof is separate from *authorization of the next*
+        # formal/result/successor write. Bind its leaf to the immutable
+        # accepted source before attributing a positive postcondition.
+        # This uses the already-accepted source, not optional historic Runs.
+        original_effect_proof: RecoveryProofResult | None = None
+        # The checked full-overlap prefix already proves this identity;
+        # the exact checkpoint has len(attempted) == index + 1.
+        if 0 <= index < len(original.effects):
+            original_effect_proof = attempted_proof
+        if attempted_proof.disposition != "SATISFIED" and not non_entry:
+            return AcceptedPostEffectProof(
+                "INDETERMINATE",
+                "attempted accepted Effect is not yet proven complete",
+                original_effect_proof=original_effect_proof,
+                pending_frontier_proof=(
+                    attempted_proof if index >= len(original.effects) else None
+                ),
+            )
+        # R9: an unentered successor is independently re-observed only
+        # when its exact Formal/Successor identity can qualify. No second DAG
+        # evaluation is needed for a negative observation.
+        observed_derived = (
+            _observe_accepted_effect_fact(attempted[-1], adapter, source=source)
+            if formal_identity is not None
+            and attempted[-1].derived
+            and non_entry
+            and bool(original.effects)
+            else None
+        )
+        qualified_derived = bool(
+            observed_derived is not None
+            and observed_derived.final_postcondition is True
+            and evaluate_recovery_evidence(
+                replace(observed_derived, depends_on=tuple(proven_prefix))
+            ).disposition
+            == "SATISFIED"
+        )
+        # A durable Formal Result alone does not prove final routing.
+        if (
+            formal_identity is not None
+            and attempted[-1].derived
+            # One qualified suffix owner has already proved the immutable
+            # Formal/Successor identity, ordinal and historical revision.
+            and (bool(original.effects) or not non_entry)
+            and (attempted_proof.disposition == "SATISFIED" or qualified_derived)
+            and consequence_postconditions_complete(
+                record.raw_worker_result,
+                source=source,
+                repository=repository,
+                token=token,
+                current_revision=current_revision,
+                authorized_change=record.change,
+                request_comment_id=record.request_comment_id,
+                accepted_intent=True,
+                allow_accepted_successor=True,
+                observed_application_correlation=formal_application_correlation(
+                    source,
+                    change=record.change,
+                    result_kind=record.result_kind,
+                    current_revision=formal_identity[1],
+                    request_comment_id=record.request_comment_id,
+                ),
+                formal_result_observed=True,
+            )
         ):
-            return False
-        if failed_index == len(batch.effects):
-            return adapter.observe_postcondition(failed_effect)
-        return True
-    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
-        # An unavailable or contradictory observation cannot grant a retry.
-        return False
+            return AcceptedPostEffectProof(
+                "COMPLETE", "exact accepted formal and successor already observed"
+            )
+        # The accepted frontier and the source reader share one ordinal owner;
+        # there is no not-called Effect after the unique derived successor.
+        frontier_obligation = _accepted_frontier_obligation(
+            len(original.effects), historical_frontier
+        )
+        if frontier_obligation is None:
+            return AcceptedPostEffectProof(
+                "INDETERMINATE",
+                "accepted successor observed but final consequence not yet proven",
+                original_effect_proof=original_effect_proof,
+            )
+        history = _read_accepted_never_called_evidence(
+            record=record,
+            source=source,
+            artifact=recovery_artifact,
+            failed_index=historical_frontier,
+            repository=repository,
+            token=token,
+        )
+        # Evidence Result is a leaf fact, never a caller-side Boolean decision.
+        # No physical Effect object is invented for the future formal/successor
+        # frontier; only the existing Application may reauthorize consequences.
+        historical_proof = evaluate_recovery_evidence(
+            RecoveryEvidenceNode(
+                frontier_obligation,
+                None,
+                final_postcondition=False,
+                never_called_evidence=history,
+                depends_on=(
+                    (*proven_prefix, attempted_fact)
+                    if attempted_proof.disposition == "SATISFIED"
+                    else tuple(proven_prefix)
+                ),
+            )
+        )
+        historical_proof = replace(historical_proof, frontier_index=historical_frontier)
+        if historical_proof.disposition != "NOT_APPLIED":
+            return AcceptedPostEffectProof(
+                "UNSAFE" if historical_proof.disposition == "CONFLICT" else "INDETERMINATE",
+                (
+                    "accepted historical write frontier contradicts source"
+                    if historical_proof.disposition == "CONFLICT"
+                    else "accepted historical write frontier is not proven"
+                ),
+                original_effect_proof=original_effect_proof,
+                pending_frontier_proof=historical_proof,
+            )
+        return AcceptedPostEffectProof(
+            "COMPLETE",
+            "accepted historical Effect satisfied"
+            if failed_satisfied
+            else "accepted unattempted suffix qualified",
+            original_effect_proof=original_effect_proof,
+        )
+    except OSError:
+        # Only an expected transport/read failure is re-observable. Invalid
+        # proof data has explicit UNSAFE returns above; unexpected program
+        # errors belong to the existing outer execution-exception capture.
+        return AcceptedPostEffectProof("INDETERMINATE", "accepted GitHub observation unavailable")
 
 
 def classify_post_effect_result_recovery(
@@ -6406,9 +7343,6 @@ def _fresh_accepted_activation_proof(
         revision = _fresh_branch_head(repository, token, branch)
         if revision is None or _SHA.fullmatch(revision) is None:
             return AcceptedPostEffectProof("INDETERMINATE", "default revision unavailable")
-    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
-        return AcceptedPostEffectProof("INDETERMINATE", "default GitHub read unavailable")
-    try:
         return _observe_accepted_post_effect_result(
             record=record,
             source=WorkerRequest(record.issue_number, record.role, record.action),
@@ -6417,7 +7351,10 @@ def _fresh_accepted_activation_proof(
             current_revision=revision,
             default_branch=branch,
         )
-    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+    except OSError:
+        # The shared I/O boundary admits read failures only. A contract or
+        # programming error must reach the existing outer exception owner,
+        # not become an indefinite read-only observation.
         return AcceptedPostEffectProof("INDETERMINATE", "accepted GitHub proof unavailable")
 
 
@@ -6436,6 +7373,7 @@ def _write_application_recovery_evidence(
     continuation: ApplicationContinuationRequest | None,
     predecessor: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None,
     effect_batch: EffectBatch | None = None,
+    preserve_predecessor_failure: bool = False,
 ) -> bool:
     """Persist a bounded, content-addressed application boundary for later reads."""
 
@@ -6470,18 +7408,46 @@ def _write_application_recovery_evidence(
     if _strict_positive_int(run_id) is None or _strict_positive_int(run_attempt) is None:
         return False
 
-    failure_evidence = _recovery_failure_document(result)
+    if preserve_predecessor_failure:
+        # This invocation only re-observed a fully qualified predecessor:
+        # its write-call facts are immutable, not a new Effect attempt.
+        if (
+            result.applied
+            or result.recovery_evidence is not None
+            or result.carrier_plan is not None
+            or not isinstance(predecessor, ApplicationRecoveryArtifact)
+            or predecessor.request_comment_id != request_comment_id
+            or predecessor.accepted_decision_sha256 != accepted_sha256
+            or predecessor.document.get("issue_number") != source.issue_number
+            or predecessor.document.get("role") != source.role
+            or predecessor.document.get("action") != source.action
+            or predecessor.document.get("authorization_revision") != authorization_revision
+        ):
+            return False
+        original_failure = predecessor.document.get("failure_evidence")
+        if (
+            not isinstance(original_failure, Mapping)
+            or _accepted_recovery_boundary(original_failure) != "READ_ONLY"
+            or _canonical_sha256(original_failure) != predecessor.failure_evidence_sha256
+        ):
+            return False
+        failure_evidence = dict(original_failure)
+        failure_evidence["reason"] = result.reason
+    else:
+        failure_evidence = _recovery_failure_document(result)
+    # Redact the raw cause once at the existing evidence producer, before
+    # computing its content digest. Neither reader nor proof table uses the
+    # error string to infer write eligibility.
+    raw_error = failure_evidence.get("raw_error")
+    if isinstance(raw_error, str):
+        safe_error = raw_error.replace(token, "***") if token else raw_error
+        safe_error = re.sub(r"https?://\S+", "[redacted-url]", safe_error)
+        failure_evidence["raw_error"] = safe_error[:2048]
     recovery = result.recovery_evidence
     if recovery is not None and _accepted_recovery_boundary(failure_evidence) == "READ_ONLY":
-        known_unattempted_suffix = (
-            recovery.mutation_status == "not-complete"
-            and recovery.unfinished_boundary == "effect-precondition"
-            and recovery.rejection is not None
-            and recovery.rejection.classification.value == "effect-precondition-unsatisfied"
-            and recovery.completed_effect_indexes == tuple(range(recovery.failed_effect_index))
-        )
-        if recovery.mutation_status != "unknown" and not known_unattempted_suffix:
-            return False
+        # Structural qualification already belongs to _accepted_recovery_boundary.
+        # Capture incomplete prefixes; do not reimplement its admissibility
+        # predicate or silently lose evidence when an earlier GET was absent.
         predecessor_failure = (
             predecessor.document.get("failure_evidence")
             if isinstance(predecessor, ApplicationRecoveryArtifact)
@@ -6489,8 +7455,7 @@ def _write_application_recovery_evidence(
         )
         inherited = (
             _verified_attempted_effect_checkpoint(predecessor_failure, source=source)
-            if not known_unattempted_suffix
-            and isinstance(predecessor_failure, Mapping)
+            if isinstance(predecessor_failure, Mapping)
             and predecessor_failure.get("failed_effect_sha256") == recovery.failed_effect_sha256
             and predecessor_failure.get("failed_effect_kind") == recovery.failed_effect_kind
             and predecessor_failure.get("failed_effect_index") == recovery.failed_effect_index
@@ -6522,7 +7487,7 @@ def _write_application_recovery_evidence(
         else:
             failure_evidence["attempted_effects"] = attempted
             try:
-                formal_revision = _attempted_formal_revision(
+                formal_identity = _attempted_formal_identity(
                     tuple(
                         StagedEffect(
                             kind=cast(str, entry["kind"]),
@@ -6538,6 +7503,7 @@ def _write_application_recovery_evidence(
                 )
             except (KeyError, TypeError, RuntimeError):
                 return False
+            formal_revision = None if formal_identity is None else formal_identity[1]
             attempt_revision = (
                 predecessor_failure.get("attempt_revision")
                 if inherited is not None and isinstance(predecessor_failure, Mapping)
@@ -7319,6 +8285,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         else _accepted_predecessor_disposition(predecessor_evidence)
     )
     uncertain_effect_index = None
+    original_effect_count: int | None = None
     missing_pr_only_plan: CarrierPlan | None = None
     if predecessor_disposition == "INDETERMINATE" and predecessor_evidence is not None:
         failure = (
@@ -7333,31 +8300,37 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             # Each contract stage has a distinct failure cause; a compound
             # boolean cannot diagnose which proof was missing.
             accepted_original = semantic_worker_result
-            if not requires_validation:
-                raise RuntimeError("post-effect recovery has no validation obligation")
             if accepted_intent is None:
                 raise RuntimeError("post-effect recovery lost its immutable accepted intent")
-            # Immutable result/action, original materialization and projected
-            # effect identity are qualified below by the same typed contract
-            # used by dispatch. Do not independently re-encode those guards.
-            original_identity = _accepted_activation_effect_identity(
-                accepted_original,
-                source=plan.source,
-                change=effective_change,
-                projected_raw=application_worker_result,
-            )
-            if (
-                original_identity.disposition != "EXACT"
-                or original_identity.projected_index is None
-            ):
-                raise RuntimeError(
-                    "post-effect original activation identity is "
-                    + original_identity.disposition.lower()
+            if requires_validation:
+                # Keep the existing exact first-activation proof/validation gate.
+                original_identity = _accepted_activation_effect_identity(
+                    accepted_original,
+                    source=plan.source,
+                    change=effective_change,
+                    projected_raw=application_worker_result,
                 )
-            # The preceding run's sole original GitHub Effect is uncertain.
-            # Reconcile its postcondition BEFORE any later formal consequence.
-            # A disappeared/ambiguous PR must not cause a second Git write.
-            uncertain_effect_index = original_identity.projected_index
+                if (
+                    original_identity.disposition != "EXACT"
+                    or original_identity.projected_index is None
+                ):
+                    raise RuntimeError(
+                        "post-effect original activation identity is "
+                        + original_identity.disposition.lower()
+                    )
+                uncertain_effect_index = original_identity.projected_index
+            else:
+                # Derive the old attempted prefix from immutable accepted
+                # effects, not a Role, error class or new arbitrary cursor.
+                application_worker_result, original_effect_count = (
+                    _accepted_reconciliation_effect_projection(
+                        accepted_raw=accepted_original,
+                        projected_raw=application_worker_result,
+                        source=plan.source,
+                        change=effective_change,
+                    )
+                )
+                uncertain_effect_index = original_effect_count - 1
             recovery_proof = _observe_accepted_post_effect_result(
                 record=accepted_intent,
                 source=plan.source,
@@ -7386,7 +8359,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 exact_source = WorkerRequest(
                     accepted_intent.issue_number, accepted_intent.role, accepted_intent.action
                 )
-                if not accepted_read_only_effects_complete(
+                proof = classify_accepted_read_only_effects(
                     record=accepted_intent,
                     source=exact_source,
                     recovery_evidence=failure,
@@ -7394,28 +8367,23 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                     token=token,
                     current_revision=args.revision,
                     default_branch=args.default_branch,
-                ):
+                    recovery_artifact=(
+                        predecessor_evidence
+                        if isinstance(predecessor_evidence, ApplicationRecoveryArtifact)
+                        else None
+                    ),
+                )
+                if proof.continuation == "REJECT":
+                    # Preserve the immutable accepted intent, but do not turn
+                    # a contradiction into yet another observable UNKNOWN.
+                    raise RuntimeError("accepted read-only recovery evidence conflict")
+                if proof.continuation == "OBSERVE":
                     # A dispatch-time proof may disappear before Application
                     # reauthorization. Persist only a read-only boundary with
                     # the SAME attempted identity, and never apply a newly
                     # projected Effect on this invocation.
-                    previous = cast(Mapping[str, object], failure)
                     deferred = ApplyResult(
-                        False,
-                        "accepted original effect not currently proven complete",
-                        recovery_evidence=EffectRecoveryEvidence(
-                            failed_effect_index=cast(int, previous["failed_effect_index"]),
-                            failed_effect_kind=cast(str, previous["failed_effect_kind"]),
-                            failed_effect_sha256=cast(str, previous["failed_effect_sha256"]),
-                            completed_effect_indexes=tuple(
-                                cast(list[int], previous["completed_effect_indexes"])
-                            ),
-                            completed_effect_sha256=tuple(
-                                cast(list[str], previous["completed_effect_sha256"])
-                            ),
-                            mutation_status="unknown",
-                            unfinished_boundary="effect-reconciliation",
-                        ),
+                        False, "accepted original effect not currently proven complete"
                     )
                     if not _write_application_recovery_evidence(
                         args.recovery_evidence_path,
@@ -7430,6 +8398,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                         run_attempt=args.run_attempt,
                         continuation=continuation,
                         predecessor=predecessor_evidence,
+                        preserve_predecessor_failure=True,
                     ):
                         raise RuntimeError("read-only attempted-effect checkpoint was not durable")
                     _write_carrier_outputs(deferred)
@@ -7506,71 +8475,64 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             # Native carrier actuator is the mutation boundary and rechecks
             # the accepted PR-only plan against fresh GitHub postconditions.
             raise CarrierRequired(missing_pr_only_plan)
-        if first_activation and args.validation_passed:
-            batch, result = run_guarded_effect_application(
-                application_worker_result,
+        # One Application-owned Effect invocation. First activation and
+        # ordinary recovery differ only in their existing governed gates;
+        # source qualification, no-replay, and postconditions stay shared.
+        activation_validated = first_activation and args.validation_passed
+        batch, result = run_guarded_effect_application(
+            application_worker_result,
+            source=plan.source,
+            repository=repository,
+            token=token,
+            current_revision=args.revision,
+            apply_derived=(
+                not activation_validated
+                and (not requires_validation or args.validation_passed)
+                and not defer_accepted_checkpoint
+            ),
+            materialization_promote_change=(args.validation_passed and not activation_validated),
+            validated_materialization_revision=(
+                None
+                if target is None or (not activation_validated and checkpoint_already_durable)
+                else target.revision
+            ),
+            request_comment_id=plan.request_comment_id,
+            defer_issue_comments=(
+                activation_validated
+                or (requires_validation and not args.validation_passed)
+                or defer_accepted_checkpoint
+            ),
+            allow_pending_continuation=pending_continuation,
+            pending_application_correlation=retained_formal_correlation,
+            application_request_body=application_request_body,
+            authorization_revision=request.authorization_revision,
+            authorized_change=plan.change,
+            **({"accepted_intent": True} if accepted_intent is not None else {}),
+            **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
+            uncertain_effect_index=uncertain_effect_index,
+            **(
+                {"proven_empty_original_effects": True}
+                if original_effect_count == 0 and predecessor_disposition == "INDETERMINATE"
+                else {}
+            ),
+        )
+        if activation_validated and result.applied:
+            if materialization is None or target is None:
+                raise RuntimeError("first activation validation target is unavailable")
+            if accepted_intent is None:
+                raise RuntimeError("first activation accepted application decision is missing")
+            _complete_first_activation(
+                raw_worker_result=application_worker_result,
+                materialization=materialization,
+                target=target,
                 source=plan.source,
                 repository=repository,
                 token=token,
                 current_revision=args.revision,
-                apply_derived=False,
-                materialization_promote_change=False,
-                validated_materialization_revision=(None if target is None else target.revision),
+                default_branch=args.default_branch,
                 request_comment_id=plan.request_comment_id,
-                defer_issue_comments=first_activation,
+                accepted_authorization_revision=accepted_intent.authorization_revision,
                 allow_pending_continuation=pending_continuation,
-                pending_application_correlation=retained_formal_correlation,
-                application_request_body=application_request_body,
-                authorization_revision=request.authorization_revision,
-                authorized_change=plan.change,
-                **({"accepted_intent": True} if accepted_intent is not None else {}),
-                **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
-                uncertain_effect_index=uncertain_effect_index,
-            )
-            if result.applied:
-                if materialization is None or target is None:
-                    raise RuntimeError("first activation validation target is unavailable")
-                if accepted_intent is None:
-                    raise RuntimeError("first activation accepted application decision is missing")
-                _complete_first_activation(
-                    raw_worker_result=application_worker_result,
-                    materialization=materialization,
-                    target=target,
-                    source=plan.source,
-                    repository=repository,
-                    token=token,
-                    current_revision=args.revision,
-                    default_branch=args.default_branch,
-                    request_comment_id=plan.request_comment_id,
-                    accepted_authorization_revision=accepted_intent.authorization_revision,
-                    allow_pending_continuation=pending_continuation,
-                )
-        else:
-            batch, result = run_guarded_effect_application(
-                application_worker_result,
-                source=plan.source,
-                repository=repository,
-                token=token,
-                current_revision=args.revision,
-                apply_derived=(
-                    (not requires_validation or args.validation_passed)
-                    and not defer_accepted_checkpoint
-                ),
-                materialization_promote_change=args.validation_passed,
-                validated_materialization_revision=(
-                    None if target is None or checkpoint_already_durable else target.revision
-                ),
-                request_comment_id=plan.request_comment_id,
-                defer_issue_comments=(requires_validation and not args.validation_passed)
-                or defer_accepted_checkpoint,
-                allow_pending_continuation=pending_continuation,
-                pending_application_correlation=retained_formal_correlation,
-                application_request_body=application_request_body,
-                authorization_revision=request.authorization_revision,
-                authorized_change=plan.change,
-                **({"accepted_intent": True} if accepted_intent is not None else {}),
-                **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
-                uncertain_effect_index=uncertain_effect_index,
             )
     except CarrierRequired as exc:
         # CarrierRequired is the hard invocation-exit boundary. Persist only

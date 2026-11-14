@@ -2737,6 +2737,117 @@ def test_terminal_transition_closes_and_clears_routing_atomically(
     assert adapter.observe_postcondition(effect)
 
 
+@pytest.mark.parametrize(
+    ("formal_case", "expected"),
+    [("qualified", True), ("missing", False), ("wrong-request", False)],
+)
+def test_accepted_terminal_postcondition_reobserves_after_process_restart(
+    monkeypatch: pytest.MonkeyPatch,
+    formal_case: str,
+    expected: bool,
+) -> None:
+    """RED: a durable accepted terminal needs source proof, not a local receipt.
+
+    A fresh adapter has no _terminal_transitions cache. Terminal recovery
+    must use native formal/timeline evidence, and an unrelated closure or
+    wrong accepted correlation must not be attributed to this request.
+    """
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "lead", "finalize-archive")
+    correct_correlation = formal_application_correlation(
+        source,
+        change=_CHANGE,
+        result_kind="lifecycle-complete",
+        request_comment_id=_REQUEST_COMMENT_ID,
+        current_revision=_REVISION,
+    )
+    observed_correlation = formal_application_correlation(
+        source,
+        change=_CHANGE,
+        result_kind="lifecycle-complete",
+        request_comment_id=(
+            _REQUEST_COMMENT_ID + 1 if formal_case == "wrong-request" else _REQUEST_COMMENT_ID
+        ),
+        current_revision=_REVISION,
+    )
+    formal_comment = {
+        "id": 992,
+        "body": (
+            "ACTION_RESULT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Action: finalize-archive\n"
+            "Role: lead\n"
+            "Result: LIFECYCLE_COMPLETE\n"
+            f"Revision: {_REVISION}\n"
+            f"Default-Branch-Revision: {_REVISION}\n"
+            f"Application-Correlation: {observed_correlation}\n"
+            "Repository-derived successor: terminal\n"
+            "Evidence: qualified final archive result"
+        ),
+        "created_at": "2026-09-03T01:00:00Z",
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    issue = {
+        "number": 138,
+        "state": "closed",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-03T00:00:00Z",
+        "closed_at": "2026-09-03T01:03:00Z",
+        "labels": [{"name": "human:notified"}],
+    }
+    timeline = [
+        {"id": 992, "event": "commented", "created_at": "2026-09-03T01:00:00Z"},
+        {
+            "id": 993,
+            "event": "unlabeled",
+            "label": {"name": "action:finalize-archive"},
+            "created_at": "2026-09-03T01:01:00Z",
+        },
+        {"id": 994, "event": "closed", "created_at": "2026-09-03T01:03:00Z"},
+    ]
+    observed_reads: list[str] = []
+
+    def read(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        **_kwargs: object,
+    ) -> object:
+        assert method == "GET", "read-only recovery must not retry terminal PATCH"
+        observed_reads.append(api_path)
+        if api_path == "issues/138":
+            return issue
+        if api_path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return [] if formal_case == "missing" else [formal_comment]
+        if api_path == "issues/138/timeline?per_page=100&page=1":
+            return timeline
+        raise AssertionError(f"unexpected recovery read: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    fresh = GitHubEffectAdapter(
+        repository,
+        _TEST_TOKEN,
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="lifecycle-complete",
+        request_comment_id=_REQUEST_COMMENT_ID,
+        accepted_intent=True,
+    )
+    effect = StagedEffect(
+        "terminal-transition",
+        json.dumps({"issue_number": 138, "expected_change": _CHANGE}),
+        derived=True,
+    )
+    assert (observed_correlation == correct_correlation) is (formal_case != "wrong-request")
+    assert fresh.observe_postcondition(effect) is expected
+    assert observed_reads
+
+
 def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

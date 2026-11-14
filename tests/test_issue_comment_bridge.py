@@ -344,6 +344,68 @@ def test_bridge_is_run_scoped_transport_without_mailbox_semantics() -> None:
         assert forbidden not in workflow
 
 
+@pytest.mark.parametrize("fault", [OSError, RuntimeError, TypeError, ValueError])
+def test_bridge_preserves_pre_dispatch_repair_evidence_without_authorizing_action(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    fault: type[Exception],
+) -> None:
+    """Native bridge must have a durable, machine-readable fail-closed proof boundary."""
+
+    event_path = tmp_path / "event.json"
+    result_path = tmp_path / "dispatch-result.json"
+    output_path = tmp_path / "github-output"
+    event_path.write_text(json.dumps({"action": "created"}), encoding="utf-8")
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("GITHUB_TOKEN", "private-credential")
+    monkeypatch.setattr(bridge, "_request_identity", lambda _event: (442, 987))
+    monkeypatch.setattr(bridge, "acquire_current_github_preflight", lambda *_a: None)
+    monkeypatch.setattr(
+        bridge,
+        "classify_dispatch",
+        lambda _p: _decision(
+            "AUTHORIZE", issue_number=435, routing=("executor", "implement-change")
+        ),
+    )
+
+    def broken_completion(*_args: object, **_kw: object) -> bridge.ApplicationCompletion:
+        raise fault("sensitive private-credential in GitHub proof failure")
+
+    monkeypatch.setattr(bridge, "qualify_application_completion", broken_completion)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled-agent-bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            REVISION,
+            "--github-output",
+            str(output_path),
+            "--result-payload",
+            str(result_path),
+        ],
+    )
+    assert bridge.main() == 0
+    result = bridge.parse_dispatch_result_document(result_path.read_text(encoding="utf-8"))
+    assert result.disposition == "FAIL_CLOSED"
+    assert result.request_comment_id == 987
+    assert result.default_branch_revision == REVISION
+    assert result.reason == "application-completion-proof-exception:issue-435:implement-change"
+    assert result.issue_number is None and result.action is None
+    assert result.application_continuation is None and result.qualified_carrier is None
+    assert output_path.read_text(encoding="utf-8").startswith(
+        "should_emit=true\nissue_number=442\nrequest_comment_id=987\n"
+    )
+    out = capsys.readouterr()
+    assert fault.__name__ in out.err
+    assert "private-credential" not in result_path.read_text(encoding="utf-8")
+    assert "private-credential" not in out.err
+
+
 def test_request_and_run_name_parsers_require_exact_identity() -> None:
     request = bridge.parse_dispatch_request(REQUEST_BODY)
     assert request is not None
@@ -3797,6 +3859,57 @@ def _carrier_plan_fixture(authorization_revision: str = REVISION) -> carrier.Car
     )
 
 
+@pytest.mark.parametrize(
+    ("origin", "proof_disposition", "state", "reason"),
+    [
+        ("EXCEPTION", "COMPLETE", None, None),
+        ("EXCEPTION", "INDETERMINATE", "RESUMABLE", "application-completion-exception-observing"),
+        ("EXCEPTION", "NOT_APPLIED", "INVALID", "application-completion-exception-unsafe"),
+        ("EXCEPTION", "UNSAFE", "INVALID", "application-completion-exception-unsafe"),
+        ("POST_EFFECT", "COMPLETE", None, None),
+        (
+            "POST_EFFECT",
+            "INDETERMINATE",
+            "RESUMABLE",
+            "application-completion-post-effect-observing",
+        ),
+        (
+            "POST_EFFECT",
+            "NOT_APPLIED",
+            "INVALID",
+            "application-completion-original-effect-incomplete",
+        ),
+        ("POST_EFFECT", "UNSAFE", "INVALID", "application-completion-original-effect-unsafe"),
+        ("READ_ONLY", "COMPLETE", None, None),
+        ("READ_ONLY", "INDETERMINATE", "RESUMABLE", "application-completion-read-only-observing"),
+        ("READ_ONLY", "NOT_APPLIED", "INVALID", "application-completion-read-only-proof-conflict"),
+        ("READ_ONLY", "UNSAFE", "INVALID", "application-completion-read-only-proof-conflict"),
+    ],
+)
+def test_accepted_recovery_proof_has_one_non_authorizing_completion_projection(
+    origin: str, proof_disposition: str, state: str | None, reason: str | None
+) -> None:
+    proof = application.AcceptedPostEffectProof(
+        cast(Literal["COMPLETE", "INDETERMINATE", "NOT_APPLIED", "UNSAFE"], proof_disposition),
+        "read-only witness",
+    )
+    result = bridge._unresolved_accepted_proof_completion(
+        proof,
+        origin=cast(Literal["EXCEPTION", "POST_EFFECT", "READ_ONLY"], origin),
+        request_comment_id=90,
+        recovery_artifact=None,
+    )
+    if state is None:
+        assert result is None
+    else:
+        assert result == bridge.ApplicationCompletion(
+            cast(Literal["RESUMABLE", "INVALID"], state),
+            cast(str, reason),
+            request_comment_id=90,
+            accepted_proof=proof,
+        )
+
+
 def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
     return bridge.ApplicationDecisionRecord(
         request_comment_id=90,
@@ -3823,20 +3936,50 @@ def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
         ("NOT_APPLIED", "INVALID", "application-completion-exception-unsafe"),
     ],
 )
+@pytest.mark.parametrize("source_kind", ["activation", "implementation"])
+@pytest.mark.parametrize("exception_stage", ["pre", "post"])
+@pytest.mark.parametrize("artifact_identity_valid", [True, False])
 def test_exception_only_application_completion_requires_fresh_original_proof(
     monkeypatch: pytest.MonkeyPatch,
     proof: str,
     expected_state: str,
     expected_reason: str,
+    source_kind: str,
+    exception_stage: str,
+    artifact_identity_valid: bool,
 ) -> None:
-    record = replace(
-        _accepted_carrier_record(),
-        issue_number=435,
-        role="lead",
-        action="propose-change",
-        change="unset",
-        result_kind="proposal-ready",
-        request_comment_id=6760870154,
+    record = (
+        replace(
+            _accepted_carrier_record(),
+            issue_number=435,
+            role="lead",
+            action="propose-change",
+            change="unset",
+            result_kind="proposal-ready",
+            request_comment_id=6760870154,
+        )
+        if source_kind == "activation"
+        else replace(
+            _accepted_carrier_record(),
+            issue_number=435,
+            result_kind="blocked",
+            request_comment_id=6796616018,
+            raw_worker_result=json.dumps(
+                {
+                    "requested_effects": [
+                        {
+                            "kind": "github-mutation",
+                            "payload_json": json.dumps(
+                                {
+                                    "operation": "application-materialize",
+                                    "issue_number": 435,
+                                }
+                            ),
+                        }
+                    ]
+                }
+            ),
+        )
     )
     evidence = application.ApplicationExceptionArtifact(
         run_id=42827477053,
@@ -3849,10 +3992,10 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
         failure_evidence_sha256="c" * 64,
         recovery_episode_sha256="d" * 64,
         document={
-            "issue_number": 435,
-            "role": "lead",
-            "action": "propose-change",
-            "change": "unset",
+            "issue_number": record.issue_number if artifact_identity_valid else 436,
+            "role": record.role,
+            "action": record.action,
+            "change": record.change,
         },
     )
     monkeypatch.setattr(
@@ -3889,22 +4032,42 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
                             "name": (
                                 "Upload pre-ACCEPT or interrupted application exception evidence"
                             ),
-                            "conclusion": "success",
+                            "conclusion": "success" if exception_stage == "pre" else "skipped",
+                        },
+                        {
+                            "name": "Upload post-validation application exception evidence",
+                            "conclusion": "success" if exception_stage == "post" else "skipped",
                         },
                     ],
                 }
             ],
         }
 
+    monkeypatch.setattr(
+        bridge, "_qualified_unapplied_terminal_carrier_effect", lambda *_a, **_kw: False
+    )
     monkeypatch.setattr(bridge, "read_application_exception_artifact", lambda *_a, **_kw: evidence)
     monkeypatch.setattr(
         bridge,
-        "classify_application_exception_recovery",
-        lambda **_kw: application.AcceptedPostEffectProof(
+        "read_application_recovery_artifact",
+        lambda *_a, **_kw: pytest.fail("wrong artifact type selected"),
+    )
+    fresh_calls: list[int] = []
+
+    def fresh_original(
+        accepted: application.ApplicationDecisionRecord, *, repository: str, token: str
+    ) -> application.AcceptedPostEffectProof:
+        assert accepted is record
+        assert repository == "royhsu-work/investment-strategy"
+        fresh_calls.append(accepted.request_comment_id)
+        return application.AcceptedPostEffectProof(
             cast(Literal["COMPLETE", "INDETERMINATE", "UNSAFE", "NOT_APPLIED"], proof),
             "observed",
-        ),
-    )
+        )
+
+    # Do not mock the classifier: exercise the actual immutable-source admission
+    # boundary and its existing non-authorizing Bridge projection.
+    monkeypatch.setattr(application, "_fresh_accepted_activation_proof", fresh_original)
     result = bridge._application_job(
         "royhsu-work/investment-strategy",
         "token",
@@ -3913,9 +4076,12 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
         record=record,
         accepted_decision_sha256=evidence.accepted_decision_sha256,
     )
-    assert result.state == expected_state
-    assert result.reason == expected_reason
+    assert result.state == (expected_state if artifact_identity_valid else "INVALID")
+    assert result.reason == (
+        expected_reason if artifact_identity_valid else "application-completion-exception-unsafe"
+    )
     assert result.recovery_artifact is evidence
+    assert fresh_calls == ([record.request_comment_id] if artifact_identity_valid else [])
 
 
 def test_exception_continuation_uses_existing_wire_and_cross_shard_no_replay(
@@ -4749,14 +4915,19 @@ def test_read_only_reconciliation_reobserves_later_complete_without_replay(
     )
     monkeypatch.setattr(bridge, "_qualified_carrier_for_application_run", lambda *_a, **_kw: None)
     monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_kw: recovery)
-    observed = {"complete": False}
+    observed = {"complete": False, "conflict": False}
     read_count = [0]
 
-    def observe(**_kwargs: object) -> bool:
+    def observe(**_kwargs: object) -> application.AcceptedPostEffectProof:
         read_count[0] += 1
-        return observed["complete"]
+        if observed["conflict"]:
+            return application.AcceptedPostEffectProof("UNSAFE", "immutable checkpoint conflicts")
+        return application.AcceptedPostEffectProof(
+            "COMPLETE" if observed["complete"] else "INDETERMINATE",
+            "fresh accepted proof",
+        )
 
-    monkeypatch.setattr(bridge, "accepted_read_only_effects_complete", observe)
+    monkeypatch.setattr(bridge, "classify_accepted_read_only_effects", observe)
 
     def fake_read(_repository: str, _token: str, path: str) -> object:
         if path == "actions/runs/777/attempts/1/jobs":
@@ -4789,6 +4960,14 @@ def test_read_only_reconciliation_reobserves_later_complete_without_replay(
     assert third.reason == "application-completion-continuation-required"
     assert third.recovery_artifact is recovery
     assert read_count[0] == 3
+    # An actual contradiction cannot be mislabeled as a transient GET.
+    # This does not select a new semantic Action or replay an Effect.
+    observed["conflict"] = True
+    fourth = classify()
+    assert fourth.state == "INVALID"
+    assert fourth.reason == "application-completion-read-only-proof-conflict"
+    assert fourth.recovery_artifact is recovery
+    assert read_count[0] == 4
 
 
 @pytest.mark.parametrize(
@@ -8792,3 +8971,656 @@ def test_original_322_exit_incomplete_does_not_call_effect_owner(
     )
     assert result.state == "INVALID"
     assert result.reason == "recovery-exit-incomplete-M"
+
+
+@pytest.mark.parametrize("line_ending", ["", "\n"])
+def test_runtime_repair_request_wire_uses_shared_canonical_codec(line_ending: str) -> None:
+    fields = {
+        "Issue": "435",
+        "Change": "restore-t1-dispatch-artifact-consumption",
+        "Action": "implement-change",
+        "Accepted-Request-Comment": "6796616018",
+        "Accepted-Decision-SHA256": "b" * 64,
+        "Repair-PR": "443",
+        "Repair-HEAD": REVISION,
+    }
+    wire = bridge.RUNTIME_REPAIR_REQUEST_WIRE
+    body = wire.render(fields)
+    assert wire.parse(body + line_ending) == fields
+    assert wire.parse(body + "\n\n") is None
+    assert wire.parse(body.replace("\n", "\r\n")) is None
+    assert wire.parse(body.replace("Repair-HEAD:", "Head:")) is None
+
+
+def _native_runtime_repair_sources() -> tuple[
+    dict[str, object], dict[str, object], dict[str, object], dict[str, object]
+]:
+    repository = "royhsu-work/investment-strategy"
+    change = "restore-t1-dispatch-artifact-consumption"
+    request = _effect_request_comment(
+        comment_id=6796616018,
+        created_at="2026-11-14T01:01:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="blocked",
+        issue_number=435,
+        change=change,
+    )
+    decision = _application_decision_comment(request, comment_id=6796662999)
+    decision_body = cast(str, decision["body"])
+    body = bridge.RUNTIME_REPAIR_REQUEST_WIRE.render(
+        {
+            "Issue": "435",
+            "Change": change,
+            "Action": "implement-change",
+            "Accepted-Request-Comment": "6796616018",
+            "Accepted-Decision-SHA256": hashlib.sha256(decision_body.encode()).hexdigest(),
+            "Repair-PR": "443",
+            "Repair-HEAD": REVISION,
+        }
+    )
+    comment: dict[str, object] = {
+        "id": 9001,
+        "body": body,
+        "user": {"login": "royhsu-work", "id": 77, "type": "User"},
+        "performed_via_github_app": None,
+    }
+    event: dict[str, object] = {
+        "action": "created",
+        "repository": {"full_name": repository, "default_branch": "main"},
+        "issue": {"number": 435},
+        "sender": {"login": "royhsu-work", "id": 77, "type": "User"},
+        "comment": comment,
+    }
+    native = {
+        **comment,
+        "issue_url": f"https://api.github.com/repos/{repository}/issues/435",
+    }
+    return (
+        event,
+        native,
+        decision,
+        {
+            "number": 435,
+            "title": "T1 recovery",
+            "state": "open",
+            "created_at": "2026-11-10T01:00:00Z",
+            "closed_at": None,
+            "body": f"Change: {change}",
+            "labels": [{"name": "action:implement-change"}],
+        },
+    )
+
+
+def _native_r9_recovery_artifact(
+    accepted_comment: Mapping[str, object],
+) -> application.ApplicationRecoveryArtifact:
+    body = accepted_comment.get("body")
+    assert isinstance(body, str)
+    record = bridge.parse_application_decision(body)
+    assert record is not None
+    return application.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "d" * 64,
+        request_comment_id=record.request_comment_id,
+        accepted_decision_sha256=hashlib.sha256(body.encode()).hexdigest(),
+        failure_evidence_sha256="e" * 64,
+        recovery_episode_sha256="f" * 64,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={
+            "issue_number": record.issue_number,
+            "role": record.role,
+            "action": record.action,
+            "authorization_revision": record.authorization_revision,
+        },
+    )
+
+
+def _native_r9_exception_artifact(
+    accepted_comment: Mapping[str, object],
+) -> application.ApplicationExceptionArtifact:
+    """Native exception shape differs from recovery: change, not auth revision."""
+
+    source = _native_r9_recovery_artifact(accepted_comment)
+    decision = bridge.parse_application_decision(cast(str, accepted_comment["body"]))
+    assert decision is not None
+    return application.ApplicationExceptionArtifact(
+        run_id=source.run_id,
+        run_attempt=source.run_attempt,
+        job_id=source.job_id,
+        artifact_id=source.artifact_id,
+        artifact_digest=source.artifact_digest,
+        request_comment_id=source.request_comment_id,
+        accepted_decision_sha256=source.accepted_decision_sha256,
+        failure_evidence_sha256=source.failure_evidence_sha256,
+        recovery_episode_sha256=source.recovery_episode_sha256,
+        document={
+            "schema": "scheduled-agent-execution-exception/v1",
+            "repository": "royhsu-work/investment-strategy",
+            "issue_number": decision.issue_number,
+            "role": decision.role,
+            "action": decision.action,
+            "change": decision.change,
+            "revision": REVISION,
+            "request_comment_id": decision.request_comment_id,
+            "trigger_comment_id": 9001,
+            "run_id": 7001,
+            "run_attempt": 1,
+            "attempted_operation": "application-effect-preparation",
+            "exception_type": "RuntimeError",
+            "raw_error": "accepted implementation checkpoint identity is incomplete",
+            "raw_traceback": "(redacted)",
+            "mutation_status": "NO_APPLICATION_WRITE_ATTEMPTED",
+            "unfinished_boundary": "application-effect-preparation",
+            "classification": "UNCLASSIFIED_EXECUTION_EXCEPTION",
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("fault", "admitted"),
+    [
+        ("valid", True),
+        ("foreign-actor", False),
+        ("app-actor", False),
+        ("changed-comment", False),
+        ("changed-decision", False),
+        ("stale-main", False),
+        ("stale-pr", False),
+        ("changed-route", False),
+        ("invalid-action", False),
+        ("duplicate-decision", False),
+        ("ordinary-continuation", False),
+        ("completed", False),
+        ("unknown-original", False),
+        ("entered-original", True),
+        ("missing-entry-witness", False),
+        ("pending-formal", True),
+        ("pending-successor", True),
+        ("pending-formal-get", False),
+        ("pending-successor-get", False),
+        ("missing-native-artifact", False),
+        ("different-native-artifact-decision", False),
+        ("different-native-artifact-request", False),
+        ("different-native-artifact-source", False),
+        ("exception-artifact", True),
+        ("exception-foreign-change", False),
+        ("exception-different-request", False),
+        ("exception-unqualified-proof", False),
+        ("exception-transient-get", False),
+        ("unqualified-proof", False),
+        ("wrong-completion-request", False),
+        ("wrong-proof-state", False),
+        ("positive-proof", False),
+        ("never-called-proof", False),
+        ("missing-proof-frontier", False),
+    ],
+)
+def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
+    monkeypatch: pytest.MonkeyPatch, fault: str, admitted: bool
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    event, native, accepted, issue = _native_runtime_repair_sources()
+    artifact: application.ApplicationRecoveryArtifact | application.ApplicationExceptionArtifact
+    if fault.startswith("exception-"):
+        artifact = _native_r9_exception_artifact(accepted)
+    else:
+        artifact = _native_r9_recovery_artifact(accepted)
+    if fault == "exception-foreign-change":
+        artifact = replace(artifact, document={**artifact.document, "change": "unrelated-change"})
+    elif fault == "exception-different-request":
+        artifact = replace(artifact, request_comment_id=artifact.request_comment_id + 1)
+    elif fault == "different-native-artifact-decision":
+        artifact = replace(artifact, accepted_decision_sha256="0" * 64)
+    elif fault == "different-native-artifact-request":
+        artifact = replace(artifact, request_comment_id=artifact.request_comment_id + 1)
+    elif fault == "different-native-artifact-source":
+        artifact = replace(
+            artifact,
+            document={**artifact.document, "action": "review-implementation"},
+        )
+    pr = {
+        "number": 443,
+        "state": "open",
+        "merged": False,
+        "head": {"sha": REVISION, "repo": {"full_name": repository}},
+        "base": {"ref": "main", "repo": {"full_name": repository}},
+    }
+    if fault == "foreign-actor":
+        event_comment = cast(dict[str, object], event["comment"])
+        event_actor = cast(dict[str, object], event_comment["user"])
+        event_actor["login"] = "attacker"
+    if fault == "app-actor":
+        native["performed_via_github_app"] = {"slug": "chatgpt-codex-connector"}
+    if fault == "changed-comment":
+        native["body"] = "changed on GitHub"
+    if fault == "changed-decision":
+        accepted["body"] = "APPLICATION_DECISION\nforged"
+    if fault == "stale-pr":
+        cast(dict[str, object], pr["head"])["sha"] = "f" * 40
+    if fault == "changed-route":
+        issue["labels"] = [{"name": "action:resolve-question"}]
+    if fault == "invalid-action":
+        cast(dict[str, object], event["comment"])["body"] = cast(
+            str, cast(dict[str, object], event["comment"])["body"]
+        ).replace("Action: implement-change", "Action: fake-action")
+        native["body"] = cast(dict[str, object], event["comment"])["body"]
+    all_decisions = (accepted, accepted) if fault == "duplicate-decision" else (accepted,)
+    observed_calls: list[str] = []
+
+    def read(source_repo: str, token: str, path: str) -> object:
+        assert source_repo == repository and token == REVISION
+        observed_calls.append(path)
+        if path == "issues/comments/9001":
+            return native
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": "f" * 40 if fault == "stale-main" else REVISION}}
+        if path == "issues/435":
+            return issue
+        if path == "pulls/443":
+            return pr
+        raise AssertionError(path)
+
+    comment_enumerations: list[str] = []
+
+    def paged(
+        _repo: str, _token: str, path: str, *, read: object
+    ) -> tuple[Mapping[str, object], ...]:
+        assert path == "issues/435/comments?sort=created&direction=asc"
+        comment_enumerations.append(path)
+        return all_decisions
+
+    monkeypatch.setattr(bridge, "_paged_list", paged)
+    completion_calls: list[str] = []
+
+    def qualify(
+        _repo: str, _token: str, *, source: object, current_revision: str, read: object
+    ) -> bridge.ApplicationCompletion:
+        assert source == bridge.WorkerRequest(435, "executor", "implement-change")
+        assert current_revision == REVISION
+        completion_calls.append("qualified")
+        if fault == "ordinary-continuation":
+            return bridge.ApplicationCompletion(
+                "RESUMABLE", "application-completion-continuation-required", 6796616018
+            )
+        if fault == "completed":
+            return bridge.ApplicationCompletion("COMPLETE", "already complete", 6796616018)
+        if fault in {"unqualified-proof", "exception-unqualified-proof"}:
+            return bridge.ApplicationCompletion(
+                "INVALID",
+                "application-completion-read-only-proof-conflict",
+                6796616018,
+                recovery_artifact=artifact,
+            )
+
+        # Exercise the real Application DAG/Result and Application→Bridge
+        # projection rather than blessing arbitrary status/reason strings.
+        if fault in {
+            "valid",
+            "exception-artifact",
+            "exception-foreign-change",
+            "exception-different-request",
+        }:
+            fact = application.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT", None, None, source_conflict=True
+            )
+        elif fault == "positive-proof":
+            fact = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, True)
+        elif fault == "never-called-proof":
+            fact = application.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT",
+                None,
+                False,
+                never_called_evidence=application.CompleteNeverCalledWitness(
+                    6796616018, 0, "b" * 64, ((1, 1, 1),)
+                ),
+            )
+        elif fault in {"entered-original", "missing-entry-witness"}:
+            fact = application.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT",
+                application.StagedEffect(
+                    "issue-comment", json.dumps({"issue_number": 435, "body": "accepted"})
+                ),
+                False,
+                write_call_entered=True,
+            )
+            if fault == "missing-entry-witness":
+                fact = replace(fact, write_call_entered=None)
+        else:
+            fact = application.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT",
+                None,
+                None,
+                never_called_evidence=application.TypedEvidenceError(
+                    "UNKNOWN", "NATIVE_GET", "read-only observation unavailable", 6796616018
+                ),
+            )
+        typed = replace(application.evaluate_recovery_evidence(fact), frontier_index=0)
+        if fault == "missing-proof-frontier":
+            typed = application.RecoveryProofResult(
+                "UNKNOWN", "ORIGINAL_EFFECT", typed.witness, None
+            )
+        pending = None
+        if fault in {
+            "pending-formal",
+            "pending-successor",
+            "pending-formal-get",
+            "pending-successor-get",
+        }:
+            # Preserve the independently satisfied Original witness while the
+            # real pending Application frontier is a later typed DAG node.
+            original = application.evaluate_recovery_evidence(
+                application.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, True)
+            )
+            obligation: application.RecoveryObligation = (
+                "FORMAL_RESULT" if fault.startswith("pending-formal") else "SUCCESSOR"
+            )
+            pending = application.evaluate_recovery_evidence(
+                application.RecoveryEvidenceNode(
+                    obligation,
+                    None,
+                    None,
+                    never_called_evidence=application.TypedEvidenceError(
+                        "UNKNOWN",
+                        "SOURCE_GET" if fault.endswith("-get") else "CALL_ENTRY",
+                        "native history unresolved",
+                        6796616018,
+                        7003,
+                        intervention_required=not fault.endswith("-get"),
+                    ),
+                    depends_on=(application.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, True),),
+                )
+            )
+            pending = replace(pending, frontier_index=1 if obligation == "FORMAL_RESULT" else 2)
+            typed = original
+        proof_disposition: Literal["UNSAFE", "INDETERMINATE"] = (
+            "UNSAFE" if typed.disposition == "CONFLICT" else "INDETERMINATE"
+        )
+        proof = application.AcceptedPostEffectProof(
+            proof_disposition,
+            "qualified Application typed proof",
+            original_effect_proof=typed,
+            pending_frontier_proof=pending,
+        )
+        completion = bridge._unresolved_accepted_proof_completion(
+            proof,
+            origin="EXCEPTION" if fault.startswith("exception-") else "READ_ONLY",
+            request_comment_id=(6796616019 if fault == "wrong-completion-request" else 6796616018),
+            recovery_artifact=None,
+        )
+        if completion is None:
+            return bridge.ApplicationCompletion(
+                "RESUMABLE", "application-completion-continuation-required", 6796616018
+            )
+        if fault == "wrong-proof-state":
+            return replace(completion, state="COMPLETE")
+        return replace(
+            completion,
+            recovery_artifact=None if fault == "missing-native-artifact" else artifact,
+        )
+
+    result = bridge.qualify_runtime_repair_admission(
+        event,
+        repository=repository,
+        token=REVISION,
+        current_revision=REVISION,
+        read=read,
+        qualify=qualify,
+    )
+    assert (result is not None) is admitted
+    if admitted:
+        assert result is not None
+        assert result.source == bridge.WorkerRequest(435, "executor", "implement-change")
+        assert result.accepted_request_comment_id == 6796616018
+        assert result.repair_pr == 443 and result.repair_head == REVISION
+        assert result.source_artifact is artifact
+        assert (result.source_artifact.run_id, result.source_artifact.job_id) == (7001, 7002)
+        expected_frontier = {
+            "valid": "ORIGINAL_EFFECT:CONFLICT",
+            "exception-artifact": "ORIGINAL_EFFECT:CONFLICT",
+            "pending-formal": "FORMAL_RESULT:UNKNOWN",
+            "pending-successor": "SUCCESSOR:UNKNOWN",
+        }.get(fault, "ORIGINAL_EFFECT:UNKNOWN")
+        assert result.frontier == expected_frontier
+        assert result.frontier_proof.frontier_index == (
+            1 if fault == "pending-formal" else 2 if fault == "pending-successor" else 0
+        )
+        parsed = bridge.parse_application_decision(cast(str, accepted["body"]))
+        assert parsed is not None
+        assert result.accepted_worker_sha256 == parsed.worker_result_sha256
+    # No apply, routing mutation, duplicate PR creation or fresh Action dispatch.
+    assert all(
+        path in {"issues/comments/9001", "git/ref/heads/main", "issues/435", "pulls/443"}
+        for path in observed_calls
+    )
+    if fault in {"valid", "unknown-original", "ordinary-continuation", "completed"}:
+        assert len(comment_enumerations) == 2
+        assert completion_calls == ["qualified"]
+
+
+def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Native-shaped event enters the real Bridge; later reads never replay.
+
+    Only the repository observations are simulated here. This does not claim
+    that a production Human repair or a later scheduled wake has occurred.
+    """
+    repository = "royhsu-work/investment-strategy"
+    event, native, decision, issue = _native_runtime_repair_sources()
+    artifact = _native_r9_recovery_artifact(decision)
+    pr = {
+        "number": 443,
+        "state": "open",
+        "merged": False,
+        "head": {"sha": REVISION, "repo": {"full_name": repository}},
+        "base": {"ref": "main", "repo": {"full_name": repository}},
+    }
+    stage = {"value": "source-unavailable"}
+    reads: list[str] = []
+
+    def read(source_repo: str, token: str, path: str) -> object:
+        assert (source_repo, token) == (repository, "test-token")
+        reads.append(path)
+        if path == "issues/comments/9001":
+            return native
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": REVISION}}
+        if path == "issues/435":
+            return issue
+        if path == "pulls/443":
+            return pr
+        raise AssertionError(f"unexpected native read: {path}")
+
+    def paged(
+        source_repo: str, token: str, path: str, *, read: object
+    ) -> tuple[Mapping[str, object], ...]:
+        assert (source_repo, token) == (repository, "test-token")
+        assert path == "issues/435/comments?sort=created&direction=asc"
+        return (decision,)
+
+    def qualify(
+        source_repo: str, token: str, *, source: object, current_revision: str, read: object
+    ) -> bridge.ApplicationCompletion:
+        assert (source_repo, token, current_revision) == (repository, "test-token", REVISION)
+        assert source == bridge.WorkerRequest(435, "executor", "implement-change")
+        if stage["value"] == "repaired":
+            return bridge.ApplicationCompletion(
+                "COMPLETE", "re-observed complete", 6796616018, recovery_artifact=artifact
+            )
+        if stage["value"] == "source-unavailable":
+            fact = application.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT",
+                None,
+                None,
+                never_called_evidence=application.TypedEvidenceError(
+                    "UNKNOWN", "SOURCE_GET", "temporary native read error", 6796616018, 7003
+                ),
+            )
+        else:
+            fact = application.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT", None, None, source_conflict=True
+            )
+        proof = application.AcceptedPostEffectProof(
+            "INDETERMINATE" if stage["value"] == "source-unavailable" else "UNSAFE",
+            "qualified read-only observation",
+            original_effect_proof=application.evaluate_recovery_evidence(fact),
+        )
+        completion = bridge._unresolved_accepted_proof_completion(
+            proof,
+            origin="READ_ONLY",
+            request_comment_id=6796616018,
+            recovery_artifact=artifact,
+        )
+        assert completion is not None
+        return completion
+
+    original_qualifier = bridge.qualify_runtime_repair_admission
+
+    def native_qualifier(
+        event: Mapping[str, object], *, repository: str, token: str, current_revision: str
+    ) -> bridge.RuntimeRepairAdmission | None:
+        return original_qualifier(
+            event,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            read=read,
+            qualify=qualify,
+        )
+
+    monkeypatch.setattr(bridge, "_paged_list", paged)
+    monkeypatch.setattr(bridge, "qualify_runtime_repair_admission", native_qualifier)
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_a, **_kw: pytest.fail("native maintenance must not dispatch"),
+    )
+    monkeypatch.setenv("GITHUB_REPOSITORY", repository)
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "issue_comment")
+    event_path = tmp_path / "native-event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    output = tmp_path / "github-output"
+    payload = tmp_path / "dispatch-result.json"
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "issue-comment-bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            REVISION,
+            "--github-output",
+            str(output),
+            "--result-payload",
+            str(payload),
+        ],
+    )
+
+    assert bridge.main() == 1  # Transient GET error: observation only.
+    assert not output.exists()
+    assert not summary.exists()
+
+    stage["value"] = "qualified-conflict"
+    assert bridge.main() == 0  # Same native event, now exact evidence-backed intake.
+    assert output.read_text() == "should_emit=false\n"
+    assert not payload.exists()
+    note = summary.read_text(encoding="utf-8")
+    assert "Native Application run: 7001 / attempt 1" in note
+    assert "Native evidence kind: recovery" in note
+    assert "Evidence Artifact ID: 7003" in note
+    assert note.count("Non-writing R9 Human/Runtime repair intake") == 1
+
+    stage["value"] = "repaired"
+    assert bridge.main() == 1  # Re-observation withdraws the stale repair candidate.
+    assert summary.read_text(encoding="utf-8") == note
+    assert not payload.exists()
+    assert reads.count("issues/comments/9001") == 3
+
+
+def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    event, _native, accepted, _issue = _native_runtime_repair_sources()
+    source_artifact = _native_r9_recovery_artifact(accepted)
+    source = tmp_path / "github-event.json"
+    source.write_text(json.dumps(event), encoding="utf-8")
+    output = tmp_path / "github-output"
+    result = tmp_path / "dispatch-result.json"
+    summary = tmp_path / "step-summary.md"
+    admission = bridge.RuntimeRepairAdmission(
+        source=bridge.WorkerRequest(435, "executor", "implement-change"),
+        trigger_comment_id=9001,
+        accepted_request_comment_id=6796616018,
+        accepted_decision_sha256="b" * 64,
+        accepted_worker_sha256="c" * 64,
+        repair_pr=443,
+        repair_head=REVISION,
+        result_state="INVALID",
+        reason="application-completion-read-only-proof-conflict",
+        frontier_proof=replace(
+            application.evaluate_recovery_evidence(
+                application.RecoveryEvidenceNode(
+                    "ORIGINAL_EFFECT",
+                    None,
+                    None,
+                    never_called_evidence=application.TypedEvidenceError(
+                        "UNKNOWN",
+                        "CALL_ENTRY",
+                        "native historical write uncertain",
+                        6796616018,
+                        7003,
+                        intervention_required=True,
+                    ),
+                )
+            ),
+            frontier_index=0,
+        ),
+        source_artifact=source_artifact,
+    )
+    monkeypatch.setattr(bridge, "qualify_runtime_repair_admission", lambda *_a, **_kw: admission)
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_a, **_kw: pytest.fail("R9 intake must not enter normal dispatch"),
+    )
+    monkeypatch.setenv("GITHUB_REPOSITORY", "royhsu-work/investment-strategy")
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "issue_comment")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "issue_comment_bridge",
+            "--event-path",
+            str(source),
+            "--revision",
+            REVISION,
+            "--github-output",
+            str(output),
+            "--result-payload",
+            str(result),
+        ],
+    )
+    assert bridge.main() == 0
+    assert output.read_text() == "should_emit=false\n"
+    assert not result.exists()
+    assert f"Exact PR HEAD: {REVISION}" in summary.read_text()
+    assert "Native Application run: 7001 / attempt 1" in summary.read_text()
+    assert "Native Application job: 7002" in summary.read_text()
+    assert "Native evidence kind: recovery" in summary.read_text()
+    assert "Evidence Artifact ID: 7003" in summary.read_text()
+    assert "Evidence Artifact digest: sha256:" + "d" * 64 in summary.read_text()
+    assert "Verified Effect ordinal: 0" in summary.read_text()
+    assert "Evidence error stage: CALL_ENTRY" in summary.read_text()
+    assert "Typed witness: TypedEvidenceError" in summary.read_text()
+    assert "authorizes NO Effect" in summary.read_text()

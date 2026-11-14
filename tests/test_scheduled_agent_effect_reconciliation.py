@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from types import SimpleNamespace
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -28,6 +30,7 @@ from investment_strategy.scheduled_agent_action_model import (
 from investment_strategy.scheduled_agent_effects import (
     EffectBatch,
     EffectRecoveryEvidence,
+    GitHubEffectAdapter,
     StagedEffect,
     apply_effect_batch,
     parse_application_decision,
@@ -43,6 +46,728 @@ from investment_strategy.workflow_dispatch import DispatchPreflight, Observation
 
 REVISION = "a" * 40
 CHANGE = "deterministic-recovery"
+
+
+@pytest.mark.parametrize(
+    ("entry", "messages"),
+    [
+        (
+            "_persist_activation_result",
+            (
+                "first activation has duplicate application result evidence",
+                "first activation result comment id is invalid",
+                "first activation result postcondition was not observed",
+                "first activation result fresh postcondition was not observed",
+            ),
+        ),
+        (
+            "_persist_recovery_comment",
+            (
+                "partial activation recovery evidence is duplicated",
+                "partial activation recovery comment id is invalid",
+                "partial activation recovery comment postcondition was not observed",
+                "partial activation recovery fresh comment was not observed",
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "scenario", ["existing", "new", "duplicate", "bad-id", "bad-post", "bad-get"]
+)
+def test_activation_and_recovery_comments_share_one_write_postcondition_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    entry: str,
+    messages: tuple[str, str, str, str],
+    scenario: str,
+) -> None:
+    """One source read/POST/fresh-GET protocol across both invocation paths."""
+
+    body = "ACTION_RESULT\nExact already-qualified application result"
+    observed: list[tuple[str, str]] = []
+    trusted = {"id": 9011, "body": body, "trusted": True}
+
+    def paged(_repo: str, _token: str, path: str) -> tuple[dict[str, object], ...]:
+        assert path == "issues/138/comments?sort=created"
+        observed.append(("LIST", path))
+        if scenario == "duplicate":
+            return trusted, trusted
+        if scenario == "existing":
+            return (trusted,)
+        if scenario == "bad-id":
+            return ({**trusted, "id": 0},)
+        return ()
+
+    def github_io(
+        _repo: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        observed.append((method, path))
+        if method == "POST":
+            assert path == "issues/138/comments" and payload == {"body": body}
+            return {**trusted, "body": "changed"} if scenario == "bad-post" else trusted
+        assert path == "issues/comments/9011"
+        return {**trusted, "body": "stale"} if scenario == "bad-get" else trusted
+
+    monkeypatch.setattr(application, "_paged_github_list", paged)
+    monkeypatch.setattr(application, "_github_json", github_io)
+    monkeypatch.setattr(
+        application, "is_github_actions_comment", lambda item: item.get("trusted") is True
+    )
+    canonical = application._persist_application_evidence_comment
+    invoked: list[bool] = []
+
+    def counted(
+        result_body: str,
+        *,
+        repository: str,
+        token: str,
+        issue_number: int,
+        errors: tuple[str, str, str, str],
+    ) -> int:
+        invoked.append(True)
+        return canonical(
+            result_body,
+            repository=repository,
+            token=token,
+            issue_number=issue_number,
+            errors=errors,
+        )
+
+    monkeypatch.setattr(application, "_persist_application_evidence_comment", counted)
+    persist = getattr(application, entry)
+    error_index = {
+        "duplicate": 0,
+        "bad-id": 1,
+        "bad-post": 2,
+        "bad-get": 3,
+    }.get(scenario)
+    if error_index is None:
+        assert persist(body, repository="owner/repo", token=REVISION, issue_number=138) == 9011
+    else:
+        with pytest.raises(RuntimeError, match=messages[error_index]):
+            persist(body, repository="owner/repo", token=REVISION, issue_number=138)
+    assert invoked == [True]
+    assert observed[0] == ("LIST", "issues/138/comments?sort=created")
+    assert sum(method == "POST" for method, _path in observed) == (
+        0 if scenario in {"existing", "duplicate", "bad-id"} else 1
+    )
+    assert sum(path == "issues/comments/9011" for _method, path in observed) == (
+        1 if scenario in {"new", "bad-get"} else 0
+    )
+
+
+def test_s2c_no_legacy_boolean_recovery_decision_owner() -> None:
+    """RED: preserve typed proof outcomes, never a second Boolean projection."""
+    assert "accepted_read_only_effects_complete" not in vars(application)
+    assert callable(application.classify_accepted_read_only_effects)
+
+
+def test_s2p_proof_result_carries_witness_and_remaining_obligation() -> None:
+    """Proof outcome is not a bare string; retain the exact fact and unfinished node."""
+    effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"effect"}')
+    positive = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT", effect, True, source_object_ref="issues/comments/992001"
+    )
+    accepted_never_called = application.CompleteNeverCalledWitness(
+        91, 0, "a" * 64, ((7001, 1, 7003),)
+    )
+    absent = application.RecoveryEvidenceNode(
+        "FORMAL_RESULT",
+        effect,
+        False,
+        never_called_evidence=accepted_never_called,
+        depends_on=(positive,),
+    )
+    read_error = application.TypedEvidenceError(
+        "UNKNOWN", "HISTORY_GET", "missing qualified predecessor", 91, 7003
+    )
+    unknown = application.RecoveryEvidenceNode(
+        "SUCCESSOR",
+        effect,
+        None,
+        never_called_evidence=read_error,
+        depends_on=(positive,),
+    )
+    contradictory = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT",
+        effect,
+        True,
+        source_conflict=True,
+    )
+    satisfied_result = application.evaluate_recovery_evidence(positive)
+    assert not isinstance(satisfied_result, str)
+    assert satisfied_result.disposition == "SATISFIED"
+    assert satisfied_result.obligation == "ORIGINAL_EFFECT"
+    assert satisfied_result.witness is positive
+    assert satisfied_result.remaining_obligation is None
+
+    never_called_result = application.evaluate_recovery_evidence(absent)
+    assert never_called_result.disposition == "NOT_APPLIED"
+    assert never_called_result.witness is accepted_never_called
+    assert never_called_result.remaining_obligation == "FORMAL_RESULT"
+
+    unknown_result = application.evaluate_recovery_evidence(unknown)
+    assert unknown_result.disposition == "UNKNOWN"
+    assert unknown_result.witness is read_error
+    assert unknown_result.remaining_obligation == "SUCCESSOR"
+
+    conflict_result = application.evaluate_recovery_evidence(contradictory)
+    assert conflict_result.disposition == "CONFLICT"
+    assert conflict_result.witness is contradictory
+    assert conflict_result.remaining_obligation == "ORIGINAL_EFFECT"
+
+
+@pytest.mark.parametrize(
+    ("entered", "final_postcondition", "expected"),
+    [
+        (True, False, True),
+        (None, False, False),
+        (True, True, False),
+        (False, False, False),
+    ],
+)
+def test_r9_unresolved_entered_write_requires_exact_witness(
+    entered: bool | None, final_postcondition: bool, expected: bool
+) -> None:
+    effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"original"}')
+    fact = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT",
+        effect,
+        final_postcondition,
+        write_call_entered=entered,
+        source_object_ref="issues/comments/992001" if final_postcondition else None,
+    )
+    decision = application.AcceptedPostEffectProof(
+        "INDETERMINATE",
+        "native accepted attempt remains uncertain",
+        original_effect_proof=application.evaluate_recovery_evidence(fact),
+    )
+    assert (decision.runtime_repair_frontier is not None) is expected
+
+
+@pytest.mark.parametrize(
+    ("source_ref", "expected"),
+    [
+        (None, "UNKNOWN"),
+        ("issues/comments/0", "UNKNOWN"),
+        ("issues/comments/bad", "UNKNOWN"),
+        ("issues/comments/992001", "SATISFIED"),
+    ],
+)
+def test_positive_issue_comment_node_needs_a_native_source_reference(
+    source_ref: str | None, expected: str
+) -> None:
+    """A caller-supplied bool cannot replace a qualified native comment witness."""
+    effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"original"}')
+    fact = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT",
+        effect,
+        True,
+        source_object_ref=source_ref,
+    )
+    proof = application.evaluate_recovery_evidence(fact)
+    assert proof.disposition == expected
+    assert proof.remaining_obligation == (None if expected == "SATISFIED" else "ORIGINAL_EFFECT")
+
+
+def test_s2o_r9_original_prefix_identity_has_one_qualification_owner() -> None:
+    """R9 must reuse the exact checkpoint prefix gate, not compare it again."""
+    source = inspect.getsource(application.classify_accepted_read_only_effects)
+    assert "attempted[:prefix_length] != original.effects[:prefix_length]" in source
+    assert "attempted[: index + 1] == original.effects[: index + 1]" not in source
+
+
+@pytest.mark.parametrize(
+    ("category", "disposition", "admission"),
+    [
+        ("UNKNOWN", "INDETERMINATE", "OBSERVE"),
+        ("CONFLICT", "UNSAFE", "REJECT"),
+    ],
+)
+def test_s2e_typed_error_uses_existing_single_proof_presentation_owner(
+    category: Literal["UNKNOWN", "CONFLICT"],
+    disposition: str,
+    admission: str,
+) -> None:
+    """A qualified Result.Err is not NOT_APPLIED or permission to replay."""
+    error = application.TypedEvidenceError(
+        category, "ORIGINAL_GET", "source-qualified read failure", 91, 7003
+    )
+    proof = application.AcceptedPostEffectProof.from_evidence_error(error)
+    assert proof.disposition == disposition
+    assert proof.continuation == admission
+    assert proof.reason == error.detail
+    assert proof.carrier_plan is None
+    assert proof.original_effect_proof is None
+
+
+def test_recovery_dag_shared_dependencies_never_authorize_successor_write() -> None:
+    """R2/R8: completion of one Effect is not formal/successor authority."""
+    effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"effect"}')
+    formal = StagedEffect("issue-comment", '{"issue_number":138,"body":"formal"}')
+    successor = StagedEffect("routing-transition", '{"issue_number":138}')
+    completed = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT", effect, True, source_object_ref="issues/comments/992001"
+    )
+    unresolved = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", effect, None)
+    formal_node = application.RecoveryEvidenceNode(
+        "FORMAL_RESULT",
+        formal,
+        False,
+        never_called_evidence=application.CompleteNeverCalledWitness(
+            91, 0, "a" * 64, ((7001, 1, 7003),)
+        ),
+        depends_on=(completed, unresolved),
+    )
+    assert application.evaluate_recovery_evidence(completed).disposition == "SATISFIED"
+    assert application.evaluate_recovery_evidence(formal_node).disposition == "UNKNOWN"
+    ready_formal = replace(formal_node, depends_on=(completed,))
+    assert application.evaluate_recovery_evidence(ready_formal).disposition == "NOT_APPLIED"
+    waiting_successor = application.RecoveryEvidenceNode(
+        "SUCCESSOR",
+        successor,
+        False,
+        never_called_evidence=application.CompleteNeverCalledWitness(
+            91, 0, "a" * 64, ((7001, 1, 7003),)
+        ),
+        depends_on=(completed, ready_formal, completed),
+    )
+    assert application.evaluate_recovery_evidence(waiting_successor).disposition == "UNKNOWN"
+    complete_formal = replace(
+        ready_formal, final_postcondition=True, source_object_ref="issues/comments/992002"
+    )
+    assert application.evaluate_recovery_evidence(complete_formal).disposition == "SATISFIED"
+    eligible_successor = replace(waiting_successor, depends_on=(completed, complete_formal))
+    assert application.evaluate_recovery_evidence(eligible_successor).disposition == "NOT_APPLIED"
+    # IR proof never calls an Effect; the shell must independently reauthorize it.
+
+
+@pytest.mark.parametrize("stage", ["FORMAL_RESULT", "SUCCESSOR"])
+def test_positive_descendant_requires_satisfied_upstream_obligation(stage: str) -> None:
+    """R8: observed later state cannot discharge an unproven predecessor."""
+    effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"effect"}')
+    missing = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", effect, None)
+    completed = replace(
+        missing, final_postcondition=True, source_object_ref="issues/comments/992001"
+    )
+    descendant = application.RecoveryEvidenceNode(
+        cast(Literal["FORMAL_RESULT", "SUCCESSOR"], stage),
+        effect,
+        True,
+        depends_on=(missing,),
+        source_object_ref="issues/comments/992002",
+    )
+    assert application.evaluate_recovery_evidence(descendant).disposition == "UNKNOWN"
+    completed_descendant = replace(descendant, depends_on=(completed,))
+    assert application.evaluate_recovery_evidence(completed_descendant).disposition == "SATISFIED"
+
+
+def test_recovery_dag_conflicting_provenance_blocks_positive_descendant() -> None:
+    """R9: source contradiction dominates even a positive child observation."""
+    effect = StagedEffect("issue-comment", '{"issue_number":138}')
+    contradiction = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT",
+        effect,
+        None,
+        source_conflict=True,
+    )
+    proven = application.RecoveryEvidenceNode(
+        "FORMAL_RESULT",
+        effect,
+        True,
+        depends_on=(contradiction,),
+    )
+    assert application.evaluate_recovery_evidence(contradiction).disposition == "CONFLICT"
+    assert application.evaluate_recovery_evidence(proven).disposition == "CONFLICT"
+
+
+@pytest.mark.parametrize("second_satisfied", [False, True])
+def test_shared_original_effect_prefix_observation(
+    second_satisfied: bool,
+) -> None:
+    """The same proof reader serves read-only and post-effect reconciliation."""
+    first = StagedEffect("issue-comment", '{"issue_number":138,"body":"first"}')
+    second = StagedEffect("issue-comment", '{"issue_number":138,"body":"second"}')
+    observed: list[StagedEffect] = []
+
+    def observe(effect: StagedEffect) -> bool:
+        observed.append(effect)
+        return effect == first or second_satisfied
+
+    adapter = cast(
+        GitHubEffectAdapter,
+        SimpleNamespace(
+            observe_postcondition=observe,
+            observe_issue_comment_source_ref=lambda effect: (
+                "issues/comments/992001" if observe(effect) else None
+            ),
+        ),
+    )
+    nodes = application._observe_accepted_effect_prefix(
+        (first, second), adapter, source=WorkerRequest(138, "lead", "resolve-question")
+    )
+    assert observed == [first, second]
+    if not second_satisfied:
+        assert isinstance(nodes, application.RecoveryProofResult)
+        assert nodes.disposition == "UNKNOWN"
+        assert nodes.remaining_obligation == "ORIGINAL_EFFECT"
+        assert nodes.frontier_index == 1
+        assert isinstance(nodes.witness, application.RecoveryEvidenceNode)
+        assert nodes.witness.effect == second
+    else:
+        assert isinstance(nodes, tuple)
+        assert len(nodes) == 2
+        assert all(not node.depends_on for node in nodes)
+        assert application.evaluate_recovery_evidence(nodes[-1]).disposition == "SATISFIED"
+
+
+def test_positive_original_effects_are_shared_flat_leaves() -> None:
+    """Long already-satisfied prefixes must not be re-evaluated recursively."""
+    original = tuple(
+        StagedEffect("issue-comment", json.dumps({"issue_number": 138, "sequence": index}))
+        for index in range(1025)
+    )
+    observed: list[StagedEffect] = []
+
+    def observe(effect: StagedEffect) -> bool:
+        observed.append(effect)
+        return True
+
+    adapter = cast(
+        GitHubEffectAdapter,
+        SimpleNamespace(
+            observe_postcondition=observe,
+            observe_issue_comment_source_ref=lambda effect: (
+                "issues/comments/992001" if observe(effect) else None
+            ),
+        ),
+    )
+    leaves = application._observe_accepted_effect_prefix(
+        original, adapter, source=WorkerRequest(138, "lead", "resolve-question")
+    )
+    assert isinstance(leaves, tuple)
+    assert len(leaves) == len(original)
+    assert observed == list(original)
+    assert all(not node.depends_on for node in leaves)
+    assert (
+        application.evaluate_recovery_evidence(
+            application.RecoveryEvidenceNode(
+                "FORMAL_RESULT",
+                original[0],
+                True,
+                depends_on=leaves,
+                source_object_ref="issues/comments/992002",
+            )
+        ).disposition
+        == "SATISFIED"
+    )
+
+
+@pytest.mark.parametrize(
+    ("original_count", "zero_source_proven", "expected"),
+    [
+        (0, True, "COMPLETE"),
+        (0, False, "INDETERMINATE"),
+        (1, False, "COMPLETE"),
+        (2, False, "COMPLETE"),
+    ],
+)
+def test_staged_commit_positive_projection_across_original_effect_cardinality(
+    monkeypatch: pytest.MonkeyPatch,
+    original_count: int,
+    zero_source_proven: bool,
+    expected: str,
+) -> None:
+    """Durable final projection can reconcile a lost response without attempt inventory.
+
+    Zero original Effects still require positive physical-source qualification;
+    an unattempted successor is handled by the existing no-write recovery path.
+    """
+    from investment_strategy.scheduled_agent_effects import derived_transition_effect
+
+    source = WorkerRequest(138, "lead", "resolve-question")
+    originals = tuple(
+        StagedEffect(
+            "issue-comment",
+            json.dumps({"issue_number": 138, "body": f"accepted original {index}"}),
+        )
+        for index in range(original_count)
+    )
+    raw = json.dumps(
+        {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "accepted",
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json} for effect in originals
+            ],
+        }
+    )
+    record = parse_application_decision(
+        render_application_decision_body(
+            request_comment_id=91,
+            request_body="immutable original request",
+            authorization_revision=REVISION,
+            decision=_decision(),
+            disposition="ACCEPTED",
+            raw_worker_result=raw,
+            reason="application accepted",
+        )
+    )
+    assert record is not None
+    projected = application._application_owned_worker_result(
+        raw,
+        source=source,
+        change=CHANGE,
+        current_revision=REVISION,
+        request_comment_id=91,
+    )
+    formal = parse_effect_batch(projected, source, authorized_change=CHANGE).effects[-1]
+    successor = derived_transition_effect(
+        issue_number=source.issue_number, change=CHANGE, successor=Action.IMPLEMENT_CHANGE
+    )
+    attempted = (*originals, formal, successor)
+    checkpoint: dict[str, object] = {
+        "mutation_status": "unknown",
+        "unfinished_boundary": "derived-effect-postcondition",
+        "write_call_entered": True,
+        "operation_stage": "AFTER_WRITE",
+        "rejection": None,
+        "failed_effect_index": len(attempted) - 1,
+        "failed_effect_kind": successor.kind,
+        "failed_effect_sha256": hashlib.sha256(successor.payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": list(range(len(attempted) - 1)),
+        "completed_effect_sha256": [
+            hashlib.sha256(effect.payload_json.encode()).hexdigest() for effect in attempted[:-1]
+        ],
+        "attempt_revision": REVISION,
+        "attempted_effects": [
+            {"kind": effect.kind, "payload_json": effect.payload_json, "derived": effect.derived}
+            for effect in attempted
+        ],
+    }
+    artifact = _assumed_qualified_history_for_postcondition_test(monkeypatch, record, checkpoint)
+    monkeypatch.setattr(
+        application, "_read_accepted_never_called_evidence", lambda **_kw: _s1_history_stub(False)
+    )
+    monkeypatch.setattr(
+        application, "_verified_zero_original_accepted_effects", lambda **_kw: zero_source_proven
+    )
+    monkeypatch.setattr(
+        application, "consequence_postconditions_complete", lambda *_args, **_kw: True
+    )
+
+    observed_effects: list[StagedEffect] = []
+
+    class Observer:
+        def __init__(self, *_args: object, **_kw: object) -> None:
+            pass
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            observed_effects.append(effect)
+            return True
+
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
+    proof = application.classify_accepted_read_only_effects(
+        record=record,
+        source=source,
+        recovery_evidence=checkpoint,
+        repository="owner/repo",
+        token=REVISION,
+        current_revision=REVISION,
+        default_branch="main",
+        recovery_artifact=artifact,
+    )
+    assert proof.disposition == expected
+    assert proof.continuation == ("CONTINUE" if expected == "COMPLETE" else "OBSERVE")
+    # The canonical DAG already observed the exact successor's postcondition.
+    # A second identical GET adds no proof and can introduce transient drift.
+    assert observed_effects == (list(attempted) if expected == "COMPLETE" else [])
+
+
+def test_r9_conflicting_immutable_effect_is_unsafe_even_if_current_postcondition_is_true(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tampered native checkpoint is not a transient history gap or completed intent."""
+    original, source = _batch()
+    accepted_raw = json.dumps(
+        {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "accepted",
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+                for effect in original.effects
+            ],
+        }
+    )
+    accepted = parse_application_decision(
+        render_application_decision_body(
+            request_comment_id=91,
+            request_body="immutable original request",
+            authorization_revision=REVISION,
+            decision=_decision(),
+            disposition="ACCEPTED",
+            raw_worker_result=accepted_raw,
+            reason="application accepted",
+        )
+    )
+    assert accepted is not None
+    conflicting = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "different effect"})
+    )
+    failure: dict[str, object] = {
+        "unfinished_boundary": "effect-precondition-exception",
+        "mutation_status": "not-complete",
+        "write_call_entered": False,
+        "operation_stage": "READ",
+        "rejection": None,
+        "failed_effect_index": 0,
+        "failed_effect_kind": conflicting.kind,
+        "failed_effect_sha256": hashlib.sha256(conflicting.payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+        "attempt_revision": REVISION,
+        "attempted_effects": [
+            {"kind": conflicting.kind, "payload_json": conflicting.payload_json, "derived": False}
+        ],
+    }
+    artifact = _assumed_qualified_history_for_postcondition_test(monkeypatch, accepted, failure)
+
+    class Observer:
+        def __init__(self, *_args: object, **_kw: object) -> None:
+            pass
+
+        def observe_postcondition(self, _effect: StagedEffect) -> bool:
+            return True
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
+    proof = application.classify_accepted_read_only_effects(
+        record=accepted,
+        source=source,
+        recovery_evidence=failure,
+        repository="owner/repo",
+        token=REVISION,
+        current_revision=REVISION,
+        default_branch="main",
+        recovery_artifact=artifact,
+    )
+    assert proof.disposition == "UNSAFE"
+    assert proof.continuation == "REJECT"
+    assert proof.original_effect_proof is not None
+    assert proof.original_effect_proof.disposition == "CONFLICT"
+
+
+@pytest.mark.parametrize("malformed_slot", ["FORMAL_RESULT", "SUCCESSOR"])
+def test_accepted_derived_slot_must_match_immutable_formal_and_successor_identity(
+    monkeypatch: pytest.MonkeyPatch, malformed_slot: str
+) -> None:
+    """A native history witness cannot make a wrongly typed/derived slot COMPLETE."""
+    from investment_strategy.scheduled_agent_effects import derived_transition_effect
+
+    original, source = _batch()
+    raw = json.dumps(
+        {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "accepted",
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+                for effect in original.effects
+            ],
+        }
+    )
+    record = parse_application_decision(
+        render_application_decision_body(
+            request_comment_id=91,
+            request_body="original request",
+            authorization_revision=REVISION,
+            decision=_decision(),
+            disposition="ACCEPTED",
+            raw_worker_result=raw,
+            reason="application accepted",
+        )
+    )
+    assert record is not None
+    formal = parse_effect_batch(
+        application._application_owned_worker_result(
+            raw, source=source, change=CHANGE, current_revision=REVISION, request_comment_id=91
+        ),
+        source,
+        authorized_change=CHANGE,
+    ).effects[-1]
+    if malformed_slot == "FORMAL_RESULT":
+        wrong = StagedEffect(
+            "issue-comment", json.dumps({"issue_number": 138, "body": "not a formal result"})
+        )
+        attempted = (*original.effects, wrong)
+    else:
+        wrong = derived_transition_effect(
+            issue_number=source.issue_number,
+            change=CHANGE,
+            successor=Action.REVIEW_IMPLEMENTATION,
+        )
+        attempted = (*original.effects, formal, wrong)
+    checkpoint: dict[str, object] = {
+        "mutation_status": "not-complete",
+        "unfinished_boundary": "effect-precondition-exception",
+        "write_call_entered": False,
+        "operation_stage": "READ",
+        "rejection": None,
+        "failed_effect_index": len(attempted) - 1,
+        "failed_effect_kind": wrong.kind,
+        "failed_effect_sha256": hashlib.sha256(wrong.payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": list(range(len(attempted) - 1)),
+        "completed_effect_sha256": [
+            hashlib.sha256(e.payload_json.encode()).hexdigest() for e in attempted[:-1]
+        ],
+        "attempt_revision": REVISION,
+        "attempted_effects": [
+            {"kind": e.kind, "payload_json": e.payload_json, "derived": e.derived}
+            for e in attempted
+        ],
+    }
+    artifact = _assumed_qualified_history_for_postcondition_test(monkeypatch, record, checkpoint)
+
+    class Observer:
+        def __init__(self, *_args: object, **_kw: object) -> None:
+            pass
+
+        def observe_postcondition(self, _effect: StagedEffect) -> bool:
+            return True
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
+    proof = application.classify_accepted_read_only_effects(
+        record=record,
+        source=source,
+        recovery_evidence=checkpoint,
+        repository="owner/repo",
+        token=REVISION,
+        current_revision=REVISION,
+        default_branch="main",
+        recovery_artifact=artifact,
+    )
+    assert proof.disposition == "UNSAFE"
+    assert proof.continuation == "REJECT"
 
 
 def _batch(
@@ -84,6 +809,435 @@ def _decision() -> ActionApplicationDecision:
         Action.IMPLEMENT_CHANGE,
         role_for(Action.IMPLEMENT_CHANGE),
     )
+
+
+def _assumed_qualified_history_for_postcondition_test(
+    monkeypatch: pytest.MonkeyPatch,
+    record: application.ApplicationDecisionRecord,
+    failure: dict[str, object],
+) -> application.ApplicationRecoveryArtifact:
+    """Isolate postcondition tests from the separately tested history proof.
+
+    This fixture assumes a qualified run history; it is NOT a native recovery
+    reader or a proof that a bare checkpoint authorizes another write.
+    """
+    artifact = application.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=record.request_comment_id,
+        accepted_decision_sha256="b" * 64,
+        failure_evidence_sha256=application._canonical_sha256(failure),
+        recovery_episode_sha256="c" * 64,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={
+            "issue_number": record.issue_number,
+            "role": record.role,
+            "action": record.action,
+            "authorization_revision": record.authorization_revision,
+            "failure_evidence": failure,
+        },
+    )
+    monkeypatch.setattr(
+        application,
+        "_read_accepted_never_called_evidence",
+        lambda **kw: _s1_history_stub(
+            kw["artifact"] is artifact
+            and kw["record"].request_comment_id == record.request_comment_id
+        ),
+    )
+    return artifact
+
+
+@pytest.mark.parametrize("original_count", [1, 2])
+@pytest.mark.parametrize(
+    ("successor_failed", "successor_durable", "history_qualified", "formal_durable", "expected"),
+    [
+        (False, False, True, False, "COMPLETE"),
+        (False, False, True, True, "COMPLETE"),
+        (True, False, True, False, "COMPLETE"),
+        (True, True, False, False, "COMPLETE"),
+        (True, False, False, False, "INDETERMINATE"),
+    ],
+)
+def test_read_only_ir_identifies_formal_result_and_successor_nodes(
+    monkeypatch: pytest.MonkeyPatch,
+    original_count: int,
+    successor_failed: bool,
+    successor_durable: bool,
+    history_qualified: bool,
+    formal_durable: bool,
+    expected: str,
+) -> None:
+    """R8: real read-only classification must distinguish Application obligations."""
+    _, source = _batch()
+    original_effects = tuple(
+        StagedEffect(
+            "issue-comment",
+            json.dumps({"issue_number": source.issue_number, "body": f"accepted original {n}"}),
+        )
+        for n in range(original_count)
+    )
+    raw = json.dumps(
+        {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "accepted",
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+                for effect in original_effects
+            ],
+        }
+    )
+    record = parse_application_decision(
+        render_application_decision_body(
+            request_comment_id=91,
+            request_body="original request",
+            authorization_revision=REVISION,
+            decision=_decision(),
+            disposition="ACCEPTED",
+            raw_worker_result=raw,
+            reason="application accepted",
+        )
+    )
+    assert record is not None
+    projected = application._application_owned_worker_result(
+        raw,
+        source=source,
+        change=CHANGE,
+        current_revision=REVISION,
+        request_comment_id=91,
+    )
+    formal = parse_effect_batch(projected, source, authorized_change=CHANGE).effects[-1]
+    from investment_strategy.scheduled_agent_effects import derived_transition_effect
+
+    successor = derived_transition_effect(
+        issue_number=source.issue_number, change=CHANGE, successor=Action.IMPLEMENT_CHANGE
+    )
+    attempted = (*original_effects, formal, *((successor,) if successor_failed else ()))
+    failed = attempted[-1]
+    checkpoint: dict[str, object] = {
+        "mutation_status": "not-complete",
+        "unfinished_boundary": "effect-precondition-exception",
+        "write_call_entered": False,
+        "operation_stage": "READ",
+        "rejection": None,
+        "failed_effect_index": len(attempted) - 1,
+        "failed_effect_kind": failed.kind,
+        "failed_effect_sha256": hashlib.sha256(failed.payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": list(range(len(attempted) - 1)),
+        "completed_effect_sha256": [
+            hashlib.sha256(effect.payload_json.encode()).hexdigest() for effect in attempted[:-1]
+        ],
+        "attempt_revision": REVISION,
+        "attempted_effects": [
+            {"kind": effect.kind, "payload_json": effect.payload_json, "derived": effect.derived}
+            for effect in attempted
+        ],
+    }
+    artifact = _assumed_qualified_history_for_postcondition_test(monkeypatch, record, checkpoint)
+
+    class Observer:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            return (
+                effect in attempted[:-1]
+                or (formal_durable and effect == formal)
+                or (successor_durable and effect == successor)
+            )
+
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
+
+    if not history_qualified:
+        # Even an already committed formal result is not a completed projection.
+        # The final routing must also be authoritative and positive.
+        monkeypatch.setattr(
+            application,
+            "_read_accepted_never_called_evidence",
+            lambda **_kw: _s1_history_stub(False),
+        )
+        monkeypatch.setattr(
+            application, "consequence_postconditions_complete", lambda *_a, **_kw: True
+        )
+
+    observed_nodes: list[application.RecoveryEvidenceNode] = []
+    original_evaluator = application.evaluate_recovery_evidence
+
+    def capture(node: application.RecoveryEvidenceNode) -> application.RecoveryProofResult:
+        observed_nodes.append(node)
+        return original_evaluator(node)
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
+    monkeypatch.setattr(application, "evaluate_recovery_evidence", capture)
+    proof = application.classify_accepted_read_only_effects(
+        record=record,
+        source=source,
+        recovery_evidence=checkpoint,
+        repository="owner/repo",
+        token=REVISION,
+        current_revision=REVISION,
+        default_branch="main",
+        recovery_artifact=artifact,
+    )
+    assert proof.disposition == expected
+    if expected == "INDETERMINATE":
+        # The actual Formal/Successor UNKNOWN must survive beyond the
+        # Original source witness, including physical-zero accepted intent.
+        frontier = proof.pending_frontier_proof
+        assert frontier is not None
+        assert frontier.disposition == "UNKNOWN"
+        assert frontier.frontier_index == original_count + int(successor_failed or formal_durable)
+        assert frontier.remaining_obligation == (
+            "SUCCESSOR" if successor_failed or formal_durable else "FORMAL_RESULT"
+        )
+        # An unavailable native GET/history is still an exact pending fact,
+        # but it is not positive evidence of an irreducible maintenance need.
+        assert proof.runtime_repair_frontier is None
+    else:
+        assert proof.pending_frontier_proof is None
+    assert [node.obligation for node in observed_nodes if node.effect == formal] == [
+        "FORMAL_RESULT"
+    ]
+    if successor_failed:
+        # One attempted DAG fact; a later positively observed Successor
+        # adds one typed proof of the same exact Effect and its ancestry.
+        assert [node.obligation for node in observed_nodes if node.effect == successor] == [
+            "SUCCESSOR"
+        ] * (2 if successor_durable else 1)
+        if successor_durable:
+            # Even a never-entered successor that becomes durable must pass
+            # the shared typed DAG, not a caller-owned Boolean completion gate.
+            positive = [
+                node
+                for node in observed_nodes
+                if node.effect == successor and node.final_postcondition is True
+            ]
+            assert len(positive) == 1
+            assert [parent.effect for parent in positive[0].depends_on] == [
+                *original_effects,
+                formal,
+            ]
+    # The historical no-call frontier is a typed DAG obligation, not always
+    # an ORIGINAL_EFFECT. Positive already-committed successor may exit early.
+    frontiers = [node.obligation for node in observed_nodes if node.effect is None]
+    if successor_failed and successor_durable and not history_qualified:
+        assert frontiers == []
+    else:
+        assert frontiers == ["SUCCESSOR" if successor_failed or formal_durable else "FORMAL_RESULT"]
+    if formal_durable:
+        successor_frontiers = [
+            node
+            for node in observed_nodes
+            if node.effect is None and node.obligation == "SUCCESSOR"
+        ]
+        assert len(successor_frontiers) == 1
+        assert [parent.effect for parent in successor_frontiers[0].depends_on] == [
+            *original_effects,
+            formal,
+        ]
+
+
+@pytest.mark.parametrize(
+    ("observation", "expected"),
+    [
+        (None, "COMPLETE"),
+        (OSError, "INDETERMINATE"),
+        (RuntimeError, "RAISE"),
+        (TypeError, "RAISE"),
+        (ValueError, "RAISE"),
+    ],
+)
+def test_fresh_accepted_proof_captures_only_io_not_implementation_defects(
+    monkeypatch: pytest.MonkeyPatch,
+    observation: type[Exception] | None,
+    expected: str,
+) -> None:
+    """R9: finite proof owner must not swallow a permanent contract defect."""
+
+    batch, source = _batch()
+    raw = json.dumps(
+        {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "accepted",
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+                for effect in batch.effects
+            ],
+        }
+    )
+    decision = render_application_decision_body(
+        request_comment_id=91,
+        request_body="original accepted source",
+        authorization_revision=REVISION,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    record = parse_application_decision(decision)
+    assert record is not None
+    monkeypatch.setattr(application, "_github_json", lambda *_a: {"default_branch": "main"})
+    monkeypatch.setattr(application, "_fresh_branch_head", lambda *_a: REVISION)
+
+    def observed(**_kwargs: object) -> application.AcceptedPostEffectProof:
+        if observation is not None:
+            raise observation("unexpected proof contract defect")
+        return application.AcceptedPostEffectProof("COMPLETE", "exact target state observed")
+
+    monkeypatch.setattr(application, "_observe_accepted_post_effect_result", observed)
+
+    def classify() -> application.AcceptedPostEffectProof:
+        return application._fresh_accepted_activation_proof(
+            record, repository="owner/repo", token=REVISION
+        )
+
+    if expected == "RAISE":
+        assert observation is not None
+        with pytest.raises(observation, match="unexpected proof contract defect"):
+            classify()
+    else:
+        proof = classify()
+        assert proof.disposition == expected
+        assert proof.continuation == ("CONTINUE" if expected == "COMPLETE" else "OBSERVE")
+
+
+@pytest.mark.parametrize("empty_original", [False, True])
+@pytest.mark.parametrize("already_durable", [False, True])
+def test_exception_recovery_real_guarded_engine_cross_wake(
+    monkeypatch: pytest.MonkeyPatch, empty_original: bool, already_durable: bool
+) -> None:
+    """Real guarded effect engine: no old replay; one lawful formal/successor."""
+
+    import investment_strategy.scheduled_agent_effects as effects
+    import investment_strategy.scheduled_agent_merge_acceptance as merge
+
+    original, source = _batch()
+    semantic = {
+        "issue_number": source.issue_number,
+        "role": source.role,
+        "action": source.action,
+        "change": CHANGE,
+        "result_kind": "ready",
+        "evidence_ref": "issuecomment-138-qualified",
+        "result_content": "already accepted",
+    }
+    original_effects = (
+        []
+        if empty_original
+        else [
+            {"kind": effect.kind, "payload_json": effect.payload_json}
+            for effect in original.effects
+        ]
+    )
+    formal = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\nformal"}),
+    }
+    accepted_raw = json.dumps(dict(semantic, requested_effects=original_effects))
+    fresh_raw = json.dumps(dict(semantic, requested_effects=[formal]))
+    projected_raw, original_count = application._accepted_reconciliation_effect_projection(
+        accepted_raw=accepted_raw,
+        projected_raw=fresh_raw,
+        source=source,
+        change=CHANGE,
+    )
+    assert original_count == len(original_effects)
+    formal_effect = parse_effect_batch(projected_raw, source, authorized_change=CHANGE).effects[-1]
+    derived = StagedEffect(
+        "routing-transition",
+        json.dumps({"issue_number": 138, "action": "implement-change"}),
+        derived=True,
+    )
+    state = {
+        "original": already_durable,
+        "formal": False,
+        "successor": False,
+    }
+    writes: list[str] = []
+
+    def identify(effect: StagedEffect) -> str:
+        if effect == derived:
+            return "successor"
+        if effect == formal_effect:
+            return "formal"
+        return "original"
+
+    class Adapter:
+        def __init__(self, *_a: object, **_k: object) -> None:
+            pass
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            return state[identify(effect)]
+
+        def guard(self, effect: StagedEffect) -> bool:
+            assert not state[identify(effect)]
+            return True
+
+        def apply(self, effect: StagedEffect) -> None:
+            key = identify(effect)
+            assert not state[key]
+            writes.append(key)
+            state[key] = True
+
+        def validate_implementation_checkpoint(self, *_a: object) -> bool:
+            return True
+
+        def carrier_plan_if_required(self, *_a: object) -> None:
+            return None
+
+        def effect_rejection(self) -> None:
+            return None
+
+    monkeypatch.setattr(merge, "GitHubEffectAdapter", Adapter)
+    monkeypatch.setattr(merge, "acquire_current_github_preflight", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        effects,
+        "_typed_application_plan",
+        lambda *_a: (_decision(), derived, None),
+    )
+
+    def run(*, proven_empty: bool) -> tuple[EffectBatch, effects.ApplyResult]:
+        return merge.run_guarded_effect_application(
+            projected_raw,
+            source=source,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            authorized_change=CHANGE,
+            accepted_intent=True,
+            reconcile_only=True,
+            uncertain_effect_index=original_count - 1,
+            proven_empty_original_effects=proven_empty,
+        )
+
+    if empty_original:
+        _, rejected = run(proven_empty=False)
+        assert not rejected.applied and writes == []
+    if not empty_original and not already_durable:
+        _, blocked = run(proven_empty=False)
+        assert not blocked.applied and writes == []
+        state["original"] = True
+
+    _, first = run(proven_empty=empty_original)
+    assert first.applied
+    assert writes == ["formal", "successor"]
+    _, second = run(proven_empty=empty_original)
+    assert second.applied and writes == ["formal", "successor"]
 
 
 @pytest.mark.parametrize("already_complete", [True, False])
@@ -350,7 +1504,9 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
                 {"kind": first_kind, "payload_json": batch.effects[0].payload_json},
                 {
                     "kind": "issue-comment",
-                    "payload_json": json.dumps({"body": "ACTION_RESULT\npending"}),
+                    "payload_json": json.dumps(
+                        {"issue_number": 138, "body": "ACTION_RESULT\npending"}
+                    ),
                 },
             ],
         }
@@ -382,6 +1538,10 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
                 else state["formal"]
             )
 
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            # Simulate the adapter's already-qualified native source, not a bool fallback.
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
+
     monkeypatch.setattr(application, "GitHubEffectAdapter", ReadOnlyAdapter)
     evidence: dict[str, object] = {
         "reason": "indeterminate accepted effects require reconciliation",
@@ -393,10 +1553,35 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
         "completed_effect_indexes": [],
         "completed_effect_sha256": [],
         "rejection": None,
+        "attempted_effects": [
+            {"kind": first_kind, "payload_json": batch.effects[0].payload_json, "derived": False}
+        ],
+        "attempt_revision": REVISION,
+        "write_call_entered": True,
     }
+    history_artifact = _assumed_qualified_history_for_postcondition_test(
+        monkeypatch, record, evidence
+    )
 
     def observe() -> bool:
-        return application.accepted_read_only_effects_complete(
+        return (
+            application.classify_accepted_read_only_effects(
+                record=record,
+                source=source,
+                recovery_evidence=evidence,
+                repository="owner/repo",
+                token=REVISION,
+                current_revision=REVISION,
+                default_branch="main",
+                recovery_artifact=history_artifact,
+            ).disposition
+            == "COMPLETE"
+        )
+
+    def classify(
+        artifact: application.ApplicationRecoveryArtifact | None,
+    ) -> application.AcceptedPostEffectProof:
+        return application.classify_accepted_read_only_effects(
             record=record,
             source=source,
             recovery_evidence=evidence,
@@ -404,21 +1589,133 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
             token=REVISION,
             current_revision=REVISION,
             default_branch="main",
+            recovery_artifact=artifact,
         )
+
+    # RED: one canonical typed proof must not flatten a source contradiction
+    # into the same reschedulable UNKNOWN as a temporary missing history read.
+    assert classify(None).disposition == "INDETERMINATE"
+    forged_artifact = replace(
+        history_artifact,
+        document={
+            **history_artifact.document,
+            "failure_evidence": {**evidence, "failed_effect_sha256": "f" * 64},
+        },
+    )
+    assert classify(forged_artifact).disposition == "UNSAFE"
+    assert classify(history_artifact).disposition == "INDETERMINATE"
 
     assert not observe()
     state["original"] = True
     assert observe()  # The later formal write is not a prerequisite.
-    assert observations == [first_kind, first_kind]
+    assert classify(history_artifact).disposition == "COMPLETE"
+    assert observations == [first_kind, first_kind, first_kind, first_kind]
 
     evidence["failed_effect_index"] = 1
     evidence["failed_effect_kind"] = "issue-comment"
-    evidence["failed_effect_sha256"] = hashlib.sha256(
-        json.loads(raw)["requested_effects"][1]["payload_json"].encode()
-    ).hexdigest()
+    formal_payload = json.loads(raw)["requested_effects"][1]["payload_json"]
+    evidence["failed_effect_sha256"] = hashlib.sha256(formal_payload.encode()).hexdigest()
+    evidence["attempted_effects"] = [
+        *cast(list[dict[str, object]], evidence["attempted_effects"]),
+        {"kind": "issue-comment", "payload_json": formal_payload, "derived": False},
+    ]
     assert not observe()  # But when the formal write itself was unknown, observe it.
     state["formal"] = True
     assert observe()
+
+
+@pytest.mark.parametrize(
+    ("error_type", "retryable"),
+    [
+        (OSError, True),
+        (RuntimeError, False),
+        (TypeError, False),
+        (ValueError, False),
+    ],
+)
+def test_accepted_recovery_observer_captures_only_operational_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+    retryable: bool,
+) -> None:
+    """An unexpected proof implementation failure must not become endless OBSERVE."""
+
+    original, source = _batch()
+    effect = original.effects[0]
+    raw = json.dumps(
+        {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "accepted",
+            "requested_effects": [{"kind": effect.kind, "payload_json": effect.payload_json}],
+        }
+    )
+    decision_body = render_application_decision_body(
+        request_comment_id=91,
+        request_body="exact accepted source",
+        authorization_revision=REVISION,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    record = parse_application_decision(decision_body)
+    assert record is not None
+    evidence: dict[str, object] = {
+        "reason": "accepted observation unavailable",
+        "mutation_status": "unknown",
+        "unfinished_boundary": "effect-reconciliation",
+        "failed_effect_index": 0,
+        "failed_effect_kind": effect.kind,
+        "failed_effect_sha256": hashlib.sha256(effect.payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+        "rejection": None,
+        "attempt_revision": REVISION,
+        "attempted_effects": [
+            {"kind": effect.kind, "payload_json": effect.payload_json, "derived": False}
+        ],
+    }
+    history = _assumed_qualified_history_for_postcondition_test(monkeypatch, record, evidence)
+
+    class FailingObserver:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def observe_postcondition(self, _effect: StagedEffect) -> bool:
+            raise error_type("proof-boundary failure")
+
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            self.observe_postcondition(effect)
+            return None
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", FailingObserver)
+
+    def classify() -> application.AcceptedPostEffectProof:
+        return application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=evidence,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+            recovery_artifact=history,
+        )
+
+    if retryable:
+        proof = classify()
+        assert proof.disposition == "INDETERMINATE"
+        assert proof.continuation == "OBSERVE"
+    else:
+        # The existing outer execution exception boundary owns unexpected
+        # programming/contract errors; no stale accepted write is replayed.
+        with pytest.raises(error_type, match="proof-boundary failure"):
+            classify()
 
 
 def test_archive_phase_drift_observes_original_dispatch_before_writing_new_pr(
@@ -550,16 +1847,27 @@ def test_archive_phase_drift_observes_original_dispatch_before_writing_new_pr(
             return bool(stage["original_completed"])
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
+    history_artifact = _assumed_qualified_history_for_postcondition_test(
+        monkeypatch, record, failure
+    )
+    # The raw worker intent contains zero physical original worker Effects.
+    # Application's projected workflow-dispatch Effect remains separately
+    # observable and may not be rebound to a newly projected carrier.
+    monkeypatch.setattr(application, "_verified_zero_original_accepted_effects", lambda **_kw: True)
 
     def original_complete() -> bool:
-        return application.accepted_read_only_effects_complete(
-            record=record,
-            source=source,
-            recovery_evidence=failure,
-            repository="owner/repo",
-            token=REVISION,
-            current_revision=advanced_revision,
-            default_branch="main",
+        return (
+            application.classify_accepted_read_only_effects(
+                record=record,
+                source=source,
+                recovery_evidence=failure,
+                repository="owner/repo",
+                token=REVISION,
+                current_revision=advanced_revision,
+                default_branch="main",
+                recovery_artifact=history_artifact,
+            ).disposition
+            == "COMPLETE"
         )
 
     assert not original_complete()
@@ -731,14 +2039,24 @@ def test_merge_phase_drift_preserves_original_merge_before_ref_cleanup(
             return effect == merge
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", Reader)
-    assert application.accepted_read_only_effects_complete(
-        record=record,
-        source=source,
-        recovery_evidence=failure,
-        repository="owner/repo",
-        token=REVISION,
-        current_revision="d" * 40,
-        default_branch="main",
+    history_artifact = _assumed_qualified_history_for_postcondition_test(
+        monkeypatch, record, failure
+    )
+    # Physical worker originals are empty; the Application-owned merge write
+    # is still observed at its exact historical Effect identity, not replayed.
+    monkeypatch.setattr(application, "_verified_zero_original_accepted_effects", lambda **_kw: True)
+    assert (
+        application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=failure,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision="d" * 40,
+            default_branch="main",
+            recovery_artifact=history_artifact,
+        ).disposition
+        == "COMPLETE"
     )
     assert observed == [merge]  # No ref-delete observation or replay.
 
@@ -1018,7 +2336,16 @@ def test_application_continuation_at_r2_preserves_durable_r1_formal_result(
         recovery_episode_sha256="f" * 64,
         recovery_attempt=1,
         continuation_eligible=True,
-        document={"failure_evidence": failure, "prior_failure_evidence_sha256": []},
+        document={
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "authorization_revision": r1,
+            "trigger_comment_id": request_id,
+            "failure_evidence": failure,
+            "prior_failure_evidence_sha256": [],
+            "predecessor": None,
+        },
     )
     active = {
         "revision": r2,
@@ -1074,6 +2401,14 @@ def test_application_continuation_at_r2_preserves_durable_r1_formal_result(
         lambda *_a, **_kw: active["predecessor"],
     )
     monkeypatch.setattr(application, "_authorization_revision_is_ancestor", lambda *_a: True)
+    monkeypatch.setattr(application, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
+    monkeypatch.setattr(application, "_verified_zero_original_accepted_effects", lambda **_kw: True)
+    monkeypatch.setattr(
+        application, "read_application_recovery_artifact", lambda *_a, **_kw: predecessor
+    )
+    monkeypatch.setattr(
+        dispatch, "_application_runs", lambda *_a, **_kw: ({"id": 7001, "run_attempt": 1},)
+    )
 
     class DurableReader:
         def __init__(self, *_a: object, **kwargs: object) -> None:
@@ -1090,6 +2425,9 @@ def test_application_continuation_at_r2_preserves_durable_r1_formal_result(
         def observe_postcondition(self, effect: StagedEffect) -> bool:
             assert effect == original_formal
             return True
+
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", DurableReader)
     monkeypatch.setattr(application, "_write_carrier_outputs", lambda *_a: None)
@@ -1393,6 +2731,33 @@ def test_durable_formal_then_zero_write_successor_rejection_recovers_after_revis
         "_application_decision_comment_for_request",
         lambda **_kw: (record, decision_body),
     )
+    # The derived guard rejection follows an independently qualified earlier
+    # formal-write response loss. A newly emitted checkpoint is not the whole
+    # accepted history; retain its original native predecessor as proof.
+    first_sha = application._canonical_sha256(original_failure)
+    first_artifact = application.ApplicationRecoveryArtifact(
+        run_id=6001,
+        run_attempt=1,
+        job_id=6002,
+        artifact_id=6003,
+        artifact_digest="sha256:" + "e" * 64,
+        request_comment_id=request_id,
+        accepted_decision_sha256=hashlib.sha256(decision_body.encode()).hexdigest(),
+        failure_evidence_sha256=first_sha,
+        recovery_episode_sha256="f" * 64,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "authorization_revision": r1,
+            "trigger_comment_id": request_id,
+            "prior_failure_evidence_sha256": [],
+            "predecessor": None,
+            "failure_evidence": original_failure,
+        },
+    )
     monkeypatch.setenv("GITHUB_RUN_ID", "7001")
     monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "github-output"))
     artifact = tmp_path / "zero-write-derived-recovery.json"
@@ -1408,7 +2773,7 @@ def test_durable_formal_then_zero_write_successor_rejection_recovers_after_revis
         current_revision=r2,
         run_attempt=1,
         continuation=None,
-        predecessor=None,
+        predecessor=first_artifact,
         effect_batch=batch,
     )
     document = json.loads(artifact.read_text(encoding="utf-8"))
@@ -1430,15 +2795,44 @@ def test_durable_formal_then_zero_write_successor_rejection_recovers_after_revis
             assert effect == formal  # Never demand the rejected derived write.
             return True
 
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
+
     monkeypatch.setattr(application, "GitHubEffectAdapter", Reader)
-    assert application.accepted_read_only_effects_complete(
-        record=record,
-        source=source,
-        recovery_evidence=failure,
-        repository="royhsu-work/investment-strategy",
-        token=REVISION,
-        current_revision=r3,
-        default_branch="main",
+    monkeypatch.setattr(application, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
+    monkeypatch.setattr(application, "_verified_zero_original_accepted_effects", lambda **_kw: True)
+    monkeypatch.setattr(
+        application, "read_application_recovery_artifact", lambda *_a, **_kw: first_artifact
+    )
+    monkeypatch.setattr(
+        dispatch, "_application_runs", lambda *_a, **_kw: ({"id": 6001, "run_attempt": 1},)
+    )
+    current_artifact = application.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=request_id,
+        accepted_decision_sha256=document["accepted_decision_sha256"],
+        failure_evidence_sha256=document["failure_evidence_sha256"],
+        recovery_episode_sha256=document["recovery_episode_sha256"],
+        recovery_attempt=2,
+        continuation_eligible=True,
+        document=document,
+    )
+    assert (
+        application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=failure,
+            repository="royhsu-work/investment-strategy",
+            token=REVISION,
+            current_revision=r3,
+            default_branch="main",
+            recovery_artifact=current_artifact,
+        ).disposition
+        == "COMPLETE"
     )
     assert observed == [formal]
 
@@ -1798,7 +3192,21 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
         def observe_postcondition(self, effect: StagedEffect) -> bool:
             return effect_state[effect_ids.index((effect.kind, effect.payload_json))]
 
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
+
     monkeypatch.setattr(application, "GitHubEffectAdapter", ReadOnlyAdapter)
+    # The genuine artifact reader has qualified the predecessor above.
+    # This integration test exercises the dispatcher/continuation wiring;
+    # intent-wide historical proof has independent positive/negative tests.
+    monkeypatch.setattr(
+        application,
+        "_read_accepted_never_called_evidence",
+        lambda **kw: _s1_history_stub(
+            kw["artifact"] == second_qualified
+            and kw["record"].request_comment_id == record.request_comment_id
+        ),
+    )
 
     def classify_again() -> dispatch.ApplicationCompletion:
         return dispatch._application_job(
@@ -2030,3 +3438,1045 @@ def test_read_only_recovery_of_recovery_is_evidence_bounded(
     # A stable read-only observation must retain the ability to observe a
     # *later* authoritative GitHub postcondition, without replaying the write.
     assert second_document["continuation_eligible"] is True
+
+
+@pytest.mark.parametrize("pre_guard_failure", [False, True])
+def test_partial_guard_exception_reuses_verified_unattempted_suffix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pre_guard_failure: bool
+) -> None:
+    """Native-shaped recovery evidence: E0 durable, E1 never called, then fresh E1/formal/route."""
+
+    import investment_strategy.scheduled_agent_effects as effects
+
+    original, source = _batch()
+    first = original.effects[0]
+    second = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "second accepted write"})
+    )
+    formal = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "ACTION_RESULT\nformal"})
+    )
+    semantic = {
+        "issue_number": source.issue_number,
+        "role": source.role,
+        "action": source.action,
+        "change": CHANGE,
+        "result_kind": "ready",
+        "evidence_ref": "issuecomment-138-qualified",
+        "result_content": "accepted semantics",
+    }
+    accepted_raw = json.dumps(
+        dict(
+            semantic,
+            requested_effects=[
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+                for effect in (first, second)
+            ],
+        )
+    )
+    projected_raw = json.dumps(
+        dict(
+            semantic,
+            requested_effects=[
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+                for effect in (first, second, formal)
+            ],
+        )
+    )
+    recovered_raw, original_count = application._accepted_reconciliation_effect_projection(
+        accepted_raw=accepted_raw,
+        projected_raw=projected_raw,
+        source=source,
+        change=CHANGE,
+    )
+    assert original_count == 2
+    batch = parse_effect_batch(recovered_raw, source, authorized_change=CHANGE)
+    successor = effects.derived_transition_effect(
+        issue_number=138, change=CHANGE, successor=Action.IMPLEMENT_CHANGE
+    )
+    monkeypatch.setattr(
+        effects, "_typed_application_plan", lambda *_a: (_decision(), successor, None)
+    )
+    labels = {first: "E0", second: "E1", formal: "formal", successor: "successor"}
+    durable: set[str] = set()
+    writes: list[str] = []
+    interrupted = {"allowed": True}
+
+    def observe(effect: StagedEffect) -> bool:
+        return labels[effect] in durable
+
+    def guard(effect: StagedEffect) -> bool:
+        if interrupted["allowed"] and effect == second and (pre_guard_failure or "E0" in durable):
+            raise OSError("transient GitHub GET failure before this write")
+        return True
+
+    def apply(effect: StagedEffect) -> None:
+        key = labels[effect]
+        assert key not in durable, f"replayed {key}"
+        durable.add(key)
+        writes.append(key)
+
+    def run(recover: bool) -> effects.ApplyResult:
+        return apply_effect_batch(
+            batch,
+            fresh_preflight=lambda: cast(DispatchPreflight, None),
+            effect_guard=guard,
+            apply_effect=apply,
+            observe_postcondition=observe,
+            current_revision=REVISION,
+            accepted_intent=True,
+            reconcile_only=recover,
+            uncertain_effect_index=0 if recover else None,
+        )
+
+    failed = run(False)
+    assert not failed.applied and failed.recovery_evidence is not None
+    assert failed.recovery_evidence.unfinished_boundary == "effect-precondition-exception"
+    assert failed.recovery_evidence.mutation_status == "not-complete"
+    if pre_guard_failure:
+        assert failed.recovery_evidence.failed_effect_index == 0
+        assert writes == []
+        durable.add("E0")  # Independently observed before any lawful continuation.
+    else:
+        assert failed.recovery_evidence.failed_effect_index == 1
+        assert failed.recovery_evidence.completed_effect_indexes == (0,)
+        assert writes == ["E0"]
+    decision_body = render_application_decision_body(
+        request_comment_id=91,
+        request_body="exact accepted request",
+        authorization_revision=REVISION,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=accepted_raw,
+        reason="application accepted",
+    )
+    record = parse_application_decision(decision_body)
+    assert record is not None
+    monkeypatch.setattr(
+        application,
+        "_application_decision_comment_for_request",
+        lambda **_kw: (record, decision_body),
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "7001")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "github-output"))
+    artifact_path = tmp_path / "recovery.json"
+    assert application._write_application_recovery_evidence(
+        str(artifact_path),
+        result=failed,
+        repository="owner/repo",
+        token=REVISION,
+        source=source,
+        request_comment_id=91,
+        trigger_comment_id=91,
+        authorization_revision=REVISION,
+        current_revision=REVISION,
+        run_attempt=1,
+        continuation=None,
+        predecessor=None,
+        effect_batch=batch,
+    )
+    failure = json.loads(artifact_path.read_text())["failure_evidence"]
+    assert application._accepted_recovery_boundary(failure) == "READ_ONLY"
+    attempted = application._verified_attempted_effect_checkpoint(failure, source=source)
+    assert attempted is not None
+    assert attempted[0] == first
+    assert attempted[-1] == (first if pre_guard_failure else second)
+
+    class FreshAdapter:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            return observe(effect)
+
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", FreshAdapter)
+    native_document = json.loads(artifact_path.read_text())
+    native = application.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "b" * 64,
+        request_comment_id=91,
+        accepted_decision_sha256=native_document["accepted_decision_sha256"],
+        failure_evidence_sha256=native_document["failure_evidence_sha256"],
+        recovery_episode_sha256=native_document["recovery_episode_sha256"],
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document=native_document,
+    )
+    monkeypatch.setattr(
+        application, "_accepted_worker_result_for_continuation", lambda **_kw: accepted_raw
+    )
+    monkeypatch.setattr(
+        dispatch, "_application_runs", lambda *_a, **_kw: ({"id": 7001, "run_attempt": 1},)
+    )
+
+    def qualified(checkpoint: dict[str, object]) -> bool:
+        return (
+            application.classify_accepted_read_only_effects(
+                record=record,
+                source=source,
+                recovery_evidence=checkpoint,
+                repository="owner/repo",
+                token=REVISION,
+                current_revision=REVISION,
+                default_branch="main",
+                recovery_artifact=native,
+            ).disposition
+            == "COMPLETE"
+        )
+
+    assert qualified(failure)
+
+    # A transient failure in a *later read-only* Application must not turn
+    # an E1 never-called proof into a synthetic UNKNOWN write. Carry the
+    # immutable parent execution frontier through a new run-scoped Artifact.
+    monkeypatch.setenv("GITHUB_RUN_ID", "7004")
+    second_artifact_path = tmp_path / "read-only-deferred-evidence.json"
+    assert application._write_application_recovery_evidence(
+        str(second_artifact_path),
+        result=application.ApplyResult(
+            False, "accepted original effect not currently proven complete"
+        ),
+        repository="owner/repo",
+        token=REVISION,
+        source=source,
+        request_comment_id=91,
+        trigger_comment_id=1000,
+        authorization_revision=REVISION,
+        current_revision=REVISION,
+        run_attempt=1,
+        continuation=None,
+        predecessor=native,
+        preserve_predecessor_failure=True,
+    )
+    deferred_document = json.loads(second_artifact_path.read_text())
+    assert deferred_document["failure_evidence"]["write_call_entered"] is False
+    inherited_attempts = deferred_document["failure_evidence"]["attempted_effects"]
+    assert inherited_attempts == failure["attempted_effects"]
+    deferred_artifact = application.ApplicationRecoveryArtifact(
+        run_id=7004,
+        run_attempt=1,
+        job_id=7005,
+        artifact_id=7006,
+        artifact_digest="sha256:" + "d" * 64,
+        request_comment_id=91,
+        accepted_decision_sha256=deferred_document["accepted_decision_sha256"],
+        failure_evidence_sha256=deferred_document["failure_evidence_sha256"],
+        recovery_episode_sha256=deferred_document["recovery_episode_sha256"],
+        recovery_attempt=2,
+        continuation_eligible=True,
+        document=deferred_document,
+    )
+    monkeypatch.setattr(
+        application, "read_application_recovery_artifact", lambda *_a, **_kw: native
+    )
+    assert (
+        application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=deferred_document["failure_evidence"],
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+            recovery_artifact=deferred_artifact,
+        ).disposition
+        == "COMPLETE"
+    )
+    mutated = dict(failure, failed_effect_sha256="f" * 64)
+    assert not qualified(mutated)
+
+    # The identical latest before-write checkpoint must not hide a previous
+    # attempted write whose response was lost. That history is UNKNOWN, not
+    # a certified NOT_APPLIED permission for the same immutable Effect.
+    previous_failure = dict(
+        failure,
+        mutation_status="unknown",
+        unfinished_boundary="effect-postcondition",
+        operation_stage="WRITE",
+        write_call_entered=True,
+    )
+    previous_hash = application._canonical_sha256(previous_failure)
+    previous = replace(
+        native,
+        failure_evidence_sha256=previous_hash,
+        document={
+            **native_document,
+            "failure_evidence": previous_failure,
+            "failure_evidence_sha256": previous_hash,
+        },
+    )
+    latest_document = {
+        **native_document,
+        "recovery_attempt": 2,
+        "trigger_comment_id": 1000,
+        "prior_failure_evidence_sha256": [previous_hash],
+        "predecessor": {
+            "run_id": previous.run_id,
+            "run_attempt": previous.run_attempt,
+            "job_id": previous.job_id,
+            "artifact_id": previous.artifact_id,
+            "artifact_digest": previous.artifact_digest,
+            "failure_evidence_sha256": previous_hash,
+            "recovery_attempt": 1,
+        },
+    }
+    latest = replace(
+        native,
+        run_id=8001,
+        job_id=8002,
+        artifact_id=8003,
+        recovery_attempt=2,
+        document=latest_document,
+    )
+    monkeypatch.setattr(
+        application, "read_application_recovery_artifact", lambda *_a, **_kw: previous
+    )
+
+    def prior_attempt_satisfied() -> bool:
+        return (
+            application.classify_accepted_read_only_effects(
+                record=record,
+                source=source,
+                recovery_evidence=failure,
+                repository="owner/repo",
+                token=REVISION,
+                current_revision=REVISION,
+                default_branch="main",
+                recovery_artifact=latest,
+            ).disposition
+            == "COMPLETE"
+        )
+
+    # A previous lost response cannot prove NOT_APPLIED. But once the exact
+    # Effect is durably SATISFIED, continuing it is no replay.
+    assert prior_attempt_satisfied() is pre_guard_failure
+    durable.remove("E0")
+    assert not prior_attempt_satisfied()  # Positive proof is no longer present.
+    # No completed prefix exists when the failure preceded every Effect.
+    assert qualified(failure) is pre_guard_failure
+    durable.add("E0")
+    interrupted["allowed"] = False
+    if pre_guard_failure:
+        # The source checkpoint proves only E0 was unattempted; the next
+        # fresh run must still inspect E0 rather than assuming it was done.
+        durable.remove("E0")
+        assert run(False).applied
+        assert writes == ["E0", "E1", "formal", "successor"]
+    else:
+        assert run(True).applied
+        assert writes == ["E0", "E1", "formal", "successor"]
+    assert run(False).applied
+    assert writes == ["E0", "E1", "formal", "successor"]
+
+
+def test_attempted_effect_exception_is_unknown_not_a_write_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same engine distinguishes an uncalled E1 from a lost E1 write response."""
+
+    import investment_strategy.scheduled_agent_effects as effects
+
+    base, _source = _batch()
+    second = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "second accepted write"})
+    )
+    batch = replace(base, effects=(base.effects[0], second))
+    successor = effects.derived_transition_effect(
+        issue_number=138, change=CHANGE, successor=Action.IMPLEMENT_CHANGE
+    )
+    monkeypatch.setattr(
+        effects, "_typed_application_plan", lambda *_a: (_decision(), successor, None)
+    )
+    complete: set[StagedEffect] = set()
+    writes: list[StagedEffect] = []
+
+    def apply(effect: StagedEffect) -> None:
+        if effect == second:
+            raise OSError("lost write response for E1")
+        complete.add(effect)
+        writes.append(effect)
+
+    def reconcile() -> effects.ApplyResult:
+        return apply_effect_batch(
+            batch,
+            fresh_preflight=lambda: cast(DispatchPreflight, None),
+            effect_guard=lambda _e: True,
+            apply_effect=apply,
+            observe_postcondition=lambda e: e in complete,
+            current_revision=REVISION,
+            accepted_intent=True,
+            reconcile_only=True,
+            uncertain_effect_index=1,
+        )
+
+    first = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: cast(DispatchPreflight, None),
+        effect_guard=lambda _e: True,
+        apply_effect=apply,
+        observe_postcondition=lambda e: e in complete,
+        current_revision=REVISION,
+        accepted_intent=True,
+    )
+    assert not first.applied and first.recovery_evidence is not None
+    assert first.recovery_evidence.mutation_status == "unknown"
+    assert first.recovery_evidence.unfinished_boundary == "effect-postcondition"
+    assert first.recovery_evidence.operation_stage == "WRITE"
+    assert first.recovery_evidence.write_call_entered is True
+    assert first.recovery_evidence.raw_error == "lost write response for E1"
+    assert first.recovery_evidence.completed_effect_indexes == (0,)
+    assert writes == [batch.effects[0]]
+    assert not reconcile().applied
+    assert writes == [batch.effects[0]]  # The uncertain E1 must never replay.
+    complete.add(second)  # A later fresh GET establishes exact E1 durability.
+    assert reconcile().applied
+    assert writes == [batch.effects[0], successor]
+
+
+@pytest.mark.parametrize("completed_first", [False, True])
+def test_initial_accepted_effect_observation_failure_has_exact_frontier(
+    monkeypatch: pytest.MonkeyPatch, completed_first: bool
+) -> None:
+    """RED: the initial all-Effect GET can fail before any effect guard is called."""
+
+    import investment_strategy.scheduled_agent_effects as effects
+
+    original, _source = _batch()
+    second = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "second accepted write"})
+    )
+    batch = replace(original, effects=(original.effects[0], second))
+    successor = effects.derived_transition_effect(
+        issue_number=138, change=CHANGE, successor=Action.IMPLEMENT_CHANGE
+    )
+    monkeypatch.setattr(
+        effects, "_typed_application_plan", lambda *_args: (_decision(), successor, None)
+    )
+    observed: list[StagedEffect] = []
+    writes: list[StagedEffect] = []
+
+    def read_postcondition(effect: StagedEffect) -> bool:
+        observed.append(effect)
+        if effect == second:
+            raise OSError("GitHub GET failed before any E1 write")
+        return completed_first
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: cast(DispatchPreflight, None),
+        effect_guard=lambda _effect: pytest.fail("guard ran after unqualified GET"),
+        apply_effect=lambda effect: writes.append(effect),
+        observe_postcondition=read_postcondition,
+        current_revision=REVISION,
+        accepted_intent=True,
+    )
+    assert not result.applied
+    assert result.recovery_evidence is not None
+    evidence = result.recovery_evidence
+    assert evidence.failed_effect_index == 1
+    assert evidence.failed_effect_sha256 == hashlib.sha256(second.payload_json.encode()).hexdigest()
+    assert evidence.unfinished_boundary == "effect-precondition-exception"
+    assert evidence.completed_effect_indexes == ((0,) if completed_first else ())
+    assert evidence.mutation_status == "not-complete"  # invocation-local only
+    assert evidence.operation_stage == "READ"
+    assert evidence.write_call_entered is False
+    assert evidence.raw_error == "GitHub GET failed before any E1 write"
+    assert observed == [original.effects[0], second]
+    assert writes == []
+
+
+@pytest.mark.parametrize("guard_failure", ["rejected", "exception"])
+def test_prewrite_guard_preserves_observed_completed_prefix(
+    monkeypatch: pytest.MonkeyPatch, guard_failure: str
+) -> None:
+    """A pre-write E1 failure must retain the independently observed E0 frontier."""
+
+    import investment_strategy.scheduled_agent_effects as effects
+
+    original, _source = _batch()
+    first = original.effects[0]
+    second = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "second original write"})
+    )
+    batch = replace(original, effects=(first, second))
+    successor = effects.derived_transition_effect(
+        issue_number=138, change=CHANGE, successor=Action.IMPLEMENT_CHANGE
+    )
+    monkeypatch.setattr(
+        effects, "_typed_application_plan", lambda *_args: (_decision(), successor, None)
+    )
+    guarded: list[StagedEffect] = []
+
+    def guard(effect: StagedEffect) -> bool:
+        guarded.append(effect)
+        if effect != second:
+            pytest.fail("already completed E0 must not be guarded or replayed")
+        if guard_failure == "exception":
+            raise OSError("E1 pre-write GET unavailable")
+        return False
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: cast(DispatchPreflight, None),
+        effect_guard=guard,
+        apply_effect=lambda _effect: pytest.fail("no Effect write was authorized"),
+        observe_postcondition=lambda effect: effect == first,
+        current_revision=REVISION,
+        accepted_intent=True,
+    )
+    assert not result.applied and result.recovery_evidence is not None
+    recovery = result.recovery_evidence
+    assert recovery.failed_effect_index == 1
+    assert recovery.completed_effect_indexes == (0,)
+    assert recovery.completed_effect_sha256 == (
+        hashlib.sha256(first.payload_json.encode()).hexdigest(),
+    )
+    assert recovery.write_call_entered is False
+    assert recovery.operation_stage == "BEFORE-WRITE"
+    assert guarded == [second]
+
+
+def test_run_local_effect_frontier_cannot_prove_accepted_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RED: the same absent effect may have a lost response in an earlier run."""
+
+    original, source = _batch()
+    effect = original.effects[0]
+    body = render_application_decision_body(
+        request_comment_id=91,
+        request_body="exact accepted request",
+        authorization_revision=REVISION,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=json.dumps(
+            {
+                "issue_number": 138,
+                "role": "lead",
+                "action": "resolve-question",
+                "change": CHANGE,
+                "result_kind": "ready",
+                "evidence_ref": "issuecomment-138-qualified",
+                "result_content": "accepted",
+                "requested_effects": [{"kind": effect.kind, "payload_json": effect.payload_json}],
+            }
+        ),
+        reason="application accepted",
+    )
+    record = parse_application_decision(body)
+    assert record is not None
+    failure: dict[str, object] = {
+        "reason": "effect observation raised before write: OSError",
+        "mutation_status": "not-complete",
+        "unfinished_boundary": "effect-precondition-exception",
+        "failed_effect_index": 0,
+        "failed_effect_kind": effect.kind,
+        "failed_effect_sha256": hashlib.sha256(effect.payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+        "rejection": None,
+        "attempt_revision": REVISION,
+        "attempted_effects": [
+            {"kind": effect.kind, "payload_json": effect.payload_json, "derived": False}
+        ],
+    }
+
+    class Observer:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def observe_postcondition(self, _effect: StagedEffect) -> bool:
+            return False
+
+        def observe_issue_comment_source_ref(self, _effect: StagedEffect) -> str | None:
+            return None
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
+    # No run / predecessor evidence was supplied. An invocation-local
+    # before-write failure must not upgrade an earlier unknown write to
+    # an intent-wide NOT_APPLIED permission.
+    assert (
+        application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=failure,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+        ).disposition
+        != "COMPLETE"
+    )
+
+
+def _s1_history_stub(
+    qualifies: bool,
+) -> application.CompleteNeverCalledWitness | application.TypedEvidenceError:
+    """Native history already independently tested; caller tests supply facts only."""
+    if qualifies:
+        return application.CompleteNeverCalledWitness(91, 0, "a" * 64, ((7001, 1, 7003),))
+    return application.TypedEvidenceError(
+        "UNKNOWN", "TEST_HISTORY", "not qualified in this test", 91
+    )
+
+
+@pytest.mark.parametrize("earlier_e1_write", [False, True])
+def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
+    monkeypatch: pytest.MonkeyPatch, earlier_e1_write: bool
+) -> None:
+    """Identical current GitHub state must not erase an earlier accepted write attempt."""
+
+    original, source = _batch()
+    first = original.effects[0]
+    second = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "second original effect"})
+    )
+    originals = (first, second)
+    raw = json.dumps(
+        {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "accepted",
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json} for effect in originals
+            ],
+        }
+    )
+    body = render_application_decision_body(
+        request_comment_id=91,
+        request_body="original request",
+        authorization_revision=REVISION,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    record = parse_application_decision(body)
+    assert record is not None
+    parent_index = 1 if earlier_e1_write else 0
+    parent_failure: dict[str, object] = {
+        "failed_effect_index": parent_index,
+        "failed_effect_kind": originals[parent_index].kind,
+        "failed_effect_sha256": hashlib.sha256(
+            originals[parent_index].payload_json.encode()
+        ).hexdigest(),
+        "completed_effect_indexes": [0] if earlier_e1_write else [],
+        "completed_effect_sha256": [hashlib.sha256(first.payload_json.encode()).hexdigest()]
+        if earlier_e1_write
+        else [],
+        "mutation_status": "unknown",
+        "unfinished_boundary": "effect-postcondition",
+        "write_call_entered": True,
+        "operation_stage": "WRITE",
+        "rejection": None,
+        "attempt_revision": REVISION,
+        "attempted_effects": [
+            {"kind": effect.kind, "payload_json": effect.payload_json, "derived": False}
+            for effect in originals[: parent_index + 1]
+        ],
+    }
+    episode = "c" * 64
+    decision_sha = hashlib.sha256(body.encode()).hexdigest()
+    parent = application.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "d" * 64,
+        request_comment_id=91,
+        accepted_decision_sha256=decision_sha,
+        failure_evidence_sha256=application._canonical_sha256(parent_failure),
+        recovery_episode_sha256=episode,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={
+            "issue_number": 138,
+            "role": source.role,
+            "action": source.action,
+            "authorization_revision": REVISION,
+            "trigger_comment_id": 91,
+            "prior_failure_evidence_sha256": [],
+            "predecessor": None,
+            "failure_evidence": parent_failure,
+        },
+    )
+    child_failure: dict[str, object] = {
+        "failed_effect_index": 1,
+        "failed_effect_kind": second.kind,
+        "failed_effect_sha256": hashlib.sha256(second.payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": [0],
+        "completed_effect_sha256": [hashlib.sha256(first.payload_json.encode()).hexdigest()],
+        "mutation_status": "not-complete",
+        "unfinished_boundary": "effect-precondition-exception",
+        "write_call_entered": False,
+        "operation_stage": "READ",
+        "rejection": None,
+        "attempt_revision": REVISION,
+        "attempted_effects": [
+            {"kind": effect.kind, "payload_json": effect.payload_json, "derived": False}
+            for effect in originals
+        ],
+    }
+    child = application.ApplicationRecoveryArtifact(
+        run_id=7004,
+        run_attempt=1,
+        job_id=7005,
+        artifact_id=7006,
+        artifact_digest="sha256:" + "e" * 64,
+        request_comment_id=91,
+        accepted_decision_sha256=decision_sha,
+        failure_evidence_sha256=application._canonical_sha256(child_failure),
+        recovery_episode_sha256=episode,
+        recovery_attempt=2,
+        continuation_eligible=True,
+        document={
+            "issue_number": 138,
+            "role": source.role,
+            "action": source.action,
+            "authorization_revision": REVISION,
+            "trigger_comment_id": 1000,
+            "prior_failure_evidence_sha256": [parent.failure_evidence_sha256],
+            "predecessor": {
+                "run_id": parent.run_id,
+                "run_attempt": parent.run_attempt,
+                "job_id": parent.job_id,
+                "artifact_id": parent.artifact_id,
+                "artifact_digest": parent.artifact_digest,
+                "failure_evidence_sha256": parent.failure_evidence_sha256,
+                "recovery_attempt": 1,
+            },
+            "failure_evidence": child_failure,
+        },
+    )
+    monkeypatch.setattr(application, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
+    monkeypatch.setattr(
+        dispatch, "_application_runs", lambda *_a, **_kw: ({"id": 7001, "run_attempt": 1},)
+    )
+
+    def read_parent(
+        _repository: str,
+        _token: str,
+        *,
+        run_id: int,
+        run_attempt: int,
+        job_id: int,
+        request_comment_id: int,
+        accepted_decision_sha256: str,
+        strict_read: bool,
+    ) -> application.ApplicationRecoveryArtifact:
+        assert (run_id, run_attempt, job_id, request_comment_id) == (7001, 1, 7002, 91)
+        assert accepted_decision_sha256 == decision_sha and strict_read
+        return parent
+
+    monkeypatch.setattr(application, "read_application_recovery_artifact", read_parent)
+
+    class Observer:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def observe_postcondition(self, effect: StagedEffect) -> bool:
+            # Identical current truth: E0 is durable, E1 is not (yet).
+            return effect == first
+
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
+
+    monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
+    qualified = (
+        application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=child_failure,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+            recovery_artifact=child,
+        ).disposition
+        == "COMPLETE"
+    )
+    assert qualified is not earlier_e1_write
+
+    if earlier_e1_write:
+        # RED: the exact E1 postcondition may become true after the lost
+        # earlier write response. A verified SATISFIED Effect never needs
+        # NOT_APPLIED/no-call proof; continuing must not replay E1.
+        observed: list[StagedEffect] = []
+
+        class LaterObserved:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def observe_postcondition(self, effect: StagedEffect) -> bool:
+                observed.append(effect)
+                assert effect in originals
+                return True
+
+            def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+                return "issues/comments/992001" if self.observe_postcondition(effect) else None
+
+        monkeypatch.setattr(application, "GitHubEffectAdapter", LaterObserved)
+        later = application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=child_failure,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+            recovery_artifact=child,
+        )
+        assert later.disposition == "COMPLETE"
+        assert observed == [first, second]
+
+    # A locally non-entered E1 does not override an earlier attempt that
+    # already crossed its claimed no-call frontier. This qualified native
+    # history needs non-writing intervention, not a blind replay.
+    crossed = application._read_accepted_never_called_evidence(
+        record=record,
+        source=source,
+        artifact=child,
+        failed_index=0,
+        repository="owner/repo",
+        token=REVISION,
+    )
+    assert isinstance(crossed, application.TypedEvidenceError)
+    assert (crossed.category, crossed.stage) == ("UNKNOWN", "ATTEMPTED")
+    assert crossed.intervention_required
+    assert crossed.artifact_id == child.artifact_id
+    if not earlier_e1_write:
+        assert isinstance(
+            application._read_accepted_never_called_evidence(
+                record=record,
+                source=source,
+                artifact=child,
+                failed_index=1,
+                repository="owner/repo",
+                token=REVISION,
+            ),
+            application.CompleteNeverCalledWitness,
+        )
+    # Omitted or conflicting history cannot become a replay permission.
+    assert (
+        application.classify_accepted_read_only_effects(
+            record=record,
+            source=source,
+            recovery_evidence=child_failure,
+            repository="owner/repo",
+            token=REVISION,
+            current_revision=REVISION,
+            default_branch="main",
+        ).disposition
+        != "COMPLETE"
+    )
+    # No accepted successor is followed by another physical Effect.
+    # Even a complete native chain must reject an out-of-range target,
+    # rather than certify a fictitious never-called Effect.
+    phantom = application._read_accepted_never_called_evidence(
+        record=record,
+        source=source,
+        artifact=child,
+        failed_index=len(originals) + 2,
+        repository="owner/repo",
+        token=REVISION,
+    )
+    assert isinstance(phantom, application.TypedEvidenceError)
+    assert (phantom.category, phantom.stage) == ("CONFLICT", "SOURCE_IDENTITY")
+
+    # The native history witness must consume the same accepted original
+    # result identity proof as the READ_ONLY classifier. A re-read of this
+    # exact source with a different semantic result kind is a contradiction,
+    # even when the immutable Effect list and Artifact chain are unchanged.
+    changed_result = dict(json.loads(raw), result_kind="blocked")
+    monkeypatch.setattr(
+        application,
+        "_accepted_worker_result_for_continuation",
+        lambda **_kw: json.dumps(changed_result),
+    )
+    mismatch = application._read_accepted_never_called_evidence(
+        record=record,
+        source=source,
+        artifact=child,
+        failed_index=1,
+        repository="owner/repo",
+        token=REVISION,
+    )
+    assert isinstance(mismatch, application.TypedEvidenceError)
+    assert (mismatch.category, mismatch.stage) == ("CONFLICT", "ORIGINAL_RESULT")
+
+
+@pytest.mark.parametrize(
+    ("boundary", "mutation_status", "entered", "classification"),
+    [
+        ("effect-precondition-exception", "not-complete", False, None),
+        ("effect-postcondition", "unknown", True, None),
+        ("effect-precondition", "not-complete", False, "effect-precondition-unsatisfied"),
+    ],
+)
+def test_read_only_deferral_preserves_immutable_execution_frontier(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    boundary: str,
+    mutation_status: str,
+    entered: bool,
+    classification: str | None,
+) -> None:
+    """RED: an unavailable fresh GET must not rewrite the earlier write-call fact.
+
+    A new read-only Application run has not issued this Effect. Its checkpoint
+    must preserve the original, content-addressed execution boundary; otherwise
+    a never-called E1 becomes an artificial unknown write and stalls forever.
+    """
+    second = StagedEffect(
+        "issue-comment", json.dumps({"issue_number": 138, "body": "unattempted second Effect"})
+    )
+    rejection = (
+        None
+        if classification is None
+        else {
+            "classification": classification,
+            "expected": "exact guard",
+            "observed": "rejected before write",
+        }
+    )
+    previous: dict[str, object] = {
+        "reason": "prior immutable execution checkpoint",
+        "failed_effect_index": 1,
+        "failed_effect_kind": second.kind,
+        "failed_effect_sha256": hashlib.sha256(second.payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": [0],
+        "completed_effect_sha256": ["a" * 64],
+        "mutation_status": mutation_status,
+        "unfinished_boundary": boundary,
+        "write_call_entered": entered,
+        "operation_stage": "READ" if not entered else "WRITE",
+        "raw_error": "prior source-bound GitHub I/O failure",
+        "rejection": rejection,
+    }
+    assert application._accepted_recovery_boundary(previous) == "READ_ONLY"
+
+    source = WorkerRequest(138, "lead", "resolve-question")
+    raw = json.dumps(
+        {
+            "issue_number": 138,
+            "role": source.role,
+            "action": source.action,
+            "change": CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "issuecomment-138-qualified",
+            "result_content": "original accepted result",
+            "requested_effects": [],
+        }
+    )
+    decision_body = render_application_decision_body(
+        request_comment_id=91,
+        request_body="original exact request",
+        authorization_revision=REVISION,
+        decision=_decision(),
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    record = parse_application_decision(decision_body)
+    assert record is not None
+    monkeypatch.setattr(
+        application,
+        "_application_decision_comment_for_request",
+        lambda **_kwargs: (record, decision_body),
+    )
+    predecessor = application.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=91,
+        accepted_decision_sha256=hashlib.sha256(decision_body.encode()).hexdigest(),
+        failure_evidence_sha256=application._canonical_sha256(previous),
+        recovery_episode_sha256="b" * 64,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "authorization_revision": REVISION,
+            "prior_failure_evidence_sha256": [],
+            "failure_evidence": previous,
+        },
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "7004")
+    deferred = application.ApplyResult(
+        False, "accepted original effect not currently proven complete"
+    )
+
+    def persist(target: Path, prior: application.ApplicationRecoveryArtifact) -> bool:
+        return application._write_application_recovery_evidence(
+            str(target),
+            result=deferred,
+            repository="owner/repo",
+            token=REVISION,
+            source=source,
+            request_comment_id=91,
+            trigger_comment_id=1000,
+            authorization_revision=REVISION,
+            current_revision=REVISION,
+            run_attempt=1,
+            continuation=None,
+            predecessor=prior,
+            preserve_predecessor_failure=True,
+        )
+
+    path = tmp_path / "read-only-checkpoint.json"
+    assert persist(path, predecessor)
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    fresh_document = saved["failure_evidence"]
+    assert application._accepted_recovery_boundary(fresh_document) == "READ_ONLY"
+    assert saved["predecessor"]["artifact_id"] == predecessor.artifact_id
+    assert saved["prior_failure_evidence_sha256"] == [predecessor.failure_evidence_sha256]
+    assert saved["failure_evidence_sha256"] == application._canonical_sha256(fresh_document)
+    for name in (
+        "failed_effect_index",
+        "failed_effect_kind",
+        "failed_effect_sha256",
+        "completed_effect_indexes",
+        "completed_effect_sha256",
+        "mutation_status",
+        "unfinished_boundary",
+        "write_call_entered",
+        "operation_stage",
+        "raw_error",
+        "rejection",
+    ):
+        assert fresh_document[name] == previous[name], name
+    assert fresh_document["reason"] != previous["reason"]
+
+    # Content-addressed identity is a necessary producer precondition.
+    forged = replace(predecessor, failure_evidence_sha256="f" * 64)
+    bad_path = tmp_path / "forged-checkpoint.json"
+    assert not persist(bad_path, forged)
+    assert not bad_path.exists()
+
+
+def test_bare_boolean_cannot_prove_intent_wide_never_called() -> None:
+    """R3/R5 RED: a caller-supplied boolean is not a qualified no-call witness."""
+    effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"non-idempotent effect"}')
+    # This intentionally invalid historical call is a runtime-negative test.
+    # Cast the constructor, not the proof, so mypy still checks production types.
+    with pytest.raises(TypeError):
+        cast(Any, application.RecoveryEvidenceNode)(
+            "ORIGINAL_EFFECT",
+            effect,
+            final_postcondition=False,
+            positive_never_called=True,
+        )

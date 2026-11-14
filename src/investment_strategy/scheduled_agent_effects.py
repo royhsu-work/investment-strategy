@@ -73,6 +73,7 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
     qualify_current_formal_consequence,
 )
+from investment_strategy.scheduled_agent_formal_result import FormalLifecycleEvent
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     WorkerRequest,
@@ -369,6 +370,9 @@ class EffectRecoveryEvidence:
     mutation_status: str
     unfinished_boundary: str
     rejection: ApplicationRejection | None = None
+    operation_stage: str | None = None
+    write_call_entered: bool | None = None
+    raw_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1396,6 +1400,7 @@ def apply_effect_batch(
     accepted_intent: bool = False,
     reconcile_only: bool = False,
     uncertain_effect_index: int | None = None,
+    proven_empty_original_effects: bool = False,
     durable_checkpoint_revision: str | None = None,
     persist_application_decision: (
         Callable[[ActionApplicationDecision, str, str], bool] | None
@@ -1491,6 +1496,9 @@ def apply_effect_batch(
         completed_indexes: tuple[int, ...] = (),
         unfinished_boundary: str = "effect-precondition",
         mutation_status: str = "not-complete",
+        operation_stage: str | None = None,
+        write_call_entered: bool | None = None,
+        raw_error: str | None = None,
     ) -> ApplyResult:
         failed_effect = (
             effects_to_apply[effect_index]
@@ -1518,8 +1526,30 @@ def apply_effect_batch(
             mutation_status=mutation_status,
             unfinished_boundary=unfinished_boundary,
             rejection=rejection,
+            operation_stage=operation_stage,
+            write_call_entered=write_call_entered,
+            raw_error=raw_error,
         )
         return ApplyResult(False, reason, rejection=rejection, recovery_evidence=evidence)
+
+    def interrupted_before_write(
+        effect_index: int,
+        completed: tuple[int, ...],
+        exc: OSError,
+        *,
+        operation_stage: str = "BEFORE-WRITE",
+    ) -> ApplyResult:
+        # These are *invocation-local* facts, never historical NOT_APPLIED proof.
+        return rejected(
+            f"effect observation raised before write: {type(exc).__qualname__}",
+            effect_index,
+            completed_indexes=completed,
+            unfinished_boundary="effect-precondition-exception",
+            mutation_status="not-complete",
+            operation_stage=operation_stage,
+            write_call_entered=False,
+            raw_error=str(exc),
+        )
 
     # ACCEPT is the immutable linearization point.  A new process may enter
     # after any GitHub write (including a write whose HTTP response was lost).
@@ -1527,11 +1557,19 @@ def apply_effect_batch(
     # the latter normally describes the pre-write state and can no longer
     # hold once the effect is durable.  Never infer completion from a failed
     # guard, and never apply this shortcut to an unaccepted worker request.
-    completed_before = {
-        index
-        for index, effect in enumerate(effects_to_apply)
-        if accepted_intent and observe_postcondition(effect)
-    }
+    completed_before: set[int] = set()
+    if accepted_intent:
+        for index, effect in enumerate(effects_to_apply):
+            try:
+                if observe_postcondition(effect):
+                    completed_before.add(index)
+            except OSError as exc:
+                # The first observation is also an I/O boundary. Preserve
+                # the exact observed prefix instead of escaping without a
+                # recovery checkpoint or inferring historical non-attempt.
+                return interrupted_before_write(
+                    index, tuple(sorted(completed_before)), exc, operation_stage="READ"
+                )
 
     def unproven_effect(missing: int | None) -> ApplyResult:
         failed_effect = effects_to_apply[missing] if missing is not None else derived_effect
@@ -1567,15 +1605,37 @@ def apply_effect_batch(
     # may apply it (notably the original formal result and legal successor).
     # An absent boundary retains the older, more restrictive read-only mode.
     if reconcile_only:
-        if not accepted_intent or (
-            uncertain_effect_index is not None
-            and (
-                type(uncertain_effect_index) is not int
-                or uncertain_effect_index < 0
-                or uncertain_effect_index > len(batch.effects)
-            )
+        valid_index = uncertain_effect_index is None or (
+            type(uncertain_effect_index) is int
+            and (uncertain_effect_index >= 0 or proven_empty_original_effects)
+            and uncertain_effect_index <= len(batch.effects)
+        )
+        if (
+            not accepted_intent
+            or not valid_index
+            or (proven_empty_original_effects and uncertain_effect_index != -1)
         ):
             return ApplyResult(False, "indeterminate accepted effects require reconciliation")
+        if proven_empty_original_effects:
+            # The caller has already proven an exact empty immutable source.
+            # Only the Application-owned formal result may follow that empty
+            # attempted frontier; no untrusted/new control write can enter.
+            expected_marker = (
+                "REVIEW_RESULT"
+                if batch.source.role == "reviewer"
+                else "MERGE_RESULT"
+                if batch.source.action.startswith("merge-")
+                else "ACTION_RESULT"
+            )
+            if len(batch.effects) != 1 or batch.effects[0].kind != "issue-comment":
+                return ApplyResult(False, "empty accepted original has unexpected Effects")
+            payload = _effect_payload(batch.effects[0])
+            if (
+                not isinstance(payload, Mapping)
+                or not isinstance(payload.get("body"), str)
+                or not cast(str, payload["body"]).startswith(expected_marker + "\n")
+            ):
+                return ApplyResult(False, "empty accepted original has no bounded formal result")
         observed_through = (
             len(batch.effects) if uncertain_effect_index is None else uncertain_effect_index
         )
@@ -1600,8 +1660,32 @@ def apply_effect_batch(
     for index, effect in enumerate(effects_to_apply):
         if index in completed_before:
             continue
-        if not effect_guard(effect):
-            return rejected("effect precondition rejected", index)
+        try:
+            guard_ok = effect_guard(effect)
+        except OSError as exc:
+            # The preflight guard pass has issued *no* Effects yet. Point
+            # the checkpoint at the earliest unobserved Effect, not the
+            # later guard whose GET failed.
+            first_pending = next(
+                (position for position in range(index + 1) if position not in completed_before),
+                index,
+            )
+            proven_prefix = tuple(
+                sorted(position for position in completed_before if position < first_pending)
+            )
+            return interrupted_before_write(first_pending, proven_prefix, exc)
+        if not guard_ok:
+            # Evidence describes the exact completed prefix at this boundary.
+            # Later completed Effects are not a sequential write certificate.
+            return rejected(
+                "effect precondition rejected",
+                index,
+                completed_indexes=tuple(
+                    sorted(position for position in completed_before if position < index)
+                ),
+                operation_stage="BEFORE-WRITE",
+                write_call_entered=False,
+            )
 
     if (
         not accepted_intent
@@ -1614,52 +1698,85 @@ def apply_effect_batch(
     ):
         return ApplyResult(False, "application decision postcondition not observed")
 
+    # Execute original and Application-derived Effects through the same
+    # guard/write/postcondition boundary. Derived Effects remain last, after
+    # the original frontier is fully observed or durably applied.
     completed_indexes: list[int] = []
-    for index, effect in enumerate(effects_to_apply):
-        if index in completed_before or (accepted_intent and observe_postcondition(effect)):
+    execution_order = (*effects_to_apply, derived_effect) if apply_derived else effects_to_apply
+    for index, effect in enumerate(execution_order):
+        is_derived = index == len(effects_to_apply)
+        try:
+            observed = index in completed_before or (
+                accepted_intent and observe_postcondition(effect)
+            )
+        except OSError as exc:
+            return interrupted_before_write(
+                index, tuple(completed_indexes), exc, operation_stage="READ"
+            )
+        if observed:
+            if is_derived:
+                return ApplyResult(True, "already-durable")
             completed_indexes.append(index)
             continue
-        if not effect_guard(effect):
+        try:
+            guard_ok = effect_guard(effect)
+        except OSError as exc:
+            return interrupted_before_write(index, tuple(completed_indexes), exc)
+        if not guard_ok:
             return rejected(
                 "effect precondition rejected",
                 index,
                 completed_indexes=tuple(completed_indexes),
+                operation_stage="BEFORE-WRITE",
+                write_call_entered=False,
             )
+
+        boundary = "derived-effect-postcondition" if is_derived else "effect-postcondition"
         try:
             apply_effect(effect)
         except CarrierRequired:
             raise
-        if not observe_postcondition(effect):
+        except OSError as exc:
+            operation = "derived" if is_derived else "effect"
+            return rejected(
+                f"{operation} write outcome unavailable: {type(exc).__qualname__}",
+                index,
+                completed_indexes=tuple(completed_indexes),
+                unfinished_boundary=boundary,
+                mutation_status="unknown",
+                operation_stage="WRITE",
+                write_call_entered=True,
+                raw_error=str(exc),
+            )
+        try:
+            observed_after = observe_postcondition(effect)
+        except OSError as exc:
+            return rejected(
+                (
+                    "derived postcondition observation unavailable"
+                    if is_derived
+                    else "durable postcondition observation unavailable"
+                ),
+                index,
+                completed_indexes=tuple(completed_indexes),
+                unfinished_boundary=boundary,
+                mutation_status="unknown",
+                operation_stage="AFTER-WRITE",
+                write_call_entered=True,
+                raw_error=str(exc),
+            )
+        if not observed_after:
             return rejected(
                 "durable postcondition not observed",
                 index,
                 completed_indexes=tuple(completed_indexes),
-                unfinished_boundary="effect-postcondition",
+                unfinished_boundary=boundary,
                 mutation_status="unknown",
+                operation_stage="AFTER-WRITE",
+                write_call_entered=True,
             )
-        completed_indexes.append(index)
-
-    if apply_derived:
-        if accepted_intent and observe_postcondition(derived_effect):
-            return ApplyResult(True, "already-durable")
-        if not effect_guard(derived_effect):
-            return rejected(
-                "effect precondition rejected",
-                len(effects_to_apply),
-                completed_indexes=tuple(completed_indexes),
-            )
-        try:
-            apply_effect(derived_effect)
-        except CarrierRequired:
-            raise
-        if not observe_postcondition(derived_effect):
-            return rejected(
-                "durable postcondition not observed",
-                len(effects_to_apply),
-                completed_indexes=tuple(completed_indexes),
-                unfinished_boundary="derived-effect-postcondition",
-                mutation_status="unknown",
-            )
+        if not is_derived:
+            completed_indexes.append(index)
 
     return ApplyResult(True, "applied")
 
@@ -3094,9 +3211,11 @@ class GitHubEffectAdapter:
                 return tuple(events)
             page += 1
 
-    def _formal_transition_is_qualified(self, effect: StagedEffect) -> bool:
+    def _formal_transition_is_qualified(
+        self, effect: StagedEffect, *, terminal_postcondition: bool = False
+    ) -> bool:
         if self.authorized_change == "unset":
-            return True
+            return not terminal_postcondition
         payload = _effect_payload(effect)
         current = self._current_issue()
         observation = None if current is None else normalize_github_issue(current)
@@ -3105,7 +3224,7 @@ class GitHubEffectAdapter:
             or observation is None
             or not observation.authoritative
             or observation.issue_number != self.source.issue_number
-            or observation.state != "open"
+            or observation.state != ("closed" if terminal_postcondition else "open")
             or observation.change != self.authorized_change
             or self.current_revision is None
         ):
@@ -3128,7 +3247,10 @@ class GitHubEffectAdapter:
             and observation.routing == expected_routing
             and expected_routing == self._accepted_successor_routing()
         )
-        if not at_source_frontier and not at_accepted_successor_frontier:
+        if terminal_postcondition:
+            if not self.accepted_intent or not expected_terminal or observation.routing is not None:
+                return False
+        elif not at_source_frontier and not at_accepted_successor_frontier:
             return False
         formal_comments = self._formal_comments()
         lifecycle_events = self._formal_lifecycle_events() if formal_comments else ()
@@ -3139,7 +3261,7 @@ class GitHubEffectAdapter:
             current_routing=observation.routing,
             comments=formal_comments,
             current_revision=self.current_revision,
-            mode="pending",
+            mode="current" if terminal_postcondition else "pending",
             expected_routing=expected_routing,
             expected_terminal=expected_terminal,
             source_routing=(self.source.role, self.source.action),
@@ -3201,7 +3323,19 @@ class GitHubEffectAdapter:
                     qualification_input,
                     authorization_ancestry=tuple(ancestry),
                 )
-        return qualify_current_formal_consequence(qualification_input).qualified
+        qualified = qualify_current_formal_consequence(qualification_input)
+        if not terminal_postcondition:
+            return qualified.qualified
+        # A closed Issue is attributable to this accepted request only when
+        # the exact formal result and terminal lifecycle are also qualified.
+        formal = qualified.event
+        return bool(
+            qualified.qualified
+            and isinstance(formal, FormalLifecycleEvent)
+            and (formal.role, formal.action) == (self.source.role, self.source.action)
+            and formal.result_kind == self.expected_result_kind
+            and formal.application_correlation == self._expected_formal_correlation()
+        )
 
     def guard(self, effect: StagedEffect) -> bool:
         self._last_rejection = None
@@ -3936,31 +4070,37 @@ class GitHubEffectAdapter:
             )
         return False
 
+    def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+        """Return the native object ref only after full postcondition qualification."""
+        if effect.kind != "issue-comment":
+            return None
+        payload = _effect_payload(effect)
+        if payload is None:
+            return None
+        bound_body = self._application_bound_comment_body(cast(str, payload["body"]))
+        comment_id = self._comment_ids.get(effect)
+        if comment_id is None:
+            # A later invocation has no process-local write receipt.
+            comment_id = self._existing_issue_comment(bound_body)
+        if comment_id is None:
+            return None
+        response = _github_json(
+            self.repository,
+            self.token,
+            f"issues/comments/{comment_id}",
+        )
+        if (
+            isinstance(response, Mapping)
+            and response.get("body") == bound_body
+            and response.get("id") == comment_id
+            and is_github_actions_comment(response)
+        ):
+            return f"issues/comments/{comment_id}"
+        return None
+
     def observe_postcondition(self, effect: StagedEffect) -> bool:
         if effect.kind == "issue-comment":
-            payload = _effect_payload(effect)
-            if payload is None:
-                return False
-            bound_body = self._application_bound_comment_body(cast(str, payload["body"]))
-            comment_id = self._comment_ids.get(effect)
-            if comment_id is None:
-                # An interrupted application has no process-local receipt.
-                # Reconstruct the exact durable comment by read-only GitHub
-                # observation, then verify its individual source object.
-                comment_id = self._existing_issue_comment(bound_body)
-            if comment_id is None:
-                return False
-            response = _github_json(
-                self.repository,
-                self.token,
-                f"issues/comments/{comment_id}",
-            )
-            return bool(
-                isinstance(response, Mapping)
-                and response.get("body") == bound_body
-                and response.get("id") == comment_id
-                and is_github_actions_comment(response)
-            )
+            return self.observe_issue_comment_source_ref(effect) is not None
 
         if effect.kind == "routing-transition":
             # A successor route can be committed just before interruption.
@@ -4002,7 +4142,15 @@ class GitHubEffectAdapter:
             current = self._current_issue()
             observation = None if current is None else normalize_github_issue(current)
             return bool(
-                effect in self._terminal_transitions
+                (
+                    effect in self._terminal_transitions
+                    or (
+                        self.accepted_intent
+                        and self._formal_transition_is_qualified(
+                            effect, terminal_postcondition=True
+                        )
+                    )
+                )
                 and payload is not None
                 and observation is not None
                 and observation.authoritative
