@@ -415,6 +415,7 @@ def test_shared_original_effect_prefix_observation(
         assert isinstance(nodes, application.RecoveryProofResult)
         assert nodes.disposition == "UNKNOWN"
         assert nodes.remaining_obligation == "ORIGINAL_EFFECT"
+        assert nodes.frontier_index == 1
         assert isinstance(nodes.witness, application.RecoveryEvidenceNode)
         assert nodes.witness.effect == second
     else:
@@ -995,6 +996,7 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         frontier = proof.pending_frontier_proof
         assert frontier is not None
         assert frontier.disposition == "UNKNOWN"
+        assert frontier.frontier_index == original_count + int(successor_failed or formal_durable)
         assert frontier.remaining_obligation == (
             "SUCCESSOR" if successor_failed or formal_durable else "FORMAL_RESULT"
         )
