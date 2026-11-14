@@ -412,9 +412,13 @@ def test_shared_original_effect_prefix_observation(
     )
     assert observed == [first, second]
     if not second_satisfied:
-        assert nodes is None
+        assert isinstance(nodes, application.RecoveryProofResult)
+        assert nodes.disposition == "UNKNOWN"
+        assert nodes.remaining_obligation == "ORIGINAL_EFFECT"
+        assert isinstance(nodes.witness, application.RecoveryEvidenceNode)
+        assert nodes.witness.effect == second
     else:
-        assert nodes is not None
+        assert isinstance(nodes, tuple)
         assert len(nodes) == 2
         assert all(not node.depends_on for node in nodes)
         assert application.evaluate_recovery_evidence(nodes[-1]).disposition == "SATISFIED"
@@ -444,7 +448,7 @@ def test_positive_original_effects_are_shared_flat_leaves() -> None:
     leaves = application._observe_accepted_effect_prefix(
         original, adapter, source=WorkerRequest(138, "lead", "resolve-question")
     )
-    assert leaves is not None
+    assert isinstance(leaves, tuple)
     assert len(leaves) == len(original)
     assert observed == list(original)
     assert all(not node.depends_on for node in leaves)
