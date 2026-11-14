@@ -2170,12 +2170,12 @@ def test_nonactivation_exception_proof_reconciles_original_effects_without_repla
 
     def track_original_proof(
         effects: Sequence[StagedEffect],
-        observe: Callable[[StagedEffect], bool],
+        adapter: bridge.GitHubEffectAdapter,
         *,
         source: WorkerRequest,
     ) -> tuple[bridge.RecoveryEvidenceNode, ...] | None:
         original_observations.append(tuple(effects))
-        return original_observer(effects, observe, source=source)
+        return original_observer(effects, adapter, source=source)
 
     monkeypatch.setattr(bridge, "_observe_accepted_effect_prefix", track_original_proof)
     seen: list[StagedEffect] = []
@@ -7435,6 +7435,9 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
 
         def observe_postcondition(self, _effect: StagedEffect) -> bool:
             return True
+
+        def observe_issue_comment_source_ref(self, _effect: StagedEffect) -> str | None:
+            return "issues/comments/992001"
 
     monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
     proof = bridge.classify_accepted_read_only_effects(

@@ -6231,6 +6231,18 @@ def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofResul
             result = RecoveryProofResult(
                 "UNKNOWN", fact.obligation, incomplete.witness, incomplete.remaining_obligation
             )
+        elif (
+            fact.final_postcondition is True
+            and fact.effect is not None
+            and fact.effect.kind == "issue-comment"
+            and (
+                fact.source_object_ref is None
+                or re.fullmatch(r"issues/comments/[1-9][0-9]*", fact.source_object_ref) is None
+            )
+        ):
+            # The adapter already checked the native source. An unqualified
+            # bool (or malformed source identity) is not positive proof.
+            result = RecoveryProofResult("UNKNOWN", fact.obligation, fact, fact.obligation)
         elif fact.final_postcondition is True:
             result = RecoveryProofResult("SATISFIED", fact.obligation, fact, None)
         elif fact.final_postcondition is False and isinstance(
@@ -6319,9 +6331,32 @@ def _accepted_frontier_obligation(original_count: int, index: int) -> RecoveryOb
     return "FORMAL_RESULT" if index == original_count else "SUCCESSOR"
 
 
+def _observe_accepted_effect_fact(
+    effect: StagedEffect,
+    adapter: GitHubEffectAdapter,
+    *,
+    source: WorkerRequest,
+) -> RecoveryEvidenceNode:
+    """Project one canonical native observation into a source-qualified fact."""
+
+    if effect.kind == "issue-comment":
+        source_ref = adapter.observe_issue_comment_source_ref(effect)
+        return RecoveryEvidenceNode(
+            _recovery_obligation(effect, source),
+            effect,
+            final_postcondition=source_ref is not None,
+            source_object_ref=source_ref,
+        )
+    return RecoveryEvidenceNode(
+        _recovery_obligation(effect, source),
+        effect,
+        final_postcondition=adapter.observe_postcondition(effect),
+    )
+
+
 def _observe_accepted_effect_prefix(
     effects: Sequence[StagedEffect],
-    observe_postcondition: Callable[[StagedEffect], bool],
+    adapter: GitHubEffectAdapter,
     *,
     source: WorkerRequest,
 ) -> tuple[RecoveryEvidenceNode, ...] | None:
@@ -6329,11 +6364,7 @@ def _observe_accepted_effect_prefix(
 
     nodes: list[RecoveryEvidenceNode] = []
     for effect in effects:
-        fact = RecoveryEvidenceNode(
-            _recovery_obligation(effect, source),
-            effect,
-            final_postcondition=observe_postcondition(effect),
-        )
+        fact = _observe_accepted_effect_fact(effect, adapter, source=source)
         if evaluate_recovery_evidence(fact).disposition != "SATISFIED":
             return None
         nodes.append(fact)
@@ -6557,7 +6588,7 @@ def _observe_accepted_post_effect_result(
             accepted_intent=True,
         )
         observed_originals = _observe_accepted_effect_prefix(
-            batch.effects, adapter.observe_postcondition, source=source
+            batch.effects, adapter, source=source
         )
         if observed_originals is None:
             return AcceptedPostEffectProof(
@@ -6996,7 +7027,7 @@ def classify_accepted_read_only_effects(
         # prove it was never called. Only an absent, invocation-local
         # never-called Effect requires the full historical NOT_APPLIED proof.
         proven_prefix = _observe_accepted_effect_prefix(
-            attempted[:-1], adapter.observe_postcondition, source=source
+            attempted[:-1], adapter, source=source
         )
         if proven_prefix is None:
             return AcceptedPostEffectProof(
@@ -7005,25 +7036,20 @@ def classify_accepted_read_only_effects(
         # A never-called derived Effect is not independently observed here:
         # its final state has a canonical consequence owner below. This
         # preserves the producer's no-write checkpoint observation boundary.
-        if index < len(original.effects) and attempted[-1].kind == "issue-comment":
-            # The witness must carry the very object ref that satisfied the
-            # positive native GET; do not promote a bare Boolean into proof.
-            positive_source_ref = adapter.observe_issue_comment_source_ref(attempted[-1])
-            failed_satisfied = positive_source_ref is not None
-        else:
-            positive_source_ref = None
-            failed_satisfied = (
-                adapter.observe_postcondition(attempted[-1])
-                if not non_entry or not attempted[-1].derived
-                else False
+        attempted_fact = (
+            RecoveryEvidenceNode(
+                _recovery_obligation(attempted[-1], source),
+                attempted[-1],
+                final_postcondition=False,
+                depends_on=tuple(proven_prefix),
             )
-        attempted_fact = RecoveryEvidenceNode(
-            _recovery_obligation(attempted[-1], source),
-            attempted[-1],
-            final_postcondition=failed_satisfied,
-            depends_on=tuple(proven_prefix),
-            source_object_ref=positive_source_ref,
+            if non_entry and attempted[-1].derived
+            else replace(
+                _observe_accepted_effect_fact(attempted[-1], adapter, source=source),
+                depends_on=tuple(proven_prefix),
+            )
         )
+        failed_satisfied = attempted_fact.final_postcondition is True
         attempted_proof = evaluate_recovery_evidence(attempted_fact)
         historical_frontier = index + 1 if attempted_proof.disposition == "SATISFIED" else index
         # Original Effect proof is separate from *authorization of the next*
@@ -7056,9 +7082,11 @@ def classify_accepted_read_only_effects(
                 attempted_proof.disposition == "SATISFIED"
                 or (
                     non_entry
-                    and adapter.observe_postcondition(attempted[-1])
                     and evaluate_recovery_evidence(
-                        replace(attempted_fact, final_postcondition=True)
+                        replace(
+                            _observe_accepted_effect_fact(attempted[-1], adapter, source=source),
+                            depends_on=tuple(proven_prefix),
+                        )
                     ).disposition
                     == "SATISFIED"
                 )

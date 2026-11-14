@@ -8,6 +8,7 @@ import json
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal, cast
 
 import pytest
@@ -29,6 +30,7 @@ from investment_strategy.scheduled_agent_action_model import (
 from investment_strategy.scheduled_agent_effects import (
     EffectBatch,
     EffectRecoveryEvidence,
+    GitHubEffectAdapter,
     StagedEffect,
     apply_effect_batch,
     parse_application_decision,
@@ -55,7 +57,9 @@ def test_s2c_no_legacy_boolean_recovery_decision_owner() -> None:
 def test_s2p_proof_result_carries_witness_and_remaining_obligation() -> None:
     """Proof outcome is not a bare string; retain the exact fact and unfinished node."""
     effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"effect"}')
-    positive = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", effect, True)
+    positive = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT", effect, True, source_object_ref="issues/comments/992001"
+    )
     accepted_never_called = application.CompleteNeverCalledWitness(
         91, 0, "a" * 64, ((7001, 1, 7003),)
     )
@@ -105,6 +109,32 @@ def test_s2p_proof_result_carries_witness_and_remaining_obligation() -> None:
     assert conflict_result.remaining_obligation == "ORIGINAL_EFFECT"
 
 
+
+@pytest.mark.parametrize(
+    ("source_ref", "expected"),
+    [
+        (None, "UNKNOWN"),
+        ("issues/comments/0", "UNKNOWN"),
+        ("issues/comments/bad", "UNKNOWN"),
+        ("issues/comments/992001", "SATISFIED"),
+    ],
+)
+def test_positive_issue_comment_node_needs_a_native_source_reference(
+    source_ref: str | None, expected: str
+) -> None:
+    """A caller-supplied bool cannot replace a qualified native comment witness."""
+    effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"original"}')
+    fact = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT",
+        effect,
+        True,
+        source_object_ref=source_ref,
+    )
+    proof = application.evaluate_recovery_evidence(fact)
+    assert proof.disposition == expected
+    assert proof.remaining_obligation == (None if expected == "SATISFIED" else "ORIGINAL_EFFECT")
+
+
 def test_s2o_r9_original_prefix_identity_has_one_qualification_owner() -> None:
     """R9 must reuse the exact checkpoint prefix gate, not compare it again."""
     source = inspect.getsource(application.classify_accepted_read_only_effects)
@@ -141,7 +171,9 @@ def test_recovery_dag_shared_dependencies_never_authorize_successor_write() -> N
     effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"effect"}')
     formal = StagedEffect("issue-comment", '{"issue_number":138,"body":"formal"}')
     successor = StagedEffect("routing-transition", '{"issue_number":138}')
-    completed = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", effect, True)
+    completed = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT", effect, True, source_object_ref="issues/comments/992001"
+    )
     unresolved = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", effect, None)
     formal_node = application.RecoveryEvidenceNode(
         "FORMAL_RESULT",
@@ -166,7 +198,9 @@ def test_recovery_dag_shared_dependencies_never_authorize_successor_write() -> N
         depends_on=(completed, ready_formal, completed),
     )
     assert application.evaluate_recovery_evidence(waiting_successor).disposition == "UNKNOWN"
-    complete_formal = replace(ready_formal, final_postcondition=True)
+    complete_formal = replace(
+        ready_formal, final_postcondition=True, source_object_ref="issues/comments/992002"
+    )
     assert application.evaluate_recovery_evidence(complete_formal).disposition == "SATISFIED"
     eligible_successor = replace(waiting_successor, depends_on=(completed, complete_formal))
     assert application.evaluate_recovery_evidence(eligible_successor).disposition == "NOT_APPLIED"
@@ -178,12 +212,15 @@ def test_positive_descendant_requires_satisfied_upstream_obligation(stage: str) 
     """R8: observed later state cannot discharge an unproven predecessor."""
     effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"effect"}')
     missing = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", effect, None)
-    completed = replace(missing, final_postcondition=True)
+    completed = replace(
+        missing, final_postcondition=True, source_object_ref="issues/comments/992001"
+    )
     descendant = application.RecoveryEvidenceNode(
         cast(Literal["FORMAL_RESULT", "SUCCESSOR"], stage),
         effect,
         True,
         depends_on=(missing,),
+        source_object_ref="issues/comments/992002",
     )
     assert application.evaluate_recovery_evidence(descendant).disposition == "UNKNOWN"
     completed_descendant = replace(descendant, depends_on=(completed,))
@@ -222,8 +259,17 @@ def test_shared_original_effect_prefix_observation(
         observed.append(effect)
         return effect == first or second_satisfied
 
+    adapter = cast(
+        GitHubEffectAdapter,
+        SimpleNamespace(
+            observe_postcondition=observe,
+            observe_issue_comment_source_ref=lambda effect: (
+                "issues/comments/992001" if observe(effect) else None
+            ),
+        ),
+    )
     nodes = application._observe_accepted_effect_prefix(
-        (first, second), observe, source=WorkerRequest(138, "lead", "resolve-question")
+        (first, second), adapter, source=WorkerRequest(138, "lead", "resolve-question")
     )
     assert observed == [first, second]
     if not second_satisfied:
@@ -247,8 +293,17 @@ def test_positive_original_effects_are_shared_flat_leaves() -> None:
         observed.append(effect)
         return True
 
+    adapter = cast(
+        GitHubEffectAdapter,
+        SimpleNamespace(
+            observe_postcondition=observe,
+            observe_issue_comment_source_ref=lambda effect: (
+                "issues/comments/992001" if observe(effect) else None
+            ),
+        ),
+    )
     leaves = application._observe_accepted_effect_prefix(
-        original, observe, source=WorkerRequest(138, "lead", "resolve-question")
+        original, adapter, source=WorkerRequest(138, "lead", "resolve-question")
     )
     assert leaves is not None
     assert len(leaves) == len(original)
@@ -256,7 +311,13 @@ def test_positive_original_effects_are_shared_flat_leaves() -> None:
     assert all(not node.depends_on for node in leaves)
     assert (
         application.evaluate_recovery_evidence(
-            application.RecoveryEvidenceNode("FORMAL_RESULT", original[0], True, depends_on=leaves)
+            application.RecoveryEvidenceNode(
+                "FORMAL_RESULT",
+                original[0],
+                True,
+                depends_on=leaves,
+                source_object_ref="issues/comments/992002",
+            )
         ).disposition
         == "SATISFIED"
     )
@@ -369,6 +430,9 @@ def test_staged_commit_positive_projection_across_original_effect_cardinality(
         def observe_postcondition(self, effect: StagedEffect) -> bool:
             observed_effects.append(effect)
             return True
+
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
     proof = application.classify_accepted_read_only_effects(
@@ -737,6 +801,9 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
                 or (formal_durable and effect == formal)
                 or (successor_durable and effect == successor)
             )
+
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
 
     if not history_qualified:
         # Even an already committed formal result is not a completed projection.
@@ -2191,6 +2258,9 @@ def test_application_continuation_at_r2_preserves_durable_r1_formal_result(
             assert effect == original_formal
             return True
 
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
+
     monkeypatch.setattr(application, "GitHubEffectAdapter", DurableReader)
     monkeypatch.setattr(application, "_write_carrier_outputs", lambda *_a: None)
     monkeypatch.setattr(application, "_write_validation_outputs", lambda *_a: None)
@@ -2556,6 +2626,9 @@ def test_durable_formal_then_zero_write_successor_rejection_recovers_after_revis
             observed.append(effect)
             assert effect == formal  # Never demand the rejected derived write.
             return True
+
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", Reader)
     monkeypatch.setattr(application, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
@@ -3752,6 +3825,9 @@ def test_run_local_effect_frontier_cannot_prove_accepted_history(
 
         def observe_postcondition(self, _effect: StagedEffect) -> bool:
             return False
+
+        def observe_issue_comment_source_ref(self, _effect: StagedEffect) -> str | None:
+            return None
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
     # No run / predecessor evidence was supplied. An invocation-local
