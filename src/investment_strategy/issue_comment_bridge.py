@@ -105,6 +105,7 @@ from investment_strategy.scheduled_agent_worker import (
     WorkerActionResult,
     parse_worker_result,
 )
+from investment_strategy.scheduled_agent_wire import RUNTIME_REPAIR_REQUEST_WIRE
 from investment_strategy.workflow_dispatch import (
     DispatchDecision,
     DispatchPreflight,
@@ -5878,6 +5879,239 @@ def _write_result_payload(path: Path, plan: BridgePlan) -> None:
         path.write_text(plan.result_body + "\n", encoding="utf-8")
 
 
+
+@dataclass(frozen=True)
+class RuntimeRepairAdmission:
+    """A native-Human-qualified, non-writing maintenance handoff only."""
+
+    source: WorkerRequest
+    trigger_comment_id: int
+    accepted_request_comment_id: int
+    accepted_decision_sha256: str
+    accepted_worker_sha256: str
+    repair_pr: int
+    repair_head: str
+    result_state: str
+    reason: str
+    frontier: str
+
+
+def qualify_runtime_repair_admission(
+    event: Mapping[str, object],
+    *,
+    repository: str,
+    token: str,
+    current_revision: str,
+    read: GitHubReader = _github_json,
+    qualify: Callable[..., ApplicationCompletion] = qualify_application_completion,
+) -> RuntimeRepairAdmission | None:
+    """Consume a native Human issue_comment without emitting any repository Effect.
+
+    The existing Application remains the one accepted-intent/evidence owner.
+    This qualified intake is not approval to patch a PR or replay an Effect.
+    The external Human maintenance interaction must fresh-reauthorize writes.
+    """
+
+    comment = event.get("comment")
+    event_issue = event.get("issue")
+    sender = event.get("sender")
+    event_repo = event.get("repository")
+    if (
+        repository != "royhsu-work/investment-strategy"
+        or _SHA.fullmatch(current_revision) is None
+        or event.get("action") != "created"
+        or not isinstance(comment, Mapping)
+        or not isinstance(event_issue, Mapping)
+        or "pull_request" in event_issue
+        or not isinstance(sender, Mapping)
+        or not isinstance(event_repo, Mapping)
+        or event_repo.get("full_name") != repository
+        or event_repo.get("default_branch") != "main"
+    ):
+        return None
+    raw_body = comment.get("body")
+    if not isinstance(raw_body, str):
+        return None
+    fields = RUNTIME_REPAIR_REQUEST_WIRE.parse(raw_body)
+    if fields is None:
+        return None
+    issue_number = _positive_int_string(fields["Issue"])
+    request_comment_id = _positive_int_string(fields["Accepted-Request-Comment"])
+    repair_pr = _positive_int_string(fields["Repair-PR"])
+    trigger_comment_id = _positive_int(comment.get("id"))
+    actor = comment.get("user")
+    native_actor = actor.get("login") if isinstance(actor, Mapping) else None
+    owner = repository.split("/", 1)[0]
+    if (
+        issue_number is None
+        or request_comment_id is None
+        or repair_pr is None
+        or trigger_comment_id is None
+        or issue_number != event_issue.get("number")
+        or not isinstance(actor, Mapping)
+        or native_actor != owner
+        or actor.get("type") != "User"
+        or sender.get("login") != owner
+        or sender.get("id") != actor.get("id")
+        or _positive_int(actor.get("id")) is None
+        or comment.get("performed_via_github_app") is not None
+        or _SHA.fullmatch(fields["Repair-HEAD"]) is None
+        or re.fullmatch(r"[0-9a-f]{64}", fields["Accepted-Decision-SHA256"]) is None
+    ):
+        return None
+    try:
+        role = role_for(ModelAction(fields["Action"])).value
+    except ValueError:
+        return None
+    source = WorkerRequest(issue_number, role, fields["Action"])
+    native = read(repository, token, f"issues/comments/{trigger_comment_id}")
+    main_ref = read(repository, token, "git/ref/heads/main")
+    current_issue = read(repository, token, f"issues/{issue_number}")
+    pr = read(repository, token, f"pulls/{repair_pr}")
+    if not all(isinstance(value, Mapping) for value in (native, main_ref, current_issue, pr)):
+        return None
+    native = cast(Mapping[str, object], native)
+    main_ref = cast(Mapping[str, object], main_ref)
+    current_issue = cast(Mapping[str, object], current_issue)
+    pr = cast(Mapping[str, object], pr)
+    native_user = native.get("user")
+    main_object = main_ref.get("object")
+    pr_head = pr.get("head")
+    pr_base = pr.get("base")
+    head_repo = pr_head.get("repo") if isinstance(pr_head, Mapping) else None
+    base_repo = pr_base.get("repo") if isinstance(pr_base, Mapping) else None
+    if (
+        native.get("id") != trigger_comment_id
+        or native.get("body") != comment.get("body")
+        or native.get("issue_url")
+        != f"https://api.github.com/repos/{repository}/issues/{issue_number}"
+        or not isinstance(native_user, Mapping)
+        or native_user.get("login") != owner
+        or native_user.get("id") != actor.get("id")
+        or native.get("performed_via_github_app") is not None
+        or not isinstance(main_object, Mapping)
+        or main_object.get("sha") != current_revision
+        or pr.get("number") != repair_pr
+        or pr.get("state") != "open"
+        or pr.get("merged") is True
+        or not isinstance(pr_head, Mapping)
+        or pr_head.get("sha") != fields["Repair-HEAD"]
+        or not isinstance(head_repo, Mapping)
+        or head_repo.get("full_name") != repository
+        or not isinstance(pr_base, Mapping)
+        or pr_base.get("ref") != "main"
+        or not isinstance(base_repo, Mapping)
+        or base_repo.get("full_name") != repository
+    ):
+        return None
+    observation = normalize_github_issue(current_issue)
+    if (
+        observation is None
+        or not observation.authoritative
+        or observation.state != "open"
+        or observation.change != fields["Change"]
+        or observation.routing != (source.role, source.action)
+    ):
+        return None
+    query = f"issues/{issue_number}/comments?sort=created&direction=asc"
+    comments = _paged_list(repository, token, query, read=read)
+    if comments != _paged_list(repository, token, query, read=read):
+        return None
+    matching = [
+        record
+        for item in comments
+        if is_github_actions_comment(item)
+        and isinstance(item.get("body"), str)
+        and hashlib.sha256(cast(str, item["body"]).encode()).hexdigest()
+        == fields["Accepted-Decision-SHA256"]
+        and (record := parse_application_decision(cast(str, item["body"]))) is not None
+        and record.disposition == "ACCEPTED"
+        and record.request_comment_id == request_comment_id
+        and (record.issue_number, record.change, record.role, record.action)
+        == (issue_number, fields["Change"], source.role, source.action)
+    ]
+    if len(matching) != 1:
+        return None
+    completion = qualify(
+        repository,
+        token,
+        source=source,
+        current_revision=current_revision,
+        read=read,
+    )
+    # An executable ordinary continuation is not a maintenance intake.
+    if (
+        completion.state not in {"INVALID", "RESUMABLE", "AMBIGUOUS"}
+        or completion.reason
+        in {
+            "application-completion-continuation-required",
+            "application-completion-carrier-required",
+            "application-completion-rerun-limit",
+            "application-completion-preaccept-in-progress",
+        }
+        or completion.request_comment_id not in {None, request_comment_id}
+    ):
+        return None
+    artifact = completion.recovery_artifact
+    failure = (
+        artifact.document.get("failure_evidence")
+        if isinstance(artifact, ApplicationRecoveryArtifact)
+        else None
+    )
+    frontier = (
+        f"{failure.get('failed_effect_index')}:{failure.get('failed_effect_kind')}"
+        if isinstance(failure, Mapping)
+        else "unverified"
+    )
+    return RuntimeRepairAdmission(
+        source=source,
+        trigger_comment_id=trigger_comment_id,
+        accepted_request_comment_id=request_comment_id,
+        accepted_decision_sha256=fields["Accepted-Decision-SHA256"],
+        accepted_worker_sha256=matching[0].worker_result_sha256,
+        repair_pr=repair_pr,
+        repair_head=fields["Repair-HEAD"],
+        result_state=completion.state,
+        reason=completion.reason,
+        frontier=frontier,
+    )
+
+
+def _present_runtime_repair_admission(
+    admission: RuntimeRepairAdmission, *, repository: str
+) -> None:
+    """Surface the actual native consumer result without dispatch/effect output."""
+
+    body = "\n".join(
+        (
+            "## Non-writing R9 Human/Runtime repair intake",
+            "",
+            f"- Exact source: {repository} Issue #{admission.source.issue_number}",
+            f"- Original Action: {admission.source.role}/{admission.source.action}",
+            f"- Native Human trigger: issuecomment-{admission.trigger_comment_id}",
+            f"- Immutable accepted request: issuecomment-{admission.accepted_request_comment_id}",
+            f"- Accepted decision SHA256: {admission.accepted_decision_sha256}",
+            f"- Accepted worker SHA256: {admission.accepted_worker_sha256}",
+            f"- Existing maintenance PR: #{admission.repair_pr}",
+            f"- Exact PR HEAD: {admission.repair_head}",
+            f"- Read-only proof: {admission.result_state}/{admission.reason}",
+            f"- Pending original/formal/successor frontier: {admission.frontier}",
+            "",
+            "This native event was consumed by the existing Bridge. It authorizes NO "
+            "Effect, Action, routing, merge, direct workflow run, or PR mutation. "
+            "A separately authorized Human/Runtime maintainer must fresh-qualify "
+            "the exact source, target and gates before any repair; only a later "
+            "ordinary fresh wake may re-observe the accepted obligation.",
+            "",
+        )
+    )
+    print(body)
+    destination = os.environ.get("GITHUB_STEP_SUMMARY")
+    if destination:
+        with Path(destination).open("a", encoding="utf-8") as output:
+            output.write(body)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Plan one run-scoped dispatch result")
     parser.add_argument("--event-path", type=Path)
@@ -5938,6 +6172,30 @@ def main() -> int:
         parser.error("dispatch requires --event-path, --github-output and --result-payload")
 
     event = _require_mapping(json.loads(args.event_path.read_text(encoding="utf-8")), "event")
+    event_comment = event.get("comment")
+    event_body = event_comment.get("body") if isinstance(event_comment, Mapping) else None
+    if isinstance(event_body, str) and event_body.splitlines()[:1] == [
+        RUNTIME_REPAIR_REQUEST_WIRE.marker
+    ]:
+        repository = os.environ.get("GITHUB_REPOSITORY")
+        token = os.environ.get("GITHUB_TOKEN")
+        if not repository or not token or os.environ.get("GITHUB_EVENT_NAME") != "issue_comment":
+            return 1
+        try:
+            admission = qualify_runtime_repair_admission(
+                event,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+            )
+        except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+            admission = None
+        if admission is None:
+            print("Native R9 repair intake is not source-qualified; no work emitted.", file=sys.stderr)
+            return 1
+        _present_runtime_repair_admission(admission, repository=repository)
+        _write_outputs(args.github_output, BridgePlan(False))
+        return 0
     identity = _request_identity(event)
     if identity is None:
         plan = BridgePlan(False)

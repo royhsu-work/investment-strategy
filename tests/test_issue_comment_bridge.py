@@ -8970,3 +8970,253 @@ def test_original_322_exit_incomplete_does_not_call_effect_owner(
     )
     assert result.state == "INVALID"
     assert result.reason == "recovery-exit-incomplete-M"
+
+
+@pytest.mark.parametrize("line_ending", ["", "\n"])
+def test_runtime_repair_request_wire_uses_shared_canonical_codec(line_ending: str) -> None:
+    fields = {
+        "Issue": "435",
+        "Change": "restore-t1-dispatch-artifact-consumption",
+        "Action": "implement-change",
+        "Accepted-Request-Comment": "6796616018",
+        "Accepted-Decision-SHA256": "b" * 64,
+        "Repair-PR": "443",
+        "Repair-HEAD": REVISION,
+    }
+    wire = bridge.RUNTIME_REPAIR_REQUEST_WIRE
+    body = wire.render(fields)
+    assert wire.parse(body + line_ending) == fields
+    assert wire.parse(body + "\n\n") is None
+    assert wire.parse(body.replace("\n", "\r\n")) is None
+    assert wire.parse(body.replace("Repair-HEAD:", "Head:")) is None
+
+
+def _native_runtime_repair_sources() -> tuple[
+    dict[str, object], dict[str, object], dict[str, object], dict[str, object]
+]:
+    repository = "royhsu-work/investment-strategy"
+    change = "restore-t1-dispatch-artifact-consumption"
+    request = _effect_request_comment(
+        comment_id=6796616018,
+        created_at="2026-11-14T01:01:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="blocked",
+        issue_number=435,
+        change=change,
+    )
+    decision = _application_decision_comment(request, comment_id=6796662999)
+    decision_body = cast(str, decision["body"])
+    body = bridge.RUNTIME_REPAIR_REQUEST_WIRE.render(
+        {
+            "Issue": "435",
+            "Change": change,
+            "Action": "implement-change",
+            "Accepted-Request-Comment": "6796616018",
+            "Accepted-Decision-SHA256": hashlib.sha256(decision_body.encode()).hexdigest(),
+            "Repair-PR": "443",
+            "Repair-HEAD": REVISION,
+        }
+    )
+    comment: dict[str, object] = {
+        "id": 9001,
+        "body": body,
+        "user": {"login": "royhsu-work", "id": 77, "type": "User"},
+        "performed_via_github_app": None,
+    }
+    event: dict[str, object] = {
+        "action": "created",
+        "repository": {"full_name": repository, "default_branch": "main"},
+        "issue": {"number": 435},
+        "sender": {"login": "royhsu-work", "id": 77, "type": "User"},
+        "comment": comment,
+    }
+    native = {
+        **comment,
+        "issue_url": f"https://api.github.com/repos/{repository}/issues/435",
+    }
+    return event, native, decision, {
+        "number": 435,
+        "title": "T1 recovery",
+        "state": "open",
+        "created_at": "2026-11-10T01:00:00Z",
+        "closed_at": None,
+        "body": f"Change: {change}",
+        "labels": [{"name": "action:implement-change"}],
+    }
+
+
+@pytest.mark.parametrize(
+    ("fault", "admitted"),
+    [
+        ("valid", True),
+        ("foreign-actor", False),
+        ("app-actor", False),
+        ("changed-comment", False),
+        ("changed-decision", False),
+        ("stale-main", False),
+        ("stale-pr", False),
+        ("changed-route", False),
+        ("invalid-action", False),
+        ("duplicate-decision", False),
+        ("ordinary-continuation", False),
+        ("completed", False),
+        ("unknown-original", True),
+    ],
+)
+def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
+    monkeypatch: pytest.MonkeyPatch, fault: str, admitted: bool
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    event, native, accepted, issue = _native_runtime_repair_sources()
+    pr = {
+        "number": 443,
+        "state": "open",
+        "merged": False,
+        "head": {"sha": REVISION, "repo": {"full_name": repository}},
+        "base": {"ref": "main", "repo": {"full_name": repository}},
+    }
+    if fault == "foreign-actor":
+        cast(dict[str, object], cast(dict[str, object], event["comment"])["user"])["login"] = "attacker"
+    if fault == "app-actor":
+        native["performed_via_github_app"] = {"slug": "chatgpt-codex-connector"}
+    if fault == "changed-comment":
+        native["body"] = "changed on GitHub"
+    if fault == "changed-decision":
+        accepted["body"] = "APPLICATION_DECISION\nforged"
+    if fault == "stale-pr":
+        cast(dict[str, object], pr["head"])["sha"] = "f" * 40
+    if fault == "changed-route":
+        issue["labels"] = [{"name": "action:resolve-question"}]
+    if fault == "invalid-action":
+        cast(dict[str, object], event["comment"])["body"] = (
+            cast(str, cast(dict[str, object], event["comment"])["body"])
+            .replace("Action: implement-change", "Action: fake-action")
+        )
+        native["body"] = cast(dict[str, object], event["comment"])["body"]
+    all_decisions = (accepted, accepted) if fault == "duplicate-decision" else (accepted,)
+    observed_calls: list[str] = []
+
+    def read(source_repo: str, token: str, path: str) -> object:
+        assert source_repo == repository and token == "token"
+        observed_calls.append(path)
+        if path == "issues/comments/9001":
+            return native
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": "f" * 40 if fault == "stale-main" else REVISION}}
+        if path == "issues/435":
+            return issue
+        if path == "pulls/443":
+            return pr
+        raise AssertionError(path)
+
+    comment_enumerations: list[str] = []
+
+    def paged(_repo: str, _token: str, path: str, *, read: object) -> tuple[Mapping[str, object], ...]:
+        assert path == "issues/435/comments?sort=created&direction=asc"
+        comment_enumerations.append(path)
+        return all_decisions
+
+    monkeypatch.setattr(bridge, "_paged_list", paged)
+    completion_calls: list[str] = []
+
+    def qualify(
+        _repo: str, _token: str, *, source: object, current_revision: str, read: object
+    ) -> bridge.ApplicationCompletion:
+        assert source == bridge.WorkerRequest(435, "executor", "implement-change")
+        assert current_revision == REVISION
+        completion_calls.append("qualified")
+        if fault == "ordinary-continuation":
+            return bridge.ApplicationCompletion(
+                "RESUMABLE", "application-completion-continuation-required", 6796616018
+            )
+        if fault == "completed":
+            return bridge.ApplicationCompletion("COMPLETE", "already complete", 6796616018)
+        if fault == "unknown-original":
+            return bridge.ApplicationCompletion(
+                "RESUMABLE", "application-completion-read-only-observing", 6796616018
+            )
+        return bridge.ApplicationCompletion(
+            "INVALID", "application-completion-read-only-proof-conflict", 6796616018
+        )
+
+    result = bridge.qualify_runtime_repair_admission(
+        event,
+        repository=repository,
+        token="token",
+        current_revision=REVISION,
+        read=read,
+        qualify=qualify,
+    )
+    assert (result is not None) is admitted
+    if admitted:
+        assert result is not None
+        assert result.source == bridge.WorkerRequest(435, "executor", "implement-change")
+        assert result.accepted_request_comment_id == 6796616018
+        assert result.repair_pr == 443 and result.repair_head == REVISION
+        assert result.frontier == "unverified"  # no fabricated positive proof
+        parsed = bridge.parse_application_decision(cast(str, accepted["body"]))
+        assert parsed is not None
+        assert result.accepted_worker_sha256 == parsed.worker_result_sha256
+    # No apply, routing mutation, duplicate PR creation or fresh Action dispatch.
+    assert all(
+        path in {"issues/comments/9001", "git/ref/heads/main", "issues/435", "pulls/443"}
+        for path in observed_calls
+    )
+    if fault in {"valid", "unknown-original", "ordinary-continuation", "completed"}:
+        assert len(comment_enumerations) == 2
+        assert completion_calls == ["qualified"]
+
+
+def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    event, _native, _accepted, _issue = _native_runtime_repair_sources()
+    source = tmp_path / "github-event.json"
+    source.write_text(json.dumps(event), encoding="utf-8")
+    output = tmp_path / "github-output"
+    result = tmp_path / "dispatch-result.json"
+    summary = tmp_path / "step-summary.md"
+    admission = bridge.RuntimeRepairAdmission(
+        source=bridge.WorkerRequest(435, "executor", "implement-change"),
+        trigger_comment_id=9001,
+        accepted_request_comment_id=6796616018,
+        accepted_decision_sha256="b" * 64,
+        accepted_worker_sha256="c" * 64,
+        repair_pr=443,
+        repair_head=REVISION,
+        result_state="INVALID",
+        reason="application-completion-read-only-proof-conflict",
+        frontier="0:github-mutation",
+    )
+    monkeypatch.setattr(
+        bridge, "qualify_runtime_repair_admission", lambda *_a, **_kw: admission
+    )
+    monkeypatch.setattr(
+        bridge, "acquire_current_github_preflight",
+        lambda *_a, **_kw: pytest.fail("R9 intake must not enter normal dispatch"),
+    )
+    monkeypatch.setenv("GITHUB_REPOSITORY", "royhsu-work/investment-strategy")
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "issue_comment")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "issue_comment_bridge",
+            "--event-path",
+            str(source),
+            "--revision",
+            REVISION,
+            "--github-output",
+            str(output),
+            "--result-payload",
+            str(result),
+        ],
+    )
+    assert bridge.main() == 0
+    assert output.read_text() == "should_emit=false\n"
+    assert not result.exists()
+    assert f"Exact PR HEAD: {REVISION}" in summary.read_text()
+    assert "authorizes NO Effect" in summary.read_text()
