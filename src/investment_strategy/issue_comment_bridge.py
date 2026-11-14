@@ -6104,6 +6104,11 @@ def _present_runtime_repair_admission(
 ) -> None:
     """Surface the actual native consumer result without dispatch/effect output."""
 
+    evidence_kind = (
+        "recovery"
+        if isinstance(admission.source_artifact, ApplicationRecoveryArtifact)
+        else "exception"
+    )
     body = "\n".join(
         (
             "## Non-writing R9 Human/Runtime repair intake",
@@ -6119,8 +6124,7 @@ def _present_runtime_repair_admission(
             f"- Native Application run: {admission.source_artifact.run_id}"
             f" / attempt {admission.source_artifact.run_attempt}",
             f"- Native Application job: {admission.source_artifact.job_id}",
-            f"- Native evidence kind: "
-            f"{'recovery' if isinstance(admission.source_artifact, ApplicationRecoveryArtifact) else 'exception'}",
+            f"- Native evidence kind: {evidence_kind}",
             f"- Evidence Artifact ID: {admission.source_artifact.artifact_id}",
             f"- Evidence Artifact digest: {admission.source_artifact.artifact_digest}",
             f"- Recovery episode SHA256: {admission.source_artifact.recovery_episode_sha256}",
