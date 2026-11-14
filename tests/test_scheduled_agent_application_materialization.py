@@ -3751,6 +3751,18 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     proof_git.set_head(witness)
     assert proof_git.comparison(base, witness)["ahead_by"] == 1
     assert len(proof_git.comparison(base, witness)["files"]) == 7
+    canonical = materialization.prove_materialization(
+        payload,
+        original,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        accepted_authorization_revision=base,
+        allow_pending_continuation=True,
+        accepted_intent=True,
+    )
+    assert canonical.disposition == "COMPLETE", canonical
 
     # Two separate fresh observations qualify one and the same original
     # accepted Git effect, without calling its historical mutation again.
