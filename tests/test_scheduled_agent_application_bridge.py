@@ -7,7 +7,7 @@ import hashlib
 import importlib
 import json
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import FrozenInstanceError, replace
 from datetime import date
 from email.message import Message
