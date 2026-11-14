@@ -2173,7 +2173,7 @@ def test_nonactivation_exception_proof_reconciles_original_effects_without_repla
         adapter: bridge.GitHubEffectAdapter,
         *,
         source: WorkerRequest,
-    ) -> tuple[bridge.RecoveryEvidenceNode, ...] | None:
+    ) -> tuple[bridge.RecoveryEvidenceNode, ...] | bridge.RecoveryProofResult:
         original_observations.append(tuple(effects))
         return original_observer(effects, adapter, source=source)
 
@@ -2199,6 +2199,11 @@ def test_nonactivation_exception_proof_reconciles_original_effects_without_repla
         default_branch="main",
     )
     assert proof.disposition == expected
+    if original_count and not observed:
+        assert proof.original_effect_proof is not None
+        assert proof.original_effect_proof.disposition == "UNKNOWN"
+        assert proof.original_effect_proof.remaining_obligation == "ORIGINAL_EFFECT"
+        assert proof.runtime_repair_frontier is None
     assert seen == ([effect] if original_count else [])
     assert original_observations == (
         [tuple(batch.effects)] if original_count or zero_source_proven else []
