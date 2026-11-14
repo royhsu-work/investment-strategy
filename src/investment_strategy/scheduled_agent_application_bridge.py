@@ -7095,6 +7095,7 @@ def classify_accepted_read_only_effects(
             if formal_identity is not None
             and attempted[-1].derived
             and non_entry
+            and bool(original.effects)
             else None
         )
         qualified_derived = bool(
@@ -7111,6 +7112,7 @@ def classify_accepted_read_only_effects(
             and attempted[-1].derived
             # One qualified suffix owner has already proved the immutable
             # Formal/Successor identity, ordinal and historical revision.
+            and (bool(original.effects) or not non_entry)
             and (attempted_proof.disposition == "SATISFIED" or qualified_derived)
             and consequence_postconditions_complete(
                 record.raw_worker_result,

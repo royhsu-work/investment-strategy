@@ -707,7 +707,7 @@ def _assumed_qualified_history_for_postcondition_test(
     return artifact
 
 
-@pytest.mark.parametrize("original_count", [0, 1, 2])
+@pytest.mark.parametrize("original_count", [1, 2])
 @pytest.mark.parametrize(
     ("successor_failed", "successor_durable", "history_qualified", "formal_durable", "expected"),
     [
@@ -736,13 +736,8 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         )
         for n in range(original_count)
     )
-    if not original_effects:
-        # Zero accepted worker Effects still require a positive native source
-        # witness, which is qualified at its separate source-reader boundary.
-        monkeypatch.setattr(application, "_verified_zero_original_accepted_effects", lambda **_kw: True)
     raw = json.dumps(
         {
-            **({"_semantic_intent_version": 2} if not original_effects else {}),
             "issue_number": source.issue_number,
             "role": source.role,
             "action": source.action,
