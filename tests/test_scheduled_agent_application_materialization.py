@@ -3649,6 +3649,10 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     pr["title"] = f"OpenSpec: {change}"
     pr["body"] = "Refs #435"
     cast(dict[str, object], pr["head"])["ref"] = proof_git.branch
+    # The fixture was initialized under its synthetic repository identity.
+    # Rebind both native PR repository fields before proving this #435 carrier.
+    cast(dict[str, object], pr["head"])["repo"] = {"full_name": proof_git.repository}
+    cast(dict[str, object], pr["base"])["repo"] = {"full_name": proof_git.repository}
 
     paths = (
         "src/investment_strategy/scheduled_agent_carrier.py",
