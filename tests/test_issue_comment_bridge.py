@@ -9052,6 +9052,34 @@ def _native_runtime_repair_sources() -> tuple[
     )
 
 
+def _native_r9_recovery_artifact(
+    accepted_comment: Mapping[str, object],
+) -> application.ApplicationRecoveryArtifact:
+    body = accepted_comment.get("body")
+    assert isinstance(body, str)
+    record = bridge.parse_application_decision(body)
+    assert record is not None
+    return application.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "d" * 64,
+        request_comment_id=record.request_comment_id,
+        accepted_decision_sha256=hashlib.sha256(body.encode()).hexdigest(),
+        failure_evidence_sha256="e" * 64,
+        recovery_episode_sha256="f" * 64,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={
+            "issue_number": record.issue_number,
+            "role": record.role,
+            "action": record.action,
+            "authorization_revision": record.authorization_revision,
+        },
+    )
+
+
 @pytest.mark.parametrize(
     ("fault", "admitted"),
     [
@@ -9074,6 +9102,10 @@ def _native_runtime_repair_sources() -> tuple[
         ("pending-successor", True),
         ("pending-formal-get", False),
         ("pending-successor-get", False),
+        ("missing-native-artifact", False),
+        ("different-native-artifact-decision", False),
+        ("different-native-artifact-request", False),
+        ("different-native-artifact-source", False),
         ("unqualified-proof", False),
         ("wrong-completion-request", False),
         ("wrong-proof-state", False),
@@ -9087,6 +9119,16 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
 ) -> None:
     repository = "royhsu-work/investment-strategy"
     event, native, accepted, issue = _native_runtime_repair_sources()
+    artifact = _native_r9_recovery_artifact(accepted)
+    if fault == "different-native-artifact-decision":
+        artifact = replace(artifact, accepted_decision_sha256="0" * 64)
+    elif fault == "different-native-artifact-request":
+        artifact = replace(artifact, request_comment_id=artifact.request_comment_id + 1)
+    elif fault == "different-native-artifact-source":
+        artifact = replace(
+            artifact,
+            document={**artifact.document, "action": "review-implementation"},
+        )
     pr = {
         "number": 443,
         "state": "open",
@@ -9250,7 +9292,10 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             )
         if fault == "wrong-proof-state":
             return replace(completion, state="COMPLETE")
-        return completion
+        return replace(
+            completion,
+            recovery_artifact=None if fault == "missing-native-artifact" else artifact,
+        )
 
     result = bridge.qualify_runtime_repair_admission(
         event,
@@ -9266,6 +9311,8 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
         assert result.source == bridge.WorkerRequest(435, "executor", "implement-change")
         assert result.accepted_request_comment_id == 6796616018
         assert result.repair_pr == 443 and result.repair_head == REVISION
+        assert result.source_artifact is artifact
+        assert (result.source_artifact.run_id, result.source_artifact.job_id) == (7001, 7002)
         expected_frontier = {
             "valid": "ORIGINAL_EFFECT:CONFLICT",
             "pending-formal": "FORMAL_RESULT:UNKNOWN",
@@ -9285,10 +9332,154 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
         assert completion_calls == ["qualified"]
 
 
+def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Native-shaped event enters the real Bridge; later reads never replay.
+
+    Only the repository observations are simulated here. This does not claim
+    that a production Human repair or a later scheduled wake has occurred.
+    """
+    repository = "royhsu-work/investment-strategy"
+    event, native, decision, issue = _native_runtime_repair_sources()
+    artifact = _native_r9_recovery_artifact(decision)
+    pr = {
+        "number": 443,
+        "state": "open",
+        "merged": False,
+        "head": {"sha": REVISION, "repo": {"full_name": repository}},
+        "base": {"ref": "main", "repo": {"full_name": repository}},
+    }
+    stage = {"value": "source-unavailable"}
+    reads: list[str] = []
+
+    def read(source_repo: str, token: str, path: str) -> object:
+        assert (source_repo, token) == (repository, "test-token")
+        reads.append(path)
+        if path == "issues/comments/9001":
+            return native
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": REVISION}}
+        if path == "issues/435":
+            return issue
+        if path == "pulls/443":
+            return pr
+        raise AssertionError(f"unexpected native read: {path}")
+
+    def paged(
+        source_repo: str, token: str, path: str, *, read: object
+    ) -> tuple[Mapping[str, object], ...]:
+        assert (source_repo, token) == (repository, "test-token")
+        assert path == "issues/435/comments?sort=created&direction=asc"
+        return (decision,)
+
+    def qualify(
+        source_repo: str, token: str, *, source: object, current_revision: str, read: object
+    ) -> bridge.ApplicationCompletion:
+        assert (source_repo, token, current_revision) == (repository, "test-token", REVISION)
+        assert source == bridge.WorkerRequest(435, "executor", "implement-change")
+        if stage["value"] == "repaired":
+            return bridge.ApplicationCompletion(
+                "COMPLETE", "re-observed complete", 6796616018, recovery_artifact=artifact
+            )
+        if stage["value"] == "source-unavailable":
+            fact = application.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT",
+                None,
+                None,
+                never_called_evidence=application.TypedEvidenceError(
+                    "UNKNOWN", "SOURCE_GET", "temporary native read error", 6796616018, 7003
+                ),
+            )
+        else:
+            fact = application.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT", None, None, source_conflict=True
+            )
+        proof = application.AcceptedPostEffectProof(
+            "INDETERMINATE" if stage["value"] == "source-unavailable" else "UNSAFE",
+            "qualified read-only observation",
+            original_effect_proof=application.evaluate_recovery_evidence(fact),
+        )
+        completion = bridge._unresolved_accepted_proof_completion(
+            proof,
+            origin="READ_ONLY",
+            request_comment_id=6796616018,
+            recovery_artifact=artifact,
+        )
+        assert completion is not None
+        return completion
+
+    original_qualifier = bridge.qualify_runtime_repair_admission
+
+    def native_qualifier(
+        event: Mapping[str, object], *, repository: str, token: str, current_revision: str
+    ) -> bridge.RuntimeRepairAdmission | None:
+        return original_qualifier(
+            event,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            read=read,
+            qualify=qualify,
+        )
+
+    monkeypatch.setattr(bridge, "_paged_list", paged)
+    monkeypatch.setattr(bridge, "qualify_runtime_repair_admission", native_qualifier)
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_a, **_kw: pytest.fail("native maintenance must not dispatch"),
+    )
+    monkeypatch.setenv("GITHUB_REPOSITORY", repository)
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "issue_comment")
+    event_path = tmp_path / "native-event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    output = tmp_path / "github-output"
+    payload = tmp_path / "dispatch-result.json"
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "issue-comment-bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            REVISION,
+            "--github-output",
+            str(output),
+            "--result-payload",
+            str(payload),
+        ],
+    )
+
+    assert bridge.main() == 1  # Transient GET error: observation only.
+    assert not output.exists()
+    assert not summary.exists()
+
+    stage["value"] = "qualified-conflict"
+    assert bridge.main() == 0  # Same native event, now exact evidence-backed intake.
+    assert output.read_text() == "should_emit=false\\n"
+    assert not payload.exists()
+    note = summary.read_text(encoding="utf-8")
+    assert "Native Application run: 7001 / attempt 1" in note
+    assert "Recovery Artifact ID: 7003" in note
+    assert note.count("Non-writing R9 Human/Runtime repair intake") == 1
+
+    stage["value"] = "repaired"
+    assert bridge.main() == 1  # Re-observation withdraws the stale repair candidate.
+    assert summary.read_text(encoding="utf-8") == note
+    assert not payload.exists()
+    assert reads.count("issues/comments/9001") == 3
+
+
 def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispatch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    event, _native, _accepted, _issue = _native_runtime_repair_sources()
+    event, _native, accepted, _issue = _native_runtime_repair_sources()
+    source_artifact = _native_r9_recovery_artifact(accepted)
     source = tmp_path / "github-event.json"
     source.write_text(json.dumps(event), encoding="utf-8")
     output = tmp_path / "github-output"
@@ -9304,7 +9495,8 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
         repair_head=REVISION,
         result_state="INVALID",
         reason="application-completion-read-only-proof-conflict",
-        frontier="0:github-mutation",
+        frontier="ORIGINAL_EFFECT:CONFLICT",
+        source_artifact=source_artifact,
     )
     monkeypatch.setattr(bridge, "qualify_runtime_repair_admission", lambda *_a, **_kw: admission)
     monkeypatch.setattr(
@@ -9335,4 +9527,8 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
     assert output.read_text() == "should_emit=false\n"
     assert not result.exists()
     assert f"Exact PR HEAD: {REVISION}" in summary.read_text()
+    assert "Native Application run: 7001 / attempt 1" in summary.read_text()
+    assert "Native Application job: 7002" in summary.read_text()
+    assert "Recovery Artifact ID: 7003" in summary.read_text()
+    assert "Recovery Artifact digest: sha256:" + "d" * 64 in summary.read_text()
     assert "authorizes NO Effect" in summary.read_text()

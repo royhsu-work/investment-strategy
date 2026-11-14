@@ -5896,6 +5896,9 @@ class RuntimeRepairAdmission:
     result_state: str
     reason: str
     frontier: str
+    # Existing Application-validated native Run/Job/Artifact identity; this
+    # handoff cannot be upgraded from a bare status or a synthetic DAG proof.
+    source_artifact: ApplicationRecoveryArtifact
 
 
 def qualify_runtime_repair_admission(
@@ -6048,8 +6051,27 @@ def qualify_runtime_repair_admission(
     if proof is None:
         return None
     repair_frontier = proof.runtime_repair_frontier
+    artifact = completion.recovery_artifact
+    # Reuse the Application's already-qualified native lineage. An arbitrary
+    # typed UNKNOWN/CONFLICT, even with a matching Human trigger, is not a
+    # source-backed handoff without its actual run-scoped recovery Artifact.
     if (
         repair_frontier is None
+        or not isinstance(artifact, ApplicationRecoveryArtifact)
+        or artifact.request_comment_id != request_comment_id
+        or artifact.accepted_decision_sha256 != fields["Accepted-Decision-SHA256"]
+        or (
+            artifact.document.get("issue_number"),
+            artifact.document.get("role"),
+            artifact.document.get("action"),
+            artifact.document.get("authorization_revision"),
+        )
+        != (
+            matching[0].issue_number,
+            matching[0].role,
+            matching[0].action,
+            matching[0].authorization_revision,
+        )
         or completion.request_comment_id != request_comment_id
         or completion.state != ("RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID")
     ):
@@ -6066,6 +6088,7 @@ def qualify_runtime_repair_admission(
         result_state=completion.state,
         reason=completion.reason,
         frontier=frontier,
+        source_artifact=artifact,
     )
 
 
@@ -6086,6 +6109,12 @@ def _present_runtime_repair_admission(
             f"- Accepted worker SHA256: {admission.accepted_worker_sha256}",
             f"- Existing maintenance PR: #{admission.repair_pr}",
             f"- Exact PR HEAD: {admission.repair_head}",
+            f"- Native Application run: {admission.source_artifact.run_id}"
+            f" / attempt {admission.source_artifact.run_attempt}",
+            f"- Native Application job: {admission.source_artifact.job_id}",
+            f"- Recovery Artifact ID: {admission.source_artifact.artifact_id}",
+            f"- Recovery Artifact digest: {admission.source_artifact.artifact_digest}",
+            f"- Recovery episode SHA256: {admission.source_artifact.recovery_episode_sha256}",
             f"- Read-only proof: {admission.result_state}/{admission.reason}",
             f"- Pending original/formal/successor frontier: {admission.frontier}",
             "",
