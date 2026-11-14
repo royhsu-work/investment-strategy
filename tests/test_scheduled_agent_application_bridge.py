@@ -2424,25 +2424,6 @@ def test_positive_accepted_effect_postcondition_outweighs_missing_attempt_histor
     )
 
 
-def test_noncompletion_accepted_intent_has_no_synthetic_checkpoint_obligation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = WorkerRequest(435, "executor", "implement-change")
-    monkeypatch.setattr(
-        bridge,
-        "parse_worker_result",
-        lambda *_a, **_kw: SimpleNamespace(requested_effects=()),
-    )
-    assert not bridge._accepted_checkpoint_already_durable(
-        "{}",
-        source=source,
-        repository=_REPOSITORY,
-        token=_REVISION,
-        current_revision=_REVISION,
-        request_comment_id=6796616018,
-    )
-
-
 @pytest.mark.parametrize(
     ("projection", "allowed"),
     [
@@ -2646,6 +2627,18 @@ def test_incident_435_accepted_blocked_materialization_is_read_only_proven(
         change=change,
         result_kind="blocked",
         request_comment_id=6796616018,
+    )
+    # Reproduce the real ACCEPTED #435 blocked/materialization intent through
+    # the production parser, not a mocked empty requested_effects projection.
+    # Incident 43029179128 failed before writes on a synthetic checkpoint
+    # obligation; the seven-file original is NOT a SLICE_CHECKPOINT.
+    assert not bridge._accepted_checkpoint_already_durable(
+        raw,
+        source=source,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        request_comment_id=record.request_comment_id,
     )
     checked: list[StagedEffect] = []
 
