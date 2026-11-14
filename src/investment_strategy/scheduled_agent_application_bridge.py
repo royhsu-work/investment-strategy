@@ -3492,13 +3492,20 @@ def _fresh_preactivation_source(
         raise RuntimeError("first activation source identity is no longer preactivation")
 
 
-def _persist_activation_result(
+def _persist_application_evidence_comment(
     body: str,
     *,
     repository: str,
     token: str,
     issue_number: int,
+    errors: tuple[str, str, str, str],
 ) -> int:
+    """The single native comment write/reconcile/postcondition owner.
+
+    Both first activation and partial recovery retain their existing purpose,
+    caller authorization and diagnostic messages, not separate write logic.
+    """
+
     comments = _paged_github_list(repository, token, f"issues/{issue_number}/comments?sort=created")
     matches = tuple(
         comment
@@ -3506,11 +3513,11 @@ def _persist_activation_result(
         if comment.get("body") == body and is_github_actions_comment(comment)
     )
     if len(matches) > 1:
-        raise RuntimeError("first activation has duplicate application result evidence")
+        raise RuntimeError(errors[0])
     if len(matches) == 1:
         comment_id = _positive_int(matches[0].get("id"))
         if comment_id is None:
-            raise RuntimeError("first activation result comment id is invalid")
+            raise RuntimeError(errors[1])
         return comment_id
 
     response = _as_mapping(
@@ -3529,7 +3536,7 @@ def _persist_activation_result(
         or response.get("body") != body
         or not is_github_actions_comment(response)
     ):
-        raise RuntimeError("first activation result postcondition was not observed")
+        raise RuntimeError(errors[2])
     observed = _as_mapping(_github_json(repository, token, f"issues/comments/{comment_id}"))
     if (
         observed is None
@@ -3537,8 +3544,29 @@ def _persist_activation_result(
         or observed.get("body") != body
         or not is_github_actions_comment(observed)
     ):
-        raise RuntimeError("first activation result fresh postcondition was not observed")
+        raise RuntimeError(errors[3])
     return comment_id
+
+
+def _persist_activation_result(
+    body: str,
+    *,
+    repository: str,
+    token: str,
+    issue_number: int,
+) -> int:
+    return _persist_application_evidence_comment(
+        body,
+        repository=repository,
+        token=token,
+        issue_number=issue_number,
+        errors=(
+            "first activation has duplicate application result evidence",
+            "first activation result comment id is invalid",
+            "first activation result postcondition was not observed",
+            "first activation result fresh postcondition was not observed",
+        ),
+    )
 
 
 def _formal_qualification(
@@ -3944,45 +3972,18 @@ def _persist_recovery_comment(
     token: str,
     issue_number: int,
 ) -> int:
-    comments = _paged_github_list(repository, token, f"issues/{issue_number}/comments?sort=created")
-    matches = tuple(
-        comment
-        for comment in comments
-        if comment.get("body") == body and is_github_actions_comment(comment)
+    return _persist_application_evidence_comment(
+        body,
+        repository=repository,
+        token=token,
+        issue_number=issue_number,
+        errors=(
+            "partial activation recovery evidence is duplicated",
+            "partial activation recovery comment id is invalid",
+            "partial activation recovery comment postcondition was not observed",
+            "partial activation recovery fresh comment was not observed",
+        ),
     )
-    if len(matches) > 1:
-        raise RuntimeError("partial activation recovery evidence is duplicated")
-    if len(matches) == 1:
-        comment_id = _positive_int(matches[0].get("id"))
-        if comment_id is None:
-            raise RuntimeError("partial activation recovery comment id is invalid")
-        return comment_id
-    response = _as_mapping(
-        _github_json(
-            repository,
-            token,
-            f"issues/{issue_number}/comments",
-            method="POST",
-            payload={"body": body},
-        )
-    )
-    comment_id = None if response is None else _positive_int(response.get("id"))
-    if (
-        response is None
-        or comment_id is None
-        or response.get("body") != body
-        or not is_github_actions_comment(response)
-    ):
-        raise RuntimeError("partial activation recovery comment postcondition was not observed")
-    observed = _as_mapping(_github_json(repository, token, f"issues/comments/{comment_id}"))
-    if (
-        observed is None
-        or observed.get("body") != body
-        or observed.get("id") != comment_id
-        or not is_github_actions_comment(observed)
-    ):
-        raise RuntimeError("partial activation recovery fresh comment was not observed")
-    return comment_id
 
 
 def _unbound_first_activation_result_matches(
@@ -8453,81 +8454,66 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             # Native carrier actuator is the mutation boundary and rechecks
             # the accepted PR-only plan against fresh GitHub postconditions.
             raise CarrierRequired(missing_pr_only_plan)
-        if first_activation and args.validation_passed:
-            batch, result = run_guarded_effect_application(
-                application_worker_result,
+        # One Application-owned Effect invocation. First activation and
+        # ordinary recovery differ only in their existing governed gates;
+        # source qualification, no-replay, and postconditions stay shared.
+        activation_validated = first_activation and args.validation_passed
+        batch, result = run_guarded_effect_application(
+            application_worker_result,
+            source=plan.source,
+            repository=repository,
+            token=token,
+            current_revision=args.revision,
+            apply_derived=(
+                not activation_validated
+                and (not requires_validation or args.validation_passed)
+                and not defer_accepted_checkpoint
+            ),
+            materialization_promote_change=(
+                args.validation_passed and not activation_validated
+            ),
+            validated_materialization_revision=(
+                None
+                if target is None or (not activation_validated and checkpoint_already_durable)
+                else target.revision
+            ),
+            request_comment_id=plan.request_comment_id,
+            defer_issue_comments=(
+                activation_validated
+                or (requires_validation and not args.validation_passed)
+                or defer_accepted_checkpoint
+            ),
+            allow_pending_continuation=pending_continuation,
+            pending_application_correlation=retained_formal_correlation,
+            application_request_body=application_request_body,
+            authorization_revision=request.authorization_revision,
+            authorized_change=plan.change,
+            **({"accepted_intent": True} if accepted_intent is not None else {}),
+            **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
+            uncertain_effect_index=uncertain_effect_index,
+            **(
+                {"proven_empty_original_effects": True}
+                if original_effect_count == 0 and predecessor_disposition == "INDETERMINATE"
+                else {}
+            ),
+        )
+        if activation_validated and result.applied:
+            if materialization is None or target is None:
+                raise RuntimeError("first activation validation target is unavailable")
+            if accepted_intent is None:
+                raise RuntimeError("first activation accepted application decision is missing")
+            _complete_first_activation(
+                raw_worker_result=application_worker_result,
+                materialization=materialization,
+                target=target,
                 source=plan.source,
                 repository=repository,
                 token=token,
                 current_revision=args.revision,
-                apply_derived=False,
-                materialization_promote_change=False,
-                validated_materialization_revision=(None if target is None else target.revision),
+                default_branch=args.default_branch,
                 request_comment_id=plan.request_comment_id,
-                defer_issue_comments=first_activation,
+                accepted_authorization_revision=accepted_intent.authorization_revision,
                 allow_pending_continuation=pending_continuation,
-                pending_application_correlation=retained_formal_correlation,
-                application_request_body=application_request_body,
-                authorization_revision=request.authorization_revision,
-                authorized_change=plan.change,
-                **({"accepted_intent": True} if accepted_intent is not None else {}),
-                **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
-                uncertain_effect_index=uncertain_effect_index,
-                **(
-                    {"proven_empty_original_effects": True}
-                    if original_effect_count == 0 and predecessor_disposition == "INDETERMINATE"
-                    else {}
-                ),
-            )
-            if result.applied:
-                if materialization is None or target is None:
-                    raise RuntimeError("first activation validation target is unavailable")
-                if accepted_intent is None:
-                    raise RuntimeError("first activation accepted application decision is missing")
-                _complete_first_activation(
-                    raw_worker_result=application_worker_result,
-                    materialization=materialization,
-                    target=target,
-                    source=plan.source,
-                    repository=repository,
-                    token=token,
-                    current_revision=args.revision,
-                    default_branch=args.default_branch,
-                    request_comment_id=plan.request_comment_id,
-                    accepted_authorization_revision=accepted_intent.authorization_revision,
-                    allow_pending_continuation=pending_continuation,
-                )
-        else:
-            batch, result = run_guarded_effect_application(
-                application_worker_result,
-                source=plan.source,
-                repository=repository,
-                token=token,
-                current_revision=args.revision,
-                apply_derived=(
-                    (not requires_validation or args.validation_passed)
-                    and not defer_accepted_checkpoint
-                ),
-                materialization_promote_change=args.validation_passed,
-                validated_materialization_revision=(
-                    None if target is None or checkpoint_already_durable else target.revision
-                ),
-                request_comment_id=plan.request_comment_id,
-                defer_issue_comments=(requires_validation and not args.validation_passed)
-                or defer_accepted_checkpoint,
-                allow_pending_continuation=pending_continuation,
-                pending_application_correlation=retained_formal_correlation,
-                application_request_body=application_request_body,
-                authorization_revision=request.authorization_revision,
-                authorized_change=plan.change,
-                **({"accepted_intent": True} if accepted_intent is not None else {}),
-                **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
-                uncertain_effect_index=uncertain_effect_index,
-                **(
-                    {"proven_empty_original_effects": True}
-                    if original_effect_count == 0 and predecessor_disposition == "INDETERMINATE"
-                    else {}
-                ),
             )
     except CarrierRequired as exc:
         # CarrierRequired is the hard invocation-exit boundary. Persist only

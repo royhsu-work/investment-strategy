@@ -48,6 +48,101 @@ REVISION = "a" * 40
 CHANGE = "deterministic-recovery"
 
 
+@pytest.mark.parametrize(
+    ("entry", "messages"),
+    [
+        (
+            "_persist_activation_result",
+            (
+                "first activation has duplicate application result evidence",
+                "first activation result comment id is invalid",
+                "first activation result postcondition was not observed",
+                "first activation result fresh postcondition was not observed",
+            ),
+        ),
+        (
+            "_persist_recovery_comment",
+            (
+                "partial activation recovery evidence is duplicated",
+                "partial activation recovery comment id is invalid",
+                "partial activation recovery comment postcondition was not observed",
+                "partial activation recovery fresh comment was not observed",
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "scenario", ["existing", "new", "duplicate", "bad-id", "bad-post", "bad-get"]
+)
+def test_activation_and_recovery_comments_share_one_write_postcondition_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    entry: str,
+    messages: tuple[str, str, str, str],
+    scenario: str,
+) -> None:
+    """One source read/POST/fresh-GET protocol across both invocation paths."""
+
+    body = "ACTION_RESULT\nExact already-qualified application result"
+    observed: list[tuple[str, str]] = []
+    trusted = {"id": 9011, "body": body, "trusted": True}
+
+    def paged(_repo: str, _token: str, path: str) -> tuple[dict[str, object], ...]:
+        assert path == "issues/138/comments?sort=created"
+        observed.append(("LIST", path))
+        if scenario == "duplicate":
+            return trusted, trusted
+        if scenario == "existing":
+            return (trusted,)
+        if scenario == "bad-id":
+            return ({**trusted, "id": 0},)
+        return ()
+
+    def github_io(
+        _repo: str, _token: str, path: str, *,
+        method: str = "GET", payload: dict[str, str] | None = None
+    ) -> dict[str, object]:
+        observed.append((method, path))
+        if method == "POST":
+            assert path == "issues/138/comments" and payload == {"body": body}
+            return {**trusted, "body": "changed"} if scenario == "bad-post" else trusted
+        assert path == "issues/comments/9011"
+        return {**trusted, "body": "stale"} if scenario == "bad-get" else trusted
+
+    monkeypatch.setattr(application, "_paged_github_list", paged)
+    monkeypatch.setattr(application, "_github_json", github_io)
+    monkeypatch.setattr(
+        application, "is_github_actions_comment", lambda item: item.get("trusted") is True
+    )
+    canonical = application._persist_application_evidence_comment
+    invoked: list[bool] = []
+
+    def counted(*args: object, **kwargs: object) -> int:
+        invoked.append(True)
+        return canonical(*args, **kwargs)
+
+    monkeypatch.setattr(application, "_persist_application_evidence_comment", counted)
+    persist = getattr(application, entry)
+    error_index = {
+        "duplicate": 0,
+        "bad-id": 1,
+        "bad-post": 2,
+        "bad-get": 3,
+    }.get(scenario)
+    if error_index is None:
+        assert persist(body, repository="owner/repo", token="test", issue_number=138) == 9011
+    else:
+        with pytest.raises(RuntimeError, match=messages[error_index]):
+            persist(body, repository="owner/repo", token="test", issue_number=138)
+    assert invoked == [True]
+    assert observed[0] == ("LIST", "issues/138/comments?sort=created")
+    assert sum(method == "POST" for method, _path in observed) == (
+        0 if scenario in {"existing", "duplicate", "bad-id"} else 1
+    )
+    assert sum(path == "issues/comments/9011" for _method, path in observed) == (
+        1 if scenario in {"new", "bad-get"} else 0
+    )
+
+
 def test_s2c_no_legacy_boolean_recovery_decision_owner() -> None:
     """RED: preserve typed proof outcomes, never a second Boolean projection."""
     assert "accepted_read_only_effects_complete" not in vars(application)
