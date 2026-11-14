@@ -3620,6 +3620,147 @@ def test_accepted_seven_file_manifest_proves_six_effective_changes(
     assert proof_git.mutations == []
 
 
+
+def test_435_accepted_original_git_witness_reobserves_without_replay(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R9/F2: the native #435-shaped Effect has one immutable Git witness.
+
+    This uses actual Git objects and the real shared Application Effect
+    observer. It does not mock the materialization result or persist any
+    Formal/Successor artifact: those have separate Application owners.
+    """
+    import investment_strategy.scheduled_agent_effects as effects
+
+    change = "restore-t1-dispatch-artifact-consumption"
+    original = WorkerRequest(435, "executor", "implement-change")
+    proof_git.repository = "royhsu-work/investment-strategy"
+    proof_git.source = original
+    proof_git.routing = original.action
+    proof_git.issue_change = change
+    proof_git.branch = f"agent/{change}"
+    proof_git.message = (
+        "test: qualify exact T1 Artifact reads "
+        "[t1-native-artifact-diagnostic] (Refs #435)"
+    )
+    pr = proof_git.prs[0]
+    pr["number"] = 437
+    pr["title"] = f"OpenSpec: {change}"
+    pr["body"] = "Refs #435"
+    cast(dict[str, object], pr["head"])["ref"] = proof_git.branch
+
+    paths = (
+        "src/investment_strategy/scheduled_agent_carrier.py",
+        "src/investment_strategy/scheduled_agent_dispatch_result.py",
+        "src/investment_strategy/scheduled_agent_idle_admission.py",
+        "tests/test_scheduled_agent_dispatch_result.py",
+        "tests/test_scheduled_agent_idle_admission.py",
+        ".github/workflows/quality.yml",
+        ".github/scripts/diagnose_dispatch_artifact.py",
+    )
+    preimage = {path: f"historical preimage {index}" for index, path in enumerate(paths[:-1])}
+    base = proof_git.commit(preimage, "Existing T1 carrier baseline", (proof_git.base,))
+    proof_git.base = base
+    proof_git.authorization = base
+    proof_git.main = base
+    proof_git.set_head(base)
+    cast(dict[str, object], pr["base"])["sha"] = base
+
+    desired = {path: f"accepted T1 content {index}" for index, path in enumerate(paths)}
+    payload = {
+        "issue_number": 435,
+        "operation": "application-materialize",
+        "expected_change": change,
+        "change": change,
+        "branch": proof_git.branch,
+        "base_sha": base,
+        "message": proof_git.message,
+        "pr_number": 437,
+        "files": [
+            {
+                "path": path,
+                "blob_sha": proof_git.blob(content),
+                "expected_sha": proof_git.entries(base).get(path, {}).get("sha"),
+            }
+            for path, content in desired.items()
+        ],
+    }
+    result = {
+        "_semantic_intent_version": 2,
+        "issue_number": 435,
+        "role": "executor",
+        "action": "implement-change",
+        "change": change,
+        "result_kind": "blocked",
+        "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/437",
+        "result_content": "Accepted seven-file implementation diagnostic; no checkpoint.",
+        "requested_effects": [
+            {"kind": "github-mutation", "payload_json": json.dumps(payload)}
+        ],
+    }
+    raw = json.dumps(result, sort_keys=True)
+    accepted = application_bridge.ApplicationDecisionRecord(
+        request_comment_id=6796616018,
+        request_body_sha256="a" * 64,
+        authorization_revision=base,
+        issue_number=435,
+        role=original.role,
+        action=original.action,
+        change=change,
+        result_kind="blocked",
+        disposition="ACCEPTED",
+        worker_result_sha256=hashlib.sha256(raw.encode()).hexdigest(),
+        raw_worker_result=raw,
+        reason="accepted",
+    )
+
+    def native_read(
+        repository: str, token: str, api_path: str, **kwargs: object
+    ) -> object:
+        if api_path == "issues/435":
+            issue = cast(dict[str, object], proof_git.api(repository, token, "issues/322", **kwargs))
+            return {**issue, "number": 435, "body": f"Change: {change}"}
+        return proof_git.api(repository, token, api_path, **kwargs)
+
+    monkeypatch.setattr(materialization, "_github_json", native_read)
+    monkeypatch.setattr(validation_resource, "_github_json", native_read)
+    monkeypatch.setattr(effects, "_github_json", native_read)
+    # The separate OpenSpec review gate is established upstream of this
+    # accepted Effect. It is not reimplemented by the Git witness test.
+    monkeypatch.setattr(
+        materialization, "_qualified_implementation_decision", lambda *_a, **_kw: None
+    )
+
+    def observe() -> application_bridge.AcceptedPostEffectProof:
+        return application_bridge._observe_accepted_post_effect_result(
+            record=accepted,
+            source=original,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            default_branch="main",
+        )
+
+    assert observe().disposition == "INDETERMINATE"  # Missing original Git effect.
+    witness = proof_git.commit(desired, proof_git.message, (base,))
+    proof_git.set_head(witness)
+    assert proof_git.comparison(base, witness)["ahead_by"] == 1
+    assert len(proof_git.comparison(base, witness)["files"]) == 7
+
+    # Two separate fresh observations qualify one and the same original
+    # accepted Git effect, without calling its historical mutation again.
+    assert observe().disposition == "COMPLETE"
+    assert observe().disposition == "COMPLETE"
+    assert proof_git.head == witness
+    assert proof_git.mutations == []
+    # A durable original is not a durable Formal or Successor.
+    assert application_bridge.AcceptedPostEffectProof(
+        "COMPLETE", "original observed"
+    ).runtime_repair_frontier is None
+
+
+
 def test_accepted_noop_manifest_still_rejects_unrelated_commit_delta(
     proof_git: _ProofGitRepository,
 ) -> None:
