@@ -3775,6 +3775,49 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     assert observe().disposition == "COMPLETE"
     assert proof_git.head == witness
     assert proof_git.mutations == []
+
+    # Original-effect completion is not a Formal result. Reuse the already
+    # source-proven Git witness as the fresh carrier revision and exercise the
+    # real Application-owned formal projection, not a mocked Formal status.
+    monkeypatch.setattr(
+        application_bridge, "_machine_result_revision", lambda *_a, **_kw: witness
+    )
+    args = {
+        "source": original,
+        "change": change,
+        "repository": proof_git.repository,
+        "token": _TOKEN,
+        "current_revision": proof_git.main,
+        "default_branch": "main",
+        "request_comment_id": accepted.request_comment_id,
+    }
+    projection = application_bridge._fresh_application_worker_result(raw, **args)
+    projected = application_bridge.parse_effect_batch(
+        projection, original, authorized_change=change
+    )
+    assert len(projected.effects) == 2
+    original_effect, formal_effect = projected.effects
+    assert original_effect.kind == "github-mutation"
+    assert json.loads(original_effect.payload_json) == payload
+    assert formal_effect.kind == "issue-comment"
+    formal = cast(str, json.loads(formal_effect.payload_json)["body"])
+    assert formal.splitlines()[0] == "ACTION_RESULT"
+    assert "Workflow: #435" in formal.splitlines()
+    assert "Result: BLOCKED" in formal.splitlines()
+    assert f"Revision: {witness}" in formal.splitlines()
+    assert "Repository-derived successor: Executor / implement-change" in formal.splitlines()
+    correlation = application_bridge.formal_application_correlation(
+        original,
+        change=change,
+        result_kind="blocked",
+        current_revision=proof_git.main,
+        request_comment_id=accepted.request_comment_id,
+    )
+    assert f"Application-Correlation: {correlation}" in formal.splitlines()
+    assert "SLICE_CHECKPOINT" not in projection
+    assert application_bridge._fresh_application_worker_result(raw, **args) == projection
+    assert proof_git.mutations == []
+
     # A durable original is not a durable Formal or Successor.
     assert (
         application_bridge.AcceptedPostEffectProof(
