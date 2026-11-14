@@ -3735,9 +3735,11 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         if api_path == "issues/435/comments?per_page=100&sort=created&direction=desc":
             return list(reversed(formal_comments))
         if api_path == "issues/435/timeline?per_page=100&page=1":
-            return [
-                {"id": 90001, "event": "commented", "created_at": "2026-11-11T08:33:00Z"}
-            ] if formal_comments else []
+            return (
+                [{"id": 90001, "event": "commented", "created_at": "2026-11-11T08:33:00Z"}]
+                if formal_comments
+                else []
+            )
         if api_path == "issues/435/comments" and kwargs.get("method") == "POST":
             request = cast(dict[str, str], kwargs["payload"])
             formal_comment_posts.append(request["body"])
