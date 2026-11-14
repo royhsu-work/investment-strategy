@@ -98,8 +98,12 @@ def test_activation_and_recovery_comments_share_one_write_postcondition_owner(
         return ()
 
     def github_io(
-        _repo: str, _token: str, path: str, *,
-        method: str = "GET", payload: dict[str, str] | None = None
+        _repo: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, str] | None = None,
     ) -> dict[str, object]:
         observed.append((method, path))
         if method == "POST":

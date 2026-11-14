@@ -8469,9 +8469,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 and (not requires_validation or args.validation_passed)
                 and not defer_accepted_checkpoint
             ),
-            materialization_promote_change=(
-                args.validation_passed and not activation_validated
-            ),
+            materialization_promote_change=(args.validation_passed and not activation_validated),
             validated_materialization_revision=(
                 None
                 if target is None or (not activation_validated and checkpoint_already_durable)
