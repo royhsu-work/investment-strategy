@@ -1303,6 +1303,10 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
                 else state["formal"]
             )
 
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            # Simulate the adapter's already-qualified native source, not a bool fallback.
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
+
     monkeypatch.setattr(application, "GitHubEffectAdapter", ReadOnlyAdapter)
     evidence: dict[str, object] = {
         "reason": "indeterminate accepted effects require reconciliation",
@@ -1449,6 +1453,10 @@ def test_accepted_recovery_observer_captures_only_operational_failures(
 
         def observe_postcondition(self, _effect: StagedEffect) -> bool:
             raise error_type("proof-boundary failure")
+
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            self.observe_postcondition(effect)
+            return None
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", FailingObserver)
 
@@ -2943,6 +2951,9 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
         def observe_postcondition(self, effect: StagedEffect) -> bool:
             return effect_state[effect_ids.index((effect.kind, effect.payload_json))]
 
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
+
     monkeypatch.setattr(application, "GitHubEffectAdapter", ReadOnlyAdapter)
     # The genuine artifact reader has qualified the predecessor above.
     # This integration test exercises the dispatcher/continuation wiring;
@@ -3336,6 +3347,9 @@ def test_partial_guard_exception_reuses_verified_unattempted_suffix(
 
         def observe_postcondition(self, effect: StagedEffect) -> bool:
             return observe(effect)
+
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", FreshAdapter)
     native_document = json.loads(artifact_path.read_text())
@@ -3930,6 +3944,9 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
             # Identical current truth: E0 is durable, E1 is not (yet).
             return effect == first
 
+        def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+            return "issues/comments/992001" if self.observe_postcondition(effect) else None
+
     monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
     qualified = (
         application.classify_accepted_read_only_effects(
@@ -3960,6 +3977,11 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
                 observed.append(effect)
                 assert effect in originals
                 return True
+
+            def observe_issue_comment_source_ref(
+                self, effect: StagedEffect
+            ) -> str | None:
+                return "issues/comments/992001" if self.observe_postcondition(effect) else None
 
         monkeypatch.setattr(application, "GitHubEffectAdapter", LaterObserved)
         later = application.classify_accepted_read_only_effects(
