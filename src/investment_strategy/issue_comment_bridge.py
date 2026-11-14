@@ -6118,6 +6118,7 @@ def _present_runtime_repair_admission(
     proof = admission.frontier_proof
     witness = proof.witness
     stage = witness.stage if isinstance(witness, TypedEvidenceError) else None
+    ordinal = proof.frontier_index if proof.frontier_index is not None else "unverified"
     body = "\n".join(
         (
             "## Non-writing R9 Human/Runtime repair intake",
@@ -6139,7 +6140,7 @@ def _present_runtime_repair_admission(
             f"- Recovery episode SHA256: {admission.source_artifact.recovery_episode_sha256}",
             f"- Read-only proof: {admission.result_state}/{admission.reason}",
             f"- Pending original/formal/successor frontier: {admission.frontier}",
-            f"- Verified Effect ordinal: {proof.frontier_index if proof.frontier_index is not None else 'unverified'}",
+            f"- Verified Effect ordinal: {ordinal}",
             f"- Typed witness: {type(witness).__name__}",
             f"- Evidence error stage: {stage if stage is not None else 'not-an-operational-error'}",
             "",
