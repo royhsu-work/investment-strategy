@@ -6195,6 +6195,9 @@ class RecoveryProofResult:
     obligation: RecoveryObligation
     witness: RecoveryEvidenceNode | CompleteNeverCalledWitness | TypedEvidenceError
     remaining_obligation: RecoveryObligation | None
+    # Native source-owned Effect position, not a new policy or write authority.
+    # Unknown until the accepted Effect sequence and checkpoint qualify it.
+    frontier_index: int | None = None
 
 
 def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofResult:
@@ -6372,11 +6375,11 @@ def _observe_accepted_effect_prefix(
     """
 
     nodes: list[RecoveryEvidenceNode] = []
-    for effect in effects:
+    for index, effect in enumerate(effects):
         fact = _observe_accepted_effect_fact(effect, adapter, source=source)
         proof = evaluate_recovery_evidence(fact)
         if proof.disposition != "SATISFIED":
-            return proof
+            return replace(proof, frontier_index=index)
         nodes.append(fact)
     return tuple(nodes)
 
@@ -7116,7 +7119,7 @@ def classify_accepted_read_only_effects(
             )
         )
         failed_satisfied = attempted_fact.final_postcondition is True
-        attempted_proof = evaluate_recovery_evidence(attempted_fact)
+        attempted_proof = replace(evaluate_recovery_evidence(attempted_fact), frontier_index=index)
         historical_frontier = index + 1 if attempted_proof.disposition == "SATISFIED" else index
         # Original Effect proof is separate from *authorization of the next*
         # formal/result/successor write. Bind its leaf to the immutable
@@ -7221,6 +7224,7 @@ def classify_accepted_read_only_effects(
                 ),
             )
         )
+        historical_proof = replace(historical_proof, frontier_index=historical_frontier)
         if historical_proof.disposition != "NOT_APPLIED":
             return AcceptedPostEffectProof(
                 "UNSAFE" if historical_proof.disposition == "CONFLICT" else "INDETERMINATE",
