@@ -3641,8 +3641,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     proof_git.issue_change = change
     proof_git.branch = f"agent/{change}"
     proof_git.message = (
-        "test: qualify exact T1 Artifact reads "
-        "[t1-native-artifact-diagnostic] (Refs #435)"
+        "test: qualify exact T1 Artifact reads [t1-native-artifact-diagnostic] (Refs #435)"
     )
     pr = proof_git.prs[0]
     pr["number"] = 437
@@ -3703,9 +3702,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         "result_kind": "blocked",
         "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/437",
         "result_content": "Accepted seven-file implementation diagnostic; no checkpoint.",
-        "requested_effects": [
-            {"kind": "github-mutation", "payload_json": json.dumps(payload)}
-        ],
+        "requested_effects": [{"kind": "github-mutation", "payload_json": json.dumps(payload)}],
     }
     raw = json.dumps(result, sort_keys=True)
     accepted = application_bridge.ApplicationDecisionRecord(
@@ -3723,9 +3720,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         reason="accepted",
     )
 
-    def native_read(
-        repository: str, token: str, api_path: str, **kwargs: object
-    ) -> object:
+    def native_read(repository: str, token: str, api_path: str, **kwargs: object) -> object:
         if api_path == "issues/435":
             issue = cast(
                 dict[str, object], proof_git.api(repository, token, "issues/322", **kwargs)
@@ -3781,9 +3776,12 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     assert proof_git.head == witness
     assert proof_git.mutations == []
     # A durable original is not a durable Formal or Successor.
-    assert application_bridge.AcceptedPostEffectProof(
-        "COMPLETE", "original observed"
-    ).runtime_repair_frontier is None
+    assert (
+        application_bridge.AcceptedPostEffectProof(
+            "COMPLETE", "original observed"
+        ).runtime_repair_frontier
+        is None
+    )
 
 
 
