@@ -9191,9 +9191,7 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
         completion = bridge._unresolved_accepted_proof_completion(
             proof,
             origin="READ_ONLY",
-            request_comment_id=(
-                6796616019 if fault == "wrong-completion-request" else 6796616018
-            ),
+            request_comment_id=(6796616019 if fault == "wrong-completion-request" else 6796616018),
             recovery_artifact=None,
         )
         if completion is None:

@@ -6051,8 +6051,7 @@ def qualify_runtime_repair_admission(
     if (
         repair_frontier is None
         or completion.request_comment_id != request_comment_id
-        or completion.state
-        != ("RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID")
+        or completion.state != ("RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID")
     ):
         return None
     frontier = f"{repair_frontier.remaining_obligation}:{repair_frontier.disposition}"
