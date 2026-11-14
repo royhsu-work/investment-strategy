@@ -3620,7 +3620,6 @@ def test_accepted_seven_file_manifest_proves_six_effective_changes(
     assert proof_git.mutations == []
 
 
-
 def test_435_accepted_original_git_witness_reobserves_without_replay(
     proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
@@ -3782,7 +3781,6 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         ).runtime_repair_frontier
         is None
     )
-
 
 
 def test_accepted_noop_manifest_still_rejects_unrelated_commit_delta(
