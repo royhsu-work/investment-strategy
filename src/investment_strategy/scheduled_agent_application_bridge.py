@@ -6154,6 +6154,9 @@ class TypedEvidenceError:
     detail: str
     request_comment_id: int
     artifact_id: int | None = None
+    # Source-qualified uncertainty that cannot safely be resolved by merely
+    # retrying the original write. Missing GET evidence stays re-observable.
+    intervention_required: bool = False
 
 
 AcceptedNeverCalledEvidence = CompleteNeverCalledWitness | TypedEvidenceError
@@ -6175,6 +6178,8 @@ class RecoveryEvidenceNode:
     depends_on: tuple[RecoveryEvidenceNode, ...] = ()
     # A verified native GitHub object, not a standalone Boolean assertion.
     source_object_ref: str | None = None
+    # Original native checkpoint fact; never a write or replay permission.
+    write_call_entered: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -6405,9 +6410,10 @@ class AcceptedPostEffectProof:
     def runtime_repair_frontier(self) -> RecoveryProofResult | None:
         """Expose only an unresolved, typed obligation already qualified by Application.
 
-        This is not a new decision policy or write permission. Absent typed
-        evidence, positive completion, and a proven never-called suffix are
-        not irreducible UNKNOWN/CONFLICT maintenance admissions.
+        This is not write permission. An observation error or a naked UNKNOWN
+        cannot prove an irreducible repair obligation; only the canonical
+        witness of an entered write, an unprovable history boundary, or an
+        actual source conflict may be presented for Human maintenance.
         """
 
         proof = self.pending_frontier_proof or self.original_effect_proof
@@ -6417,6 +6423,19 @@ class AcceptedPostEffectProof:
             or proof.disposition not in {"UNKNOWN", "CONFLICT"}
             or proof.remaining_obligation is None
         ):
+            return None
+        if proof.disposition == "UNKNOWN":
+            witness = proof.witness
+            if isinstance(witness, TypedEvidenceError):
+                return proof if witness.intervention_required else None
+            if isinstance(witness, RecoveryEvidenceNode):
+                return (
+                    proof
+                    if witness.write_call_entered is True
+                    and witness.final_postcondition is False
+                    and witness.effect is not None
+                    else None
+                )
             return None
         return proof
 
@@ -6761,13 +6780,16 @@ def _read_accepted_never_called_evidence(
     This is a read adapter, not a policy, mutation guard, or retry permit.
     """
 
-    def error(stage: str, detail: str, *, conflict: bool = False) -> TypedEvidenceError:
+    def error(
+        stage: str, detail: str, *, conflict: bool = False, intervention: bool = False
+    ) -> TypedEvidenceError:
         return TypedEvidenceError(
             "CONFLICT" if conflict else "UNKNOWN",
             stage,
             detail,
             record.request_comment_id,
             None if artifact is None else artifact.artifact_id,
+            intervention_required=intervention,
         )
 
     if artifact is None:
@@ -6825,7 +6847,11 @@ def _read_accepted_never_called_evidence(
         if attempted is None or type(index) is not int:
             return error("CHECKPOINT", "attempted Effect checkpoint invalid", conflict=True)
         if index > failed_index:
-            return error("ATTEMPTED", "a prior attempt crossed the claimed uncalled frontier")
+            return error(
+                "ATTEMPTED",
+                "a prior attempt crossed the claimed uncalled frontier",
+                intervention=True,
+            )
         if any(
             effect != original.effects[position]
             for position, effect in enumerate(attempted)
@@ -6855,7 +6881,9 @@ def _read_accepted_never_called_evidence(
             in {"effect-precondition", "effect-precondition-exception"}
             and failure.get("write_call_entered") is False
         ):
-            return error("CALL_ENTRY", "target Effect may already have been called")
+            return error(
+                "CALL_ENTRY", "target Effect may already have been called", intervention=True
+            )
 
         if current.recovery_attempt == 1:
             if (
@@ -7064,6 +7092,9 @@ def classify_accepted_read_only_effects(
             else replace(
                 _observe_accepted_effect_fact(attempted[-1], adapter, source=source),
                 depends_on=tuple(proven_prefix),
+                write_call_entered=(
+                    True if recovery_evidence.get("write_call_entered") is True else None
+                ),
             )
         )
         failed_satisfied = attempted_fact.final_postcondition is True

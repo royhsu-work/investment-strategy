@@ -9067,9 +9067,13 @@ def _native_runtime_repair_sources() -> tuple[
         ("duplicate-decision", False),
         ("ordinary-continuation", False),
         ("completed", False),
-        ("unknown-original", True),
+        ("unknown-original", False),
+        ("entered-original", True),
+        ("missing-entry-witness", False),
         ("pending-formal", True),
         ("pending-successor", True),
+        ("pending-formal-get", False),
+        ("pending-successor-get", False),
         ("unqualified-proof", False),
         ("wrong-completion-request", False),
         ("wrong-proof-state", False),
@@ -9171,6 +9175,17 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
                     6796616018, 0, "b" * 64, ((1, 1, 1),)
                 ),
             )
+        elif fault in {"entered-original", "missing-entry-witness"}:
+            fact = application.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT",
+                application.StagedEffect(
+                    "issue-comment", json.dumps({"issue_number": 435, "body": "accepted"})
+                ),
+                False,
+                write_call_entered=True,
+            )
+            if fault == "missing-entry-witness":
+                fact = replace(fact, write_call_entered=None)
         else:
             fact = application.RecoveryEvidenceNode(
                 "ORIGINAL_EFFECT",
@@ -9186,14 +9201,19 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
                 "UNKNOWN", "ORIGINAL_EFFECT", typed.witness, None
             )
         pending = None
-        if fault in {"pending-formal", "pending-successor"}:
+        if fault in {
+            "pending-formal",
+            "pending-successor",
+            "pending-formal-get",
+            "pending-successor-get",
+        }:
             # Preserve the independently satisfied Original witness while the
             # real pending Application frontier is a later typed DAG node.
             original = application.evaluate_recovery_evidence(
                 application.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, True)
             )
             obligation: application.RecoveryObligation = (
-                "FORMAL_RESULT" if fault == "pending-formal" else "SUCCESSOR"
+                "FORMAL_RESULT" if fault.startswith("pending-formal") else "SUCCESSOR"
             )
             pending = application.evaluate_recovery_evidence(
                 application.RecoveryEvidenceNode(
@@ -9201,7 +9221,12 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
                     None,
                     None,
                     never_called_evidence=application.TypedEvidenceError(
-                        "UNKNOWN", "HISTORY", "native history unresolved", 6796616018
+                        "UNKNOWN",
+                        "SOURCE_GET" if fault.endswith("-get") else "CALL_ENTRY",
+                        "native history unresolved",
+                        6796616018,
+                        7003,
+                        intervention_required=not fault.endswith("-get"),
                     ),
                     depends_on=(application.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, True),),
                 )

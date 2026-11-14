@@ -110,6 +110,31 @@ def test_s2p_proof_result_carries_witness_and_remaining_obligation() -> None:
 
 
 @pytest.mark.parametrize(
+    ("entered", "final_postcondition", "expected"),
+    [
+        (True, False, True),
+        (None, False, False),
+        (True, True, False),
+        (False, False, False),
+    ],
+)
+def test_r9_unresolved_entered_write_requires_exact_witness(
+    entered: bool | None, final_postcondition: bool, expected: bool
+) -> None:
+    effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"original"}')
+    fact = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT", effect, final_postcondition,
+        write_call_entered=entered,
+        source_object_ref="issues/comments/992001" if final_postcondition else None,
+    )
+    decision = application.AcceptedPostEffectProof(
+        "INDETERMINATE", "native accepted attempt remains uncertain",
+        original_effect_proof=application.evaluate_recovery_evidence(fact),
+    )
+    assert (decision.runtime_repair_frontier is not None) is expected
+
+
+@pytest.mark.parametrize(
     ("source_ref", "expected"),
     [
         (None, "UNKNOWN"),
@@ -854,7 +879,9 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
         assert frontier.remaining_obligation == (
             "SUCCESSOR" if successor_failed or formal_durable else "FORMAL_RESULT"
         )
-        assert proof.runtime_repair_frontier is frontier
+        # An unavailable native GET/history is still an exact pending fact,
+        # but it is not positive evidence of an irreducible maintenance need.
+        assert proof.runtime_repair_frontier is None
     else:
         assert proof.pending_frontier_proof is None
     assert [node.obligation for node in observed_nodes if node.effect == formal] == [
@@ -4091,18 +4118,21 @@ def test_historical_proof_distinguishes_never_called_from_lost_prior_write(
         assert later.disposition == "COMPLETE"
         assert observed == [first, second]
 
-    # A locally non-entered E1 does not override the earlier lost response.
-    assert isinstance(
-        application._read_accepted_never_called_evidence(
-            record=record,
-            source=source,
-            artifact=child,
-            failed_index=0,
-            repository="owner/repo",
-            token=REVISION,
-        ),
-        application.TypedEvidenceError,
+    # A locally non-entered E1 does not override an earlier attempt that
+    # already crossed its claimed no-call frontier. This qualified native
+    # history needs non-writing intervention, not a blind replay.
+    crossed = application._read_accepted_never_called_evidence(
+        record=record,
+        source=source,
+        artifact=child,
+        failed_index=0,
+        repository="owner/repo",
+        token=REVISION,
     )
+    assert isinstance(crossed, application.TypedEvidenceError)
+    assert (crossed.category, crossed.stage) == ("UNKNOWN", "ATTEMPTED")
+    assert crossed.intervention_required
+    assert crossed.artifact_id == child.artifact_id
     if not earlier_e1_write:
         assert isinstance(
             application._read_accepted_never_called_evidence(
