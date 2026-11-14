@@ -5898,7 +5898,7 @@ class RuntimeRepairAdmission:
     frontier: str
     # Existing Application-validated native Run/Job/Artifact identity; this
     # handoff cannot be upgraded from a bare status or a synthetic DAG proof.
-    source_artifact: ApplicationRecoveryArtifact
+    source_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact
 
 
 def qualify_runtime_repair_admission(
@@ -6052,25 +6052,32 @@ def qualify_runtime_repair_admission(
         return None
     repair_frontier = proof.runtime_repair_frontier
     artifact = completion.recovery_artifact
-    # Reuse the Application's already-qualified native lineage. An arbitrary
-    # typed UNKNOWN/CONFLICT, even with a matching Human trigger, is not a
-    # source-backed handoff without its actual run-scoped recovery Artifact.
+    # Both Application artifact readers independently qualify the native
+    # Run/Job/Artifact, but their documents use distinct stage schemas:
+    # recovery carries authorization_revision; exception carries change.
+    # Compare the common accepted identity once, then its typed schema field.
+    if repair_frontier is None or not isinstance(
+        artifact, (ApplicationRecoveryArtifact, ApplicationExceptionArtifact)
+    ):
+        return None
     if (
-        repair_frontier is None
-        or not isinstance(artifact, ApplicationRecoveryArtifact)
-        or artifact.request_comment_id != request_comment_id
+        artifact.request_comment_id != request_comment_id
         or artifact.accepted_decision_sha256 != fields["Accepted-Decision-SHA256"]
         or (
             artifact.document.get("issue_number"),
             artifact.document.get("role"),
             artifact.document.get("action"),
-            artifact.document.get("authorization_revision"),
+        )
+        != (matching[0].issue_number, matching[0].role, matching[0].action)
+        or (
+            artifact.document.get("authorization_revision")
+            if isinstance(artifact, ApplicationRecoveryArtifact)
+            else artifact.document.get("change")
         )
         != (
-            matching[0].issue_number,
-            matching[0].role,
-            matching[0].action,
-            matching[0].authorization_revision,
+            matching[0].authorization_revision
+            if isinstance(artifact, ApplicationRecoveryArtifact)
+            else matching[0].change
         )
         or completion.request_comment_id != request_comment_id
         or completion.state != ("RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID")
@@ -6112,8 +6119,10 @@ def _present_runtime_repair_admission(
             f"- Native Application run: {admission.source_artifact.run_id}"
             f" / attempt {admission.source_artifact.run_attempt}",
             f"- Native Application job: {admission.source_artifact.job_id}",
-            f"- Recovery Artifact ID: {admission.source_artifact.artifact_id}",
-            f"- Recovery Artifact digest: {admission.source_artifact.artifact_digest}",
+            f"- Native evidence kind: "
+            f"{'recovery' if isinstance(admission.source_artifact, ApplicationRecoveryArtifact) else 'exception'}",
+            f"- Evidence Artifact ID: {admission.source_artifact.artifact_id}",
+            f"- Evidence Artifact digest: {admission.source_artifact.artifact_digest}",
             f"- Recovery episode SHA256: {admission.source_artifact.recovery_episode_sha256}",
             f"- Read-only proof: {admission.result_state}/{admission.reason}",
             f"- Pending original/formal/successor frontier: {admission.frontier}",

@@ -9080,6 +9080,47 @@ def _native_r9_recovery_artifact(
     )
 
 
+def _native_r9_exception_artifact(
+    accepted_comment: Mapping[str, object],
+) -> application.ApplicationExceptionArtifact:
+    """Native exception shape differs from recovery: change, not auth revision."""
+
+    source = _native_r9_recovery_artifact(accepted_comment)
+    decision = bridge.parse_application_decision(cast(str, accepted_comment["body"]))
+    assert decision is not None
+    return application.ApplicationExceptionArtifact(
+        run_id=source.run_id,
+        run_attempt=source.run_attempt,
+        job_id=source.job_id,
+        artifact_id=source.artifact_id,
+        artifact_digest=source.artifact_digest,
+        request_comment_id=source.request_comment_id,
+        accepted_decision_sha256=source.accepted_decision_sha256,
+        failure_evidence_sha256=source.failure_evidence_sha256,
+        recovery_episode_sha256=source.recovery_episode_sha256,
+        document={
+            "schema": "scheduled-agent-execution-exception/v1",
+            "repository": "royhsu-work/investment-strategy",
+            "issue_number": decision.issue_number,
+            "role": decision.role,
+            "action": decision.action,
+            "change": decision.change,
+            "revision": REVISION,
+            "request_comment_id": decision.request_comment_id,
+            "trigger_comment_id": 9001,
+            "run_id": 7001,
+            "run_attempt": 1,
+            "attempted_operation": "application-effect-preparation",
+            "exception_type": "RuntimeError",
+            "raw_error": "accepted implementation checkpoint identity is incomplete",
+            "raw_traceback": "(redacted)",
+            "mutation_status": "NO_APPLICATION_WRITE_ATTEMPTED",
+            "unfinished_boundary": "application-effect-preparation",
+            "classification": "UNCLASSIFIED_EXECUTION_EXCEPTION",
+        },
+    )
+
+
 @pytest.mark.parametrize(
     ("fault", "admitted"),
     [
@@ -9106,6 +9147,11 @@ def _native_r9_recovery_artifact(
         ("different-native-artifact-decision", False),
         ("different-native-artifact-request", False),
         ("different-native-artifact-source", False),
+        ("exception-artifact", True),
+        ("exception-foreign-change", False),
+        ("exception-different-request", False),
+        ("exception-unqualified-proof", False),
+        ("exception-transient-get", False),
         ("unqualified-proof", False),
         ("wrong-completion-request", False),
         ("wrong-proof-state", False),
@@ -9119,8 +9165,18 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
 ) -> None:
     repository = "royhsu-work/investment-strategy"
     event, native, accepted, issue = _native_runtime_repair_sources()
-    artifact = _native_r9_recovery_artifact(accepted)
-    if fault == "different-native-artifact-decision":
+    artifact: application.ApplicationRecoveryArtifact | application.ApplicationExceptionArtifact
+    if fault.startswith("exception-"):
+        artifact = _native_r9_exception_artifact(accepted)
+    else:
+        artifact = _native_r9_recovery_artifact(accepted)
+    if fault == "exception-foreign-change":
+        artifact = replace(
+            artifact, document={**artifact.document, "change": "unrelated-change"}
+        )
+    elif fault == "exception-different-request":
+        artifact = replace(artifact, request_comment_id=artifact.request_comment_id + 1)
+    elif fault == "different-native-artifact-decision":
         artifact = replace(artifact, accepted_decision_sha256="0" * 64)
     elif fault == "different-native-artifact-request":
         artifact = replace(artifact, request_comment_id=artifact.request_comment_id + 1)
@@ -9195,14 +9251,20 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             )
         if fault == "completed":
             return bridge.ApplicationCompletion("COMPLETE", "already complete", 6796616018)
-        if fault == "unqualified-proof":
+        if fault in {"unqualified-proof", "exception-unqualified-proof"}:
             return bridge.ApplicationCompletion(
-                "INVALID", "application-completion-read-only-proof-conflict", 6796616018
+                "INVALID", "application-completion-read-only-proof-conflict",
+                6796616018, recovery_artifact=artifact
             )
 
         # Exercise the real Application DAG/Result and Application→Bridge
         # projection rather than blessing arbitrary status/reason strings.
-        if fault == "valid":
+        if fault in {
+            "valid",
+            "exception-artifact",
+            "exception-foreign-change",
+            "exception-different-request",
+        }:
             fact = application.RecoveryEvidenceNode(
                 "ORIGINAL_EFFECT", None, None, source_conflict=True
             )
@@ -9275,14 +9337,21 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             )
             typed = original
         proof = application.AcceptedPostEffectProof(
-            "UNSAFE" if fault == "valid" else "INDETERMINATE",
+            "UNSAFE"
+            if fault in {
+                "valid",
+                "exception-artifact",
+                "exception-foreign-change",
+                "exception-different-request",
+            }
+            else "INDETERMINATE",
             "qualified Application typed proof",
             original_effect_proof=typed,
             pending_frontier_proof=pending,
         )
         completion = bridge._unresolved_accepted_proof_completion(
             proof,
-            origin="READ_ONLY",
+            origin="EXCEPTION" if fault.startswith("exception-") else "READ_ONLY",
             request_comment_id=(6796616019 if fault == "wrong-completion-request" else 6796616018),
             recovery_artifact=None,
         )
@@ -9315,6 +9384,7 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
         assert (result.source_artifact.run_id, result.source_artifact.job_id) == (7001, 7002)
         expected_frontier = {
             "valid": "ORIGINAL_EFFECT:CONFLICT",
+            "exception-artifact": "ORIGINAL_EFFECT:CONFLICT",
             "pending-formal": "FORMAL_RESULT:UNKNOWN",
             "pending-successor": "SUCCESSOR:UNKNOWN",
         }.get(fault, "ORIGINAL_EFFECT:UNKNOWN")
@@ -9465,7 +9535,8 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
     assert not payload.exists()
     note = summary.read_text(encoding="utf-8")
     assert "Native Application run: 7001 / attempt 1" in note
-    assert "Recovery Artifact ID: 7003" in note
+    assert "Native evidence kind: recovery" in note
+    assert "Evidence Artifact ID: 7003" in note
     assert note.count("Non-writing R9 Human/Runtime repair intake") == 1
 
     stage["value"] = "repaired"
@@ -9529,6 +9600,7 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
     assert f"Exact PR HEAD: {REVISION}" in summary.read_text()
     assert "Native Application run: 7001 / attempt 1" in summary.read_text()
     assert "Native Application job: 7002" in summary.read_text()
-    assert "Recovery Artifact ID: 7003" in summary.read_text()
-    assert "Recovery Artifact digest: sha256:" + "d" * 64 in summary.read_text()
+    assert "Native evidence kind: recovery" in summary.read_text()
+    assert "Evidence Artifact ID: 7003" in summary.read_text()
+    assert "Evidence Artifact digest: sha256:" + "d" * 64 in summary.read_text()
     assert "authorizes NO Effect" in summary.read_text()
