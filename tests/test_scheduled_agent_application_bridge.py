@@ -7027,15 +7027,16 @@ def test_cli_checkpoint_revision_is_bound_to_fresh_proven_target_not_unverified_
 
     main_source = inspect.getsource(bridge._main_unprotected)
     assert "validated_materialization_revision=args.validated_revision" not in main_source
+    # Only one guarded Effect call owns both validated first activation
+    # and ordinary accepted continuation. Neither trusts CLI revision input.
+    assert main_source.count("batch, result = run_guarded_effect_application(") == 1
+    assert main_source.count("validated_materialization_revision=(") == 1
+    assert "activation_validated = first_activation and args.validation_passed" in main_source
     assert (
-        main_source.count(
-            "validated_materialization_revision=(None if target is None else target.revision)"
-        )
-        == 1
+        "if target is None or (not activation_validated and checkpoint_already_durable)"
+        in main_source
     )
-    assert (
-        "None if target is None or checkpoint_already_durable else target.revision" in main_source
-    )
+    assert "else target.revision" in main_source
 
 
 def test_accepted_checkpoint_and_formal_projection_rebind_only_after_proven_target() -> None:
