@@ -120,9 +120,22 @@ def test_activation_and_recovery_comments_share_one_write_postcondition_owner(
     canonical = application._persist_application_evidence_comment
     invoked: list[bool] = []
 
-    def counted(*args: object, **kwargs: object) -> int:
+    def counted(
+        result_body: str,
+        *,
+        repository: str,
+        token: str,
+        issue_number: int,
+        errors: tuple[str, str, str, str],
+    ) -> int:
         invoked.append(True)
-        return canonical(*args, **kwargs)
+        return canonical(
+            result_body,
+            repository=repository,
+            token=token,
+            issue_number=issue_number,
+            errors=errors,
+        )
 
     monkeypatch.setattr(application, "_persist_application_evidence_comment", counted)
     persist = getattr(application, entry)
