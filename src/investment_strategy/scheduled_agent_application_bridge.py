@@ -6587,9 +6587,7 @@ def _observe_accepted_post_effect_result(
             allow_pending_continuation=True,
             accepted_intent=True,
         )
-        observed_originals = _observe_accepted_effect_prefix(
-            batch.effects, adapter, source=source
-        )
+        observed_originals = _observe_accepted_effect_prefix(batch.effects, adapter, source=source)
         if observed_originals is None:
             return AcceptedPostEffectProof(
                 "INDETERMINATE", "accepted original Effect postconditions unproven"
@@ -7026,9 +7024,7 @@ def classify_accepted_read_only_effects(
         # One proof table: a positively SATISFIED Effect does not have to
         # prove it was never called. Only an absent, invocation-local
         # never-called Effect requires the full historical NOT_APPLIED proof.
-        proven_prefix = _observe_accepted_effect_prefix(
-            attempted[:-1], adapter, source=source
-        )
+        proven_prefix = _observe_accepted_effect_prefix(attempted[:-1], adapter, source=source)
         if proven_prefix is None:
             return AcceptedPostEffectProof(
                 "INDETERMINATE", "accepted historical prefix is not yet satisfied"
@@ -7093,10 +7089,7 @@ def classify_accepted_read_only_effects(
             # One qualified suffix owner has already proved the immutable
             # Formal/Successor identity, ordinal and historical revision.
             and (bool(original.effects) or not non_entry)
-            and (
-                attempted_proof.disposition == "SATISFIED"
-                or qualified_derived
-            )
+            and (attempted_proof.disposition == "SATISFIED" or qualified_derived)
             and consequence_postconditions_complete(
                 record.raw_worker_result,
                 source=source,

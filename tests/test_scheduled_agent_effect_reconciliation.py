@@ -109,7 +109,6 @@ def test_s2p_proof_result_carries_witness_and_remaining_obligation() -> None:
     assert conflict_result.remaining_obligation == "ORIGINAL_EFFECT"
 
 
-
 @pytest.mark.parametrize(
     ("source_ref", "expected"),
     [
