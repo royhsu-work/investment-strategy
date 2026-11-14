@@ -9171,9 +9171,7 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
     else:
         artifact = _native_r9_recovery_artifact(accepted)
     if fault == "exception-foreign-change":
-        artifact = replace(
-            artifact, document={**artifact.document, "change": "unrelated-change"}
-        )
+        artifact = replace(artifact, document={**artifact.document, "change": "unrelated-change"})
     elif fault == "exception-different-request":
         artifact = replace(artifact, request_comment_id=artifact.request_comment_id + 1)
     elif fault == "different-native-artifact-decision":
@@ -9253,8 +9251,10 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             return bridge.ApplicationCompletion("COMPLETE", "already complete", 6796616018)
         if fault in {"unqualified-proof", "exception-unqualified-proof"}:
             return bridge.ApplicationCompletion(
-                "INVALID", "application-completion-read-only-proof-conflict",
-                6796616018, recovery_artifact=artifact
+                "INVALID",
+                "application-completion-read-only-proof-conflict",
+                6796616018,
+                recovery_artifact=artifact,
             )
 
         # Exercise the real Application DAG/Result and Application→Bridge
@@ -9336,15 +9336,11 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
                 )
             )
             typed = original
+        proof_disposition: Literal["UNSAFE", "INDETERMINATE"] = (
+            "UNSAFE" if typed.disposition == "CONFLICT" else "INDETERMINATE"
+        )
         proof = application.AcceptedPostEffectProof(
-            "UNSAFE"
-            if fault in {
-                "valid",
-                "exception-artifact",
-                "exception-foreign-change",
-                "exception-different-request",
-            }
-            else "INDETERMINATE",
+            proof_disposition,
             "qualified Application typed proof",
             original_effect_proof=typed,
             pending_frontier_proof=pending,
