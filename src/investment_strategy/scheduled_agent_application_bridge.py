@@ -7067,29 +7067,35 @@ def classify_accepted_read_only_effects(
                 "attempted accepted Effect is not yet proven complete",
                 original_effect_proof=original_effect_proof,
             )
-        # R9: after positive original/formal witnesses, the canonical
-        # consequence owner can read-only prove an already durable successor.
-        # No history-of-nonentry gate is needed when no write remains.
-        # A missing result/route still requires the no-replay gate below.
+        # R9: an unentered successor is independently re-observed only
+        # when its exact Formal/Successor identity can qualify. No second DAG
+        # evaluation is needed for a negative observation.
+        observed_derived = (
+            _observe_accepted_effect_fact(attempted[-1], adapter, source=source)
+            if formal_identity is not None
+            and attempted[-1].derived
+            and non_entry
+            and bool(original.effects)
+            else None
+        )
+        qualified_derived = bool(
+            observed_derived is not None
+            and observed_derived.final_postcondition is True
+            and evaluate_recovery_evidence(
+                replace(observed_derived, depends_on=tuple(proven_prefix))
+            ).disposition
+            == "SATISFIED"
+        )
+        # A durable Formal Result alone does not prove final routing.
         if (
             formal_identity is not None
             and attempted[-1].derived
             # One qualified suffix owner has already proved the immutable
             # Formal/Successor identity, ordinal and historical revision.
             and (bool(original.effects) or not non_entry)
-            # A durable Formal Result alone does not prove final routing.
             and (
                 attempted_proof.disposition == "SATISFIED"
-                or (
-                    non_entry
-                    and evaluate_recovery_evidence(
-                        replace(
-                            _observe_accepted_effect_fact(attempted[-1], adapter, source=source),
-                            depends_on=tuple(proven_prefix),
-                        )
-                    ).disposition
-                    == "SATISFIED"
-                )
+                or qualified_derived
             )
             and consequence_postconditions_complete(
                 record.raw_worker_result,
