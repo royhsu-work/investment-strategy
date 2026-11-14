@@ -9077,7 +9077,9 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
         "base": {"ref": "main", "repo": {"full_name": repository}},
     }
     if fault == "foreign-actor":
-        cast(dict[str, object], cast(dict[str, object], event["comment"])["user"])["login"] = "attacker"
+        event_comment = cast(dict[str, object], event["comment"])
+        event_actor = cast(dict[str, object], event_comment["user"])
+        event_actor["login"] = "attacker"
     if fault == "app-actor":
         native["performed_via_github_app"] = {"slug": "chatgpt-codex-connector"}
     if fault == "changed-comment":
@@ -9098,7 +9100,7 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
     observed_calls: list[str] = []
 
     def read(source_repo: str, token: str, path: str) -> object:
-        assert source_repo == repository and token == "token"
+        assert source_repo == repository and token == REVISION
         observed_calls.append(path)
         if path == "issues/comments/9001":
             return native
@@ -9112,7 +9114,9 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
 
     comment_enumerations: list[str] = []
 
-    def paged(_repo: str, _token: str, path: str, *, read: object) -> tuple[Mapping[str, object], ...]:
+    def paged(
+        _repo: str, _token: str, path: str, *, read: object
+    ) -> tuple[Mapping[str, object], ...]:
         assert path == "issues/435/comments?sort=created&direction=asc"
         comment_enumerations.append(path)
         return all_decisions
@@ -9143,7 +9147,7 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
     result = bridge.qualify_runtime_repair_admission(
         event,
         repository=repository,
-        token="token",
+        token=REVISION,
         current_revision=REVISION,
         read=read,
         qualify=qualify,

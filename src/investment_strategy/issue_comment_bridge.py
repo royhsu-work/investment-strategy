@@ -101,11 +101,11 @@ from investment_strategy.scheduled_agent_runtime import (
     is_github_actions_comment,
     normalize_github_issue,
 )
+from investment_strategy.scheduled_agent_wire import RUNTIME_REPAIR_REQUEST_WIRE
 from investment_strategy.scheduled_agent_worker import (
     WorkerActionResult,
     parse_worker_result,
 )
-from investment_strategy.scheduled_agent_wire import RUNTIME_REPAIR_REQUEST_WIRE
 from investment_strategy.workflow_dispatch import (
     DispatchDecision,
     DispatchPreflight,
@@ -6191,7 +6191,10 @@ def main() -> int:
         except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
             admission = None
         if admission is None:
-            print("Native R9 repair intake is not source-qualified; no work emitted.", file=sys.stderr)
+            print(
+                "Native R9 repair intake is not source-qualified; no work emitted.",
+                file=sys.stderr,
+            )
             return 1
         _present_runtime_repair_admission(admission, repository=repository)
         _write_outputs(args.github_output, BridgePlan(False))
