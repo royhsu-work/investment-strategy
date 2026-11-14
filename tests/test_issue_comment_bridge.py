@@ -9461,7 +9461,7 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
 
     stage["value"] = "qualified-conflict"
     assert bridge.main() == 0  # Same native event, now exact evidence-backed intake.
-    assert output.read_text() == "should_emit=false\\n"
+    assert output.read_text() == "should_emit=false\n"
     assert not payload.exists()
     note = summary.read_text(encoding="utf-8")
     assert "Native Application run: 7001 / attempt 1" in note
