@@ -9593,6 +9593,7 @@ def test_manual_r9_consumer_requalifies_prior_artifact_and_withdraws_stale(
     The snapshot never authorizes replay, dispatch, routing or a repair write.
     """
     repository = "royhsu-work/investment-strategy"
+    test_token = "test-token"  # noqa: S105
     event, native, decision, issue = _native_runtime_repair_sources()
     record = bridge.parse_application_decision(cast(str, decision["body"]))
     assert record is not None
@@ -9626,7 +9627,7 @@ def test_manual_r9_consumer_requalifies_prior_artifact_and_withdraws_stale(
     reads: list[str] = []
 
     def read(source_repo: str, token: str, path: str) -> object:
-        assert (source_repo, token) == (repository, "test-token")
+        assert (source_repo, token) == (repository, test_token)
         reads.append(path)
         if path == "issues/comments/9001":
             return native
@@ -9641,7 +9642,7 @@ def test_manual_r9_consumer_requalifies_prior_artifact_and_withdraws_stale(
     def qualify(
         source_repo: str, token: str, *, source: object, current_revision: str, read: object
     ) -> bridge.ApplicationCompletion:
-        assert (source_repo, token, current_revision) == (repository, "test-token", REVISION)
+        assert (source_repo, token, current_revision) == (repository, test_token, REVISION)
         assert source == bridge.WorkerRequest(435, "executor", "implement-change")
         return state["completion"]
 
@@ -9672,7 +9673,7 @@ def test_manual_r9_consumer_requalifies_prior_artifact_and_withdraws_stale(
         lambda *_a, **_kw: pytest.fail("manual R9 consumer cannot dispatch"),
     )
     monkeypatch.setenv("GITHUB_REPOSITORY", repository)
-    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("GITHUB_TOKEN", test_token)
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     event_path = tmp_path / "native-event.json"
     event_path.write_text(json.dumps(event), encoding="utf-8")
@@ -9693,7 +9694,7 @@ def test_manual_r9_consumer_requalifies_prior_artifact_and_withdraws_stale(
     initial = bridge.qualify_runtime_repair_admission(
         event,
         repository=repository,
-        token="test-token",
+        token=test_token,
         current_revision=REVISION,
         read=read,
         qualify=qualify,

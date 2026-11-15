@@ -6172,13 +6172,19 @@ def main() -> int:
                 _load_json(args.consume_repair_admission), "prior repair admission"
             )
             admission = consume_runtime_repair_admission(
-                event, artifact,
-                repository=repository, token=token, current_revision=args.revision,
+                event,
+                artifact,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
             )
         except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
             admission = None
         if admission is None:
-            print("Repair admission is stale or not source-qualified; no work emitted.", file=sys.stderr)
+            print(
+                "Repair admission is stale or not source-qualified; no work emitted.",
+                file=sys.stderr,
+            )
             return 1
         _present_runtime_repair_admission(admission, repository=repository)
         return 0
