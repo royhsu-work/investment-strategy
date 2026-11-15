@@ -1800,6 +1800,60 @@ def _paged_github_list(
     )
 
 
+def persist_native_application_evidence_comment(
+    *,
+    repository: str,
+    token: str,
+    issue_number: int,
+    body: str,
+    errors: tuple[str, str, str, str],
+    read: Callable[..., object | None],
+    list_comments: Callable[[str, str, str], tuple[Mapping[str, object], ...]],
+) -> int:
+    """Single native comment lookup/write/fresh-proof owner for Application evidence.
+
+    The callers retain distinct accepted/activation/recovery authorization and
+    error contracts. Only durable GitHub Actions provenance can satisfy a write.
+    """
+    comments = list_comments(repository, token, f"issues/{issue_number}/comments?sort=created")
+    matches = [
+        item for item in comments if is_github_actions_comment(item) and item.get("body") == body
+    ]
+    if len(matches) > 1:
+        raise RuntimeError(errors[0])
+    if matches:
+        existing_id = _positive_comment_id(matches[0].get("id"))
+        if existing_id is None:
+            raise RuntimeError(errors[1])
+        return existing_id
+    response = read(
+        repository,
+        token,
+        f"issues/{issue_number}/comments",
+        method="POST",
+        payload={"body": body},
+    )
+    comment_id = (
+        None if not isinstance(response, Mapping) else _positive_comment_id(response.get("id"))
+    )
+    if (
+        not isinstance(response, Mapping)
+        or comment_id is None
+        or response.get("body") != body
+        or not is_github_actions_comment(response)
+    ):
+        raise RuntimeError(errors[2])
+    observed = read(repository, token, f"issues/comments/{comment_id}")
+    if (
+        not isinstance(observed, Mapping)
+        or observed.get("id") != comment_id
+        or observed.get("body") != body
+        or not is_github_actions_comment(observed)
+    ):
+        raise RuntimeError(errors[3])
+    return comment_id
+
+
 def _github_json(
     repository: str,
     token: str,
@@ -3746,49 +3800,21 @@ class GitHubEffectAdapter:
         body: str,
         marker: str,
     ) -> bool:
-        """Create one immutable application evidence comment and fresh-verify it."""
-
-        comments = _paged_github_list(
-            self.repository,
-            self.token,
-            f"issues/{self.source.issue_number}/comments?sort=created&direction=asc",
+        """Reuse the same native comment owner as activation/recovery evidence."""
+        persist_native_application_evidence_comment(
+            repository=self.repository,
+            token=self.token,
+            issue_number=self.source.issue_number,
+            body=body,
+            errors=(
+                f"{marker} evidence is duplicated",
+                f"{marker} evidence postcondition was not observed",
+                f"{marker} evidence postcondition was not observed",
+                f"{marker} evidence fresh postcondition was not observed",
+            ),
+            read=_github_json,
+            list_comments=_paged_github_list,
         )
-        existing = [
-            item
-            for item in comments
-            if is_github_actions_comment(item) and item.get("body") == body
-        ]
-        if len(existing) > 1:
-            raise RuntimeError(f"{marker} evidence is duplicated")
-        if existing:
-            return True
-        response = _github_json(
-            self.repository,
-            self.token,
-            f"issues/{self.source.issue_number}/comments",
-            method="POST",
-            payload={"body": body},
-        )
-        comment_id = (
-            None if not isinstance(response, Mapping) else _positive_comment_id(response.get("id"))
-        )
-        if (
-            not isinstance(response, Mapping)
-            or comment_id is None
-            or response.get("body") != body
-            or not is_github_actions_comment(response)
-        ):
-            raise RuntimeError(f"{marker} evidence postcondition was not observed")
-        observed = _as_mapping(
-            _github_json(self.repository, self.token, f"issues/comments/{comment_id}")
-        )
-        if (
-            observed is None
-            or observed.get("id") != comment_id
-            or observed.get("body") != body
-            or not is_github_actions_comment(observed)
-        ):
-            raise RuntimeError(f"{marker} evidence fresh postcondition was not observed")
         return True
 
     def persist_application_decision(
