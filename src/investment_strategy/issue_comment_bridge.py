@@ -3734,12 +3734,10 @@ def _accepted_application_state(
             "application-completion-continuation-chain-ambiguous",
             request_comment_id=record.request_comment_id,
         )
-    # An accepted semantic intent may intentionally have no worker-owned
-    # requested effects.  New application-owned envelopes carry an explicit
-    # semantic-intent marker so Phase B still resumes their job; historical
-    # raw envelopes remain compatible with the old formal-only fixtures.
-    if worker.requested_effects or semantic_intent:
-        resumed = _application_job(
+    # One native Application observation per accepted frontier. Later
+    # formal/successor proof checks must not replace its read-only witness.
+    def observe_application_job() -> ApplicationCompletion:
+        return _application_job(
             repository,
             token,
             record.request_comment_id,
@@ -3751,6 +3749,12 @@ def _accepted_application_state(
             current_dispatch_request_comment_id=current_dispatch_request_comment_id,
             current_revision=current_revision,
         )
+
+    # New semantic envelopes resume Phase B even with zero worker Effects.
+    # Historical raw envelopes retain their existing formal-only path.
+    resumed: ApplicationCompletion | None = None
+    if worker.requested_effects or semantic_intent:
+        resumed = observe_application_job()
         if resumed.state == "RESUMABLE":
             return resumed
     if (
@@ -3811,18 +3815,7 @@ def _accepted_application_state(
             request_comment_id=record.request_comment_id,
         )
     if observation.routing == (source.role, source.action):
-        return _application_job(
-            repository,
-            token,
-            record.request_comment_id,
-            read=read,
-            record=record,
-            transport_comment_ids=continuation_transport_comment_ids,
-            accepted_decision_sha256=accepted_decision_sha256,
-            recent_comments=recent_comments,
-            current_dispatch_request_comment_id=current_dispatch_request_comment_id,
-            current_revision=current_revision,
-        )
+        return resumed if resumed is not None else observe_application_job()
     if successor is not None and observation.routing == expected_routing:
         return ApplicationCompletion(
             "RESUMABLE",

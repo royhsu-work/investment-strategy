@@ -3574,6 +3574,58 @@ def test_rejected_intent_returns_ownership_to_later_semantic_dispatch() -> None:
     assert completion.reason == "application-completion-rejected"
 
 
+@pytest.mark.parametrize("first_state", ["INVALID", "ABORTED"])
+@pytest.mark.parametrize("semantic_intent", [True, False])
+def test_accepted_frontier_reuses_one_application_job_observation(
+    monkeypatch: pytest.MonkeyPatch,
+    first_state: Literal["INVALID", "ABORTED"],
+    semantic_intent: bool,
+) -> None:
+    """Never overwrite one native job's proof via a second non-atomic read."""
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = _effect_request_comment(comment_id=654, created_at="2026-09-18T01:00:00Z")
+    if semantic_intent:
+        lines = cast(str, request["body"]).splitlines()
+        worker = json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: ")).decode())
+        worker["_semantic_intent_version"] = 2
+        encoded = base64.b64encode(
+            json.dumps(worker, sort_keys=True, separators=(",", ":")).encode()
+        ).decode("ascii")
+        request["body"] = "\n".join((lines[0], lines[1], f"Worker-Result-B64: {encoded}"))
+    decision = _application_decision_comment(request, comment_id=700)
+    record = bridge.parse_application_decision(cast(str, decision["body"]))
+    assert record is not None
+    observed: list[int] = []
+
+    def application_job(
+        _repository: str, _token: str, request_id: int, **_kwargs: object
+    ) -> bridge.ApplicationCompletion:
+        observed.append(request_id)
+        if len(observed) > 1:
+            return bridge.ApplicationCompletion(
+                "RESUMABLE", "different non-atomic snapshot", request_id
+            )
+        return bridge.ApplicationCompletion(first_state, "first native proof", request_id)
+
+    monkeypatch.setattr(bridge, "_application_job", application_job)
+    monkeypatch.setattr(bridge, "_formal_consequence", lambda **_kwargs: False)
+    monkeypatch.setattr(bridge, "_successor_consequence_supersedes", lambda **_kwargs: False)
+    test_token = "test-token"  # noqa: S105
+    result = bridge._accepted_application_state(
+        repository="owner/repo",
+        token=test_token,
+        source=source,
+        record=record,
+        issue_comments=(decision,),
+        lifecycle_events=(),
+        current_issue=_current_source_issue(),
+        current_revision=REVISION,
+        read=lambda *_args: pytest.fail("same revision requires no extra GET"),
+    )
+    assert result == bridge.ApplicationCompletion(first_state, "first native proof", 654)
+    assert observed == [654]
+
+
 def test_distinct_accepted_requests_never_alias_by_equal_payload() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     requests = [
