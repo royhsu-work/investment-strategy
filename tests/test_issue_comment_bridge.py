@@ -9158,6 +9158,10 @@ def _native_r9_exception_artifact(
         ("positive-proof", False),
         ("never-called-proof", False),
         ("missing-proof-frontier", False),
+        ("missing-frontier-index", False),
+        ("negative-frontier-index", False),
+        ("bool-frontier-index", False),
+        ("pending-formal-missing-frontier-index", False),
     ],
 )
 def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
@@ -9253,6 +9257,9 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
         # projection rather than blessing arbitrary status/reason strings.
         if fault in {
             "valid",
+            "missing-frontier-index",
+            "negative-frontier-index",
+            "bool-frontier-index",
             "exception-artifact",
             "exception-foreign-change",
             "exception-different-request",
@@ -9296,9 +9303,16 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             typed = application.RecoveryProofResult(
                 "UNKNOWN", "ORIGINAL_EFFECT", typed.witness, None
             )
+        if fault == "missing-frontier-index":
+            typed = replace(typed, frontier_index=None)
+        elif fault == "negative-frontier-index":
+            typed = replace(typed, frontier_index=-1)
+        elif fault == "bool-frontier-index":
+            typed = replace(typed, frontier_index=True)
         pending = None
         if fault in {
             "pending-formal",
+            "pending-formal-missing-frontier-index",
             "pending-successor",
             "pending-formal-get",
             "pending-successor-get",
@@ -9328,6 +9342,8 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
                 )
             )
             pending = replace(pending, frontier_index=1 if obligation == "FORMAL_RESULT" else 2)
+            if fault == "pending-formal-missing-frontier-index":
+                pending = replace(pending, frontier_index=None)
             typed = original
         proof_disposition: Literal["UNSAFE", "INDETERMINATE"] = (
             "UNSAFE" if typed.disposition == "CONFLICT" else "INDETERMINATE"

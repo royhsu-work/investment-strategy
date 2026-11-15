@@ -6003,7 +6003,7 @@ def _present_runtime_repair_admission(
     proof = admission.frontier_proof
     witness = proof.witness
     stage = witness.stage if isinstance(witness, TypedEvidenceError) else None
-    ordinal = proof.frontier_index if proof.frontier_index is not None else "unverified"
+    ordinal = proof.frontier_index
     body = "\n".join(
         (
             "## Non-writing R9 Human/Runtime repair intake",

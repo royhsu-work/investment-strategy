@@ -6383,6 +6383,8 @@ class AcceptedPostEffectProof:
             or proof is None
             or proof.disposition not in {"UNKNOWN", "CONFLICT"}
             or proof.remaining_obligation is None
+            or type(proof.frontier_index) is not int
+            or proof.frontier_index < 0
         ):
             return None
         if proof.disposition == "UNKNOWN":

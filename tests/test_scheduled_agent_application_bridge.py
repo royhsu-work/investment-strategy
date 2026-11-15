@@ -2241,8 +2241,13 @@ def test_runtime_repair_frontier_keeps_first_unsettled_obligation(
                 source_conflict=original_case == "conflict",
             )
         )
-    pending = bridge.evaluate_recovery_evidence(
-        bridge.RecoveryEvidenceNode("FORMAL_RESULT", None, None, source_conflict=True)
+    if original is not None:
+        original = replace(original, frontier_index=0)
+    pending = replace(
+        bridge.evaluate_recovery_evidence(
+            bridge.RecoveryEvidenceNode("FORMAL_RESULT", None, None, source_conflict=True)
+        ),
+        frontier_index=1,
     )
     result = bridge.AcceptedPostEffectProof(
         "UNSAFE",
@@ -2256,6 +2261,20 @@ def test_runtime_repair_frontier_keeps_first_unsettled_obligation(
         assert frontier is original
     elif expected == "FORMAL_RESULT":
         assert frontier is pending
+
+
+@pytest.mark.parametrize("frontier_index", [None, -1, True])
+def test_runtime_repair_frontier_requires_exact_nonnegative_native_ordinal(
+    frontier_index: int | None,
+) -> None:
+    """Unbound/invalid ordinal is diagnostic evidence, not an actionable repair target."""
+
+    fact = bridge.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, None, source_conflict=True)
+    proof = replace(bridge.evaluate_recovery_evidence(fact), frontier_index=frontier_index)
+    result = bridge.AcceptedPostEffectProof(
+        "UNSAFE", "qualified original source conflict", original_effect_proof=proof
+    )
+    assert result.runtime_repair_frontier is None
 
 
 @pytest.mark.parametrize(
