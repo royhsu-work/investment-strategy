@@ -5747,8 +5747,12 @@ def _require_mapping(value: object, name: str) -> Mapping[str, object]:
     return cast(Mapping[str, object], value)
 
 
-def _write_outputs(path: Path, plan: BridgePlan) -> None:
+def _write_outputs(
+    path: Path, plan: BridgePlan, *, repair_admission: bool = False
+) -> None:
     lines = [f"should_emit={'true' if plan.should_emit else 'false'}"]
+    if repair_admission:
+        lines.append("repair_admission=true")
     if plan.issue_number is not None:
         lines.append(f"issue_number={plan.issue_number}")
     if plan.request_comment_id is not None:
@@ -5983,7 +5987,7 @@ def qualify_runtime_repair_admission(
 
 
 def _present_runtime_repair_admission(
-    admission: RuntimeRepairAdmission, *, repository: str
+    admission: RuntimeRepairAdmission, *, repository: str, evidence_path: Path | None = None
 ) -> None:
     """Surface the actual native consumer result without dispatch/effect output."""
 
@@ -6029,6 +6033,45 @@ def _present_runtime_repair_admission(
             "",
         )
     )
+    # A qualified run-scoped Artifact is evidence only, never write permission.
+    # Both presentations share the same Application-qualified admission.
+    if evidence_path is not None:
+        document = {
+            "schema": "scheduled-agent-runtime-repair-admission/v1",
+            "source": {
+                "repository": repository,
+                "issue_number": admission.source.issue_number,
+                "role": admission.source.role,
+                "action": admission.source.action,
+                "human_comment_id": admission.trigger_comment_id,
+                "accepted_request_comment_id": admission.accepted_request_comment_id,
+                "accepted_decision_sha256": admission.accepted_decision_sha256,
+                "accepted_worker_sha256": admission.accepted_worker_sha256,
+            },
+            "repair_target": {"pr_number": admission.repair_pr, "head_sha": admission.repair_head},
+            "native_application": {
+                "run_id": admission.source_artifact.run_id,
+                "run_attempt": admission.source_artifact.run_attempt,
+                "job_id": admission.source_artifact.job_id,
+                "artifact_id": admission.source_artifact.artifact_id,
+                "artifact_digest": admission.source_artifact.artifact_digest,
+                "recovery_episode_sha256": admission.source_artifact.recovery_episode_sha256,
+                "kind": evidence_kind,
+            },
+            "frontier": {
+                "obligation": proof.remaining_obligation,
+                "disposition": proof.disposition,
+                "ordinal": proof.frontier_index,
+                "witness_kind": type(witness).__name__,
+                "evidence_stage": stage,
+            },
+            "completion": {"state": admission.result_state, "reason": admission.reason},
+            "effect_authority": "NONE",
+        }
+        evidence_path.write_text(
+            json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
     print(body)
     destination = os.environ.get("GITHUB_STEP_SUMMARY")
     if destination:
@@ -6042,6 +6085,7 @@ def main() -> int:
     parser.add_argument("--revision", required=True)
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--result-payload", type=Path)
+    parser.add_argument("--repair-admission-payload", type=Path)
     parser.add_argument("--recovery-exit-request-comment-id", type=int)
     args = parser.parse_args()
 
@@ -6120,8 +6164,13 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        _present_runtime_repair_admission(admission, repository=repository)
-        _write_outputs(args.github_output, BridgePlan(False))
+        if args.repair_admission_payload is None:
+            print("Native R9 repair intake has no evidence Artifact destination.", file=sys.stderr)
+            return 1
+        _present_runtime_repair_admission(
+            admission, repository=repository, evidence_path=args.repair_admission_payload
+        )
+        _write_outputs(args.github_output, BridgePlan(False), repair_admission=True)
         return 0
     identity = _request_identity(event)
     if identity is None:

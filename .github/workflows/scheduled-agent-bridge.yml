@@ -52,6 +52,17 @@ jobs:
           --revision "$DEFAULT_BRANCH_REVISION"
           --github-output "$GITHUB_OUTPUT"
           --result-payload "$RUNNER_TEMP/dispatch-result.json"
+          --repair-admission-payload "$RUNNER_TEMP/runtime-repair-admission.json"
+
+      - name: Upload qualified non-writing Runtime repair admission
+        if: steps.handler.outputs.repair_admission == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: runtime-repair-admission.json
+          path: ${{ runner.temp }}/runtime-repair-admission.json
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload exact run-scoped machine dispatch result
         if: steps.handler.outputs.should_emit == 'true'

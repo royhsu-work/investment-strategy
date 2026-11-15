@@ -9507,6 +9507,7 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
     event_path.write_text(json.dumps(event), encoding="utf-8")
     output = tmp_path / "github-output"
     payload = tmp_path / "dispatch-result.json"
+    repair_admission_payload = tmp_path / "runtime-repair-admission.json"
     summary = tmp_path / "summary.md"
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
     monkeypatch.setattr(
@@ -9522,22 +9523,33 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
             str(output),
             "--result-payload",
             str(payload),
+            "--repair-admission-payload",
+            str(repair_admission_payload),
         ],
     )
 
     assert bridge.main() == 1  # Transient GET error: observation only.
     assert not output.exists()
     assert not summary.exists()
+    assert not repair_admission_payload.exists()
 
     stage["value"] = "qualified-conflict"
     assert bridge.main() == 0  # Same native event, now exact evidence-backed intake.
-    assert output.read_text() == "should_emit=false\n"
+    assert output.read_text() == "should_emit=false\nrepair_admission=true\n"
     assert not payload.exists()
     note = summary.read_text(encoding="utf-8")
     assert "Native Application run: 7001 / attempt 1" in note
     assert "Native evidence kind: recovery" in note
     assert "Evidence Artifact ID: 7003" in note
     assert note.count("Non-writing R9 Human/Runtime repair intake") == 1
+    document = json.loads(repair_admission_payload.read_text(encoding="utf-8"))
+    assert document["schema"] == "scheduled-agent-runtime-repair-admission/v1"
+    assert document["effect_authority"] == "NONE"
+    assert document["native_application"]["artifact_id"] == 7003
+    assert document["frontier"]["obligation"] == "ORIGINAL_EFFECT"
+    assert document["frontier"]["disposition"] == "CONFLICT"
+    assert document["source"]["accepted_request_comment_id"] == 6796616018
+    repair_admission_payload.unlink()  # A separate wake has a separate temporary directory.
 
     stage["value"] = "repaired"
     assert bridge.main() == 1  # Re-observation withdraws the stale repair candidate.
@@ -9562,6 +9574,7 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
     source.write_text(json.dumps(event), encoding="utf-8")
     output = tmp_path / "github-output"
     result = tmp_path / "dispatch-result.json"
+    repair_admission_payload = tmp_path / "runtime-repair-admission.json"
     summary = tmp_path / "step-summary.md"
     admission = bridge.RuntimeRepairAdmission(
         source=bridge.WorkerRequest(435, "executor", "implement-change"),
@@ -9616,11 +9629,27 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
             str(output),
             "--result-payload",
             str(result),
+            "--repair-admission-payload",
+            str(repair_admission_payload),
         ],
     )
     assert bridge.main() == 0
-    assert output.read_text() == "should_emit=false\n"
+    assert output.read_text() == "should_emit=false\nrepair_admission=true\n"
     assert not result.exists()
+    document = json.loads(repair_admission_payload.read_text(encoding="utf-8"))
+    assert document["schema"] == "scheduled-agent-runtime-repair-admission/v1"
+    assert document["source"]["human_comment_id"] == 9001
+    assert document["repair_target"] == {"pr_number": 443, "head_sha": REVISION}
+    assert document["native_application"]["run_id"] == 7001
+    assert document["native_application"]["artifact_id"] == 7003
+    assert document["frontier"] == {
+        "obligation": "ORIGINAL_EFFECT",
+        "disposition": "UNKNOWN",
+        "ordinal": 0,
+        "witness_kind": "TypedEvidenceError",
+        "evidence_stage": "CALL_ENTRY",
+    }
+    assert document["effect_authority"] == "NONE"
     assert f"Exact PR HEAD: {REVISION}" in summary.read_text()
     assert "Native Application run: 7001 / attempt 1" in summary.read_text()
     assert "Native Application job: 7002" in summary.read_text()
