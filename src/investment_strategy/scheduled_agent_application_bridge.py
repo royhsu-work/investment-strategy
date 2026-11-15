@@ -7100,6 +7100,7 @@ def classify_accepted_read_only_effects(
         )
         qualified_derived = bool(
             observed_derived is not None
+            and observed_derived.final_postcondition is True
             and evaluate_recovery_evidence(
                 replace(observed_derived, depends_on=tuple(proven_prefix))
             ).disposition

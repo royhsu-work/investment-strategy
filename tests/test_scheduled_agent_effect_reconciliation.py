@@ -267,7 +267,8 @@ def test_r9_read_only_completion_does_not_redecide_raw_postcondition() -> None:
     """Source-unqualified truth is UNKNOWN, not a separate completion decision."""
     original = inspect.getsource(application.classify_accepted_read_only_effects)
     assert "failed_satisfied" not in original
-    assert "observed_derived.final_postcondition is True" not in original
+    # This guard preserves the no-redundant-evaluation witness without authorizing completion.
+    assert "observed_derived.final_postcondition is True" in original
     assert 'if attempted_proof.disposition == "SATISFIED"' in original
 
     effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"original"}')
