@@ -5747,9 +5747,7 @@ def _require_mapping(value: object, name: str) -> Mapping[str, object]:
     return cast(Mapping[str, object], value)
 
 
-def _write_outputs(
-    path: Path, plan: BridgePlan, *, repair_admission: bool = False
-) -> None:
+def _write_outputs(path: Path, plan: BridgePlan, *, repair_admission: bool = False) -> None:
     lines = [f"should_emit={'true' if plan.should_emit else 'false'}"]
     if repair_admission:
         lines.append("repair_admission=true")
