@@ -9660,3 +9660,62 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
     assert "Evidence error stage: CALL_ENTRY" in summary.read_text()
     assert "Typed witness: TypedEvidenceError" in summary.read_text()
     assert "authorizes NO Effect" in summary.read_text()
+
+def test_native_r9_handoff_cannot_substitute_for_real_application_qualifier() -> None:
+    """A valid Human event/ACCEPT is not proof of a completed native Application.
+
+    Use the real Application completion reader and R9 ingress classifier.
+    Only outbound GitHub GET responses are simulated; no domain proof,
+    repair write, synthetic dispatch, or application result is injected.
+    """
+    repository = "royhsu-work/investment-strategy"
+    event, native, accepted, issue = _native_runtime_repair_sources()
+    pr = {
+        "number": 443,
+        "state": "open",
+        "merged": False,
+        "head": {"sha": REVISION, "repo": {"full_name": repository}},
+        "base": {"ref": "main", "repo": {"full_name": repository}},
+    }
+    read_paths: list[str] = []
+
+    def read(source_repo: str, _token: str, path: str) -> object:
+        assert source_repo == repository
+        read_paths.append(path)
+        if path == "issues/comments/9001":
+            return native
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": REVISION}}
+        if path == "issues/435":
+            return issue
+        if path == "pulls/443":
+            return pr
+        if path.startswith("issues/435/comments?"):
+            return [accepted] if path.endswith("page=1") else []
+        if path.startswith("issues/comments?") or path.startswith("issues/435/timeline?"):
+            return []
+        if path.startswith("actions/workflows/"):
+            # No qualified original Application run/job/Artifact exists.
+            return {"workflow_runs": []}
+        if path.startswith("compare/"):
+            return {"status": "identical", "base_commit": {"sha": REVISION}}
+        if path == "":
+            return {"default_branch": "main"}
+        return None
+
+    admission = bridge.qualify_runtime_repair_admission(
+        event,
+        repository=repository,
+        token="test-token",
+        current_revision=REVISION,
+        read=read,
+        qualify=bridge.qualify_application_completion,
+    )
+
+    assert admission is None
+    # This distinguishes an actual Application source re-read from a test that
+    # replaces the completion qualifier with a convenient synthetic result.
+    assert any(path.startswith("issues/comments?") for path in read_paths)
+    assert "issues/comments/9001" in read_paths
+    assert "git/ref/heads/main" in read_paths
+    assert all(not path.startswith(("POST ", "PATCH ", "DELETE ")) for path in read_paths)
