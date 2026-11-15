@@ -5990,6 +5990,94 @@ def qualify_runtime_repair_admission(
     )
 
 
+def _runtime_repair_admission_document(
+    admission: RuntimeRepairAdmission, *, repository: str
+) -> dict[str, object]:
+    """One canonical snapshot for emission and fresh Human/Runtime consumption.
+
+    This is a description of evidence, not an Effect or repair authorization.
+    """
+    evidence_kind = (
+        "recovery"
+        if isinstance(admission.source_artifact, ApplicationRecoveryArtifact)
+        else "exception"
+    )
+    proof = admission.frontier_proof
+    witness = proof.witness
+    stage = witness.stage if isinstance(witness, TypedEvidenceError) else None
+    document = {
+        "schema": "scheduled-agent-runtime-repair-admission/v1",
+        "source": {
+            "repository": repository,
+            "issue_number": admission.source.issue_number,
+            "role": admission.source.role,
+            "action": admission.source.action,
+            "human_comment_id": admission.trigger_comment_id,
+            "accepted_request_comment_id": admission.accepted_request_comment_id,
+            "accepted_decision_sha256": admission.accepted_decision_sha256,
+            "accepted_worker_sha256": admission.accepted_worker_sha256,
+        },
+        "repair_target": {"pr_number": admission.repair_pr, "head_sha": admission.repair_head},
+        "native_application": {
+            "run_id": admission.source_artifact.run_id,
+            "run_attempt": admission.source_artifact.run_attempt,
+            "job_id": admission.source_artifact.job_id,
+            "artifact_id": admission.source_artifact.artifact_id,
+            "artifact_digest": admission.source_artifact.artifact_digest,
+            "recovery_episode_sha256": admission.source_artifact.recovery_episode_sha256,
+            "kind": evidence_kind,
+        },
+        "frontier": {
+            "obligation": proof.remaining_obligation,
+            "disposition": proof.disposition,
+            "ordinal": proof.frontier_index,
+            "witness_kind": type(witness).__name__,
+            "evidence_stage": stage,
+        },
+        "completion": {"state": admission.result_state, "reason": admission.reason},
+        "effect_authority": "NONE",
+    }
+    return document
+
+
+def consume_runtime_repair_admission(
+    event: Mapping[str, object],
+    artifact: Mapping[str, object],
+    *,
+    repository: str,
+    token: str,
+    current_revision: str,
+    read: GitHubReader = _github_json,
+    qualify: Callable[..., ApplicationCompletion] = qualify_application_completion,
+) -> RuntimeRepairAdmission | None:
+    """Explicit, read-only maintenance consumer for a prior Bridge Artifact.
+
+    The previous run cannot authorize anything. Reuse the same native source
+    qualifier and compare every canonical evidence field from a later fresh
+    observation. Any missing or changed witness withdraws the candidate.
+    """
+    if (
+        artifact.get("schema") != "scheduled-agent-runtime-repair-admission/v1"
+        or artifact.get("effect_authority") != "NONE"
+    ):
+        return None
+    admission = qualify_runtime_repair_admission(
+        event,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+        read=read,
+        qualify=qualify,
+    )
+    if admission is None:
+        return None
+    return (
+        admission
+        if artifact == _runtime_repair_admission_document(admission, repository=repository)
+        else None
+    )
+
+
 def _present_runtime_repair_admission(
     admission: RuntimeRepairAdmission, *, repository: str, evidence_path: Path | None = None
 ) -> None:
@@ -6040,38 +6128,7 @@ def _present_runtime_repair_admission(
     # A qualified run-scoped Artifact is evidence only, never write permission.
     # Both presentations share the same Application-qualified admission.
     if evidence_path is not None:
-        document = {
-            "schema": "scheduled-agent-runtime-repair-admission/v1",
-            "source": {
-                "repository": repository,
-                "issue_number": admission.source.issue_number,
-                "role": admission.source.role,
-                "action": admission.source.action,
-                "human_comment_id": admission.trigger_comment_id,
-                "accepted_request_comment_id": admission.accepted_request_comment_id,
-                "accepted_decision_sha256": admission.accepted_decision_sha256,
-                "accepted_worker_sha256": admission.accepted_worker_sha256,
-            },
-            "repair_target": {"pr_number": admission.repair_pr, "head_sha": admission.repair_head},
-            "native_application": {
-                "run_id": admission.source_artifact.run_id,
-                "run_attempt": admission.source_artifact.run_attempt,
-                "job_id": admission.source_artifact.job_id,
-                "artifact_id": admission.source_artifact.artifact_id,
-                "artifact_digest": admission.source_artifact.artifact_digest,
-                "recovery_episode_sha256": admission.source_artifact.recovery_episode_sha256,
-                "kind": evidence_kind,
-            },
-            "frontier": {
-                "obligation": proof.remaining_obligation,
-                "disposition": proof.disposition,
-                "ordinal": proof.frontier_index,
-                "witness_kind": type(witness).__name__,
-                "evidence_stage": stage,
-            },
-            "completion": {"state": admission.result_state, "reason": admission.reason},
-            "effect_authority": "NONE",
-        }
+        document = _runtime_repair_admission_document(admission, repository=repository)
         evidence_path.write_text(
             json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
             encoding="utf-8",
@@ -6090,8 +6147,41 @@ def main() -> int:
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--result-payload", type=Path)
     parser.add_argument("--repair-admission-payload", type=Path)
+    parser.add_argument("--consume-repair-admission", type=Path)
     parser.add_argument("--recovery-exit-request-comment-id", type=int)
     args = parser.parse_args()
+
+    if args.consume_repair_admission is not None:
+        if (
+            args.event_path is None
+            or args.github_output is not None
+            or args.result_payload is not None
+            or args.repair_admission_payload is not None
+            or args.recovery_exit_request_comment_id is not None
+            or _SHA.fullmatch(args.revision) is None
+        ):
+            parser.error("manual repair consumption is read-only and requires a native event")
+        repository = os.environ.get("GITHUB_REPOSITORY")
+        token = os.environ.get("GITHUB_TOKEN")
+        if repository != "royhsu-work/investment-strategy" or not token:
+            print("Exact repository and GitHub read credentials are required.", file=sys.stderr)
+            return 1
+        try:
+            event = _require_mapping(_load_json(args.event_path), "native repair event")
+            artifact = _require_mapping(
+                _load_json(args.consume_repair_admission), "prior repair admission"
+            )
+            admission = consume_runtime_repair_admission(
+                event, artifact,
+                repository=repository, token=token, current_revision=args.revision,
+            )
+        except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+            admission = None
+        if admission is None:
+            print("Repair admission is stale or not source-qualified; no work emitted.", file=sys.stderr)
+            return 1
+        _present_runtime_repair_admission(admission, repository=repository)
+        return 0
 
     if args.recovery_exit_request_comment_id is not None:
         if (

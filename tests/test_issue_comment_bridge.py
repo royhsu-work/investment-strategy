@@ -9583,6 +9583,149 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
     assert reads.count("issues/comments/9001") == 4
 
 
+
+def test_manual_r9_consumer_requalifies_prior_artifact_and_withdraws_stale(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Manual maintenance uses the same real Bridge qualifier on a later wake.
+
+    Only GitHub GET and the Application completion response are injected.
+    The snapshot never authorizes replay, dispatch, routing or a repair write.
+    """
+    repository = "royhsu-work/investment-strategy"
+    event, native, decision, issue = _native_runtime_repair_sources()
+    record = bridge.parse_application_decision(cast(str, decision["body"]))
+    assert record is not None
+    digest = hashlib.sha256(cast(str, decision["body"]).encode()).hexdigest()
+    artifact = _native_r9_recovery_artifact(decision)
+    original_fact = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT", None, None, source_conflict=True
+    )
+    original_proof = replace(
+        application.evaluate_recovery_evidence(original_fact), frontier_index=0
+    )
+    unresolved = bridge._unresolved_accepted_proof_completion(
+        application.AcceptedPostEffectProof(
+            "UNSAFE", "native repair conflict", original_effect_proof=original_proof
+        ),
+        origin="READ_ONLY",
+        request_comment_id=6796616018,
+        recovery_artifact=artifact,
+        accepted_record=record,
+        accepted_decision_sha256=digest,
+    )
+    assert unresolved is not None
+    state = {"completion": unresolved}
+    pr = {
+        "number": 443,
+        "state": "open",
+        "merged": False,
+        "head": {"sha": REVISION, "repo": {"full_name": repository}},
+        "base": {"ref": "main", "repo": {"full_name": repository}},
+    }
+    reads: list[str] = []
+
+    def read(source_repo: str, token: str, path: str) -> object:
+        assert (source_repo, token) == (repository, "test-token")
+        reads.append(path)
+        if path == "issues/comments/9001":
+            return native
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": REVISION}}
+        if path == "issues/435":
+            return issue
+        if path == "pulls/443":
+            return pr
+        raise AssertionError(path)
+
+    def qualify(
+        source_repo: str, token: str, *, source: object, current_revision: str, read: object
+    ) -> bridge.ApplicationCompletion:
+        assert (source_repo, token, current_revision) == (repository, "test-token", REVISION)
+        assert source == bridge.WorkerRequest(435, "executor", "implement-change")
+        return state["completion"]
+
+    native_consumer = bridge.consume_runtime_repair_admission
+
+    def consume(
+        received_event: Mapping[str, object],
+        document: Mapping[str, object],
+        *,
+        repository: str,
+        token: str,
+        current_revision: str,
+    ) -> bridge.RuntimeRepairAdmission | None:
+        return native_consumer(
+            received_event,
+            document,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            read=read,
+            qualify=qualify,
+        )
+
+    monkeypatch.setattr(bridge, "consume_runtime_repair_admission", consume)
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_a, **_kw: pytest.fail("manual R9 consumer cannot dispatch"),
+    )
+    monkeypatch.setenv("GITHUB_REPOSITORY", repository)
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    event_path = tmp_path / "native-event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    artifact_path = tmp_path / "runtime-repair-admission.json"
+    monkeypatch.setattr(
+        sys, "argv",
+        [
+            "issue-comment-bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            REVISION,
+            "--consume-repair-admission",
+            str(artifact_path),
+        ],
+    )
+
+    initial = bridge.qualify_runtime_repair_admission(
+        event,
+        repository=repository,
+        token="test-token",
+        current_revision=REVISION,
+        read=read,
+        qualify=qualify,
+    )
+    assert initial is not None
+    document = bridge._runtime_repair_admission_document(initial, repository=repository)
+    artifact_path.write_text(json.dumps(document), encoding="utf-8")
+    assert bridge.main() == 0  # A fresh real Bridge proof matches the old snapshot.
+    assert reads.count("issues/comments/9001") == 2
+
+    # A diagnostic Artifact has no independent effect authority.
+    tampered = json.loads(artifact_path.read_text(encoding="utf-8"))
+    tampered["frontier"]["ordinal"] = 1
+    artifact_path.write_text(json.dumps(tampered), encoding="utf-8")
+    assert bridge.main() == 1
+    artifact_path.write_text(json.dumps(document), encoding="utf-8")
+
+    cast(dict[str, object], pr["head"])["sha"] = "f" * 40
+    assert bridge.main() == 1  # PR HEAD changed on a later wake.
+    cast(dict[str, object], pr["head"])["sha"] = REVISION
+
+    state["completion"] = bridge.ApplicationCompletion(
+        "COMPLETE", "later fresh consequence satisfied", 6796616018
+    )
+    assert bridge.main() == 1  # Completing the original revokes old repair admission.
+    assert set(reads) == {
+        "issues/comments/9001",
+        "git/ref/heads/main",
+        "issues/435",
+        "pulls/443",
+    }
+
 def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispatch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
