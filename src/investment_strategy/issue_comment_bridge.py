@@ -5903,9 +5903,9 @@ def qualify_runtime_repair_admission(
     ):
         return None
     query = f"issues/{issue_number}/comments?sort=created&direction=asc"
+    # One fresh, source-qualified observation; a second GET is not an atomic
+    # snapshot and cannot grant repair authority to this non-writing intake.
     comments = _paged_list(repository, token, query, read=read)
-    if comments != _paged_list(repository, token, query, read=read):
-        return None
     matching = [
         record
         for item in comments

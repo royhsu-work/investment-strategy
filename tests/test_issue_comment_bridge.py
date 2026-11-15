@@ -9398,7 +9398,7 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
         for path in observed_calls
     )
     if fault in {"valid", "unknown-original", "ordinary-continuation", "completed"}:
-        assert len(comment_enumerations) == 2
+        assert len(comment_enumerations) == 1
         assert completion_calls == ["qualified"]
 
 
@@ -9441,7 +9441,7 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
     ) -> tuple[Mapping[str, object], ...]:
         assert (source_repo, token) == (repository, "test-token")
         assert path == "issues/435/comments?sort=created&direction=asc"
-        return (decision,)
+        return () if stage["value"] == "source-withdrawn" else (decision,)
 
     def qualify(
         source_repo: str, token: str, *, source: object, current_revision: str, read: object
@@ -9543,7 +9543,14 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
     assert bridge.main() == 1  # Re-observation withdraws the stale repair candidate.
     assert summary.read_text(encoding="utf-8") == note
     assert not payload.exists()
-    assert reads.count("issues/comments/9001") == 3
+
+    # A later native event observation must use current source, not the
+    # previous invocation's ACCEPTED comment list or repair admission.
+    stage["value"] = "source-withdrawn"
+    assert bridge.main() == 1
+    assert summary.read_text(encoding="utf-8") == note
+    assert not payload.exists()
+    assert reads.count("issues/comments/9001") == 4
 
 
 def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispatch(
