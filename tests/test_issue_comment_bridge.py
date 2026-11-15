@@ -9165,6 +9165,9 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
 ) -> None:
     repository = "royhsu-work/investment-strategy"
     event, native, accepted, issue = _native_runtime_repair_sources()
+    accepted_record = bridge.parse_application_decision(cast(str, accepted["body"]))
+    assert accepted_record is not None
+    accepted_decision_sha = hashlib.sha256(cast(str, accepted["body"]).encode()).hexdigest()
     artifact: application.ApplicationRecoveryArtifact | application.ApplicationExceptionArtifact
     if fault.startswith("exception-"):
         artifact = _native_r9_exception_artifact(accepted)
@@ -9209,7 +9212,6 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             str, cast(dict[str, object], event["comment"])["body"]
         ).replace("Action: implement-change", "Action: fake-action")
         native["body"] = cast(dict[str, object], event["comment"])["body"]
-    all_decisions = (accepted, accepted) if fault == "duplicate-decision" else (accepted,)
     observed_calls: list[str] = []
 
     def read(source_repo: str, token: str, path: str) -> object:
@@ -9225,16 +9227,6 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             return pr
         raise AssertionError(path)
 
-    comment_enumerations: list[str] = []
-
-    def paged(
-        _repo: str, _token: str, path: str, *, read: object
-    ) -> tuple[Mapping[str, object], ...]:
-        assert path == "issues/435/comments?sort=created&direction=asc"
-        comment_enumerations.append(path)
-        return all_decisions
-
-    monkeypatch.setattr(bridge, "_paged_list", paged)
     completion_calls: list[str] = []
 
     def qualify(
@@ -9358,9 +9350,18 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             )
         if fault == "wrong-proof-state":
             return replace(completion, state="COMPLETE")
+        # An Application substitute must carry its native ACCEPTED witness;
+        # revoked or duplicate decisions never supply that source proof.
+        source_record = (
+            None if fault in {"changed-decision", "duplicate-decision"} else accepted_record
+        )
         return replace(
             completion,
             recovery_artifact=None if fault == "missing-native-artifact" else artifact,
+            accepted_record=source_record,
+            accepted_decision_sha256=(
+                None if source_record is None else accepted_decision_sha
+            ),
         )
 
     result = bridge.qualify_runtime_repair_admission(
@@ -9398,7 +9399,7 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
         for path in observed_calls
     )
     if fault in {"valid", "unknown-original", "ordinary-continuation", "completed"}:
-        assert len(comment_enumerations) == 1
+        assert "issues/435/comments?sort=created&direction=asc" not in observed_calls
         assert completion_calls == ["qualified"]
 
 
@@ -9412,6 +9413,9 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
     """
     repository = "royhsu-work/investment-strategy"
     event, native, decision, issue = _native_runtime_repair_sources()
+    accepted_record = bridge.parse_application_decision(cast(str, decision["body"]))
+    assert accepted_record is not None
+    accepted_decision_sha = hashlib.sha256(cast(str, decision["body"]).encode()).hexdigest()
     artifact = _native_r9_recovery_artifact(decision)
     pr = {
         "number": 443,
@@ -9435,13 +9439,6 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
         if path == "pulls/443":
             return pr
         raise AssertionError(f"unexpected native read: {path}")
-
-    def paged(
-        source_repo: str, token: str, path: str, *, read: object
-    ) -> tuple[Mapping[str, object], ...]:
-        assert (source_repo, token) == (repository, "test-token")
-        assert path == "issues/435/comments?sort=created&direction=asc"
-        return () if stage["value"] == "source-withdrawn" else (decision,)
 
     def qualify(
         source_repo: str, token: str, *, source: object, current_revision: str, read: object
@@ -9477,7 +9474,15 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
             recovery_artifact=artifact,
         )
         assert completion is not None
-        return completion
+        return replace(
+            completion,
+            accepted_record=(
+                None if stage["value"] == "source-withdrawn" else accepted_record
+            ),
+            accepted_decision_sha256=(
+                None if stage["value"] == "source-withdrawn" else accepted_decision_sha
+            ),
+        )
 
     original_qualifier = bridge.qualify_runtime_repair_admission
 
@@ -9493,7 +9498,6 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
             qualify=qualify,
         )
 
-    monkeypatch.setattr(bridge, "_paged_list", paged)
     monkeypatch.setattr(bridge, "qualify_runtime_repair_admission", native_qualifier)
     monkeypatch.setattr(
         bridge,

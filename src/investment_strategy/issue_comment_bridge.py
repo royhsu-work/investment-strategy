@@ -170,6 +170,9 @@ class ApplicationCompletion:
     recovery_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None = None
     # Only the Application's actual accepted proof can propose an R9 intake.
     accepted_proof: AcceptedPostEffectProof | None = None
+    # Application-owned exact accepted-source proof, not Bridge-local history.
+    accepted_record: ApplicationDecisionRecord | None = None
+    accepted_decision_sha256: str | None = None
 
 
 # The canonical proof owns permission. This Bridge-only table preserves the
@@ -199,8 +202,10 @@ def _unresolved_accepted_proof_completion(
     origin: Literal["EXCEPTION", "POST_EFFECT", "READ_ONLY"],
     request_comment_id: int,
     recovery_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None,
+    accepted_record: ApplicationDecisionRecord | None = None,
+    accepted_decision_sha256: str | None = None,
 ) -> ApplicationCompletion | None:
-    """Project one proof into a non-authorizing read/repair consequence."""
+    """Project one accepted-source Application proof into non-authorizing evidence."""
 
     if proof.continuation == "CONTINUE":
         return None
@@ -210,6 +215,8 @@ def _unresolved_accepted_proof_completion(
         request_comment_id=request_comment_id,
         recovery_artifact=recovery_artifact,
         accepted_proof=proof,
+        accepted_record=accepted_record,
+        accepted_decision_sha256=accepted_decision_sha256,
     )
 
 
@@ -2854,6 +2861,8 @@ def _application_job(
             origin="EXCEPTION",
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
+            accepted_record=record,
+            accepted_decision_sha256=accepted_decision_sha256,
         )
         if unresolved is not None:
             return unresolved
@@ -2908,6 +2917,8 @@ def _application_job(
             origin="POST_EFFECT",
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
+            accepted_record=record,
+            accepted_decision_sha256=accepted_decision_sha256,
         )
         if unresolved is not None:
             return unresolved
@@ -3054,6 +3065,8 @@ def _application_job(
             origin="READ_ONLY",
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
+            accepted_record=record,
+            accepted_decision_sha256=accepted_decision_sha256,
         )
         if unresolved is not None:
             return unresolved
@@ -5904,25 +5917,8 @@ def qualify_runtime_repair_admission(
         or observation.routing != (source.role, source.action)
     ):
         return None
-    query = f"issues/{issue_number}/comments?sort=created&direction=asc"
-    # One fresh, source-qualified observation; a second GET is not an atomic
-    # snapshot and cannot grant repair authority to this non-writing intake.
-    comments = _paged_list(repository, token, query, read=read)
-    matching = [
-        record
-        for item in comments
-        if is_github_actions_comment(item)
-        and isinstance(item.get("body"), str)
-        and hashlib.sha256(cast(str, item["body"]).encode()).hexdigest()
-        == fields["Accepted-Decision-SHA256"]
-        and (record := parse_application_decision(cast(str, item["body"]))) is not None
-        and record.disposition == "ACCEPTED"
-        and record.request_comment_id == request_comment_id
-        and (record.issue_number, record.change, record.role, record.action)
-        == (issue_number, fields["Change"], source.role, source.action)
-    ]
-    if len(matching) != 1:
-        return None
+    # Application owns the unique native accepted-decision inventory and SHA.
+    # Bridge consumes that result; a second GET is neither atomic nor authority.
     completion = qualify(
         repository,
         token,
@@ -5930,6 +5926,16 @@ def qualify_runtime_repair_admission(
         current_revision=current_revision,
         read=read,
     )
+    accepted = completion.accepted_record
+    if (
+        accepted is None
+        or completion.accepted_decision_sha256 != fields["Accepted-Decision-SHA256"]
+        or accepted.disposition != "ACCEPTED"
+        or accepted.request_comment_id != request_comment_id
+        or (accepted.issue_number, accepted.change, accepted.role, accepted.action)
+        != (issue_number, fields["Change"], source.role, source.action)
+    ):
+        return None
     # Eligibility comes from the Application-owned typed proof, not a
     # Bridge status/reason allowlist. A missing or mismatched accepted source
     # cannot become a positive repair admission just because it is INVALID.
@@ -5954,16 +5960,16 @@ def qualify_runtime_repair_admission(
             artifact.document.get("role"),
             artifact.document.get("action"),
         )
-        != (matching[0].issue_number, matching[0].role, matching[0].action)
+        != (accepted.issue_number, accepted.role, accepted.action)
         or (
             artifact.document.get("authorization_revision")
             if isinstance(artifact, ApplicationRecoveryArtifact)
             else artifact.document.get("change")
         )
         != (
-            matching[0].authorization_revision
+            accepted.authorization_revision
             if isinstance(artifact, ApplicationRecoveryArtifact)
-            else matching[0].change
+            else accepted.change
         )
         or completion.request_comment_id != request_comment_id
         or completion.state != ("RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID")
@@ -5974,7 +5980,7 @@ def qualify_runtime_repair_admission(
         trigger_comment_id=trigger_comment_id,
         accepted_request_comment_id=request_comment_id,
         accepted_decision_sha256=fields["Accepted-Decision-SHA256"],
-        accepted_worker_sha256=matching[0].worker_result_sha256,
+        accepted_worker_sha256=accepted.worker_result_sha256,
         repair_pr=repair_pr,
         repair_head=fields["Repair-HEAD"],
         result_state=completion.state,
