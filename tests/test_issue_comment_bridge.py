@@ -9706,7 +9706,7 @@ def test_native_r9_handoff_cannot_substitute_for_real_application_qualifier() ->
     admission = bridge.qualify_runtime_repair_admission(
         event,
         repository=repository,
-        token="test-token",
+        token=REVISION,
         current_revision=REVISION,
         read=read,
         qualify=bridge.qualify_application_completion,
