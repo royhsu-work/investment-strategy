@@ -9661,6 +9661,7 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
     assert "Typed witness: TypedEvidenceError" in summary.read_text()
     assert "authorizes NO Effect" in summary.read_text()
 
+
 def test_native_r9_handoff_cannot_substitute_for_real_application_qualifier() -> None:
     """A valid Human event/ACCEPT is not proof of a completed native Application.
 
