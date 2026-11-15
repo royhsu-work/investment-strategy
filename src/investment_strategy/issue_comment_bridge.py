@@ -6005,7 +6005,7 @@ def _runtime_repair_admission_document(
     proof = admission.frontier_proof
     witness = proof.witness
     stage = witness.stage if isinstance(witness, TypedEvidenceError) else None
-    document = {
+    document: dict[str, object] = {
         "schema": "scheduled-agent-runtime-repair-admission/v1",
         "source": {
             "repository": repository,
