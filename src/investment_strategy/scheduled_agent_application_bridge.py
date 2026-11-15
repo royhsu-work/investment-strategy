@@ -87,6 +87,7 @@ from investment_strategy.scheduled_agent_effects import (
     merged_pr_readiness_complete,
     parse_application_decision,
     parse_effect_batch,
+    persist_native_application_evidence_comment,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
@@ -3492,62 +3493,6 @@ def _fresh_preactivation_source(
         raise RuntimeError("first activation source identity is no longer preactivation")
 
 
-def _persist_application_evidence_comment(
-    body: str,
-    *,
-    repository: str,
-    token: str,
-    issue_number: int,
-    errors: tuple[str, str, str, str],
-) -> int:
-    """The single native comment write/reconcile/postcondition owner.
-
-    Both first activation and partial recovery retain their existing purpose,
-    caller authorization and diagnostic messages, not separate write logic.
-    """
-
-    comments = _paged_github_list(repository, token, f"issues/{issue_number}/comments?sort=created")
-    matches = tuple(
-        comment
-        for comment in comments
-        if comment.get("body") == body and is_github_actions_comment(comment)
-    )
-    if len(matches) > 1:
-        raise RuntimeError(errors[0])
-    if len(matches) == 1:
-        comment_id = _positive_int(matches[0].get("id"))
-        if comment_id is None:
-            raise RuntimeError(errors[1])
-        return comment_id
-
-    response = _as_mapping(
-        _github_json(
-            repository,
-            token,
-            f"issues/{issue_number}/comments",
-            method="POST",
-            payload={"body": body},
-        )
-    )
-    comment_id = None if response is None else _positive_int(response.get("id"))
-    if (
-        response is None
-        or comment_id is None
-        or response.get("body") != body
-        or not is_github_actions_comment(response)
-    ):
-        raise RuntimeError(errors[2])
-    observed = _as_mapping(_github_json(repository, token, f"issues/comments/{comment_id}"))
-    if (
-        observed is None
-        or observed.get("id") != comment_id
-        or observed.get("body") != body
-        or not is_github_actions_comment(observed)
-    ):
-        raise RuntimeError(errors[3])
-    return comment_id
-
-
 def _persist_activation_result(
     body: str,
     *,
@@ -3555,8 +3500,8 @@ def _persist_activation_result(
     token: str,
     issue_number: int,
 ) -> int:
-    return _persist_application_evidence_comment(
-        body,
+    return persist_native_application_evidence_comment(
+        body=body,
         repository=repository,
         token=token,
         issue_number=issue_number,
@@ -3566,6 +3511,8 @@ def _persist_activation_result(
             "first activation result postcondition was not observed",
             "first activation result fresh postcondition was not observed",
         ),
+        read=_github_json,
+        list_comments=_paged_github_list,
     )
 
 
@@ -3972,8 +3919,8 @@ def _persist_recovery_comment(
     token: str,
     issue_number: int,
 ) -> int:
-    return _persist_application_evidence_comment(
-        body,
+    return persist_native_application_evidence_comment(
+        body=body,
         repository=repository,
         token=token,
         issue_number=issue_number,
@@ -3983,6 +3930,8 @@ def _persist_recovery_comment(
             "partial activation recovery comment postcondition was not observed",
             "partial activation recovery fresh comment was not observed",
         ),
+        read=_github_json,
+        list_comments=_paged_github_list,
     )
 
 
