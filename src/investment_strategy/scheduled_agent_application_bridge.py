@@ -7067,7 +7067,6 @@ def classify_accepted_read_only_effects(
                 ),
             )
         )
-        failed_satisfied = attempted_fact.final_postcondition is True
         attempted_proof = replace(evaluate_recovery_evidence(attempted_fact), frontier_index=index)
         historical_frontier = index + 1 if attempted_proof.disposition == "SATISFIED" else index
         # Original Effect proof is separate from *authorization of the next*
@@ -7101,7 +7100,6 @@ def classify_accepted_read_only_effects(
         )
         qualified_derived = bool(
             observed_derived is not None
-            and observed_derived.final_postcondition is True
             and evaluate_recovery_evidence(
                 replace(observed_derived, depends_on=tuple(proven_prefix))
             ).disposition
@@ -7188,7 +7186,7 @@ def classify_accepted_read_only_effects(
         return AcceptedPostEffectProof(
             "COMPLETE",
             "accepted historical Effect satisfied"
-            if failed_satisfied
+            if attempted_proof.disposition == "SATISFIED"
             else "accepted unattempted suffix qualified",
             original_effect_proof=original_effect_proof,
         )

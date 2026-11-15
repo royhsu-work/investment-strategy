@@ -263,6 +263,20 @@ def test_positive_issue_comment_node_needs_a_native_source_reference(
     assert proof.remaining_obligation == (None if expected == "SATISFIED" else "ORIGINAL_EFFECT")
 
 
+def test_r9_read_only_completion_does_not_redecide_raw_postcondition() -> None:
+    """Source-unqualified truth is UNKNOWN, not a separate completion decision."""
+    original = inspect.getsource(application.classify_accepted_read_only_effects)
+    assert "failed_satisfied" not in original
+    assert "observed_derived.final_postcondition is True" not in original
+    assert 'if attempted_proof.disposition == "SATISFIED"' in original
+
+    effect = StagedEffect("issue-comment", '{"issue_number":138,"body":"original"}')
+    unqualified = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", effect, True)
+    proof = application.evaluate_recovery_evidence(unqualified)
+    assert proof.disposition == "UNKNOWN"
+    assert proof.remaining_obligation == "ORIGINAL_EFFECT"
+
+
 def test_s2o_r9_original_prefix_identity_has_one_qualification_owner() -> None:
     """R9 must reuse the exact checkpoint prefix gate, not compare it again."""
     source = inspect.getsource(application.classify_accepted_read_only_effects)
