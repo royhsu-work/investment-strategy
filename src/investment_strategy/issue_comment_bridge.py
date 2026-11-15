@@ -6075,41 +6075,40 @@ def consume_runtime_repair_admission(
 def _present_runtime_repair_admission(
     admission: RuntimeRepairAdmission, *, repository: str, evidence_path: Path | None = None
 ) -> None:
-    """Surface the actual native consumer result without dispatch/effect output."""
+    """Present the canonical non-writing Artifact without a second evidence projection."""
 
-    evidence_kind = (
-        "recovery"
-        if isinstance(admission.source_artifact, ApplicationRecoveryArtifact)
-        else "exception"
-    )
-    proof = admission.frontier_proof
-    witness = proof.witness
-    stage = witness.stage if isinstance(witness, TypedEvidenceError) else None
-    ordinal = proof.frontier_index
+    document = _runtime_repair_admission_document(admission, repository=repository)
+    source = cast(Mapping[str, object], document["source"])
+    repair = cast(Mapping[str, object], document["repair_target"])
+    native = cast(Mapping[str, object], document["native_application"])
+    frontier = cast(Mapping[str, object], document["frontier"])
+    completion = cast(Mapping[str, object], document["completion"])
+    evidence_stage = frontier["evidence_stage"]
     body = "\n".join(
         (
             "## Non-writing R9 Human/Runtime repair intake",
             "",
-            f"- Exact source: {repository} Issue #{admission.source.issue_number}",
-            f"- Original Action: {admission.source.role}/{admission.source.action}",
-            f"- Native Human trigger: issuecomment-{admission.trigger_comment_id}",
-            f"- Immutable accepted request: issuecomment-{admission.accepted_request_comment_id}",
-            f"- Accepted decision SHA256: {admission.accepted_decision_sha256}",
-            f"- Accepted worker SHA256: {admission.accepted_worker_sha256}",
-            f"- Existing maintenance PR: #{admission.repair_pr}",
-            f"- Exact PR HEAD: {admission.repair_head}",
-            f"- Native Application run: {admission.source_artifact.run_id}"
-            f" / attempt {admission.source_artifact.run_attempt}",
-            f"- Native Application job: {admission.source_artifact.job_id}",
-            f"- Native evidence kind: {evidence_kind}",
-            f"- Evidence Artifact ID: {admission.source_artifact.artifact_id}",
-            f"- Evidence Artifact digest: {admission.source_artifact.artifact_digest}",
-            f"- Recovery episode SHA256: {admission.source_artifact.recovery_episode_sha256}",
-            f"- Read-only proof: {admission.result_state}/{admission.reason}",
-            f"- Pending original/formal/successor frontier: {admission.frontier}",
-            f"- Verified Effect ordinal: {ordinal}",
-            f"- Typed witness: {type(witness).__name__}",
-            f"- Evidence error stage: {stage if stage is not None else 'not-an-operational-error'}",
+            f"- Exact source: {repository} Issue #{source['issue_number']}",
+            f"- Original Action: {source['role']}/{source['action']}",
+            f"- Native Human trigger: issuecomment-{source['human_comment_id']}",
+            f"- Immutable accepted request: issuecomment-{source['accepted_request_comment_id']}",
+            f"- Accepted decision SHA256: {source['accepted_decision_sha256']}",
+            f"- Accepted worker SHA256: {source['accepted_worker_sha256']}",
+            f"- Existing maintenance PR: #{repair['pr_number']}",
+            f"- Exact PR HEAD: {repair['head_sha']}",
+            f"- Native Application run: {native['run_id']} / attempt {native['run_attempt']}",
+            f"- Native Application job: {native['job_id']}",
+            f"- Native evidence kind: {native['kind']}",
+            f"- Evidence Artifact ID: {native['artifact_id']}",
+            f"- Evidence Artifact digest: {native['artifact_digest']}",
+            f"- Recovery episode SHA256: {native['recovery_episode_sha256']}",
+            f"- Read-only proof: {completion['state']}/{completion['reason']}",
+            f"- Pending original/formal/successor frontier: "
+            f"{frontier['obligation']}:{frontier['disposition']}",
+            f"- Verified Effect ordinal: {frontier['ordinal']}",
+            f"- Typed witness: {frontier['witness_kind']}",
+            f"- Evidence error stage: "
+            f"{evidence_stage if evidence_stage is not None else 'not-an-operational-error'}",
             "",
             "This native event was consumed by the existing Bridge. It authorizes NO "
             "Effect, Action, routing, merge, direct workflow run, or PR mutation. "
@@ -6119,10 +6118,8 @@ def _present_runtime_repair_admission(
             "",
         )
     )
-    # A qualified run-scoped Artifact is evidence only, never write permission.
-    # Both presentations share the same Application-qualified admission.
+    # One document owns both machine Artifact and Human summary field values.
     if evidence_path is not None:
-        document = _runtime_repair_admission_document(admission, repository=repository)
         evidence_path.write_text(
             json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
             encoding="utf-8",
