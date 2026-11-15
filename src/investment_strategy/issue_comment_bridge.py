@@ -3734,6 +3734,7 @@ def _accepted_application_state(
             "application-completion-continuation-chain-ambiguous",
             request_comment_id=record.request_comment_id,
         )
+
     # One native Application observation per accepted frontier. Later
     # formal/successor proof checks must not replace its read-only witness.
     def observe_application_job() -> ApplicationCompletion:
