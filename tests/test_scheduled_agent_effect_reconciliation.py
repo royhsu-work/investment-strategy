@@ -112,32 +112,21 @@ def test_activation_and_recovery_comments_share_one_write_postcondition_owner(
         assert path == "issues/comments/9011"
         return {**trusted, "body": "stale"} if scenario == "bad-get" else trusted
 
+    import investment_strategy.scheduled_agent_effects as effects
+
     monkeypatch.setattr(application, "_paged_github_list", paged)
     monkeypatch.setattr(application, "_github_json", github_io)
     monkeypatch.setattr(
-        application, "is_github_actions_comment", lambda item: item.get("trusted") is True
+        effects, "is_github_actions_comment", lambda item: item.get("trusted") is True
     )
-    canonical = application._persist_application_evidence_comment
+    canonical = application.persist_native_application_evidence_comment
     invoked: list[bool] = []
 
-    def counted(
-        result_body: str,
-        *,
-        repository: str,
-        token: str,
-        issue_number: int,
-        errors: tuple[str, str, str, str],
-    ) -> int:
+    def counted(**kwargs: Any) -> int:
         invoked.append(True)
-        return canonical(
-            result_body,
-            repository=repository,
-            token=token,
-            issue_number=issue_number,
-            errors=errors,
-        )
+        return canonical(**kwargs)
 
-    monkeypatch.setattr(application, "_persist_application_evidence_comment", counted)
+    monkeypatch.setattr(application, "persist_native_application_evidence_comment", counted)
     persist = getattr(application, entry)
     error_index = {
         "duplicate": 0,
