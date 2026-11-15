@@ -9359,9 +9359,7 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             completion,
             recovery_artifact=None if fault == "missing-native-artifact" else artifact,
             accepted_record=source_record,
-            accepted_decision_sha256=(
-                None if source_record is None else accepted_decision_sha
-            ),
+            accepted_decision_sha256=(None if source_record is None else accepted_decision_sha),
         )
 
     result = bridge.qualify_runtime_repair_admission(
@@ -9476,9 +9474,7 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
         assert completion is not None
         return replace(
             completion,
-            accepted_record=(
-                None if stage["value"] == "source-withdrawn" else accepted_record
-            ),
+            accepted_record=(None if stage["value"] == "source-withdrawn" else accepted_record),
             accepted_decision_sha256=(
                 None if stage["value"] == "source-withdrawn" else accepted_decision_sha
             ),
