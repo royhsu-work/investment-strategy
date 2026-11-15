@@ -9583,7 +9583,6 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
     assert reads.count("issues/comments/9001") == 4
 
 
-
 def test_manual_r9_consumer_requalifies_prior_artifact_and_withdraws_stale(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -9679,7 +9678,8 @@ def test_manual_r9_consumer_requalifies_prior_artifact_and_withdraws_stale(
     event_path.write_text(json.dumps(event), encoding="utf-8")
     artifact_path = tmp_path / "runtime-repair-admission.json"
     monkeypatch.setattr(
-        sys, "argv",
+        sys,
+        "argv",
         [
             "issue-comment-bridge",
             "--event-path",
@@ -9726,6 +9726,7 @@ def test_manual_r9_consumer_requalifies_prior_artifact_and_withdraws_stale(
         "issues/435",
         "pulls/443",
     }
+
 
 def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispatch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
