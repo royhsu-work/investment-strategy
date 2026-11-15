@@ -9479,7 +9479,9 @@ def test_native_r9_repair_ingress_requalifies_after_external_source_changes(
         proof = application.AcceptedPostEffectProof(
             "INDETERMINATE" if stage["value"] == "source-unavailable" else "UNSAFE",
             "qualified read-only observation",
-            original_effect_proof=application.evaluate_recovery_evidence(fact),
+            original_effect_proof=replace(
+                application.evaluate_recovery_evidence(fact), frontier_index=0
+            ),
         )
         completion = bridge._unresolved_accepted_proof_completion(
             proof,

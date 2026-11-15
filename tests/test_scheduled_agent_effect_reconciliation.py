@@ -233,7 +233,9 @@ def test_r9_unresolved_entered_write_requires_exact_witness(
     decision = application.AcceptedPostEffectProof(
         "INDETERMINATE",
         "native accepted attempt remains uncertain",
-        original_effect_proof=application.evaluate_recovery_evidence(fact),
+        original_effect_proof=replace(
+            application.evaluate_recovery_evidence(fact), frontier_index=0
+        ),
     )
     assert (decision.runtime_repair_frontier is not None) is expected
 
