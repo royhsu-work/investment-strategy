@@ -6373,7 +6373,11 @@ class AcceptedPostEffectProof:
         actual source conflict may be presented for Human maintenance.
         """
 
-        proof = self.pending_frontier_proof or self.original_effect_proof
+        # Original Effects must be settled before Formal Result / Successor.
+        # A pending downstream proof cannot hide an unresolved earlier frontier.
+        proof = self.original_effect_proof
+        if proof is None or proof.disposition == "SATISFIED":
+            proof = self.pending_frontier_proof
         if (
             self.disposition not in {"INDETERMINATE", "UNSAFE"}
             or proof is None

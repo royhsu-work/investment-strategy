@@ -2211,6 +2211,54 @@ def test_nonactivation_exception_proof_reconciles_original_effects_without_repla
 
 
 @pytest.mark.parametrize(
+    ("original_case", "expected"),
+    [
+        ("conflict", "ORIGINAL_EFFECT"),
+        ("satisfied", "FORMAL_RESULT"),
+        ("transient", None),
+        ("absent", "FORMAL_RESULT"),
+    ],
+)
+def test_runtime_repair_frontier_keeps_first_unsettled_obligation(
+    original_case: str, expected: str | None
+) -> None:
+    """A downstream repair candidate cannot bypass an unproved Original Effect."""
+
+    original: bridge.RecoveryProofResult | None = None
+    if original_case != "absent":
+        original = bridge.evaluate_recovery_evidence(
+            bridge.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT",
+                None,
+                True if original_case == "satisfied" else None,
+                never_called_evidence=(
+                    bridge.TypedEvidenceError(
+                        "UNKNOWN", "SOURCE_GET", "native history temporarily unavailable", 9001
+                    )
+                    if original_case == "transient"
+                    else None
+                ),
+                source_conflict=original_case == "conflict",
+            )
+        )
+    pending = bridge.evaluate_recovery_evidence(
+        bridge.RecoveryEvidenceNode("FORMAL_RESULT", None, None, source_conflict=True)
+    )
+    result = bridge.AcceptedPostEffectProof(
+        "UNSAFE",
+        "read-only repair frontier qualification",
+        original_effect_proof=original,
+        pending_frontier_proof=pending,
+    )
+    frontier = result.runtime_repair_frontier
+    assert (None if frontier is None else frontier.remaining_obligation) == expected
+    if expected == "ORIGINAL_EFFECT":
+        assert frontier is original
+    elif expected == "FORMAL_RESULT":
+        assert frontier is pending
+
+
+@pytest.mark.parametrize(
     ("failure", "expected"),
     [
         (OSError, "INDETERMINATE"),
