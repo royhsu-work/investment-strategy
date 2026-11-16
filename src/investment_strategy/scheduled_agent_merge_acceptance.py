@@ -41,6 +41,8 @@ from investment_strategy.scheduled_agent_effects import (
     StagedEffect,
     apply_effect_batch,
     parse_effect_batch,
+    _source_from_environment,
+    _write_github_outputs,
 )
 from investment_strategy.scheduled_agent_formal_result import (
     _field_values,
@@ -941,31 +943,6 @@ def run_guarded_effect_application(
     if not result.applied and rejections:
         result = replace(result, rejection=rejections[-1])
     return applied_batch, result
-
-
-def _source_from_environment() -> WorkerRequest:
-    issue = os.environ.get("AUTHORIZED_ISSUE")
-    role = os.environ.get("AUTHORIZED_ROLE")
-    action = os.environ.get("AUTHORIZED_ACTION")
-    if not issue or not role or not action:
-        raise RuntimeError("machine-authorized Issue/role/action environment is required")
-    try:
-        issue_number = int(issue)
-    except ValueError as exc:
-        raise RuntimeError("AUTHORIZED_ISSUE must be an integer") from exc
-    return WorkerRequest(
-        issue_number=issue_number,
-        role=role,
-        action=action,
-    )
-
-
-def _write_github_outputs(result: ApplyResult) -> None:
-    output_path = os.environ.get("GITHUB_OUTPUT")
-    if not output_path:
-        return
-    with Path(output_path).open("a", encoding="utf-8") as output:
-        output.write(f"applied={'true' if result.applied else 'false'}\n")
 
 
 def main() -> int:
