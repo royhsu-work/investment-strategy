@@ -3940,6 +3940,56 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     assert formal_comment_posts == [formal]
     assert proof_git.mutations == []
 
+    # R1 contract: the *guarded Application effect entrypoint*, rather than
+    # only the adapter, must reconstruct the same accepted complete outcome on
+    # a separate fresh invocation without replaying Original, Formal or route.
+    import investment_strategy.scheduled_agent_merge_acceptance as merge_acceptance
+    from investment_strategy.scheduled_agent_runtime import (
+        GitHubIssueObservation,
+        acquire_dispatch_preflight,
+    )
+    from investment_strategy.workflow_dispatch import ObservationProvenance
+
+    def fresh_preflight() -> object:
+        return acquire_dispatch_preflight(
+            observations=(
+                GitHubIssueObservation(
+                    issue_number=435,
+                    change=change,
+                    routing=("executor", "implement-change"),
+                    state="open",
+                    created_order=1,
+                    authoritative=True,
+                    current_state_provenance=ObservationProvenance.QUALIFIED,
+                ),
+            ),
+            source_total_count=1,
+            incomplete_results=False,
+            exhausted=True,
+            human_authorized=True,
+        )
+
+    monkeypatch.setattr(
+        merge_acceptance, "acquire_current_github_preflight", lambda *_args: fresh_preflight()
+    )
+    guarded_batch, guarded_result = merge_acceptance.run_guarded_effect_application(
+        projection,
+        source=original,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        request_comment_id=accepted.request_comment_id,
+        authorized_change=change,
+        authorization_revision=accepted.authorization_revision,
+        allow_pending_continuation=True,
+        accepted_intent=True,
+    )
+    assert guarded_result.applied, guarded_result
+    assert len(guarded_batch.effects) == 2
+    assert formal_comment_posts == [formal]
+    assert proof_git.head == witness
+    assert proof_git.mutations == []
+
     # A durable original is not a durable Formal or Successor.
     assert (
         application_bridge.AcceptedPostEffectProof(
