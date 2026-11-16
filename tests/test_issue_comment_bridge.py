@@ -9442,6 +9442,8 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
     if admitted:
         assert result is not None
         assert result.source == bridge.WorkerRequest(435, "executor", "implement-change")
+        assert result.change == accepted_record.change
+        assert result.authorization_revision == accepted_record.authorization_revision
         assert result.accepted_request_comment_id == 6796616018
         assert result.repair_pr == 443 and result.repair_head == REVISION
         assert result.source_artifact is artifact
@@ -9768,6 +9770,18 @@ def test_manual_r9_consumer_requalifies_prior_artifact_and_withdraws_stale(
     assert bridge.main() == 1
     artifact_path.write_text(json.dumps(document), encoding="utf-8")
 
+    # A copied admission cannot silently change its immutable Change or
+    # original authorization revision while retaining the same decision SHA.
+    for field, replacement in (
+        ("change", "unrelated-change"),
+        ("authorization_revision", "f" * 40),
+    ):
+        tampered = json.loads(json.dumps(document))
+        tampered["source"][field] = replacement
+        artifact_path.write_text(json.dumps(tampered), encoding="utf-8")
+        assert bridge.main() == 1
+    artifact_path.write_text(json.dumps(document), encoding="utf-8")
+
     cast(dict[str, object], pr["head"])["sha"] = "f" * 40
     assert bridge.main() == 1  # PR HEAD changed on a later wake.
     cast(dict[str, object], pr["head"])["sha"] = REVISION
@@ -9807,6 +9821,8 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
     summary = tmp_path / "step-summary.md"
     admission = bridge.RuntimeRepairAdmission(
         source=bridge.WorkerRequest(435, "executor", "implement-change"),
+        change="restore-t1-dispatch-artifact-consumption",
+        authorization_revision=REVISION,
         trigger_comment_id=9001,
         accepted_request_comment_id=6796616018,
         accepted_decision_sha256="b" * 64,
@@ -9868,6 +9884,8 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
     document = json.loads(repair_admission_payload.read_text(encoding="utf-8"))
     assert document["schema"] == "scheduled-agent-runtime-repair-admission/v1"
     assert document["source"]["human_comment_id"] == 9001
+    assert document["source"]["change"] == "restore-t1-dispatch-artifact-consumption"
+    assert document["source"]["authorization_revision"] == REVISION
     assert document["repair_target"] == {"pr_number": 443, "head_sha": REVISION}
     assert document["native_application"]["run_id"] == 7001
     assert document["native_application"]["artifact_id"] == 7003
