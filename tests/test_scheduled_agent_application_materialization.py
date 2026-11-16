@@ -3970,7 +3970,9 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         )
 
     monkeypatch.setattr(
-        merge_acceptance, "acquire_current_github_preflight", lambda *_args: fresh_preflight()
+        merge_acceptance,
+        "acquire_current_github_preflight",
+        lambda *_args: fresh_preflight(),
     )
     guarded_batch, guarded_result = merge_acceptance.run_guarded_effect_application(
         projection,
