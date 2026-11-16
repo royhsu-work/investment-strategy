@@ -9183,6 +9183,8 @@ def _native_r9_exception_artifact(
         ("changed-decision", False),
         ("stale-main", False),
         ("stale-pr", False),
+        ("missing-merged-state", False),
+        ("null-merged-state", False),
         ("changed-route", False),
         ("invalid-action", False),
         ("duplicate-decision", False),
@@ -9261,6 +9263,10 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
         accepted["body"] = "APPLICATION_DECISION\nforged"
     if fault == "stale-pr":
         cast(dict[str, object], pr["head"])["sha"] = "f" * 40
+    if fault == "missing-merged-state":
+        del pr["merged"]
+    if fault == "null-merged-state":
+        pr["merged"] = None
     if fault == "changed-route":
         issue["labels"] = [{"name": "action:resolve-question"}]
     if fault == "invalid-action":
