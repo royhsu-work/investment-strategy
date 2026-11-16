@@ -3897,52 +3897,11 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     assert project_formal() == projection
     assert proof_git.mutations == []
 
-    # First Application owns only the missing Formal write. A later fresh
-    # adapter has no process-local comment receipt and must reconstruct the
-    # same source-qualified postcondition, without reissuing that write.
-    def new_application() -> effects.GitHubEffectAdapter:
-        return effects.GitHubEffectAdapter(
-            proof_git.repository,
-            _TOKEN,
-            original,
-            authorized_change=change,
-            current_revision=proof_git.main,
-            expected_result_kind="blocked",
-            request_comment_id=accepted.request_comment_id,
-            authorization_revision=accepted.authorization_revision,
-            allow_pending_continuation=True,
-            accepted_intent=True,
-        )
-
-    first = new_application()
-    assert first.observe_postcondition(original_effect)
-    assert first.guard(formal_effect)
-    assert not first.observe_postcondition(formal_effect)
-    with pytest.raises(OSError, match="simulated lost response after formal POST"):
-        first.apply(formal_effect)
-    assert first.observe_postcondition(formal_effect)
-    assert formal_comment_posts == [formal]
-    assert len(formal_comments) == 1
-
-    fresh = new_application()
-    assert fresh.observe_postcondition(original_effect)
-    assert fresh.observe_postcondition(formal_effect)
-    fresh.apply(formal_effect)  # Fresh Application reconciles the lost response.
-    assert formal_comment_posts == [formal]
-    successor = effects.StagedEffect(
-        "routing-transition",
-        json.dumps({"issue_number": 435, "action": "implement-change"}),
-        derived=True,
-    )
-    assert fresh.guard(successor)
-    fresh.apply(successor)
-    assert new_application().observe_postcondition(successor)
-    assert formal_comment_posts == [formal]
-    assert proof_git.mutations == []
-
-    # R1 contract: the *guarded Application effect entrypoint*, rather than
-    # only the adapter, must reconstruct the same accepted complete outcome on
-    # a separate fresh invocation without replaying Original, Formal or route.
+    # R1: enter through the real guarded Application effect owner while
+    # Original is already source-proven and Formal is still absent. Its first
+    # non-idempotent Formal POST succeeds at GitHub but loses the HTTP response.
+    # The next independent process must read/reconcile that exact Formal and
+    # derive the still-needed Successor without retrying either original write.
     import investment_strategy.scheduled_agent_merge_acceptance as merge_acceptance
     from investment_strategy.scheduled_agent_runtime import (
         GitHubIssueObservation,
@@ -3974,20 +3933,78 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         "acquire_current_github_preflight",
         lambda *_args: fresh_preflight(),
     )
-    guarded_batch, guarded_result = merge_acceptance.run_guarded_effect_application(
-        projection,
-        source=original,
-        repository=proof_git.repository,
-        token=_TOKEN,
-        current_revision=proof_git.main,
-        request_comment_id=accepted.request_comment_id,
-        authorized_change=change,
-        authorization_revision=accepted.authorization_revision,
-        allow_pending_continuation=True,
-        accepted_intent=True,
+
+    def guarded(
+        *, reconcile_only: bool = False, uncertain_effect_index: int | None = None
+    ) -> tuple[effects.EffectBatch, effects.ApplyResult]:
+        return merge_acceptance.run_guarded_effect_application(
+            projection,
+            source=original,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            request_comment_id=accepted.request_comment_id,
+            authorized_change=change,
+            authorization_revision=accepted.authorization_revision,
+            allow_pending_continuation=True,
+            accepted_intent=True,
+            reconcile_only=reconcile_only,
+            uncertain_effect_index=uncertain_effect_index,
+        )
+
+    def new_application() -> effects.GitHubEffectAdapter:
+        return effects.GitHubEffectAdapter(
+            proof_git.repository,
+            _TOKEN,
+            original,
+            authorized_change=change,
+            current_revision=proof_git.main,
+            expected_result_kind="blocked",
+            request_comment_id=accepted.request_comment_id,
+            authorization_revision=accepted.authorization_revision,
+            allow_pending_continuation=True,
+            accepted_intent=True,
+        )
+
+    first = new_application()
+    assert first.observe_postcondition(original_effect)
+    assert first.guard(formal_effect)
+    assert not first.observe_postcondition(formal_effect)
+    assert formal_comment_posts == []
+
+    initial_batch, interrupted = guarded()
+    assert len(initial_batch.effects) == 2
+    assert not interrupted.applied
+    assert interrupted.recovery_evidence is not None
+    assert interrupted.recovery_evidence.failed_effect_index == 1
+    assert interrupted.recovery_evidence.write_call_entered is True
+    assert interrupted.recovery_evidence.mutation_status == "unknown"
+    assert interrupted.recovery_evidence.completed_effect_indexes == (0,)
+    assert formal_comment_posts == [formal]
+    assert len(formal_comments) == 1
+    assert proof_git.head == witness
+    assert proof_git.mutations == []
+
+    # A separately reconstructed Application has no invocation-local write
+    # receipt. Its existing Effect owner must positively observe Original and
+    # Formal, then complete/verify only the derived Successor.
+    next_wake = new_application()
+    assert next_wake.observe_postcondition(original_effect)
+    assert next_wake.observe_postcondition(formal_effect)
+    successor = effects.StagedEffect(
+        "routing-transition",
+        json.dumps({"issue_number": 435, "action": "implement-change"}),
+        derived=True,
     )
-    assert guarded_result.applied, guarded_result
-    assert len(guarded_batch.effects) == 2
+    assert next_wake.guard(successor)
+    _, recovered = guarded(reconcile_only=True, uncertain_effect_index=1)
+    assert recovered.applied, recovered
+    assert new_application().observe_postcondition(successor)
+
+    # A further independent guarded Application invocation is idempotent.
+    final_batch, repeated = guarded()
+    assert repeated.applied, repeated
+    assert len(final_batch.effects) == 2
     assert formal_comment_posts == [formal]
     assert proof_git.head == witness
     assert proof_git.mutations == []
