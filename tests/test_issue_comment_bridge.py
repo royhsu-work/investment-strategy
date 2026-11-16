@@ -9452,8 +9452,12 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             "pending-formal": "FORMAL_RESULT:UNKNOWN",
             "pending-successor": "SUCCESSOR:UNKNOWN",
         }.get(fault, "ORIGINAL_EFFECT:UNKNOWN")
-        assert result.frontier == expected_frontier
-        assert result.frontier_proof.frontier_index == (
+        frontier = cast(
+            Mapping[str, object],
+            bridge._runtime_repair_admission_document(result, repository=repository)["frontier"],
+        )
+        assert f"{frontier['obligation']}:{frontier['disposition']}" == expected_frontier
+        assert frontier["ordinal"] == (
             1 if fault == "pending-formal" else 2 if fault == "pending-successor" else 0
         )
         parsed = bridge.parse_application_decision(cast(str, accepted["body"]))
@@ -9865,6 +9869,11 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
         "evidence_stage": "CALL_ENTRY",
     }
     assert document["effect_authority"] == "NONE"
+    assert (
+        "Pending original/formal/successor frontier: "
+        f"{document['frontier']['obligation']}:{document['frontier']['disposition']}"
+        in summary.read_text(encoding="utf-8")
+    )
     assert f"Exact PR HEAD: {REVISION}" in summary.read_text()
     assert "Native Application run: 7001 / attempt 1" in summary.read_text()
     assert "Native Application job: 7002" in summary.read_text()

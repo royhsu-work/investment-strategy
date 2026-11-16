@@ -5788,11 +5788,6 @@ class RuntimeRepairAdmission:
     # handoff cannot be upgraded from a bare status or a synthetic DAG proof.
     source_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact
 
-    @property
-    def frontier(self) -> str:
-        proof = self.frontier_proof
-        return f"{proof.remaining_obligation}:{proof.disposition}"
-
 
 def qualify_runtime_repair_admission(
     event: Mapping[str, object],
