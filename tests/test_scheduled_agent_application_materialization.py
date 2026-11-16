@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from email.message import Message
 from pathlib import Path
 from typing import cast
@@ -3775,6 +3776,51 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             default_branch="main",
         )
 
+    # The original #435 failure was an Application preparation exception.
+    # This fixture starts at the already-validated native Artifact boundary;
+    # it does not replace the actual Application domain classifier with a
+    # synthetic success result or claim to test Artifact download validation.
+    exception = application_bridge.ApplicationExceptionArtifact(
+        run_id=43029179128,
+        run_attempt=1,
+        job_id=130551485662,
+        artifact_id=13860996180,
+        artifact_digest="sha256:"
+        "6e635bde715bec5b9d282396655b788c414890c6e8ac3a5f9c34bc5c5701d292",
+        request_comment_id=accepted.request_comment_id,
+        accepted_decision_sha256="d" * 64,
+        failure_evidence_sha256="e" * 64,
+        recovery_episode_sha256="f" * 64,
+        document={
+            "issue_number": 435,
+            "role": original.role,
+            "action": original.action,
+            "change": change,
+            "attempted_operation": "application-effect-preparation",
+            "mutation_status": "NO_APPLICATION_WRITE_ATTEMPTED",
+        },
+    )
+
+    def exception_proof(
+        evidence: application_bridge.ApplicationExceptionArtifact,
+    ) -> application_bridge.AcceptedPostEffectProof:
+        with monkeypatch.context() as patch:
+            patch.setattr(application_bridge, "_github_json", native_read)
+            return application_bridge.classify_application_exception_recovery(
+                record=accepted,
+                artifact=evidence,
+                repository=proof_git.repository,
+                token=_TOKEN,
+            )
+
+    # A run-local pre-call exception must never imply intent-wide NOT_APPLIED.
+    assert exception_proof(exception).disposition == "INDETERMINATE"
+    assert (
+        exception_proof(
+            replace(exception, document={**exception.document, "change": "foreign-change"})
+        ).disposition
+        == "UNSAFE"
+    )
     assert observe().disposition == "INDETERMINATE"  # Missing original Git effect.
     witness = proof_git.commit(desired, proof_git.message, (base,))
     proof_git.set_head(witness)
@@ -3798,6 +3844,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     # accepted Git effect, without calling its historical mutation again.
     assert observe().disposition == "COMPLETE"
     assert observe().disposition == "COMPLETE"
+    assert exception_proof(exception).disposition == "COMPLETE"
     assert proof_git.head == witness
     assert proof_git.mutations == []
 
