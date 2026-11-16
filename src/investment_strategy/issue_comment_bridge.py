@@ -5775,6 +5775,8 @@ class RuntimeRepairAdmission:
     """A native-Human-qualified, non-writing maintenance handoff only."""
 
     source: WorkerRequest
+    change: str
+    authorization_revision: str
     trigger_comment_id: int
     accepted_request_comment_id: int
     accepted_decision_sha256: str
@@ -5966,6 +5968,8 @@ def qualify_runtime_repair_admission(
         return None
     return RuntimeRepairAdmission(
         source=source,
+        change=accepted.change,
+        authorization_revision=accepted.authorization_revision,
         trigger_comment_id=trigger_comment_id,
         accepted_request_comment_id=request_comment_id,
         accepted_decision_sha256=fields["Accepted-Decision-SHA256"],
@@ -6001,6 +6005,8 @@ def _runtime_repair_admission_document(
             "issue_number": admission.source.issue_number,
             "role": admission.source.role,
             "action": admission.source.action,
+            "change": admission.change,
+            "authorization_revision": admission.authorization_revision,
             "human_comment_id": admission.trigger_comment_id,
             "accepted_request_comment_id": admission.accepted_request_comment_id,
             "accepted_decision_sha256": admission.accepted_decision_sha256,
@@ -6085,6 +6091,8 @@ def _present_runtime_repair_admission(
             "",
             f"- Exact source: {repository} Issue #{source['issue_number']}",
             f"- Original Action: {source['role']}/{source['action']}",
+            f"- Immutable Change: {source['change']}",
+            f"- Accepted authorization revision: {source['authorization_revision']}",
             f"- Native Human trigger: issuecomment-{source['human_comment_id']}",
             f"- Immutable accepted request: issuecomment-{source['accepted_request_comment_id']}",
             f"- Accepted decision SHA256: {source['accepted_decision_sha256']}",
