@@ -8576,41 +8576,6 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         )
         return 0
 
-    if result.carrier_plan is not None:
-        # Keep compatibility with an adapter that returns the existing carrier
-        # result surface while enforcing the same invocation boundary.
-        _write_carrier_outputs(result)
-        _write_validation_outputs(None)
-        _write_application_recovery_evidence(
-            args.recovery_evidence_path,
-            result=result,
-            repository=repository,
-            token=token,
-            source=plan.source,
-            request_comment_id=plan.request_comment_id,
-            trigger_comment_id=event_comment_id or plan.request_comment_id,
-            authorization_revision=request.authorization_revision,
-            current_revision=args.revision,
-            run_attempt=args.run_attempt,
-            continuation=continuation,
-            predecessor=predecessor_evidence,
-            effect_batch=batch,
-        )
-        print(
-            json.dumps(
-                {
-                    "applied": False,
-                    "reason": result.reason,
-                    "effects": len(batch.effects),
-                    "validation_required": requires_validation,
-                    "validation_completed": args.validation_passed,
-                    "carrier_required": True,
-                    "carrier_plan_id": result.carrier_plan.plan_id,
-                },
-                sort_keys=True,
-            )
-        )
-        return 0
     if result.applied and requires_validation and not args.validation_passed:
         if materialization is None:
             raise RuntimeError("validation gate has no materialization target")
