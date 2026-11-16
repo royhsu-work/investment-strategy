@@ -7266,10 +7266,12 @@ def test_accepted_checkpoint_and_formal_projection_rebind_only_after_proven_targ
 
 
 @pytest.mark.parametrize("materialized", [False, True])
+@pytest.mark.parametrize("result_kind", ["ready", "blocked"])
 def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proof(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     materialized: bool,
+    result_kind: str,
 ) -> None:
     """Phase B first creates its carrier, then binds a checkpoint on a fresh wake."""
     source = WorkerRequest(138, "executor", "implement-change")
@@ -7318,23 +7320,28 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
             "Application-Correlation: original",
         )
     )
-    worker = _worker_result(action=source.action, role=source.role, result_kind="ready")
+    worker = _worker_result(action=source.action, role=source.role, result_kind=result_kind)
     worker["change"] = _CHANGE
     worker["_semantic_intent_version"] = 2
     worker["requested_effects"] = [
         {"kind": "github-mutation", "payload_json": json.dumps(materialization)},
-        {
-            "kind": "issue-comment",
-            "payload_json": json.dumps({"issue_number": 138, "body": checkpoint}),
-        },
-        {
-            "kind": "issue-comment",
-            "payload_json": json.dumps({"issue_number": 138, "body": formal}),
-        },
     ]
+    if result_kind == "ready":
+        cast(list[dict[str, str]], worker["requested_effects"]).extend(
+            [
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps({"issue_number": 138, "body": checkpoint}),
+                },
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps({"issue_number": 138, "body": formal}),
+                },
+            ]
+        )
     raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
     body = _effect_request(worker)
-    accepted = _accepted_record(raw, body, source=source, change=_CHANGE, result_kind="ready")
+    accepted = _accepted_record(raw, body, source=source, change=_CHANGE, result_kind=result_kind)
     event_path = tmp_path / "event.json"
     event_path.write_text(json.dumps(_event(body)), encoding="utf-8")
     monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
@@ -7411,7 +7418,13 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
         for effect in projected_effects
         if effect["kind"] == "issue-comment"
     ]
-    assert (f"Revision: {revision}" in bodies[0].splitlines()) is materialized
+    if result_kind == "ready":
+        assert (f"Revision: {revision}" in bodies[0].splitlines()) is materialized
+    else:
+        # Accepted BLOCKED materialization does not require SLICE_CHECKPOINT.
+        assert bodies == []
+        assert len(projected_effects) == 1
+        assert projected_effects[0]["kind"] == "github-mutation"
 
 
 def test_application_apply_job_uses_bounded_pending_queue() -> None:
