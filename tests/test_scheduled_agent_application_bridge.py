@@ -2653,6 +2653,51 @@ def test_accepted_projection_preserves_immutable_completed_effects(
     assert json.loads(reconciled)["requested_effects"] == effects[:2] + [formal]
 
 
+@pytest.mark.parametrize(
+    ("projected_count", "allowed"),
+    [(1, True), (2, True), (3, False)],
+)
+def test_accepted_projection_preserves_distinct_equal_ordinals(
+    projected_count: int, allowed: bool
+) -> None:
+    """Equal immutable Effect values have separate ordinals, not index(0)."""
+
+    source = WorkerRequest(138, "lead", "explore-change")
+    original = _worker_result(action=source.action, role=source.role, result_kind="blocked")
+    repeated = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 138, "body": "same-original"}),
+    }
+    formal = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\\nformal"}),
+    }
+    original["requested_effects"] = [repeated, repeated]
+    projected = dict(
+        original, requested_effects=[repeated] * projected_count + [formal]
+    )
+    accepted_raw = json.dumps(original, sort_keys=True)
+    projected_raw = json.dumps(projected, sort_keys=True)
+
+    if not allowed:
+        with pytest.raises(RuntimeError, match="accepted recovery"):
+            bridge._accepted_reconciliation_effect_projection(
+                accepted_raw=accepted_raw,
+                projected_raw=projected_raw,
+                source=source,
+                change="unset",
+            )
+        return
+    reconciled, original_count = bridge._accepted_reconciliation_effect_projection(
+        accepted_raw=accepted_raw,
+        projected_raw=projected_raw,
+        source=source,
+        change="unset",
+    )
+    assert original_count == 2
+    assert json.loads(reconciled)["requested_effects"] == [repeated, repeated, formal]
+
+
 def test_empty_original_projection_preserves_application_formal_obligation() -> None:
     source = WorkerRequest(138, "lead", "explore-change")
     original = _worker_result(action=source.action, role=source.role, result_kind="blocked")
