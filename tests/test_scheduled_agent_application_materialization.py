@@ -3722,6 +3722,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
 
     formal_comments: list[dict[str, object]] = []
     formal_comment_posts: list[str] = []
+    lose_formal_post_response = {"once": True}
 
     def native_read(repository: str, token: str, api_path: str, **kwargs: object) -> object:
         if api_path == "issues/435":
@@ -3752,6 +3753,11 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
                 "performed_via_github_app": {"slug": "github-actions"},
             }
             formal_comments.append(comment)
+            # Native GitHub accepted the comment; only the client response is
+            # lost. This must not authorize the next wake to replay the POST.
+            if lose_formal_post_response["once"]:
+                lose_formal_post_response["once"] = False
+                raise OSError("simulated lost response after formal POST")
             return comment
         if api_path == "issues/comments/90001":
             return formal_comments[0] if formal_comments else None
@@ -3912,7 +3918,8 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     assert first.observe_postcondition(original_effect)
     assert first.guard(formal_effect)
     assert not first.observe_postcondition(formal_effect)
-    first.apply(formal_effect)
+    with pytest.raises(OSError, match="simulated lost response after formal POST"):
+        first.apply(formal_effect)
     assert first.observe_postcondition(formal_effect)
     assert formal_comment_posts == [formal]
     assert len(formal_comments) == 1
@@ -3920,7 +3927,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     fresh = new_application()
     assert fresh.observe_postcondition(original_effect)
     assert fresh.observe_postcondition(formal_effect)
-    fresh.apply(formal_effect)  # Interrupted response: reconcile, do not post again.
+    fresh.apply(formal_effect)  # Fresh Application reconciles the lost response.
     assert formal_comment_posts == [formal]
     successor = effects.StagedEffect(
         "routing-transition",
