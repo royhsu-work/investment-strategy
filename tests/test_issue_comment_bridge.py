@@ -9958,9 +9958,7 @@ def test_r9_real_application_qualifier_to_manual_consumer_across_fresh_reads(
     )
     encoded = cast(str, request["body"]).splitlines()[2].split(": ", 1)[1]
     worker = json.loads(base64.b64decode(encoded, validate=True))
-    worker["requested_effects"] = [
-        {"kind": "github-mutation", "payload_json": payload_json}
-    ]
+    worker["requested_effects"] = [{"kind": "github-mutation", "payload_json": payload_json}]
     worker_raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
     request["body"] = (
         "EFFECT_REQUEST\n"
@@ -10083,9 +10081,11 @@ def test_r9_real_application_qualifier_to_manual_consumer_across_fresh_reads(
         if api_path.startswith("issues/435/timeline?"):
             return []
         if api_path.startswith("actions/workflows/"):
-            return {"total_count": 1, "workflow_runs": [run]} if api_path.endswith("page=1") else {
-                "total_count": 1, "workflow_runs": []
-            }
+            return (
+                {"total_count": 1, "workflow_runs": [run]}
+                if api_path.endswith("page=1")
+                else {"total_count": 1, "workflow_runs": []}
+            )
         if api_path == "actions/runs/7001":
             return run
         if api_path == "actions/runs/7001/attempts/1/jobs":
@@ -10098,7 +10098,9 @@ def test_r9_real_application_qualifier_to_manual_consumer_across_fresh_reads(
 
     def artifact_get(source_repo: str, token: str, api_path: str) -> bytes:
         assert (source_repo, token, api_path) == (
-            repository, REVISION, "actions/artifacts/7003/zip"
+            repository,
+            REVISION,
+            "actions/artifacts/7003/zip",
         )
         return raw_artifact
 
@@ -10143,8 +10145,12 @@ def test_r9_real_application_qualifier_to_manual_consumer_across_fresh_reads(
     metadata["digest"] = "sha256:" + "f" * 64
     assert (
         bridge.consume_runtime_repair_admission(
-            event, snapshot, repository=repository, token=REVISION,
-            current_revision=REVISION, read=read,
+            event,
+            snapshot,
+            repository=repository,
+            token=REVISION,
+            current_revision=REVISION,
+            read=read,
             qualify=bridge.qualify_application_completion,
         )
         is None
