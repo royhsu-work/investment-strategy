@@ -5888,7 +5888,7 @@ def qualify_runtime_repair_admission(
         or main_object.get("sha") != current_revision
         or pr.get("number") != repair_pr
         or pr.get("state") != "open"
-        or pr.get("merged") is True
+        or pr.get("merged") is not False
         or not isinstance(pr_head, Mapping)
         or pr_head.get("sha") != fields["Repair-HEAD"]
         or not isinstance(head_repo, Mapping)
