@@ -9914,6 +9914,243 @@ def test_real_issue_comment_bridge_consumes_qualified_repair_event_without_dispa
     assert "authorizes NO Effect" in summary.read_text()
 
 
+def test_r9_real_application_qualifier_to_manual_consumer_across_fresh_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Native Human event -> full Application reader -> Bridge -> fresh consumer.
+
+    Replace only outbound GitHub JSON and Artifact bytes. Never inject a
+    synthetic ApplicationCompletion, recovery proof or Action authority.
+    """
+    from investment_strategy import scheduled_agent_effects as effects
+
+    repository = "royhsu-work/investment-strategy"
+    change = "restore-t1-dispatch-artifact-consumption"
+    event, native, _old_decision, issue = _native_runtime_repair_sources()
+    request = _effect_request_comment(
+        comment_id=6796616018,
+        created_at="2026-11-14T01:01:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="blocked",
+        issue_number=435,
+        change=change,
+    )
+    payload_json = json.dumps(
+        {
+            "operation": "application-materialize",
+            "issue_number": 435,
+            "change": change,
+            "expected_change": change,
+            "branch": f"agent/{change}",
+            "base_sha": REVISION,
+            "pr_number": 437,
+            "message": "source-qualified native R9 original",
+            "files": [
+                {
+                    "path": f"openspec/changes/{change}/proposal.md",
+                    "blob_sha": "a" * 40,
+                    "expected_sha": "b" * 40,
+                }
+            ],
+        },
+        sort_keys=True,
+    )
+    encoded = cast(str, request["body"]).splitlines()[2].split(": ", 1)[1]
+    worker = json.loads(base64.b64decode(encoded, validate=True))
+    worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": payload_json}
+    ]
+    worker_raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    request["body"] = (
+        "EFFECT_REQUEST\n"
+        f"Authorization-Revision: {REVISION}\n"
+        f"Worker-Result-B64: {base64.b64encode(worker_raw.encode()).decode()}"
+    )
+    request["user"] = {"login": "royhsu-work"}
+    decision = _application_decision_comment(request, comment_id=6796662999)
+    decision["created_at"] = "2026-11-14T01:03:00Z"
+    decision_sha = hashlib.sha256(cast(str, decision["body"]).encode()).hexdigest()
+    repair_body = bridge.RUNTIME_REPAIR_REQUEST_WIRE.render(
+        {
+            "Issue": "435",
+            "Change": change,
+            "Action": "implement-change",
+            "Accepted-Request-Comment": "6796616018",
+            "Accepted-Decision-SHA256": decision_sha,
+            "Repair-PR": "443",
+            "Repair-HEAD": REVISION,
+        }
+    )
+    cast(dict[str, object], event["comment"])["body"] = repair_body
+    native["body"] = repair_body
+
+    failure = {
+        "unfinished_boundary": "effect-reconciliation",
+        "mutation_status": "unknown",
+        "failed_effect_index": 0,
+        "failed_effect_kind": "github-mutation",
+        "failed_effect_sha256": hashlib.sha256(payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+        "attempted_effects": [
+            {"kind": "github-mutation", "payload_json": payload_json, "derived": False}
+        ],
+        "attempt_revision": REVISION,
+        "write_call_entered": True,
+    }
+    recovery = {
+        "schema": "scheduled-agent-application-recovery/v1",
+        "repository": repository,
+        "issue_number": 435,
+        "role": "executor",
+        "action": "implement-change",
+        "request_comment_id": 6796616018,
+        "accepted_decision_sha256": decision_sha,
+        "trigger_comment_id": 6796616018,
+        "run_id": 7001,
+        "run_attempt": 1,
+        "current_revision": REVISION,
+        "authorization_revision": REVISION,
+        "recovery_attempt": 1,
+        "recovery_episode_sha256": "c" * 64,
+        "prior_failure_evidence_sha256": [],
+        "predecessor": None,
+        "failure_evidence": failure,
+        "failure_evidence_sha256": application._canonical_sha256(failure),
+        "continuation_eligible": True,
+    }
+    raw_artifact = json.dumps(recovery, sort_keys=True, separators=(",", ":")).encode()
+    digest = "sha256:" + hashlib.sha256(raw_artifact).hexdigest()
+    metadata: dict[str, object] = {
+        "id": 7003,
+        "name": "application-recovery-evidence",
+        "expired": False,
+        "digest": digest,
+        "workflow_run": {"id": 7001, "head_sha": REVISION},
+    }
+    run = {
+        "id": 7001,
+        "run_attempt": 1,
+        "head_sha": REVISION,
+        "display_title": "Scheduled Agent Application 6796616018",
+        "status": "completed",
+        "conclusion": "failure",
+    }
+    job = {
+        "id": 7002,
+        "name": "apply",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "failure",
+        "steps": [
+            {
+                "name": "Freshly authorize and apply repository-owned effects",
+                "conclusion": "failure",
+            },
+            {"name": "Upload exact application recovery evidence", "conclusion": "success"},
+        ],
+    }
+    repair_pr = {
+        "number": 443,
+        "state": "open",
+        "merged": False,
+        "head": {"sha": REVISION, "repo": {"full_name": repository}},
+        "base": {"ref": "main", "repo": {"full_name": repository}},
+    }
+    reads: list[str] = []
+
+    def read(source_repo: str, token: str, api_path: str, **kwargs: object) -> object:
+        assert (source_repo, token) == (repository, REVISION)
+        assert kwargs.get("method", "GET") == "GET", "repair may never replay an Effect"
+        reads.append(api_path)
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path == "issues/comments/9001":
+            return native
+        if api_path == "issues/comments/6796616018":
+            return request
+        if api_path == "git/ref/heads/main":
+            return {"object": {"sha": REVISION}}
+        if api_path == "issues/435":
+            return issue
+        if api_path == "pulls/443":
+            return repair_pr
+        if api_path.startswith("issues/435/comments?"):
+            return [decision] if api_path.endswith("page=1") else []
+        if api_path.startswith("issues/comments?"):
+            return [request] if api_path.endswith("page=1") else []
+        if api_path.startswith("issues/435/timeline?"):
+            return []
+        if api_path.startswith("actions/workflows/"):
+            return {"total_count": 1, "workflow_runs": [run]} if api_path.endswith("page=1") else {
+                "total_count": 1, "workflow_runs": []
+            }
+        if api_path == "actions/runs/7001":
+            return run
+        if api_path == "actions/runs/7001/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [job]}
+        if api_path == "actions/runs/7001/artifacts?per_page=100":
+            return {"total_count": 1, "artifacts": [metadata]}
+        # No independent positive Git postcondition can be inferred from a
+        # missing Effect target, even when an earlier run recorded call-entry.
+        return None
+
+    def artifact_get(source_repo: str, token: str, api_path: str) -> bytes:
+        assert (source_repo, token, api_path) == (
+            repository, REVISION, "actions/artifacts/7003/zip"
+        )
+        return raw_artifact
+
+    monkeypatch.setattr(application, "_github_json", read)
+    monkeypatch.setattr(effects, "_github_json", read)
+    monkeypatch.setattr(bridge, "read_github_artifact_bytes", artifact_get)
+
+    first = bridge.qualify_runtime_repair_admission(
+        event,
+        repository=repository,
+        token=REVISION,
+        current_revision=REVISION,
+        read=read,
+        qualify=bridge.qualify_application_completion,
+    )
+    assert first is not None
+    assert first.frontier_proof.disposition == "UNKNOWN"
+    assert first.frontier_proof.remaining_obligation == "ORIGINAL_EFFECT"
+    assert first.frontier_proof.frontier_index == 0
+    assert first.source_artifact.artifact_id == 7003
+    snapshot = bridge._runtime_repair_admission_document(first, repository=repository)
+    assert snapshot["effect_authority"] == "NONE"
+    assert snapshot["source"]["accepted_decision_sha256"] == decision_sha
+
+    # A later fresh invocation uses the same real Application owner, not
+    # the first invocation's completion object or a trusted old snapshot.
+    second = bridge.consume_runtime_repair_admission(
+        event,
+        snapshot,
+        repository=repository,
+        token=REVISION,
+        current_revision=REVISION,
+        read=read,
+        qualify=bridge.qualify_application_completion,
+    )
+    assert second is not None
+    assert second.source_artifact.artifact_digest == digest
+    assert reads.count("issues/comments/9001") == 2
+    assert "actions/runs/7001/attempts/1/jobs" in reads
+
+    # A changed native Artifact cannot inherit the old accepted handoff.
+    metadata["digest"] = "sha256:" + "f" * 64
+    assert (
+        bridge.consume_runtime_repair_admission(
+            event, snapshot, repository=repository, token=REVISION,
+            current_revision=REVISION, read=read,
+            qualify=bridge.qualify_application_completion,
+        )
+        is None
+    )
+
+
 def test_native_r9_handoff_cannot_substitute_for_real_application_qualifier() -> None:
     """A valid Human event/ACCEPT is not proof of a completed native Application.
 
