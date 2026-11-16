@@ -2696,6 +2696,78 @@ def test_accepted_projection_preserves_distinct_equal_ordinals(
     assert json.loads(reconciled)["requested_effects"] == [repeated, repeated, formal]
 
 
+@pytest.mark.parametrize(
+    ("repeat", "expected"),
+    [(True, "CONFLICT"), (False, "SATISFIED")],
+)
+def test_accepted_comment_ordinals_require_distinct_native_sources(
+    monkeypatch: pytest.MonkeyPatch, repeat: bool, expected: str
+) -> None:
+    """One native issue comment cannot satisfy two accepted Effect ordinals."""
+
+    source = WorkerRequest(138, "lead", "explore-change")
+    body = "accepted-physical-comment"
+    second_body = body if repeat else "other-accepted-physical-comment"
+    effects = tuple(
+        StagedEffect(
+            "issue-comment",
+            json.dumps({"issue_number": 138, "body": item}),
+        )
+        for item in (body, second_body)
+    )
+    native_comments = [
+        {
+            "id": 81001,
+            "body": body,
+            "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
+        },
+    ]
+    if not repeat:
+        native_comments.append(
+            {
+                "id": 81002,
+                "body": second_body,
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+            }
+        )
+    reads: list[str] = []
+
+    def read(_repo: str, _token: str, path: str, **kwargs: object) -> object:
+        assert kwargs.get("method", "GET") == "GET", "no Effect replay"
+        assert _repo == _REPOSITORY
+        reads.append(path)
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return native_comments
+        if path.startswith("issues/comments/"):
+            return next(
+                (item for item in native_comments if item["id"] == int(path.rsplit("/", 1)[1])),
+                None,
+            )
+        raise AssertionError(path)
+
+    monkeypatch.setattr("investment_strategy.scheduled_agent_effects._github_json", read)
+    adapter = GitHubEffectAdapter(
+        _REPOSITORY,
+        _REVISION,
+        source,
+        authorized_change="unset",
+        current_revision=_REVISION,
+        accepted_intent=True,
+    )
+    observed = bridge._observe_accepted_effect_prefix(effects, adapter, source=source)
+    if repeat:
+        assert isinstance(observed, bridge.RecoveryProofResult)
+        assert observed.disposition == expected
+        assert observed.frontier_index == 1
+    else:
+        assert isinstance(observed, tuple)
+        assert len(observed) == 2
+        assert len({item.source_object_ref for item in observed}) == 2
+    assert reads.count("issues/138/comments?per_page=100&sort=created&direction=desc") == 4
+
+
 def test_empty_original_projection_preserves_application_formal_obligation() -> None:
     source = WorkerRequest(138, "lead", "explore-change")
     original = _worker_result(action=source.action, role=source.role, result_kind="blocked")
