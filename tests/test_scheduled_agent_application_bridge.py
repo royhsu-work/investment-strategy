@@ -2673,9 +2673,7 @@ def test_accepted_projection_preserves_distinct_equal_ordinals(
         "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\nformal"}),
     }
     original["requested_effects"] = [repeated, repeated]
-    projected = dict(
-        original, requested_effects=[repeated] * projected_count + [formal]
-    )
+    projected = dict(original, requested_effects=[repeated] * projected_count + [formal])
     accepted_raw = json.dumps(original, sort_keys=True)
     projected_raw = json.dumps(projected, sort_keys=True)
 
