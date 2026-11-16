@@ -10123,7 +10123,8 @@ def test_r9_real_application_qualifier_to_manual_consumer_across_fresh_reads(
     assert first.source_artifact.artifact_id == 7003
     snapshot = bridge._runtime_repair_admission_document(first, repository=repository)
     assert snapshot["effect_authority"] == "NONE"
-    assert snapshot["source"]["accepted_decision_sha256"] == decision_sha
+    source_identity = cast(Mapping[str, object], snapshot["source"])
+    assert source_identity["accepted_decision_sha256"] == decision_sha
 
     # A later fresh invocation uses the same real Application owner, not
     # the first invocation's completion object or a trusted old snapshot.
