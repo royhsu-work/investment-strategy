@@ -2305,15 +2305,17 @@ def test_r9_entered_original_frontier_comes_from_real_read_only_classifier(
             "result_kind": "blocked",
             "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/437",
             "result_content": "Original accepted Effect is unresolved.",
-            "requested_effects": [
-                {"kind": effect.kind, "payload_json": effect.payload_json}
-            ],
+            "requested_effects": [{"kind": effect.kind, "payload_json": effect.payload_json}],
         },
         sort_keys=True,
     )
     record = _accepted_record(
-        raw, "EFFECT_REQUEST", source=source, change=change,
-        result_kind="blocked", request_comment_id=6796616018,
+        raw,
+        "EFFECT_REQUEST",
+        source=source,
+        change=change,
+        result_kind="blocked",
+        request_comment_id=6796616018,
     )
     failure = {
         "unfinished_boundary": "effect-reconciliation",
