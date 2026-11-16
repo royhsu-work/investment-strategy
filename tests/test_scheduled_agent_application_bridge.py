@@ -2670,7 +2670,7 @@ def test_accepted_projection_preserves_distinct_equal_ordinals(
     }
     formal = {
         "kind": "issue-comment",
-        "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\\nformal"}),
+        "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT\nformal"}),
     }
     original["requested_effects"] = [repeated, repeated]
     projected = dict(
