@@ -2346,7 +2346,7 @@ def test_r9_entered_original_frontier_comes_from_real_read_only_classifier(
     reads: list[str] = []
 
     def read_only(repository: str, token: str, path: str, **kwargs: object) -> object:
-        assert repository == _REPOSITORY and token == "read-only-token"
+        assert repository == _REPOSITORY and token == _REVISION
         assert kwargs.get("method", "GET") == "GET"
         reads.append(path)
         # No current authoritative Git Effect postcondition is established.
@@ -2359,7 +2359,7 @@ def test_r9_entered_original_frontier_comes_from_real_read_only_classifier(
         source=source,
         recovery_evidence=failure,
         repository=_REPOSITORY,
-        token="read-only-token",
+        token=_REVISION,
         current_revision=_REVISION,
         default_branch="main",
         recovery_artifact=artifact,
