@@ -6324,11 +6324,17 @@ def _observe_accepted_effect_prefix(
     """
 
     nodes: list[RecoveryEvidenceNode] = []
+    seen_native_comments: set[str] = set()
     for index, effect in enumerate(effects):
         fact = _observe_accepted_effect_fact(effect, adapter, source=source)
+        if fact.source_object_ref in seen_native_comments:
+            # One native GitHub object cannot discharge two Effect ordinals.
+            fact = replace(fact, source_conflict=True)
         proof = evaluate_recovery_evidence(fact)
         if proof.disposition != "SATISFIED":
             return replace(proof, frontier_index=index)
+        if fact.source_object_ref is not None:
+            seen_native_comments.add(fact.source_object_ref)
         nodes.append(fact)
     return tuple(nodes)
 
