@@ -3785,8 +3785,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         run_attempt=1,
         job_id=130551485662,
         artifact_id=13860996180,
-        artifact_digest="sha256:"
-        "6e635bde715bec5b9d282396655b788c414890c6e8ac3a5f9c34bc5c5701d292",
+        artifact_digest="sha256:6e635bde715bec5b9d282396655b788c414890c6e8ac3a5f9c34bc5c5701d292",
         request_comment_id=accepted.request_comment_id,
         accepted_decision_sha256="d" * 64,
         failure_evidence_sha256="e" * 64,
