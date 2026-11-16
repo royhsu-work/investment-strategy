@@ -2263,6 +2263,120 @@ def test_runtime_repair_frontier_keeps_first_unsettled_obligation(
         assert frontier is pending
 
 
+def test_r9_entered_original_frontier_comes_from_real_read_only_classifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An entered original write yields a non-writing R9 frontier from real owners.
+
+    The only substituted boundary is outbound GitHub GET; neither the
+    accepted-source parser, Effect observer, DAG evaluator nor completion
+    classifier is replaced with a synthetic result.
+    """
+    import investment_strategy.scheduled_agent_effects as effects
+
+    source = WorkerRequest(435, "executor", "implement-change")
+    change = "restore-t1-dispatch-artifact-consumption"
+    materialization = {
+        "operation": "application-materialize",
+        "issue_number": 435,
+        "expected_change": change,
+        "change": change,
+        "branch": f"agent/{change}",
+        "base_sha": _REVISION,
+        "pr_number": 437,
+        "message": "source-qualified native R9 witness",
+        "files": [
+            {
+                "path": f"openspec/changes/{change}/proposal.md",
+                "blob_sha": "a" * 40,
+                "expected_sha": "b" * 40,
+            }
+        ],
+    }
+    payload_json = json.dumps(materialization, sort_keys=True)
+    effect = StagedEffect("github-mutation", payload_json)
+    raw = json.dumps(
+        {
+            "_semantic_intent_version": 2,
+            "issue_number": 435,
+            "role": "executor",
+            "action": "implement-change",
+            "change": change,
+            "result_kind": "blocked",
+            "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/437",
+            "result_content": "Original accepted Effect is unresolved.",
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+            ],
+        },
+        sort_keys=True,
+    )
+    record = _accepted_record(
+        raw, "EFFECT_REQUEST", source=source, change=change,
+        result_kind="blocked", request_comment_id=6796616018,
+    )
+    failure = {
+        "unfinished_boundary": "effect-reconciliation",
+        "mutation_status": "unknown",
+        "failed_effect_index": 0,
+        "failed_effect_kind": effect.kind,
+        "failed_effect_sha256": hashlib.sha256(payload_json.encode()).hexdigest(),
+        "completed_effect_indexes": [],
+        "completed_effect_sha256": [],
+        "attempted_effects": [
+            {"kind": effect.kind, "payload_json": payload_json, "derived": False}
+        ],
+        "attempt_revision": _REVISION,
+        "write_call_entered": True,
+    }
+    artifact = bridge.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=record.request_comment_id,
+        accepted_decision_sha256="b" * 64,
+        failure_evidence_sha256="c" * 64,
+        recovery_episode_sha256="d" * 64,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={"failure_evidence": failure},
+    )
+    reads: list[str] = []
+
+    def read_only(repository: str, token: str, path: str, **kwargs: object) -> object:
+        assert repository == _REPOSITORY and token == "read-only-token"
+        assert kwargs.get("method", "GET") == "GET"
+        reads.append(path)
+        # No current authoritative Git Effect postcondition is established.
+        # Returning an absent read is not evidence of a never-called write.
+        return {"default_branch": "main"} if path == "" else None
+
+    monkeypatch.setattr(effects, "_github_json", read_only)
+    proof = bridge.classify_accepted_read_only_effects(
+        record=record,
+        source=source,
+        recovery_evidence=failure,
+        repository=_REPOSITORY,
+        token="read-only-token",
+        current_revision=_REVISION,
+        default_branch="main",
+        recovery_artifact=artifact,
+    )
+    frontier = proof.runtime_repair_frontier
+    assert proof.disposition == "INDETERMINATE"
+    assert frontier is not None
+    assert frontier.disposition == "UNKNOWN"
+    assert frontier.remaining_obligation == "ORIGINAL_EFFECT"
+    assert frontier.frontier_index == 0
+    assert isinstance(frontier.witness, bridge.RecoveryEvidenceNode)
+    assert frontier.witness.effect == effect
+    assert frontier.witness.write_call_entered is True
+    assert frontier.witness.final_postcondition is False
+    assert reads  # Real Effect adapter performed GitHub GETs, never a write.
+
+
 @pytest.mark.parametrize("frontier_index", [None, -1, True])
 def test_runtime_repair_frontier_requires_exact_nonnegative_native_ordinal(
     frontier_index: int | None,
