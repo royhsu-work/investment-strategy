@@ -5633,10 +5633,12 @@ def test_original_322_recovery_comment_is_bounded_to_the_existing_application_ow
     assert 'if [[ "$ORIGINAL_REQUEST" != "6019133874" ]]' in recovery_step
 
 
+@pytest.mark.parametrize("carrier_mode", ["raised", "returned"])
 def test_main_exits_at_carrier_boundary_before_formal_continuation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    carrier_mode: str,
 ) -> None:
     worker_result = _worker_result(
         action="implement-change",
@@ -5702,11 +5704,18 @@ def test_main_exits_at_carrier_boundary_before_formal_continuation(
     )
     monkeypatch.setattr(bridge, "_machine_result_revision", lambda *_args, **_kwargs: _REVISION)
 
-    def raise_carrier(*_args: object, **_kwargs: object) -> object:
+    def carrier_application(
+        *_args: object, **_kwargs: object
+    ) -> tuple[EffectBatch, bridge.ApplyResult]:
         events.append("application")
-        raise CarrierRequired(carrier_plan)
+        if carrier_mode == "raised":
+            raise CarrierRequired(carrier_plan)
+        return (
+            EffectBatch(source=source, effects=()),
+            bridge.ApplyResult(False, "carrier_required", carrier_plan=carrier_plan),
+        )
 
-    monkeypatch.setattr(bridge, "run_guarded_effect_application", raise_carrier)
+    monkeypatch.setattr(bridge, "run_guarded_effect_application", carrier_application)
     monkeypatch.setattr(
         bridge,
         "_write_carrier_outputs",
