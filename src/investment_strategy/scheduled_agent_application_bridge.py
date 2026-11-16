@@ -6682,19 +6682,12 @@ def _accepted_reconciliation_effect_projection(
     suffix: list[StagedEffect] = []
     for candidate in projected.effects:
         if candidate in originals:
-            # Match immutable Effect ordinals, not the first equal value.
-            # A fresh projection may omit satisfied predecessors, but may
-            # neither reorder originals nor invent another equal Effect.
-            index = next(
-                (
-                    position
-                    for position in range(expected_index, len(originals))
-                    if originals[position] == candidate
-                ),
-                None,
-            )
-            if index is None:
-                raise RuntimeError("accepted recovery original Effect order has changed")
+            # A fresh projection may skip satisfied originals, but must
+            # retain each matching immutable ordinal in monotonic order.
+            try:
+                index = originals.index(candidate, expected_index)
+            except ValueError as exc:
+                raise RuntimeError("accepted recovery original Effect order has changed") from exc
             expected_index = index + 1
             if suffix:
                 raise RuntimeError("accepted recovery Effect appears after a new suffix")
