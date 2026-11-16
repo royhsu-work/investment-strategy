@@ -409,7 +409,9 @@ def test_shared_original_effect_prefix_observation(
         SimpleNamespace(
             observe_postcondition=observe,
             observe_issue_comment_source_ref=lambda effect: (
-                "issues/comments/992001" if observe(effect) else None
+                f"issues/comments/{992001 if effect == first else 992002}"
+                if observe(effect)
+                else None
             ),
         ),
     )
@@ -443,12 +445,15 @@ def test_positive_original_effects_are_shared_flat_leaves() -> None:
         observed.append(effect)
         return True
 
+    native_refs = {
+        effect: f"issues/comments/{992001 + index}" for index, effect in enumerate(original)
+    }
     adapter = cast(
         GitHubEffectAdapter,
         SimpleNamespace(
             observe_postcondition=observe,
             observe_issue_comment_source_ref=lambda effect: (
-                "issues/comments/992001" if observe(effect) else None
+                native_refs[effect] if observe(effect) else None
             ),
         ),
     )
@@ -572,6 +577,10 @@ def test_staged_commit_positive_projection_across_original_effect_cardinality(
     )
 
     observed_effects: list[StagedEffect] = []
+    native_refs = {
+        effect: f"issues/comments/{992001 + index}"
+        for index, effect in enumerate((*originals, formal))
+    }
 
     class Observer:
         def __init__(self, *_args: object, **_kw: object) -> None:
@@ -582,7 +591,7 @@ def test_staged_commit_positive_projection_across_original_effect_cardinality(
             return True
 
         def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
-            return "issues/comments/992001" if self.observe_postcondition(effect) else None
+            return native_refs[effect] if self.observe_postcondition(effect) else None
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", Observer)
     proof = application.classify_accepted_read_only_effects(
@@ -950,6 +959,11 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
     }
     artifact = _assumed_qualified_history_for_postcondition_test(monkeypatch, record, checkpoint)
 
+    native_refs = {
+        effect: f"issues/comments/{992001 + index}"
+        for index, effect in enumerate((*original_effects, formal))
+    }
+
     class Observer:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             pass
@@ -962,7 +976,7 @@ def test_read_only_ir_identifies_formal_result_and_successor_nodes(
             )
 
         def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
-            return "issues/comments/992001" if self.observe_postcondition(effect) else None
+            return native_refs[effect] if self.observe_postcondition(effect) else None
 
     if not history_qualified:
         # Even an already committed formal result is not a completed projection.
