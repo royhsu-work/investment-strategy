@@ -9772,6 +9772,16 @@ def test_manual_r9_consumer_requalifies_prior_artifact_and_withdraws_stale(
     assert bridge.main() == 1  # PR HEAD changed on a later wake.
     cast(dict[str, object], pr["head"])["sha"] = REVISION
 
+    # A different native run-scoped Artifact cannot inherit an earlier
+    # admission even if the ACCEPTED decision, proof and Issue still match.
+    # This is a second fresh observation, never an authority to replay Effects.
+    state["completion"] = replace(
+        unresolved, recovery_artifact=replace(artifact, artifact_id=artifact.artifact_id + 1)
+    )
+    assert bridge.main() == 1
+    state["completion"] = unresolved
+    assert bridge.main() == 0  # The exact original witness remains readable.
+
     state["completion"] = bridge.ApplicationCompletion(
         "COMPLETE", "later fresh consequence satisfied", 6796616018
     )
