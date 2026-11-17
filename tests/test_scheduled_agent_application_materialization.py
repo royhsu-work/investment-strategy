@@ -4105,9 +4105,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             )
             is None
         )
-        accepted_from_continuation = effects.parse_application_decision(
-            decision_comment["body"]
-        )
+        accepted_from_continuation = effects.parse_application_decision(decision_comment["body"])
         assert accepted_from_continuation == accepted
 
         # A tampered native Artifact cannot inherit the positive Git witness
@@ -4121,9 +4119,10 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     # Formal and Successor now consume the exact parsed accepted source that
     # qualified the predecessor at the fresh continuation wake, not a detached
     # worker fixture or a new worker decision.
-    assert accepted_from_continuation.worker_result_sha256 == hashlib.sha256(
-        accepted_from_continuation.raw_worker_result.encode()
-    ).hexdigest()
+    assert (
+        accepted_from_continuation.worker_result_sha256
+        == hashlib.sha256(accepted_from_continuation.raw_worker_result.encode()).hexdigest()
+    )
     # Original-effect completion is not a Formal result. Reuse the already
     # source-proven Git witness as the fresh carrier revision and exercise the
     # real Application-owned formal projection, not a mocked Formal status.
