@@ -5837,11 +5837,8 @@ def _attempted_formal_identity(
 
     formals: list[tuple[StagedEffect, str]] = []
     for effect in attempted:
-        if effect.kind != "issue-comment":
-            continue
-        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
-        body = None if payload is None else payload.get("body")
-        if isinstance(body, str) and _marker(body) in _FORMAL_RESULT_MARKERS:
+        body = _accepted_formal_effect_body(effect)
+        if body is not None:
             formals.append((effect, body))
     if not formals:
         return None
@@ -6237,17 +6234,27 @@ def evaluate_recovery_evidence(
     return evaluate(node)
 
 
+def _accepted_formal_effect_body(effect: StagedEffect) -> str | None:
+    """Project an immutable Effect's formal marker without authorizing it."""
+
+    if effect.kind != "issue-comment":
+        return None
+    payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
+    body = None if payload is None else payload.get("body")
+    return body if isinstance(body, str) and _marker(body) in _FORMAL_RESULT_MARKERS else None
+
+
 def _recovery_obligation(effect: StagedEffect, source: WorkerRequest) -> RecoveryObligation:
     """Project an existing Effect identity into one typed DAG obligation."""
 
     if effect.derived:
         return "SUCCESSOR"
-    if effect.kind == "issue-comment":
-        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
-        body = None if payload is None else payload.get("body")
-        if isinstance(body, str) and _marker(body) == _expected_formal_marker(source):
-            return "FORMAL_RESULT"
-    return "ORIGINAL_EFFECT"
+    body = _accepted_formal_effect_body(effect)
+    return (
+        "FORMAL_RESULT"
+        if body is not None and _marker(body) == _expected_formal_marker(source)
+        else "ORIGINAL_EFFECT"
+    )
 
 
 def _qualified_accepted_derived_suffix_identity(
@@ -6724,20 +6731,7 @@ def _accepted_reconciliation_effect_projection(
         raise RuntimeError("accepted recovery formal consequence is not unique")
     # A semantic worker never owns a formal result. Its immutable Effects
     # are distinct from the single Application-derived consequence.
-    if any(
-        effect.kind == "issue-comment"
-        and isinstance(
-            (
-                payload := _effect_payload(
-                    {"kind": effect.kind, "payload_json": effect.payload_json}
-                )
-            ),
-            Mapping,
-        )
-        and isinstance(payload.get("body"), str)
-        and _marker(cast(str, payload["body"])) in _FORMAL_RESULT_MARKERS
-        for effect in originals
-    ):
+    if any(_accepted_formal_effect_body(effect) is not None for effect in originals):
         raise RuntimeError("accepted recovery includes a worker-owned formal result")
 
     decoded = json.loads(projected_raw)
