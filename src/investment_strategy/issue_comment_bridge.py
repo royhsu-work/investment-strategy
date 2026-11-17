@@ -1891,6 +1891,53 @@ def _carrier_change_matches_accepted_intent(
     )
 
 
+def _single_run_artifact(
+    payload: object, *, name: str
+) -> Mapping[str, object] | None:
+    """Qualify a complete run inventory and at most one named Artifact."""
+
+    if not isinstance(payload, Mapping):
+        raise ValueError("incomplete")
+    raw_artifacts = payload.get("artifacts")
+    total_count = payload.get("total_count")
+    if (
+        not isinstance(raw_artifacts, list)
+        or isinstance(total_count, bool)
+        or not isinstance(total_count, int)
+        or total_count != len(raw_artifacts)
+    ):
+        raise ValueError("incomplete")
+    matches = [
+        cast(Mapping[str, object], item)
+        for item in raw_artifacts
+        if isinstance(item, Mapping) and item.get("name") == name
+    ]
+    if len(matches) > 1:
+        raise ValueError("ambiguous")
+    return matches[0] if matches else None
+
+
+def _exact_run_artifact_identity(
+    artifact: Mapping[str, object], *, run: Mapping[str, object], run_id: int
+) -> tuple[int, str]:
+    """Qualify the exact run-bound, unexpired content-addressed Artifact."""
+
+    artifact_id = _positive_int(artifact.get("id"))
+    digest = artifact.get("digest")
+    workflow_run = artifact.get("workflow_run")
+    if (
+        artifact_id is None
+        or artifact.get("expired") is not False
+        or not isinstance(digest, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+        or not isinstance(workflow_run, Mapping)
+        or workflow_run.get("id") != run_id
+        or workflow_run.get("head_sha") != run.get("head_sha")
+    ):
+        raise ValueError("invalid")
+    return artifact_id, digest
+
+
 def _qualified_carrier_for_application_run(
     repository: str,
     token: str,
@@ -1906,26 +1953,17 @@ def _qualified_carrier_for_application_run(
     """Recover one current-attempt carrier Artifact without replaying its producer."""
 
     artifacts_payload = read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100")
-    if not isinstance(artifacts_payload, Mapping):
-        raise RuntimeError("application carrier artifact listing is incomplete")
-    raw_artifacts = artifacts_payload.get("artifacts")
-    total_count = artifacts_payload.get("total_count")
-    if (
-        not isinstance(raw_artifacts, list)
-        or isinstance(total_count, bool)
-        or not isinstance(total_count, int)
-        or total_count != len(raw_artifacts)
-    ):
-        raise RuntimeError("application carrier artifact listing is incomplete")
-    artifacts = [
-        cast(Mapping[str, object], item)
-        for item in raw_artifacts
-        if isinstance(item, Mapping) and item.get("name") == "carrier-plan.json"
-    ]
-    if not artifacts:
+    try:
+        artifact = _single_run_artifact(artifacts_payload, name="carrier-plan.json")
+    except ValueError as exc:
+        reason = (
+            "application carrier artifact identity is ambiguous"
+            if str(exc) == "ambiguous"
+            else "application carrier artifact listing is incomplete"
+        )
+        raise RuntimeError(reason) from exc
+    if artifact is None:
         return None
-    if len(artifacts) != 1:
-        raise RuntimeError("application carrier artifact identity is ambiguous")
 
     steps = job.steps
     if steps is None:
@@ -1941,20 +1979,10 @@ def _qualified_carrier_for_application_run(
     if upload_conclusion != "success":
         raise RuntimeError("application carrier Artifact is not current-attempt evidence")
 
-    artifact = artifacts[0]
-    artifact_id = _positive_int(artifact.get("id"))
-    digest = artifact.get("digest")
-    workflow_run = artifact.get("workflow_run")
-    if (
-        artifact_id is None
-        or artifact.get("expired") is not False
-        or not isinstance(digest, str)
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
-        or not isinstance(workflow_run, Mapping)
-        or workflow_run.get("id") != run_id
-        or workflow_run.get("head_sha") != run.get("head_sha")
-    ):
-        raise RuntimeError("application carrier Artifact identity is invalid")
+    try:
+        artifact_id, digest = _exact_run_artifact_identity(artifact, run=run, run_id=run_id)
+    except ValueError as exc:
+        raise RuntimeError("application carrier Artifact identity is invalid") from exc
 
     raw = read_github_artifact_bytes(repository, token, f"actions/artifacts/{artifact_id}/zip")
     if f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest:
@@ -2351,35 +2379,14 @@ def _prior_dispatch_handoff_reason(
         )
         if not isinstance(artifacts_payload, Mapping):
             return "application-completion-carrier-prior-dispatch-artifact-unavailable"
-        raw_artifacts = artifacts_payload.get("artifacts")
-        total_count = artifacts_payload.get("total_count")
-        if (
-            not isinstance(raw_artifacts, list)
-            or isinstance(total_count, bool)
-            or not isinstance(total_count, int)
-            or total_count != len(raw_artifacts)
-        ):
-            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
-        artifacts = [
-            cast(Mapping[str, object], item)
-            for item in raw_artifacts
-            if isinstance(item, Mapping) and item.get("name") == "dispatch-result.json"
-        ]
-        if len(artifacts) != 1:
-            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
-        artifact = artifacts[0]
-        artifact_id = _positive_int(artifact.get("id"))
-        digest = artifact.get("digest")
-        workflow_run = artifact.get("workflow_run")
-        if (
-            artifact_id is None
-            or artifact.get("expired") is not False
-            or not isinstance(digest, str)
-            or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
-            or not isinstance(workflow_run, Mapping)
-            or workflow_run.get("id") != run_id
-            or workflow_run.get("head_sha") != run.get("head_sha")
-        ):
+        try:
+            artifact = _single_run_artifact(artifacts_payload, name="dispatch-result.json")
+            if artifact is None:
+                return "application-completion-carrier-prior-dispatch-artifact-unavailable"
+            artifact_id, digest = _exact_run_artifact_identity(
+                artifact, run=run, run_id=run_id
+            )
+        except ValueError:
             return "application-completion-carrier-prior-dispatch-artifact-unavailable"
         try:
             raw = read_github_artifact_bytes(
