@@ -2243,17 +2243,13 @@ def _complete_workflow_runs(
         # GitHub search cap forces an unfiltered history.
         pages = max(1, (total_count + 99) // 100)
         with ThreadPoolExecutor(max_workers=min(8, pages)) as pool:
-            remaining = tuple(
-                pool.map(lambda n: page(n, filtered=filtered), range(2, pages + 1))
-            )
+            remaining = tuple(pool.map(lambda n: page(n, filtered=filtered), range(2, pages + 1)))
         runs: list[Mapping[str, object]] = []
         for index, payload in enumerate((first, *remaining)):
             if payload is None or payload.get("total_count") != total_count:
                 return None
             rows = payload.get("workflow_runs")
-            if not isinstance(rows, list) or len(rows) != min(
-                100, total_count - index * 100
-            ):
+            if not isinstance(rows, list) or len(rows) != min(100, total_count - index * 100):
                 return None
             for run in rows:
                 if (
@@ -2289,6 +2285,7 @@ def _complete_workflow_runs(
         if next_page is None:
             return None
         current = next_page
+
 
 def _prior_dispatch_handoff_reason(
     repository: str,
