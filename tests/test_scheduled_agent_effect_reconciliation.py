@@ -391,14 +391,15 @@ def test_r9_native_comment_source_is_unique_across_original_formal_dependency(
         "ORIGINAL_EFFECT", original, True, source_object_ref="issues/comments/992001"
     )
     terminal = application.RecoveryEvidenceNode(
-        "FORMAL_RESULT", formal, True, source_object_ref=formal_ref,
+        "FORMAL_RESULT",
+        formal,
+        True,
+        source_object_ref=formal_ref,
         depends_on=(upstream, upstream),
     )
     decision = application.evaluate_recovery_evidence(terminal)
     assert decision.disposition == expected
-    assert decision.remaining_obligation == (
-        "FORMAL_RESULT" if expected == "CONFLICT" else None
-    )
+    assert decision.remaining_obligation == ("FORMAL_RESULT" if expected == "CONFLICT" else None)
 
 
 def test_recovery_dag_conflicting_provenance_blocks_positive_descendant() -> None:
@@ -1592,10 +1593,14 @@ def test_dispatch_read_only_observer_checks_attempted_prefix_not_unwritten_forma
         def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
             # Simulate the adapter's already-qualified native source, not a bool fallback.
             return (
-                "issues/comments/992001"
-                if effect.payload_json == batch.effects[0].payload_json
-                else "issues/comments/992002"
-            ) if self.observe_postcondition(effect) else None
+                (
+                    "issues/comments/992001"
+                    if effect.payload_json == batch.effects[0].payload_json
+                    else "issues/comments/992002"
+                )
+                if self.observe_postcondition(effect)
+                else None
+            )
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", ReadOnlyAdapter)
     evidence: dict[str, object] = {
