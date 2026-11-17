@@ -3774,6 +3774,44 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         "performed_via_github_app": {"slug": "github-actions"},
     }
 
+    # Establish the current Executor route using an earlier Actions Review
+    # and its durable label event. The real qualifier must inspect both.
+    import investment_strategy.scheduled_agent_runtime as runtime
+
+    prior_source = WorkerRequest(435, "reviewer", "review-implementation")
+    prior_correlation = application_bridge.formal_application_correlation(
+        prior_source, change=change, result_kind="findings",
+        current_revision=proof_git.main, request_comment_id=89989,
+    )
+    prior_body = "\n".join((
+        "REVIEW_RESULT",
+        "Workflow: #435",
+        f"Change: {change}",
+        "Role: reviewer",
+        "Action: review-implementation",
+        "Result: FINDINGS",
+        f"Revision: {proof_git.main}",
+        f"Default-Branch-Revision: {proof_git.main}",
+        f"Application-Correlation: {prior_correlation}",
+        "Repository-derived successor: Executor / implement-change",
+        "Evidence: one further implementation slice required",
+    ))
+    prior_comment: dict[str, object] = {
+        "id": 89990,
+        "body": prior_body,
+        "created_at": "2026-11-11T08:20:00Z",
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    prior_timeline: list[dict[str, object]] = [
+        {"id": 89990, "event": "commented", "created_at": "2026-11-11T08:20:00Z"},
+        {
+            "id": 89991,
+            "event": "labeled",
+            "label": {"name": "action:implement-change"},
+            "created_at": "2026-11-11T08:21:00Z",
+        },
+    ]
     formal_comments: list[dict[str, object]] = []
     formal_comment_posts: list[str] = []
     lose_formal_post_response = {"once": True}
@@ -3789,20 +3827,23 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
                 {"filename": item, "status": "modified"} for item in paths
             ]
         if api_path == "issues/435/comments?per_page=100&sort=created&direction=desc":
-            return list(reversed(formal_comments))
+            return list(reversed([prior_comment, *formal_comments]))
         if api_path == "issues/435/timeline?per_page=100&page=1":
-            return (
-                [{"id": 90001, "event": "commented", "created_at": "2026-11-11T08:33:00Z"}]
-                if formal_comments
-                else []
-            )
+            return [
+                *prior_timeline,
+                *(
+                    [{"id": 90001, "event": "commented", "created_at": "2026-11-11T13:09:00Z"}]
+                    if formal_comments
+                    else []
+                ),
+            ]
         if api_path == "issues/435/comments" and kwargs.get("method") == "POST":
             request = cast(dict[str, str], kwargs["payload"])
             formal_comment_posts.append(request["body"])
             comment: dict[str, object] = {
                 "id": 90001,
                 "body": request["body"],
-                "created_at": "2026-11-11T08:33:00Z",
+                "created_at": "2026-11-11T13:09:00Z",
                 "user": {"login": "github-actions[bot]"},
                 "performed_via_github_app": {"slug": "github-actions"},
             }
@@ -3995,9 +4036,13 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         if path.startswith("issues/435/comments?sort=created&direction=asc&per_page=100"):
             if transient_source_read["unavailable"]:
                 raise OSError("temporary native source inventory failure")
-            return [decision_comment, *formal_comments]
+            return [prior_comment, decision_comment, *formal_comments]
         if path.startswith("issues/435/comments?sort=created&per_page=100&page="):
-            return [decision_comment, *formal_comments] if path.endswith("page=1") else []
+            return (
+                [prior_comment, decision_comment, *formal_comments]
+                if path.endswith("page=1")
+                else []
+            )
         if path.startswith("issues/448/comments?sort=created&direction=asc&per_page=100"):
             return continuation_comments
         if path.startswith("issues/comments?sort=created&direction=asc&since="):
@@ -4195,36 +4240,66 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     # The next independent process must read/reconcile that exact Formal and
     # derive the still-needed Successor without retrying either original write.
     import investment_strategy.scheduled_agent_merge_acceptance as merge_acceptance
-    from investment_strategy.scheduled_agent_runtime import (
-        GitHubIssueObservation,
-        acquire_dispatch_preflight,
-    )
-    from investment_strategy.workflow_dispatch import ObservationProvenance
+    from investment_strategy.workflow_dispatch import classify_dispatch
 
-    def fresh_preflight() -> object:
-        return acquire_dispatch_preflight(
-            observations=(
-                GitHubIssueObservation(
-                    issue_number=435,
-                    change=change,
-                    routing=("executor", "implement-change"),
-                    state="open",
-                    created_order=1,
-                    authoritative=True,
-                    current_state_provenance=ObservationProvenance.QUALIFIED,
-                ),
-            ),
-            source_total_count=1,
-            incomplete_results=False,
-            exhausted=True,
-            human_authorized=True,
-        )
+    api_root = f"https://api.github.com/repos/{proof_git.repository}"
+    preflight_read_paths: list[str] = []
 
+    def runtime_page(url: str, token: str) -> tuple[Mapping[str, object], ...]:
+        assert token == _TOKEN and url.startswith(api_root + "/")
+        path = url.removeprefix(api_root + "/")
+        preflight_read_paths.append(path)
+        if path == "issues?state=all&per_page=100&page=1":
+            issue = native_read(proof_git.repository, token, "issues/435")
+            assert isinstance(issue, Mapping)
+            return (issue,)
+        if path == "issues/435/comments?per_page=100&sort=created&direction=desc":
+            return tuple(reversed([prior_comment, *formal_comments]))
+        if path == "issues/435/timeline?per_page=100&page=1":
+            timeline = native_read(
+                proof_git.repository, token, "issues/435/timeline?per_page=100&page=1"
+            )
+            assert isinstance(timeline, list)
+            return tuple(timeline)
+        raise AssertionError(f"unexpected runtime preflight GET: {path}")
+
+    def runtime_object(url: str, token: str) -> Mapping[str, object]:
+        assert token == _TOKEN
+        preflight_read_paths.append(url.removeprefix(api_root))
+        if url == api_root:
+            return {"default_branch": "main"}
+        if url == api_root + "/git/ref/heads/main":
+            return {"object": {"sha": proof_git.main}}
+        raise AssertionError(f"unexpected preflight identity GET: {url}")
+
+    monkeypatch.setattr(runtime, "_github_get_list_page", runtime_page)
+    monkeypatch.setattr(runtime, "_github_get_object", runtime_object)
+    # All decision consumers use the genuine preflight + classifier; only
+    # outbound GitHub GETs are replaced with native-shaped fixture payloads.
     monkeypatch.setattr(
-        merge_acceptance,
-        "acquire_current_github_preflight",
-        lambda *_args: fresh_preflight(),
+        merge_acceptance, "acquire_current_github_preflight",
+        runtime.acquire_current_github_preflight,
     )
+    monkeypatch.setattr(
+        effects, "acquire_current_github_preflight",
+        runtime.acquire_current_github_preflight,
+    )
+    qualified = runtime.acquire_current_github_preflight(proof_git.repository, _TOKEN)
+    dispatch = classify_dispatch(qualified)
+    assert dispatch.disposition == "AUTHORIZE", dispatch
+    assert dispatch.selected_issue_id == 435
+    assert dispatch.selected_routing == ("executor", "implement-change")
+    route_event = prior_timeline.pop()
+    try:
+        rejected = classify_dispatch(
+            runtime.acquire_current_github_preflight(proof_git.repository, _TOKEN)
+        )
+        assert rejected.disposition == "FAIL_CLOSED", rejected
+    finally:
+        prior_timeline.append(route_event)
+    assert classify_dispatch(
+        runtime.acquire_current_github_preflight(proof_git.repository, _TOKEN)
+    ).disposition == "AUTHORIZE"
 
     def guarded(
         *, reconcile_only: bool = False, uncertain_effect_index: int | None = None
@@ -4301,7 +4376,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             fresh_entry.setattr(
                 application_bridge,
                 "acquire_current_github_preflight",
-                lambda *_args: fresh_preflight(),
+                runtime.acquire_current_github_preflight,
             )
             fresh_entry.setattr(application_bridge, "run_guarded_effect_application", traced_owner)
             fresh_entry.setenv("GITHUB_REPOSITORY", proof_git.repository)
@@ -4376,6 +4451,9 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     assert formal_comment_posts == [formal]
     assert proof_git.head == witness
     assert proof_git.mutations == []
+
+    assert preflight_read_paths.count("issues?state=all&per_page=100&page=1") >= 4
+    assert "issues/435/timeline?per_page=100&page=1" in preflight_read_paths
 
     # A durable original is not a durable Formal or Successor.
     assert (
