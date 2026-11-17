@@ -2457,8 +2457,6 @@ class GitHubEffectAdapter:
         expected_head_sha = request.get("expected_head_sha")
         if expected_head_sha is not None and head.get("sha") != expected_head_sha:
             return False
-        if request.get("head") == _archive_branch(self.authorized_change):
-            return _valid_sha(self.current_revision) and base.get("sha") == self.current_revision
         return _valid_sha(self.current_revision) and base.get("sha") == self.current_revision
 
     def _source_pull_request(
@@ -4355,33 +4353,21 @@ def _fresh_materialization_target(
     if request is None or default_branch is None:
         return None
     try:
-        if accepted_successor_routing is None:
-            target = observe_materialization_target(
-                payload,
-                source,
-                repository=adapter.repository,
-                token=adapter.token,
-                current_revision=current_revision,
-                default_branch=default_branch,
-                accepted_authorization_revision=adapter.authorization_revision,
-                allow_pending_continuation=allow_pending_continuation,
-                accepted_intent=adapter.accepted_intent,
-            )
-        else:
-            extra = {"committed_formal_result": True} if committed_formal_result else {}
-            target = observe_materialization_target(
-                payload,
-                source,
-                repository=adapter.repository,
-                token=adapter.token,
-                current_revision=current_revision,
-                default_branch=default_branch,
-                accepted_authorization_revision=adapter.authorization_revision,
-                allow_pending_continuation=allow_pending_continuation,
-                accepted_successor_routing=accepted_successor_routing,
-                accepted_intent=adapter.accepted_intent,
-                **extra,
-            )
+        target = observe_materialization_target(
+            payload,
+            source,
+            repository=adapter.repository,
+            token=adapter.token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            accepted_authorization_revision=adapter.authorization_revision,
+            allow_pending_continuation=allow_pending_continuation,
+            accepted_successor_routing=accepted_successor_routing,
+            accepted_intent=adapter.accepted_intent,
+            committed_formal_result=(
+                committed_formal_result and accepted_successor_routing is not None
+            ),
+        )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return None
     if (
