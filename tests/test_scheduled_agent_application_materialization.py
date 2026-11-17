@@ -4264,9 +4264,9 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     assert not first.observe_postcondition(formal_effect)
     assert formal_comment_posts == []
 
-    # Execute the first Formal attempt through the native continuation
-    # entrypoint. Keep source/intent/plan/proof logic real; the source
-    # preflight is an already-qualified scoped observation fixture.
+    # A fresh Application process uses the same immutable accepted source.
+    # The second run represents a new native run attempt of the SAME event,
+    # not a fabricated second Dispatch request or a second recovery owner.
     event = {
         "action": "created",
         "issue": {
@@ -4279,51 +4279,60 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     }
     event_path = tmp_path / "435-continuation-event.json"
     event_path.write_text(json.dumps(event), encoding="utf-8")
-    entered: list[tuple[effects.EffectBatch, effects.ApplyResult]] = []
     actual_owner: Callable[..., tuple[effects.EffectBatch, effects.ApplyResult]] = (
         application_bridge.run_guarded_effect_application
     )
 
-    def traced_owner(
-        raw_worker_result: str, **kwargs: object
-    ) -> tuple[effects.EffectBatch, effects.ApplyResult]:
-        outcome = actual_owner(raw_worker_result, **kwargs)
-        entered.append(outcome)
-        return outcome
+    def native_continuation_attempt(
+        attempt: int,
+    ) -> tuple[int, list[tuple[effects.EffectBatch, effects.ApplyResult]]]:
+        entered: list[tuple[effects.EffectBatch, effects.ApplyResult]] = []
 
-    with monkeypatch.context() as fresh_entry:
-        fresh_entry.setattr(application_bridge, "_github_json", bridge_read)
-        fresh_entry.setattr(application_bridge, "read_github_artifact_bytes", artifact_read)
-        fresh_entry.setattr(
-            application_bridge,
-            "acquire_current_github_preflight",
-            lambda *_args: fresh_preflight(),
-        )
-        fresh_entry.setattr(application_bridge, "run_guarded_effect_application", traced_owner)
-        fresh_entry.setenv("GITHUB_REPOSITORY", proof_git.repository)
-        fresh_entry.setenv("GITHUB_TOKEN", _TOKEN)
-        fresh_entry.setenv("GITHUB_RUN_ID", "43029179129")
-        fresh_entry.setenv("GITHUB_OUTPUT", str(tmp_path / "435-entry-output"))
-        fresh_entry.setattr(
-            application_bridge.sys,
-            "argv",
-            [
-                "application-bridge",
-                "--event-path",
-                str(event_path),
-                "--revision",
-                proof_git.main,
-                "--default-branch",
-                "main",
-                "--recovery-evidence-path",
-                str(tmp_path / "435-entry-recovery.json"),
-            ],
-        )
-        # The Formal POST was accepted but its HTTP response was lost.
-        assert (
-            application_bridge._main_unprotected(application_bridge.ApplicationExceptionContext())
-            == 1
-        )
+        def traced_owner(
+            raw_worker_result: str, **kwargs: object
+        ) -> tuple[effects.EffectBatch, effects.ApplyResult]:
+            outcome = actual_owner(raw_worker_result, **kwargs)
+            entered.append(outcome)
+            return outcome
+
+        with monkeypatch.context() as fresh_entry:
+            fresh_entry.setattr(application_bridge, "_github_json", bridge_read)
+            fresh_entry.setattr(application_bridge, "read_github_artifact_bytes", artifact_read)
+            fresh_entry.setattr(
+                application_bridge,
+                "acquire_current_github_preflight",
+                lambda *_args: fresh_preflight(),
+            )
+            fresh_entry.setattr(application_bridge, "run_guarded_effect_application", traced_owner)
+            fresh_entry.setenv("GITHUB_REPOSITORY", proof_git.repository)
+            fresh_entry.setenv("GITHUB_TOKEN", _TOKEN)
+            fresh_entry.setenv("GITHUB_RUN_ID", "43029179129")
+            fresh_entry.setenv("GITHUB_OUTPUT", str(tmp_path / f"435-entry-output-{attempt}"))
+            fresh_entry.setattr(
+                application_bridge.sys,
+                "argv",
+                [
+                    "application-bridge",
+                    "--event-path",
+                    str(event_path),
+                    "--revision",
+                    proof_git.main,
+                    "--default-branch",
+                    "main",
+                    "--run-attempt",
+                    str(attempt),
+                    "--recovery-evidence-path",
+                    str(tmp_path / f"435-entry-recovery-{attempt}.json"),
+                ],
+            )
+            code = application_bridge._main_unprotected(
+                application_bridge.ApplicationExceptionContext()
+            )
+        return code, entered
+
+    # Formal POST succeeds at GitHub but its client response is lost.
+    first_exit, entered = native_continuation_attempt(1)
+    assert first_exit == 1
     assert len(entered) == 1
     initial_batch, interrupted = entered[0]
     assert len(initial_batch.effects) == 2
@@ -4350,7 +4359,13 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         derived=True,
     )
     assert next_wake.guard(successor)
-    _, recovered = guarded(reconcile_only=True, uncertain_effect_index=1)
+    # Re-enter through the actual Application entrypoint, not a direct
+    # guarded helper. Reobserve immutable Original and Formal postconditions,
+    # then allow only the still-needed derived Successor.
+    second_exit, resumed_entries = native_continuation_attempt(2)
+    assert second_exit == 0
+    assert len(resumed_entries) == 1
+    _, recovered = resumed_entries[0]
     assert recovered.applied, recovered
     assert new_application().observe_postcondition(successor)
 
