@@ -5105,6 +5105,7 @@ def qualify_application_completion(
         f"issues/{source.issue_number}/timeline",
         read=read,
     )
+
     # One accepted-source proof owner for unqualified, predecessor and
     # current frontiers. Reconstruct the continuation transport from this
     # invocation's fresh sources; never memoize an earlier wake's proof.
