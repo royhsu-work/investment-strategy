@@ -3831,8 +3831,13 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     formal_comment_posts: list[str] = []
     lose_formal_post_response = {"once": True}
     successor_patches: list[list[str]] = []
+    # Source Git bytes are already durable; an out-of-band maintenance repair
+    # only restores correct observations. It must never replay Original.
+    original_read_fault = {"active": False}
 
     def native_read(repository: str, token: str, api_path: str, **kwargs: object) -> object:
+        if original_read_fault["active"] and api_path == f"git/ref/heads/{proof_git.branch}":
+            return {"object": {"sha": base}}
         if api_path == "issues/435":
             if kwargs.get("method") == "PATCH":
                 payload = kwargs.get("payload")
@@ -3962,6 +3967,18 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     assert observe().disposition == "INDETERMINATE"  # Missing original Git effect.
     witness = proof_git.commit(desired, proof_git.message, (base,))
     proof_git.set_head(witness)
+    # This is a separate maintenance/read-repair boundary, not a replay of
+    # the accepted seven-file Effect. The physical Git witness does not change
+    # between a defective observation and a later fresh Application check.
+    original_read_fault["active"] = True
+    unrepaired = observe()
+    assert unrepaired.disposition != "COMPLETE", unrepaired
+    assert formal_comment_posts == []
+    assert successor_patches == []
+    assert proof_git.head == witness and proof_git.mutations == []
+    original_read_fault["active"] = False
+    assert observe().disposition == "COMPLETE"
+    assert proof_git.head == witness and proof_git.mutations == []
     comparison = proof_git.comparison(base, witness)
     assert comparison["ahead_by"] == 1
     assert len(cast(list[dict[str, object]], comparison["files"])) == 7
