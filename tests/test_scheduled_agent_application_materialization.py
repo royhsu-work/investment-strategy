@@ -4291,9 +4291,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         "acquire_current_github_preflight",
         runtime.acquire_current_github_preflight,
     )
-    qualified_preflight = runtime.acquire_current_github_preflight(
-        proof_git.repository, _TOKEN
-    )
+    qualified_preflight = runtime.acquire_current_github_preflight(proof_git.repository, _TOKEN)
     dispatch = classify_dispatch(qualified_preflight)
     assert dispatch.disposition == "AUTHORIZE", dispatch
     assert dispatch.selected_issue_id == 435
