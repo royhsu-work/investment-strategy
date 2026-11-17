@@ -3853,6 +3853,125 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     assert proof_git.head == witness
     assert proof_git.mutations == []
 
+    # R2 integration: the native-shaped failed Application attempt must feed
+    # the real Bridge completion reader, strict exception Artifact reader and
+    # canonical Application/Git postcondition proof. This is the missing
+    # source->completion seam, not a second proof owner or an Effect replay.
+    import investment_strategy.issue_comment_bridge as dispatch_bridge
+
+    native_run = {
+        "id": 43029179128,
+        "run_attempt": 1,
+        "head_sha": proof_git.main,
+        "display_title": "Scheduled Agent Application 6797071043",
+        "status": "completed",
+        "conclusion": "failure",
+    }
+    native_job = {
+        "id": 130551485662,
+        "name": "apply",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "failure",
+        "steps": [
+            {
+                "name": "Freshly authorize and apply repository-owned effects",
+                "conclusion": "failure",
+            },
+            {"name": "Upload exact application recovery evidence", "conclusion": "skipped"},
+            {
+                "name": "Upload pre-ACCEPT or interrupted application exception evidence",
+                "conclusion": "success",
+            },
+        ],
+    }
+    native_document = {
+        "schema": "scheduled-agent-execution-exception/v1",
+        "repository": proof_git.repository,
+        "issue_number": 435,
+        "role": original.role,
+        "action": original.action,
+        "change": change,
+        "revision": proof_git.main,
+        "request_comment_id": accepted.request_comment_id,
+        "trigger_comment_id": 6797071043,
+        "run_id": native_run["id"],
+        "run_attempt": 1,
+        "attempted_operation": "application-effect-preparation",
+        "exception_type": "RuntimeError",
+        "raw_error": "accepted implementation checkpoint identity is incomplete",
+        "raw_traceback": "sanitized test fixture",
+        "mutation_status": "NO_APPLICATION_WRITE_ATTEMPTED",
+        "unfinished_boundary": "application-effect-preparation",
+        "classification": "UNCLASSIFIED_EXECUTION_EXCEPTION",
+    }
+    artifact_bytes = json.dumps(native_document, sort_keys=True).encode()
+    native_artifact = {
+        "id": 13860996180,
+        "name": "application-execution-exception.json",
+        "expired": False,
+        "digest": "sha256:" + hashlib.sha256(artifact_bytes).hexdigest(),
+        "workflow_run": {"id": native_run["id"], "head_sha": proof_git.main},
+    }
+    read_paths: list[str] = []
+
+    def bridge_read(repository: str, token: str, path: str, **kwargs: object) -> object:
+        assert kwargs.get("method", "GET") == "GET"
+        read_paths.append(path)
+        if path.startswith("actions/workflows/scheduled-agent-application.yml/runs?"):
+            return {
+                "total_count": 1,
+                "workflow_runs": [native_run] if "page=1" in path else [],
+            }
+        if path == "actions/runs/43029179128":
+            return native_run
+        if path == "actions/runs/43029179128/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [native_job]}
+        if path == "actions/runs/43029179128/artifacts?per_page=100":
+            return {"total_count": 1, "artifacts": [native_artifact]}
+        return native_read(repository, token, path, **kwargs)
+
+    def artifact_read(repository: str, token: str, path: str) -> bytes:
+        assert repository == proof_git.repository and token == _TOKEN
+        assert path == "actions/artifacts/13860996180/zip"
+        return artifact_bytes
+
+    def native_completion() -> dispatch_bridge.ApplicationCompletion:
+        return dispatch_bridge._application_job(
+            proof_git.repository,
+            _TOKEN,
+            accepted.request_comment_id,
+            read=bridge_read,
+            record=accepted,
+            transport_comment_ids=(6797071043,),
+            accepted_decision_sha256="d" * 64,
+            current_revision=proof_git.main,
+        )
+
+    with monkeypatch.context() as patch:
+        # Only outbound GitHub data transport is injected. Artifact shape,
+        # Application typed proof and native Bridge selection remain real.
+        patch.setattr(application_bridge, "_github_json", bridge_read)
+        patch.setattr(dispatch_bridge, "read_github_artifact_bytes", artifact_read)
+        completed = native_completion()
+        assert completed.state == "RESUMABLE", completed
+        assert completed.reason == "application-completion-continuation-required"
+        assert isinstance(
+            completed.recovery_artifact, application_bridge.ApplicationExceptionArtifact
+        )
+        assert completed.recovery_artifact.artifact_id == 13860996180
+        assert completed.recovery_artifact.request_comment_id == 6796616018
+        assert proof_git.head == witness and proof_git.mutations == []
+        assert "actions/runs/43029179128/attempts/1/jobs" in read_paths
+
+        # A tampered native Artifact cannot inherit the positive Git witness
+        # as permission for Formal/Successor or an Original Effect retry.
+        native_artifact["digest"] = "sha256:" + "0" * 64
+        unqualified = native_completion()
+        assert unqualified.state == "INVALID"
+        assert unqualified.reason == "application-completion-recovery-evidence-unavailable"
+        assert proof_git.mutations == []
+
     # Original-effect completion is not a Formal result. Reuse the already
     # source-proven Git witness as the fresh carrier revision and exercise the
     # real Application-owned formal projection, not a mocked Formal status.
