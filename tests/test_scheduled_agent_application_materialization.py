@@ -3622,10 +3622,20 @@ def test_accepted_seven_file_manifest_proves_six_effective_changes(
     assert proof_git.mutations == []
 
 
+@pytest.mark.parametrize(
+    ("result_kind", "successor_action", "successor_role"),
+    [
+        ("blocked", "implement-change", "executor"),
+        ("spec-blocker", "resolve-question", "lead"),
+    ],
+)
 def test_435_accepted_original_git_witness_reobserves_without_replay(
     proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    result_kind: str,
+    successor_action: str,
+    successor_role: str,
 ) -> None:
     """R9/F2: the native #435-shaped Effect has one immutable Git witness.
 
@@ -3701,7 +3711,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         "role": "executor",
         "action": "implement-change",
         "change": change,
-        "result_kind": "blocked",
+        "result_kind": result_kind,
         "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/437",
         "result_content": "Accepted seven-file implementation diagnostic; no checkpoint.",
         # Phase A canonicalizes the accepted payload_json, as in the real
@@ -3720,7 +3730,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         role=original.role,
         action=original.action,
         change=change,
-        result_kind="blocked",
+        result_kind=result_kind,
         disposition="ACCEPTED",
         worker_result_sha256=hashlib.sha256(raw.encode()).hexdigest(),
         raw_worker_result=raw,
@@ -3820,11 +3830,36 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     formal_comments: list[dict[str, object]] = []
     formal_comment_posts: list[str] = []
     lose_formal_post_response = {"once": True}
+    successor_patches: list[list[str]] = []
 
     def native_read(repository: str, token: str, api_path: str, **kwargs: object) -> object:
         if api_path == "issues/435":
+            if kwargs.get("method") == "PATCH":
+                payload = kwargs.get("payload")
+                assert isinstance(payload, Mapping)
+                labels = payload.get("labels")
+                assert labels == [f"action:{successor_action}"]
+                assert result_kind == "spec-blocker"
+                successor_patches.append(labels)
+                proof_git.routing = successor_action
+                prior_timeline.extend(
+                    [
+                        {
+                            "id": 90002,
+                            "event": "unlabeled",
+                            "label": {"name": "action:implement-change"},
+                            "created_at": "2026-11-11T13:10:00Z",
+                        },
+                        {
+                            "id": 90003,
+                            "event": "labeled",
+                            "label": {"name": f"action:{successor_action}"},
+                            "created_at": "2026-11-11T13:10:01Z",
+                        },
+                    ]
+                )
             issue = cast(
-                dict[str, object], proof_git.api(repository, token, "issues/322", **kwargs)
+                dict[str, object], proof_git.api(repository, token, "issues/322")
             )
             return {**issue, "number": 435, "body": f"Change: {change}"}
         if api_path == "pulls/437/files?per_page=100":
@@ -4224,13 +4259,16 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     formal = cast(str, json.loads(formal_effect.payload_json)["body"])
     assert formal.splitlines()[0] == "ACTION_RESULT"
     assert "Workflow: #435" in formal.splitlines()
-    assert "Result: BLOCKED" in formal.splitlines()
+    assert f"Result: {result_kind.upper().replace('-', '_')}" in formal.splitlines()
     assert f"Revision: {witness}" in formal.splitlines()
-    assert "Repository-derived successor: Executor / implement-change" in formal.splitlines()
+    assert (
+        f"Repository-derived successor: {successor_role.capitalize()} / {successor_action}"
+        in formal.splitlines()
+    )
     correlation = application_bridge.formal_application_correlation(
         original,
         change=change,
-        result_kind="blocked",
+        result_kind=result_kind,
         current_revision=proof_git.main,
         request_comment_id=accepted.request_comment_id,
     )
@@ -4336,7 +4374,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             original,
             authorized_change=change,
             current_revision=proof_git.main,
-            expected_result_kind="blocked",
+            expected_result_kind=result_kind,
             request_comment_id=accepted.request_comment_id,
             authorization_revision=accepted.authorization_revision,
             allow_pending_continuation=True,
@@ -4440,26 +4478,34 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     assert next_wake.observe_postcondition(formal_effect)
     successor = effects.StagedEffect(
         "routing-transition",
-        json.dumps({"issue_number": 435, "action": "implement-change"}),
+        json.dumps({"issue_number": 435, "action": successor_action}),
         derived=True,
     )
     assert next_wake.guard(successor)
-    # Re-enter through the native Application entrypoint, which now sees
-    # the *real* qualified historical Formal frontier. Both Formal and its
-    # same-action successor are already durable: canonical committed-result
-    # proof exits idempotently without calling the Effect writer again.
+    # The distinct-action variant still has a missing successor label after
+    # Formal became durable. Recovery must write ONLY the missing transition;
+    # the same-action variant instead has an already-durable successor.
     second_exit, resumed_entries = native_continuation_attempt(2)
     assert second_exit == 0
-    assert resumed_entries == []
+    if result_kind == "blocked":
+        assert resumed_entries == []
+        assert successor_patches == []
+    else:
+        assert len(resumed_entries) == 1
+        _, resumed = resumed_entries[0]
+        assert resumed.applied, resumed
+        assert successor_patches == [[f"action:{successor_action}"]]
     assert new_application().observe_postcondition(formal_effect)
     assert new_application().observe_postcondition(successor)
     assert formal_comment_posts == [formal]
     assert proof_git.mutations == []
 
-    # A further independent guarded Application invocation is idempotent.
-    final_batch, repeated = guarded()
-    assert repeated.applied, repeated
-    assert len(final_batch.effects) == 2
+    # The historical same-action case also remains idempotent when directly
+    # revisiting its original Effect owner.
+    if result_kind == "blocked":
+        final_batch, repeated = guarded()
+        assert repeated.applied, repeated
+        assert len(final_batch.effects) == 2
     assert formal_comment_posts == [formal]
     assert proof_git.head == witness
     assert proof_git.mutations == []
