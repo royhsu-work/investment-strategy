@@ -3704,7 +3704,12 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         "result_kind": "blocked",
         "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/437",
         "result_content": "Accepted seven-file implementation diagnostic; no checkpoint.",
-        "requested_effects": [{"kind": "github-mutation", "payload_json": json.dumps(payload)}],
+        # Phase A canonicalizes the accepted payload_json, as in the real
+        # #435 APPLICATION_DECISION. The earlier WORKER_RESULT transport
+        # may use a different key order; Phase B compares ACCEPTED bytes.
+        "requested_effects": [
+            {"kind": "github-mutation", "payload_json": json.dumps(payload, sort_keys=True)}
+        ],
     }
     raw = json.dumps(result, sort_keys=True)
     accepted = application_bridge.ApplicationDecisionRecord(
