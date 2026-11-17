@@ -5105,6 +5105,36 @@ def qualify_application_completion(
         f"issues/{source.issue_number}/timeline",
         read=read,
     )
+    # One accepted-source proof owner for unqualified, predecessor and
+    # current frontiers. Reconstruct the continuation transport from this
+    # invocation's fresh sources; never memoize an earlier wake's proof.
+    def accepted_state(
+        accepted_record: ApplicationDecisionRecord, accepted_source: WorkerRequest
+    ) -> ApplicationCompletion:
+        return _accepted_application_state(
+            repository=repository,
+            token=token,
+            source=accepted_source,
+            record=accepted_record,
+            issue_comments=issue_comments,
+            lifecycle_events=lifecycle,
+            current_issue=cast(Mapping[str, object], issue),
+            current_revision=current_revision,
+            read=read,
+            recent_comments=runtime_comments,
+            current_dispatch_request_comment_id=current_dispatch_request_comment_id,
+            continuation_transport_comment_ids=_continuation_transport_comment_ids(
+                repository=repository,
+                owner=owner,
+                token=token,
+                read=read,
+                source=accepted_source,
+                record=accepted_record,
+                issue_comments=issue_comments,
+                recent_comments=recent,
+            ),
+        )
+
     frontier, frontier_qualified = _derive_frontier(
         repository=repository,
         token=token,
@@ -5141,29 +5171,7 @@ def qualify_application_completion(
             and observation.routing == (source.role, source.action)
             and len(current_accepted) == 1
         ):
-            resumed = _accepted_application_state(
-                repository=repository,
-                token=token,
-                source=source,
-                record=current_accepted[0],
-                issue_comments=issue_comments,
-                lifecycle_events=lifecycle,
-                current_issue=cast(Mapping[str, object], issue),
-                current_revision=current_revision,
-                read=read,
-                recent_comments=runtime_comments,
-                current_dispatch_request_comment_id=current_dispatch_request_comment_id,
-                continuation_transport_comment_ids=_continuation_transport_comment_ids(
-                    repository=repository,
-                    owner=owner,
-                    token=token,
-                    read=read,
-                    source=source,
-                    record=current_accepted[0],
-                    issue_comments=issue_comments,
-                    recent_comments=recent,
-                ),
-            )
+            resumed = accepted_state(current_accepted[0], source)
             if resumed.state != "NONE":
                 return resumed
         elif len(current_accepted) > 1:
@@ -5246,29 +5254,7 @@ def qualify_application_completion(
                 "application-completion-frontier-owner-invalid",
                 request_comment_id=frontier_owner.request_comment_id,
             )
-        frontier_completion = _accepted_application_state(
-            repository=repository,
-            token=token,
-            source=frontier_source,
-            record=frontier_owner,
-            issue_comments=issue_comments,
-            lifecycle_events=lifecycle,
-            current_issue=cast(Mapping[str, object], issue),
-            current_revision=current_revision,
-            read=read,
-            recent_comments=runtime_comments,
-            current_dispatch_request_comment_id=current_dispatch_request_comment_id,
-            continuation_transport_comment_ids=_continuation_transport_comment_ids(
-                repository=repository,
-                owner=owner,
-                token=token,
-                read=read,
-                source=frontier_source,
-                record=frontier_owner,
-                issue_comments=issue_comments,
-                recent_comments=recent,
-            ),
-        )
+        frontier_completion = accepted_state(frontier_owner, frontier_source)
         if frontier_completion.state != "COMPLETE":
             return frontier_completion
 
@@ -5476,29 +5462,7 @@ def qualify_application_completion(
     # edited or deleted after ACCEPT, do not parse its new text and do not
     # replay worker semantics; the exact accepted record remains the only
     # resumable payload.
-    return _accepted_application_state(
-        repository=repository,
-        token=token,
-        source=source,
-        record=record,
-        issue_comments=issue_comments,
-        lifecycle_events=lifecycle,
-        current_issue=cast(Mapping[str, object], issue),
-        current_revision=current_revision,
-        read=read,
-        recent_comments=runtime_comments,
-        current_dispatch_request_comment_id=current_dispatch_request_comment_id,
-        continuation_transport_comment_ids=_continuation_transport_comment_ids(
-            repository=repository,
-            owner=owner,
-            token=token,
-            read=read,
-            source=source,
-            record=record,
-            issue_comments=issue_comments,
-            recent_comments=recent,
-        ),
-    )
+    return accepted_state(record, source)
 
 
 def render_dispatch_result_document(
