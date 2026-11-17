@@ -1891,9 +1891,7 @@ def _carrier_change_matches_accepted_intent(
     )
 
 
-def _single_run_artifact(
-    payload: object, *, name: str
-) -> Mapping[str, object] | None:
+def _single_run_artifact(payload: object, *, name: str) -> Mapping[str, object] | None:
     """Qualify a complete run inventory and at most one named Artifact."""
 
     if not isinstance(payload, Mapping):
@@ -2383,9 +2381,7 @@ def _prior_dispatch_handoff_reason(
             artifact = _single_run_artifact(artifacts_payload, name="dispatch-result.json")
             if artifact is None:
                 return "application-completion-carrier-prior-dispatch-artifact-unavailable"
-            artifact_id, digest = _exact_run_artifact_identity(
-                artifact, run=run, run_id=run_id
-            )
+            artifact_id, digest = _exact_run_artifact_identity(artifact, run=run, run_id=run_id)
         except ValueError:
             return "application-completion-carrier-prior-dispatch-artifact-unavailable"
         try:
