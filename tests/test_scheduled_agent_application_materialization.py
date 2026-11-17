@@ -3883,6 +3883,13 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
                 "name": "Upload pre-ACCEPT or interrupted application exception evidence",
                 "conclusion": "success",
             },
+            {"name": "Persist exact external carrier plan", "conclusion": "skipped"},
+            {"name": "Upload exact external carrier plan", "conclusion": "skipped"},
+            {
+                "name": "Persist the derived successor after exact validation",
+                "conclusion": "skipped",
+            },
+            {"name": "Upload final exact application recovery evidence", "conclusion": "skipped"},
         ],
     }
     native_document = {
