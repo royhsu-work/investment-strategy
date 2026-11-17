@@ -5262,6 +5262,98 @@ def test_completed_application_blocks_refused_carrier_outcome_without_retry(
     assert completion.qualified_carrier is None
 
 
+@pytest.mark.parametrize(
+    ("case", "carrier_error"),
+    [
+        ("incomplete", "application carrier artifact listing is incomplete"),
+        ("duplicate", "application carrier artifact identity is ambiguous"),
+        ("expired", "application carrier Artifact identity is invalid"),
+        ("wrong-run", "application carrier Artifact identity is invalid"),
+        ("wrong-head", "application carrier Artifact identity is invalid"),
+        ("invalid-digest", "application carrier Artifact identity is invalid"),
+    ],
+)
+def test_shared_run_artifact_metadata_preserves_both_consumer_failures(
+    monkeypatch: pytest.MonkeyPatch, case: str, carrier_error: str
+) -> None:
+    """Both consumers reject the same bad metadata without downloading or replaying."""
+
+    def inventory(name: str) -> dict[str, object]:
+        artifact: dict[str, object] = {
+            "id": 999,
+            "name": name,
+            "expired": case == "expired",
+            "digest": "sha256:" + "a" * 64,
+            "workflow_run": {
+                "id": 778 if case == "wrong-run" else 777,
+                "head_sha": "b" * 40 if case == "wrong-head" else REVISION,
+            },
+        }
+        if case == "invalid-digest":
+            artifact["digest"] = "sha256:not-a-digest"
+        entries = [artifact]
+        if case == "duplicate":
+            entries.append(dict(artifact))
+        return {
+            "total_count": len(entries) + (1 if case == "incomplete" else 0),
+            "artifacts": entries,
+        }
+
+    def no_artifact_download(*_args: object) -> bytes:
+        raise AssertionError("invalid metadata must not request Artifact bytes")
+
+    monkeypatch.setattr(bridge, "read_github_artifact_bytes", no_artifact_download)
+
+    def carrier_read(_repository: str, _token: str, path: str) -> object:
+        assert path == "actions/runs/777/artifacts?per_page=100"
+        return inventory("carrier-plan.json")
+
+    job = carrier.QualifiedApplicationJob(
+        id=888,
+        status="completed",
+        conclusion="success",
+        steps=(("Upload exact external carrier plan", "success"),),
+    )
+    with pytest.raises(RuntimeError, match=f"^{carrier_error}$"):
+        bridge._qualified_carrier_for_application_run(
+            "owner/repo",
+            "token",
+            90,
+            run={"head_sha": REVISION},
+            run_id=777,
+            run_attempt=1,
+            job=job,
+            record=_accepted_carrier_record(),
+            read=carrier_read,
+        )
+
+    def prior_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?"):
+            return {
+                "total_count": 1,
+                "workflow_runs": [
+                    {
+                        "id": 777,
+                        "display_title": bridge.render_dispatch_run_name(91),
+                        "status": "completed",
+                        "head_sha": REVISION,
+                    }
+                ],
+            }
+        assert path == "actions/runs/777/artifacts?per_page=100"
+        return inventory("dispatch-result.json")
+
+    assert bridge._prior_dispatch_handoff_reason(
+        "owner/repo",
+        "token",
+        recent_comments=(_trusted_connector_comment(91, REQUEST_BODY),),
+        owner="owner",
+        current_dispatch_request_comment_id=100,
+        plan_id="carrier-plan-" + "e" * 64,
+        read=prior_read,
+    ) == "application-completion-carrier-prior-dispatch-artifact-unavailable"
+
+
 def test_completed_application_distinguishes_absent_from_incomplete_carrier_listing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
