@@ -4434,15 +4434,17 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         derived=True,
     )
     assert next_wake.guard(successor)
-    # Re-enter through the actual Application entrypoint, not a direct
-    # guarded helper. Reobserve immutable Original and Formal postconditions,
-    # then allow only the still-needed derived Successor.
+    # Re-enter through the native Application entrypoint, which now sees
+    # the *real* qualified historical Formal frontier. Both Formal and its
+    # same-action successor are already durable: canonical committed-result
+    # proof exits idempotently without calling the Effect writer again.
     second_exit, resumed_entries = native_continuation_attempt(2)
     assert second_exit == 0
-    assert len(resumed_entries) == 1
-    _, recovered = resumed_entries[0]
-    assert recovered.applied, recovered
+    assert resumed_entries == []
+    assert new_application().observe_postcondition(formal_effect)
     assert new_application().observe_postcondition(successor)
+    assert formal_comment_posts == [formal]
+    assert proof_git.mutations == []
 
     # A further independent guarded Application invocation is idempotent.
     final_batch, repeated = guarded()
