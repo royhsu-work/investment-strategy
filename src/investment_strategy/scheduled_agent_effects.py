@@ -2301,17 +2301,16 @@ class GitHubEffectAdapter:
         owner = self.repository.split("/", 1)[0]
         head = quote(f"{owner}:{branch}", safe="")
         base = quote(default_branch, safe="")
-        payload = _github_json(
-            self.repository,
-            self.token,
-            f"pulls?state=all&head={head}&base={base}&per_page=100",
-        )
-        if not isinstance(payload, list) or len(payload) >= 100:
+        try:
+            candidates = _paged_github_list(
+                self.repository,
+                self.token,
+                f"pulls?state=all&head={head}&base={base}",
+            )
+        except RuntimeError:
             return False
         matches = 0
-        for item in payload:
-            if not isinstance(item, Mapping):
-                continue
+        for item in candidates:
             number = item.get("number")
             if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
                 continue
@@ -2368,17 +2367,16 @@ class GitHubEffectAdapter:
         branch = ref.removeprefix("refs/heads/")
         head = quote(f"{owner}:{branch}", safe="")
         base = quote(default_branch, safe="")
-        payload = _github_json(
-            self.repository,
-            self.token,
-            f"pulls?state=all&head={head}&base={base}&per_page=100",
-        )
-        if not isinstance(payload, list) or len(payload) >= 100:
+        try:
+            candidates = _paged_github_list(
+                self.repository,
+                self.token,
+                f"pulls?state=all&head={head}&base={base}",
+            )
+        except RuntimeError:
             return False
         matches = 0
-        for item in payload:
-            if not isinstance(item, Mapping):
-                continue
+        for item in candidates:
             number = item.get("number")
             if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
                 continue
