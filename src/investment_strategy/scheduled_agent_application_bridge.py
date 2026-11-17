@@ -12,7 +12,7 @@ import re
 import sys
 import time
 import traceback
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -6149,7 +6149,9 @@ class RecoveryProofResult:
     frontier_index: int | None = None
 
 
-def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofResult:
+def evaluate_recovery_evidence(
+    node: RecoveryEvidenceNode, *, prior_native_refs: Collection[str] = ()
+) -> RecoveryProofResult:
     """One pure DAG proof evaluator retaining evidence and unfinished obligations.
 
     Positive current state does not require attempt-history enumeration.
@@ -6159,6 +6161,7 @@ def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofResul
 
     memo: dict[int, RecoveryProofResult] = {}
     visiting: set[int] = set()
+    proven_native_refs: set[str] = set()
 
     def evaluate(fact: RecoveryEvidenceNode) -> RecoveryProofResult:
         identity = id(fact)
@@ -6171,8 +6174,18 @@ def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofResul
         visiting.remove(identity)
         conflicting = next((p for p in dependencies if p.disposition == "CONFLICT"), None)
         incomplete = next((p for p in dependencies if p.disposition != "SATISFIED"), None)
+        native_ref = (
+            fact.source_object_ref
+            if fact.final_postcondition is True
+            and fact.effect is not None
+            and fact.effect.kind == "issue-comment"
+            else None
+        )
+        duplicate_native_ref = native_ref is not None and (
+            native_ref in prior_native_refs or native_ref in proven_native_refs
+        )
 
-        if fact.source_conflict:
+        if fact.source_conflict or duplicate_native_ref:
             result = RecoveryProofResult("CONFLICT", fact.obligation, fact, fact.obligation)
         elif (
             isinstance(fact.never_called_evidence, TypedEvidenceError)
@@ -6217,6 +6230,8 @@ def evaluate_recovery_evidence(node: RecoveryEvidenceNode) -> RecoveryProofResul
             )
             result = RecoveryProofResult("UNKNOWN", fact.obligation, witness, fact.obligation)
         memo[identity] = result
+        if result.disposition == "SATISFIED" and native_ref is not None:
+            proven_native_refs.add(native_ref)
         return result
 
     return evaluate(node)
@@ -6327,10 +6342,7 @@ def _observe_accepted_effect_prefix(
     seen_native_comments: set[str] = set()
     for index, effect in enumerate(effects):
         fact = _observe_accepted_effect_fact(effect, adapter, source=source)
-        if fact.source_object_ref in seen_native_comments:
-            # One native GitHub object cannot discharge two Effect ordinals.
-            fact = replace(fact, source_conflict=True)
-        proof = evaluate_recovery_evidence(fact)
+        proof = evaluate_recovery_evidence(fact, prior_native_refs=seen_native_comments)
         if proof.disposition != "SATISFIED":
             return replace(proof, frontier_index=index)
         if fact.source_object_ref is not None:
