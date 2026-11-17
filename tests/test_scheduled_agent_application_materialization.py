@@ -3625,6 +3625,7 @@ def test_accepted_seven_file_manifest_proves_six_effective_changes(
 def test_435_accepted_original_git_witness_reobserves_without_replay(
     proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """R9/F2: the native #435-shaped Effect has one immutable Git witness.
 
@@ -3996,6 +3997,15 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             return continuation_comments
         if path == "issues/comments/6796616018":
             return source_comment
+        if path == "issues/448":
+            return {
+                "number": 448,
+                "title": "[Agent Runtime] 2026-11-17",
+                "state": "open",
+                "labels": [],
+            }
+        if path == "issues/comments/90007":
+            return continuation_comments[0] if continuation_comments else None
         return native_read(repository, token, path, **kwargs)
 
     def artifact_read(repository: str, token: str, path: str) -> bytes:
@@ -4242,7 +4252,70 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     assert not first.observe_postcondition(formal_effect)
     assert formal_comment_posts == []
 
-    initial_batch, interrupted = guarded()
+    # Execute the first Formal attempt through the native continuation
+    # entrypoint. Keep source/intent/plan/proof logic real; the source
+    # preflight is an already-qualified scoped observation fixture.
+    event = {
+        "action": "created",
+        "issue": {
+            "number": 448,
+            "title": "[Agent Runtime] 2026-11-17",
+            "state": "open",
+            "labels": [],
+        },
+        "comment": dict(continuation_comments[0]),
+    }
+    event_path = tmp_path / "435-continuation-event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    entered: list[tuple[effects.EffectBatch, effects.ApplyResult]] = []
+    actual_owner = application_bridge.run_guarded_effect_application
+
+    def traced_owner(
+        raw_worker_result: str, **kwargs: object
+    ) -> tuple[effects.EffectBatch, effects.ApplyResult]:
+        outcome = actual_owner(raw_worker_result, **kwargs)
+        entered.append(outcome)
+        return outcome
+
+    with monkeypatch.context() as fresh_entry:
+        fresh_entry.setattr(application_bridge, "_github_json", bridge_read)
+        fresh_entry.setattr(application_bridge, "read_github_artifact_bytes", artifact_read)
+        fresh_entry.setattr(
+            application_bridge,
+            "acquire_current_github_preflight",
+            lambda *_args: fresh_preflight(),
+        )
+        fresh_entry.setattr(
+            application_bridge, "run_guarded_effect_application", traced_owner
+        )
+        fresh_entry.setenv("GITHUB_REPOSITORY", proof_git.repository)
+        fresh_entry.setenv("GITHUB_TOKEN", _TOKEN)
+        fresh_entry.setenv("GITHUB_RUN_ID", "43029179129")
+        fresh_entry.setenv("GITHUB_OUTPUT", str(tmp_path / "435-entry-output"))
+        fresh_entry.setattr(
+            application_bridge.sys,
+            "argv",
+            [
+                "application-bridge",
+                "--event-path",
+                str(event_path),
+                "--revision",
+                proof_git.main,
+                "--default-branch",
+                "main",
+                "--recovery-evidence-path",
+                str(tmp_path / "435-entry-recovery.json"),
+            ],
+        )
+        # The Formal POST was accepted but its HTTP response was lost.
+        assert (
+            application_bridge._main_unprotected(
+                application_bridge.ApplicationExceptionContext()
+            )
+            == 1
+        )
+    assert len(entered) == 1
+    initial_batch, interrupted = entered[0]
     assert len(initial_batch.effects) == 2
     assert not interrupted.applied
     assert interrupted.recovery_evidence is not None
