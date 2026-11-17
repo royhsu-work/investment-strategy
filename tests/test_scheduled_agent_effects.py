@@ -3010,9 +3010,7 @@ def test_ref_delete_pr_inventory_uses_one_complete_page_reader(
     """Distinct merge proofs share complete bounded PR discovery, never partial evidence."""
 
     branch = (
-        f"agent/{_CHANGE}"
-        if action == "merge-implementation-pr"
-        else f"agent/archive-{_CHANGE}"
+        f"agent/{_CHANGE}" if action == "merge-implementation-pr" else f"agent/archive-{_CHANGE}"
     )
     ref = f"refs/heads/{branch}"
     reads: list[str] = []
@@ -3022,7 +3020,11 @@ def test_ref_delete_pr_inventory_uses_one_complete_page_reader(
         if path.startswith("pulls?state=all&head="):
             assert "&base=main&per_page=100&page=" in path
             assert inventory in {
-                "single", "duplicate", "malformed", "incomplete-page", "second-page"
+                "single",
+                "duplicate",
+                "malformed",
+                "incomplete-page",
+                "second-page",
             }
             if path.endswith("page=1"):
                 if inventory == "single":
@@ -3070,9 +3072,7 @@ def test_ref_delete_pr_inventory_uses_one_complete_page_reader(
             ref, _REVISION, observation, "main", require_merged=True
         )
     else:
-        proven = adapter._archive_ref_matches_merged_source(
-            ref, _REVISION, observation, "main"
-        )
+        proven = adapter._archive_ref_matches_merged_source(ref, _REVISION, observation, "main")
     assert proven is expected
     assert any(path.endswith("page=2") for path in reads) is (
         inventory in {"incomplete-page", "second-page"}
