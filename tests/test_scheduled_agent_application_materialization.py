@@ -4126,6 +4126,11 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         assert unqualified.reason == "application-completion-recovery-evidence-unavailable"
         assert proof_git.mutations == []
 
+    # Restore the native Artifact after the adversarial digest test. The
+    # independent entrypoint below must verify the original qualified bytes,
+    # not inherit this intentionally corrupted fixture state.
+    native_artifact["digest"] = "sha256:" + hashlib.sha256(artifact_bytes).hexdigest()
+
     # Formal and Successor now consume the exact parsed accepted source that
     # qualified the predecessor at the fresh continuation wake, not a detached
     # worker fixture or a new worker decision.
