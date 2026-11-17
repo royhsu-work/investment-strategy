@@ -3972,7 +3972,8 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     # between a defective observation and a later fresh Application check.
     original_read_fault["active"] = True
     unrepaired = observe()
-    assert unrepaired.disposition != "COMPLETE", unrepaired
+    assert unrepaired.continuation in {"OBSERVE", "REJECT"}, unrepaired
+    assert unrepaired.carrier_plan is None
     assert formal_comment_posts == []
     assert successor_patches == []
     assert proof_git.head == witness and proof_git.mutations == []
