@@ -2200,12 +2200,12 @@ def _complete_workflow_runs(
     *,
     read: GitHubReader,
 ) -> tuple[Mapping[str, object], ...] | None:
-    """Read complete issue-comment runs without GitHub's filtered 1,000-run cap.
+    """Read one complete workflow-run history with a single counted-page proof.
 
-    GitHub caps event-filtered workflow-run searches at 1,000 results even when
-    ``total_count`` reports more.  The unfiltered endpoint is paginated without
-    that search cap.  Fetch its independent pages concurrently and fail closed
-    if the run count changes while constructing the observation.
+    Event-filtered GitHub searches are capped at 1,000 runs. When the count
+    exceeds that cap, switch to unfiltered pages and require native event
+    provenance before selecting issue_comment runs. A failed/inconsistent
+    observation never proves absence.
     """
 
     path = f"actions/workflows/{quote(workflow, safe='')}/runs"
@@ -2223,75 +2223,53 @@ def _complete_workflow_runs(
     if first is None:
         return None
     total_count = first.get("total_count")
-    if type(total_count) is int and total_count > 1000:
-        first = page(1, filtered=False)
-        if first is None:
-            return None
-        unfiltered_count = first.get("total_count")
-        if type(unfiltered_count) is not int or unfiltered_count < total_count:
-            return None
-        pages = (unfiltered_count + 99) // 100
-        if pages == 0:
-            return None
-        with ThreadPoolExecutor(max_workers=min(8, pages)) as pool:
-            remaining = tuple(pool.map(lambda n: page(n, filtered=False), range(2, pages + 1)))
-        payloads = (first, *remaining)
-        if any(
-            payload is None
-            or payload.get("total_count") != unfiltered_count
-            or len(cast(list[object], payload["workflow_runs"]))
-            != min(100, unfiltered_count - index * 100)
-            for index, payload in enumerate(payloads)
-        ):
-            return None
-        complete_runs: list[Mapping[str, object]] = []
-        for payload in payloads:
-            if payload is None:
-                return None
-            raw_runs = payload["workflow_runs"]
-            if not isinstance(raw_runs, list):
-                return None
-            for run in raw_runs:
-                if (
-                    not isinstance(run, Mapping)
-                    or type(run.get("id")) is not int
-                    or not isinstance(run.get("event"), str)
-                ):
-                    return None
-                complete_runs.append(cast(Mapping[str, object], run))
-        ids = [cast(int, run["id"]) for run in complete_runs]
-        if len(ids) != len(set(ids)):
-            return None
-        return tuple(run for run in complete_runs if run.get("event") == "issue_comment")
-
     if total_count is not None and (type(total_count) is not int or total_count < 0):
         return None
-    if isinstance(total_count, int):
-        count_pages = max(1, (total_count + 99) // 100)
-        with ThreadPoolExecutor(max_workers=min(8, count_pages)) as pool:
-            remaining = tuple(pool.map(lambda n: page(n, filtered=True), range(2, count_pages + 1)))
-        payloads = (first, *remaining)
-        filtered_runs: list[Mapping[str, object]] = []
-        for index, payload in enumerate(payloads):
+
+    if type(total_count) is int:
+        filtered = total_count <= 1000
+        if not filtered:
+            unfiltered_first = page(1, filtered=False)
+            if unfiltered_first is None:
+                return None
+            unfiltered_count = unfiltered_first.get("total_count")
+            if type(unfiltered_count) is not int or unfiltered_count < total_count:
+                return None
+            first = unfiltered_first
+            total_count = unfiltered_count
+
+        # Both counted modes use the same complete-page, stable-count and
+        # unique-run-ID qualification. The event proof differs only when the
+        # GitHub search cap forces an unfiltered history.
+        pages = max(1, (total_count + 99) // 100)
+        with ThreadPoolExecutor(max_workers=min(8, pages)) as pool:
+            remaining = tuple(
+                pool.map(lambda n: page(n, filtered=filtered), range(2, pages + 1))
+            )
+        runs: list[Mapping[str, object]] = []
+        for index, payload in enumerate((first, *remaining)):
             if payload is None or payload.get("total_count") != total_count:
                 return None
-            raw_runs = payload["workflow_runs"]
-            if not isinstance(raw_runs, list) or len(raw_runs) != min(
+            rows = payload.get("workflow_runs")
+            if not isinstance(rows, list) or len(rows) != min(
                 100, total_count - index * 100
             ):
                 return None
-            for run in raw_runs:
-                if not isinstance(run, Mapping) or type(run.get("id")) is not int:
+            for run in rows:
+                if (
+                    not isinstance(run, Mapping)
+                    or type(run.get("id")) is not int
+                    or (not filtered and not isinstance(run.get("event"), str))
+                ):
                     return None
-                filtered_runs.append(cast(Mapping[str, object], run))
-        ids = [cast(int, run["id"]) for run in filtered_runs]
+                runs.append(cast(Mapping[str, object], run))
+        ids = [cast(int, run["id"]) for run in runs]
         if len(ids) != len(set(ids)):
             return None
-        return tuple(filtered_runs)
+        return tuple(run for run in runs if filtered or run.get("event") == "issue_comment")
 
-    # Legacy injected readers may omit the GitHub total_count field. A short
-    # final page is still an explicit pagination terminator, but the search
-    # cannot prove completeness at GitHub's 1,000-result filtered cap.
+    # Historical injected readers without total_count retain a bounded
+    # short-page terminator; do not trust a filtered 1,000-result cap.
     legacy_runs: list[Mapping[str, object]] = []
     current = first
     number = 1
@@ -2311,7 +2289,6 @@ def _complete_workflow_runs(
         if next_page is None:
             return None
         current = next_page
-
 
 def _prior_dispatch_handoff_reason(
     repository: str,
