@@ -274,6 +274,7 @@ def test_human_supplied_native_dispatch_failure_is_read_only_evidence(
     request_id = 6938169343
     run_id = 44016297831
     artifact_id = 14299620526
+    read_marker = "read-only-token"
     document = (
         '{"default_branch_revision":"' + revision + '",'
         '"disposition":"FAIL_CLOSED",'
@@ -286,7 +287,7 @@ def test_human_supplied_native_dispatch_failure_is_read_only_evidence(
 
     def fake_json(repository: str, token: str, path: str) -> object:
         assert repository == "royhsu-work/investment-strategy"
-        assert token == "read-only-token"
+        assert token == read_marker
         read_paths.append(path)
         if path == f"actions/runs/{run_id}":
             return {
@@ -313,7 +314,7 @@ def test_human_supplied_native_dispatch_failure_is_read_only_evidence(
 
     def fake_bytes(repository: str, token: str, path: str) -> bytes:
         assert repository == "royhsu-work/investment-strategy"
-        assert token == "read-only-token"
+        assert token == read_marker
         assert path == f"actions/artifacts/{artifact_id}/zip"
         read_paths.append(path)
         return document
