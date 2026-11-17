@@ -3065,7 +3065,7 @@ def test_ref_delete_pr_inventory_uses_one_complete_page_reader(
     monkeypatch.setattr(adapter, "_pull_request_matches_source", lambda *_a, **_k: True)
     monkeypatch.setattr(adapter, "_historical_merged_pr", lambda *_a: True)
     monkeypatch.setattr(adapter, "_merge_commit_is_in_current_default", lambda *_a: True)
-    observation = SimpleNamespace(change=_CHANGE)
+    observation = cast(GitHubIssueObservation, SimpleNamespace(change=_CHANGE))
 
     if action == "merge-implementation-pr":
         proven = adapter._implementation_ref_matches_source(
