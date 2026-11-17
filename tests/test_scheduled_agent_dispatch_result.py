@@ -259,3 +259,102 @@ def test_github_bytes_reads_signed_redirect_without_forwarding_bearer(
         transport._github_bytes("owner/repo", "token", "actions/artifacts/300/zip")
         == b"raw artifact"
     )
+
+
+def test_human_supplied_native_dispatch_failure_is_read_only_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real correlated FAIL_CLOSED Artifact is maintenance evidence, not an Action.
+
+    These identifiers and the exact 241-byte payload come from the native
+    2026-11-17 dispatch. Outbound GitHub GETs are substituted; the existing
+    strict run/Artifact reader and result parser are not mocked.
+    """
+    revision = "3d0d1da5905f9f91f15da6af7e70d9173d4b06b3"
+    request_id = 6938169343
+    run_id = 44016297831
+    artifact_id = 14299620526
+    document = (
+        '{"default_branch_revision":"' + revision + '",'
+        '"disposition":"FAIL_CLOSED",'
+        '"reason":"application-completion-recovery-evidence-unavailable",'
+        '"request_comment_id":6938169343,'
+        '"schema":"scheduled-agent-dispatch-result/v1"}\n'
+    ).encode()
+    assert len(document) == 241
+    read_paths: list[str] = []
+
+    def fake_json(repository: str, token: str, path: str) -> object:
+        assert repository == "royhsu-work/investment-strategy"
+        assert token == "read-only-token"
+        read_paths.append(path)
+        if path == f"actions/runs/{run_id}":
+            return {
+                "id": run_id,
+                "name": f"Scheduled Agent Dispatch {request_id}",
+                "path": ".github/workflows/scheduled-agent-bridge.yml",
+                "event": "issue_comment",
+                "head_sha": revision,
+                "status": "completed",
+                "conclusion": "success",
+            }
+        if path == f"actions/runs/{run_id}/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": artifact_id,
+                        "name": "dispatch-result.json",
+                        "expired": False,
+                    }
+                ],
+            }
+        raise AssertionError(f"unexpected GitHub read: {path}")
+
+    def fake_bytes(repository: str, token: str, path: str) -> bytes:
+        assert repository == "royhsu-work/investment-strategy"
+        assert token == "read-only-token"
+        assert path == f"actions/artifacts/{artifact_id}/zip"
+        read_paths.append(path)
+        return document
+
+    monkeypatch.setattr(transport, "_github_json", fake_json)
+    monkeypatch.setattr(transport, "_github_bytes", fake_bytes)
+    result = transport.fetch_dispatch_result(
+        "royhsu-work/investment-strategy",
+        "read-only-token",
+        request_comment_id=request_id,
+        run_id=run_id,
+        current_revision=revision,
+    )
+    assert result == MachineDispatchDecision(
+        request_comment_id=request_id,
+        default_branch_revision=revision,
+        disposition="FAIL_CLOSED",
+        reason="application-completion-recovery-evidence-unavailable",
+    )
+    assert result.issue_number is None and result.action is None and result.role is None
+    assert read_paths == [
+        f"actions/runs/{run_id}",
+        f"actions/runs/{run_id}/artifacts?per_page=100",
+        f"actions/artifacts/{artifact_id}/zip",
+    ]
+
+    # A supplied run ID does not allow the maintainer to select another
+    # request or adopt a stale branch revision.
+    with pytest.raises(RuntimeError, match="identity or completion"):
+        transport.fetch_dispatch_result(
+            "royhsu-work/investment-strategy",
+            "read-only-token",
+            request_comment_id=request_id + 1,
+            run_id=run_id,
+            current_revision=revision,
+        )
+    with pytest.raises(RuntimeError, match="identity or completion"):
+        transport.fetch_dispatch_result(
+            "royhsu-work/investment-strategy",
+            "read-only-token",
+            request_comment_id=request_id,
+            run_id=run_id,
+            current_revision="f" * 40,
+        )
