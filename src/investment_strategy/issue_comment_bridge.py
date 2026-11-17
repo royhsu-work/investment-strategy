@@ -1911,7 +1911,7 @@ def _single_run_artifact(payload: object, *, name: str) -> Mapping[str, object] 
         if isinstance(item, Mapping) and item.get("name") == name
     ]
     if len(matches) > 1:
-        raise ValueError("ambiguous")
+        raise LookupError("multiple matching run artifacts")
     return matches[0] if matches else None
 
 
@@ -1953,13 +1953,10 @@ def _qualified_carrier_for_application_run(
     artifacts_payload = read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100")
     try:
         artifact = _single_run_artifact(artifacts_payload, name="carrier-plan.json")
+    except LookupError as exc:
+        raise RuntimeError("application carrier artifact identity is ambiguous") from exc
     except ValueError as exc:
-        reason = (
-            "application carrier artifact identity is ambiguous"
-            if str(exc) == "ambiguous"
-            else "application carrier artifact listing is incomplete"
-        )
-        raise RuntimeError(reason) from exc
+        raise RuntimeError("application carrier artifact listing is incomplete") from exc
     if artifact is None:
         return None
 
@@ -2382,7 +2379,7 @@ def _prior_dispatch_handoff_reason(
             if artifact is None:
                 return "application-completion-carrier-prior-dispatch-artifact-unavailable"
             artifact_id, digest = _exact_run_artifact_identity(artifact, run=run, run_id=run_id)
-        except ValueError:
+        except (ValueError, LookupError):
             return "application-completion-carrier-prior-dispatch-artifact-unavailable"
         try:
             raw = read_github_artifact_bytes(
