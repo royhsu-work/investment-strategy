@@ -3074,7 +3074,9 @@ def test_ref_delete_pr_inventory_uses_one_complete_page_reader(
             ref, _REVISION, observation, "main"
         )
     assert proven is expected
-    assert ("page=2" in reads[-1]) is (inventory in {"incomplete-page", "second-page"})
+    assert any(path.endswith("page=2") for path in reads) is (
+        inventory in {"incomplete-page", "second-page"}
+    )
 
 
 @pytest.mark.parametrize(
