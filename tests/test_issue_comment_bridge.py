@@ -3988,7 +3988,7 @@ def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
         ("NOT_APPLIED", "INVALID", "application-completion-exception-unsafe"),
     ],
 )
-@pytest.mark.parametrize("source_kind", ["activation", "implementation"])
+@pytest.mark.parametrize("source_kind", ["activation", "implementation", "semantic-zero"])
 @pytest.mark.parametrize("exception_stage", ["pre", "post"])
 @pytest.mark.parametrize("artifact_identity_valid", [True, False])
 def test_exception_only_application_completion_requires_fresh_original_proof(
@@ -4018,7 +4018,7 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
             request_comment_id=6796616018,
             raw_worker_result=json.dumps(
                 {
-                    "requested_effects": [
+                    "requested_effects": [] if source_kind == "semantic-zero" else [
                         {
                             "kind": "github-mutation",
                             "payload_json": json.dumps(
