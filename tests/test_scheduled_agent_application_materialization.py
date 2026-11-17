@@ -3936,6 +3936,12 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             return {"total_count": 1, "jobs": [native_job]}
         if path == "actions/runs/43029179128/artifacts?per_page=100":
             return {"total_count": 1, "artifacts": [native_artifact]}
+        if path.startswith("issues/435/comments?sort=created&direction=asc&per_page=100"):
+            return []  # No Formal Result for this accepted invocation.
+        if path == "issues/comments/6796616018":
+            # The historical terminal-carrier no-write proof is inapplicable
+            # to application-materialize; its request SHA is not qualified.
+            return {"id": 6796616018, "body": "no terminal-carrier source"}
         return native_read(repository, token, path, **kwargs)
 
     def artifact_read(repository: str, token: str, path: str) -> bytes:
