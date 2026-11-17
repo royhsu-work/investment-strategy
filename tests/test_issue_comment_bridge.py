@@ -5343,15 +5343,18 @@ def test_shared_run_artifact_metadata_preserves_both_consumer_failures(
         assert path == "actions/runs/777/artifacts?per_page=100"
         return inventory("dispatch-result.json")
 
-    assert bridge._prior_dispatch_handoff_reason(
-        "owner/repo",
-        "token",
-        recent_comments=(_trusted_connector_comment(91, REQUEST_BODY),),
-        owner="owner",
-        current_dispatch_request_comment_id=100,
-        plan_id="carrier-plan-" + "e" * 64,
-        read=prior_read,
-    ) == "application-completion-carrier-prior-dispatch-artifact-unavailable"
+    assert (
+        bridge._prior_dispatch_handoff_reason(
+            "owner/repo",
+            "token",
+            recent_comments=(_trusted_connector_comment(91, REQUEST_BODY),),
+            owner="owner",
+            current_dispatch_request_comment_id=100,
+            plan_id="carrier-plan-" + "e" * 64,
+            read=prior_read,
+        )
+        == "application-completion-carrier-prior-dispatch-artifact-unavailable"
+    )
 
 
 def test_completed_application_distinguishes_absent_from_incomplete_carrier_listing(
