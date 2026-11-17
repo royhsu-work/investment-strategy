@@ -4506,15 +4506,40 @@ def consequence_postconditions_complete(
             # separate callers.  Once the formal event is qualified, the
             # default branch itself is the affirmative evidence target.
             return _valid_sha(current_revision)
-        if spec.evidence_target is EvidenceTarget.MATERIALIZED_REVISION:
-            materializations = tuple(
-                effect
-                for effect in batch.effects
-                if effect.kind == GITHUB_MUTATION_KIND
-                and (_effect_payload(effect) or {}).get("operation") == "application-materialize"
+        if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
+            return merged_pr_readiness_complete(
+                repository=repository,
+                token=token,
+                issue_number=source.issue_number,
+                action=source.action,
+                change=change,
+                current_revision=current_revision,
             )
-            if len(materializations) != 1:
-                return False
+
+        # Both materialization evidence targets consume the same immutable
+        # effect identities; each retains its own canonical postcondition.
+        materializations = tuple(
+            effect
+            for effect in batch.effects
+            if effect.kind == GITHUB_MUTATION_KIND
+            and (_effect_payload(effect) or {}).get("operation") == "application-materialize"
+        )
+        if len(materializations) > 1 or (
+            spec.evidence_target is EvidenceTarget.MATERIALIZED_REVISION and not materializations
+        ):
+            return False
+        checkpoints = tuple(
+            effect
+            for effect in batch.effects
+            if effect.kind == "issue-comment"
+            and isinstance((_effect_payload(effect) or {}).get("body"), str)
+            and cast(str, (_effect_payload(effect) or {})["body"]).splitlines()[:1]
+            == ["SLICE_CHECKPOINT"]
+        )
+        if len(checkpoints) > 1:
+            return False
+
+        if spec.evidence_target is EvidenceTarget.MATERIALIZED_REVISION:
             adapter = GitHubEffectAdapter(
                 repository,
                 token,
@@ -4544,26 +4569,7 @@ def consequence_postconditions_complete(
             # distinct obligations of one immutable accepted result. The
             # carrier's positive witness alone must not complete a checkpoint
             # whose exact trusted Issue comment has not been observed.
-            checkpoints = tuple(
-                effect
-                for effect in batch.effects
-                if effect.kind == "issue-comment"
-                and isinstance((_effect_payload(effect) or {}).get("body"), str)
-                and cast(str, (_effect_payload(effect) or {})["body"]).splitlines()[:1]
-                == ["SLICE_CHECKPOINT"]
-            )
-            if len(checkpoints) > 1:
-                return False
             return all(adapter.observe_postcondition(effect) for effect in checkpoints)
-        if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
-            return merged_pr_readiness_complete(
-                repository=repository,
-                token=token,
-                issue_number=source.issue_number,
-                action=source.action,
-                change=change,
-                current_revision=current_revision,
-            )
 
         # Implementation carrier qualification stays with its existing owner,
         # even when a new process must reconstruct a materialization effect.
@@ -4580,36 +4586,27 @@ def consequence_postconditions_complete(
             pending_application_correlation=observed_application_correlation,
         )
         materialized_revision: str | None = None
-        if spec.evidence_target is EvidenceTarget.IMPLEMENTATION_PR_HEAD:
-            materializations = tuple(
-                effect
-                for effect in batch.effects
-                if effect.kind == GITHUB_MUTATION_KIND
-                and (_effect_payload(effect) or {}).get("operation") == "application-materialize"
-            )
-            if len(materializations) > 1:
-                return False
-            if materializations:
-                payload = _effect_payload(materializations[0])
-                target = (
-                    None
-                    if payload is None
-                    else _fresh_materialization_target(
-                        payload,
-                        adapter=adapter,
-                        source=source,
-                        current_revision=current_revision,
-                        allow_pending_continuation=allow_pending_continuation,
-                        accepted_successor_routing=accepted_successor_routing,
-                        committed_formal_result=(
-                            formal_result_observed
-                            and batch.typed_result.action == ModelAction.IMPLEMENT_CHANGE
-                        ),
-                    )
+        if spec.evidence_target is EvidenceTarget.IMPLEMENTATION_PR_HEAD and materializations:
+            payload = _effect_payload(materializations[0])
+            target = (
+                None
+                if payload is None
+                else _fresh_materialization_target(
+                    payload,
+                    adapter=adapter,
+                    source=source,
+                    current_revision=current_revision,
+                    allow_pending_continuation=allow_pending_continuation,
+                    accepted_successor_routing=accepted_successor_routing,
+                    committed_formal_result=(
+                        formal_result_observed
+                        and batch.typed_result.action == ModelAction.IMPLEMENT_CHANGE
+                    ),
                 )
-                if target is None:
-                    return False
-                materialized_revision = target.revision
+            )
+            if target is None:
+                return False
+            materialized_revision = target.revision
         for effect in batch.effects:
             payload = _effect_payload(effect)
             if effect.kind == GITHUB_MUTATION_KIND and payload is not None:
@@ -4625,16 +4622,6 @@ def consequence_postconditions_complete(
         # READY and MORE_IMPLEMENTATION_REQUIRED use IMPLEMENTATION_PR_HEAD,
         # not MATERIALIZED_REVISION. Before formal commit, the PR witness
         # cannot silently satisfy the separately accepted checkpoint effect.
-        checkpoints = tuple(
-            effect
-            for effect in batch.effects
-            if effect.kind == "issue-comment"
-            and isinstance((_effect_payload(effect) or {}).get("body"), str)
-            and cast(str, (_effect_payload(effect) or {})["body"]).splitlines()[:1]
-            == ["SLICE_CHECKPOINT"]
-        )
-        if len(checkpoints) > 1:
-            return False
         if formal_result_observed and batch.typed_result.action == ModelAction.IMPLEMENT_CHANGE:
             if checkpoints:
                 if len(materializations) != 1:
