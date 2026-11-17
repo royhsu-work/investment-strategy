@@ -5265,6 +5265,7 @@ def test_completed_application_blocks_refused_carrier_outcome_without_retry(
 @pytest.mark.parametrize(
     ("case", "carrier_error"),
     [
+        ("non-mapping", "application carrier artifact listing is incomplete"),
         ("incomplete", "application carrier artifact listing is incomplete"),
         ("duplicate", "application carrier artifact identity is ambiguous"),
         ("expired", "application carrier Artifact identity is invalid"),
@@ -5278,7 +5279,9 @@ def test_shared_run_artifact_metadata_preserves_both_consumer_failures(
 ) -> None:
     """Both consumers reject the same bad metadata without downloading or replaying."""
 
-    def inventory(name: str) -> dict[str, object]:
+    def inventory(name: str) -> object:
+        if case == "non-mapping":
+            return []
         artifact: dict[str, object] = {
             "id": 999,
             "name": name,
