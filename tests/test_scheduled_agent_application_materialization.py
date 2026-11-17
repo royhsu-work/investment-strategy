@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from collections.abc import Mapping
@@ -3720,6 +3721,53 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         reason="accepted",
     )
 
+    # Recreate the production transport/decision bytes once, instead of a
+    # detached accepted-decision hash. The accepted intent is immutable.
+    source_body = application_bridge._render_accepted_application_wire(
+        application_bridge.ApplicationRequest(
+            authorization_revision=base,
+            raw_worker_result=raw,
+            dispatch_correlation=application_bridge.dispatch_correlation_for(
+                proof_git.repository, original, base
+            ),
+        )
+    )
+    accepted = replace(
+        accepted, request_body_sha256=hashlib.sha256(source_body.encode()).hexdigest()
+    )
+    decision_body = effects._APPLICATION_DECISION_WIRE.render(
+        {
+            "Request-Comment": str(accepted.request_comment_id),
+            "Request-Body-SHA256": accepted.request_body_sha256,
+            "Authorization-Revision": accepted.authorization_revision,
+            "Issue": str(accepted.issue_number),
+            "Role": accepted.role,
+            "Action": accepted.action,
+            "Change": accepted.change,
+            "Result-Kind": accepted.result_kind,
+            "Disposition": accepted.disposition,
+            "Worker-Result-SHA256": accepted.worker_result_sha256,
+            "Application-Intent-B64": base64.b64encode(raw.encode()).decode(),
+            "Reason": accepted.reason,
+        }
+    )
+    assert effects.parse_application_decision(decision_body) == accepted
+    decision_digest = hashlib.sha256(decision_body.encode()).hexdigest()
+    source_comment = {
+        "id": accepted.request_comment_id,
+        "body": source_body,
+        "created_at": "2026-11-11T13:05:53Z",
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+    decision_comment = {
+        "id": 6796662999,
+        "body": decision_body,
+        "created_at": "2026-11-11T13:08:00Z",
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+
     formal_comments: list[dict[str, object]] = []
     formal_comment_posts: list[str] = []
     lose_formal_post_response = {"once": True}
@@ -3921,6 +3969,8 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         "workflow_run": {"id": native_run["id"], "head_sha": proof_git.main},
     }
     read_paths: list[str] = []
+    continuation_comments: list[dict[str, object]] = []
+    transient_source_read = {"unavailable": False}
 
     def bridge_read(repository: str, token: str, path: str, **kwargs: object) -> object:
         assert kwargs.get("method", "GET") == "GET"
@@ -3937,11 +3987,15 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         if path == "actions/runs/43029179128/artifacts?per_page=100":
             return {"total_count": 1, "artifacts": [native_artifact]}
         if path.startswith("issues/435/comments?sort=created&direction=asc&per_page=100"):
-            return []  # No Formal Result for this accepted invocation.
+            if transient_source_read["unavailable"]:
+                raise OSError("temporary native source inventory failure")
+            return [decision_comment, *formal_comments]
+        if path.startswith("issues/448/comments?sort=created&direction=asc&per_page=100"):
+            return continuation_comments
+        if path.startswith("issues/comments?sort=created&direction=asc&since="):
+            return continuation_comments
         if path == "issues/comments/6796616018":
-            # The historical terminal-carrier no-write proof is inapplicable
-            # to application-materialize; its request SHA is not qualified.
-            return {"id": 6796616018, "body": "no terminal-carrier source"}
+            return source_comment
         return native_read(repository, token, path, **kwargs)
 
     def artifact_read(repository: str, token: str, path: str) -> bytes:
@@ -3957,7 +4011,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             read=bridge_read,
             record=accepted,
             transport_comment_ids=(6797071043,),
-            accepted_decision_sha256="d" * 64,
+            accepted_decision_sha256=decision_digest,
             current_revision=proof_git.main,
         )
 
@@ -3974,8 +4028,87 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         )
         assert completed.recovery_artifact.artifact_id == 13860996180
         assert completed.recovery_artifact.request_comment_id == 6796616018
+        assert completed.recovery_artifact.accepted_decision_sha256 == decision_digest
         assert proof_git.head == witness and proof_git.mutations == []
         assert "actions/runs/43029179128/attempts/1/jobs" in read_paths
+
+        # The *same* qualified failed Application now emits its actual
+        # repository wire, and the next wake re-reads the exact predecessor.
+        continuation_body = dispatch_bridge._application_continuation_body(
+            repository=proof_git.repository,
+            token=_TOKEN,
+            source=original,
+            request_comment_id=accepted.request_comment_id,
+            predecessor_evidence=completed.recovery_artifact,
+            read=bridge_read,
+        )
+        assert isinstance(continuation_body, str)
+        parsed_continuation = application_bridge.parse_application_continuation_request(
+            continuation_body
+        )
+        assert parsed_continuation is not None
+        assert parsed_continuation.accepted_decision_sha256 == decision_digest
+        assert parsed_continuation.predecessor_artifact_id == 13860996180
+        continuation_comments.append(
+            {
+                "id": 90007,
+                "body": continuation_body,
+                "created_at": "2026-11-17T05:37:00Z",
+                "user": {"login": "royhsu-work"},
+                "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+            }
+        )
+
+        def fresh_predecessor() -> (
+            application_bridge.ApplicationRecoveryArtifact
+            | application_bridge.ApplicationExceptionArtifact
+            | None
+        ):
+            return application_bridge.qualify_application_continuation_predecessor(
+                proof_git.repository,
+                _TOKEN,
+                parsed_continuation,
+                current_comment_id=90007,
+                transport_issue_number=448,
+                read=bridge_read,
+                artifact_reader=artifact_read,
+            )
+
+        qualified = fresh_predecessor()
+        assert isinstance(qualified, application_bridge.ApplicationExceptionArtifact)
+        assert qualified == completed.recovery_artifact
+        assert qualified.accepted_decision_sha256 == decision_digest
+        assert proof_git.mutations == []
+        # Duplicated/foreign native sources never authorize a second consumer.
+        continuation_comments.append({**continuation_comments[0], "id": 90008})
+        assert fresh_predecessor() is None
+        continuation_comments.pop()
+        decision_comment["body"] = decision_body.replace(
+            f"Change: {change}", "Change: unrelated", 1
+        )
+        assert fresh_predecessor() is None
+        decision_comment["body"] = decision_body
+        transient_source_read["unavailable"] = True
+        with pytest.raises(OSError, match="temporary native source inventory failure"):
+            fresh_predecessor()
+        transient_source_read["unavailable"] = False
+        assert fresh_predecessor() == qualified
+        # A reobservation cannot emit another request for an existing lineage.
+        assert (
+            dispatch_bridge._application_continuation_body(
+                repository=proof_git.repository,
+                token=_TOKEN,
+                source=original,
+                request_comment_id=accepted.request_comment_id,
+                predecessor_evidence=qualified,
+                read=bridge_read,
+            )
+            is None
+        )
+        accepted_from_continuation = effects.parse_application_decision(
+            decision_comment["body"]
+        )
+        assert accepted_from_continuation == accepted
 
         # A tampered native Artifact cannot inherit the positive Git witness
         # as permission for Formal/Successor or an Original Effect retry.
@@ -3985,6 +4118,12 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         assert unqualified.reason == "application-completion-recovery-evidence-unavailable"
         assert proof_git.mutations == []
 
+    # Formal and Successor now consume the exact parsed accepted source that
+    # qualified the predecessor at the fresh continuation wake, not a detached
+    # worker fixture or a new worker decision.
+    assert accepted_from_continuation.worker_result_sha256 == hashlib.sha256(
+        accepted_from_continuation.raw_worker_result.encode()
+    ).hexdigest()
     # Original-effect completion is not a Formal result. Reuse the already
     # source-proven Git witness as the fresh carrier revision and exercise the
     # real Application-owned formal projection, not a mocked Formal status.
@@ -3992,7 +4131,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
 
     def project_formal() -> str:
         return application_bridge._fresh_application_worker_result(
-            raw,
+            accepted_from_continuation.raw_worker_result,
             source=original,
             change=change,
             repository=proof_git.repository,
