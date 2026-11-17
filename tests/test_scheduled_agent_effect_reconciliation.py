@@ -372,6 +372,34 @@ def test_positive_descendant_requires_satisfied_upstream_obligation(stage: str) 
     assert application.evaluate_recovery_evidence(completed_descendant).disposition == "SATISFIED"
 
 
+@pytest.mark.parametrize(
+    ("formal_ref", "expected"),
+    [
+        ("issues/comments/992001", "CONFLICT"),
+        ("issues/comments/992002", "SATISFIED"),
+    ],
+)
+def test_r9_native_comment_source_is_unique_across_original_formal_dependency(
+    formal_ref: str, expected: str
+) -> None:
+    """Distinct Effect ordinals cannot spend the same native comment twice."""
+
+    original = StagedEffect("issue-comment", '{"issue_number":138,"body":"original"}')
+    formal = StagedEffect("issue-comment", '{"issue_number":138,"body":"ACTION_RESULT"}')
+    upstream = application.RecoveryEvidenceNode(
+        "ORIGINAL_EFFECT", original, True, source_object_ref="issues/comments/992001"
+    )
+    terminal = application.RecoveryEvidenceNode(
+        "FORMAL_RESULT", formal, True, source_object_ref=formal_ref,
+        depends_on=(upstream, upstream),
+    )
+    decision = application.evaluate_recovery_evidence(terminal)
+    assert decision.disposition == expected
+    assert decision.remaining_obligation == (
+        "FORMAL_RESULT" if expected == "CONFLICT" else None
+    )
+
+
 def test_recovery_dag_conflicting_provenance_blocks_positive_descendant() -> None:
     """R9: source contradiction dominates even a positive child observation."""
     effect = StagedEffect("issue-comment", '{"issue_number":138}')
