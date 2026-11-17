@@ -3991,6 +3991,8 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             if transient_source_read["unavailable"]:
                 raise OSError("temporary native source inventory failure")
             return [decision_comment, *formal_comments]
+        if path.startswith("issues/435/comments?sort=created&per_page=100&page="):
+            return [decision_comment, *formal_comments] if path.endswith("page=1") else []
         if path.startswith("issues/448/comments?sort=created&direction=asc&per_page=100"):
             return continuation_comments
         if path.startswith("issues/comments?sort=created&direction=asc&since="):
