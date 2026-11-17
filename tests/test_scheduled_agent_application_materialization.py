@@ -3780,22 +3780,27 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
 
     prior_source = WorkerRequest(435, "reviewer", "review-implementation")
     prior_correlation = application_bridge.formal_application_correlation(
-        prior_source, change=change, result_kind="findings",
-        current_revision=proof_git.main, request_comment_id=89989,
+        prior_source,
+        change=change,
+        result_kind="findings",
+        current_revision=proof_git.main,
+        request_comment_id=89989,
     )
-    prior_body = "\n".join((
-        "REVIEW_RESULT",
-        "Workflow: #435",
-        f"Change: {change}",
-        "Role: reviewer",
-        "Action: review-implementation",
-        "Result: FINDINGS",
-        f"Revision: {proof_git.main}",
-        f"Default-Branch-Revision: {proof_git.main}",
-        f"Application-Correlation: {prior_correlation}",
-        "Repository-derived successor: Executor / implement-change",
-        "Evidence: one further implementation slice required",
-    ))
+    prior_body = "\n".join(
+        (
+            "REVIEW_RESULT",
+            "Workflow: #435",
+            f"Change: {change}",
+            "Role: reviewer",
+            "Action: review-implementation",
+            "Result: FINDINGS",
+            f"Revision: {proof_git.main}",
+            f"Default-Branch-Revision: {proof_git.main}",
+            f"Application-Correlation: {prior_correlation}",
+            "Repository-derived successor: Executor / implement-change",
+            "Evidence: one further implementation slice required",
+        )
+    )
     prior_comment: dict[str, object] = {
         "id": 89990,
         "body": prior_body,
@@ -4277,11 +4282,13 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     # All decision consumers use the genuine preflight + classifier; only
     # outbound GitHub GETs are replaced with native-shaped fixture payloads.
     monkeypatch.setattr(
-        merge_acceptance, "acquire_current_github_preflight",
+        merge_acceptance,
+        "acquire_current_github_preflight",
         runtime.acquire_current_github_preflight,
     )
     monkeypatch.setattr(
-        effects, "acquire_current_github_preflight",
+        effects,
+        "acquire_current_github_preflight",
         runtime.acquire_current_github_preflight,
     )
     qualified = runtime.acquire_current_github_preflight(proof_git.repository, _TOKEN)
@@ -4297,9 +4304,12 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         assert rejected.disposition == "FAIL_CLOSED", rejected
     finally:
         prior_timeline.append(route_event)
-    assert classify_dispatch(
-        runtime.acquire_current_github_preflight(proof_git.repository, _TOKEN)
-    ).disposition == "AUTHORIZE"
+    assert (
+        classify_dispatch(
+            runtime.acquire_current_github_preflight(proof_git.repository, _TOKEN)
+        ).disposition
+        == "AUTHORIZE"
+    )
 
     def guarded(
         *, reconcile_only: bool = False, uncertain_effect_index: int | None = None
