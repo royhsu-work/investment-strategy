@@ -2993,6 +2993,90 @@ def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
     assert not ref_adapter.guard(foreign_ref)
 
 
+@pytest.mark.parametrize("action", ["merge-implementation-pr", "merge-archive-pr"])
+@pytest.mark.parametrize(
+    ("inventory", "expected"),
+    [
+        ("single", True),
+        ("duplicate", False),
+        ("malformed", False),
+        ("incomplete-page", False),
+        ("second-page", True),
+    ],
+)
+def test_ref_delete_pr_inventory_uses_one_complete_page_reader(
+    monkeypatch: pytest.MonkeyPatch, action: str, inventory: str, expected: bool
+) -> None:
+    """Distinct merge proofs share complete bounded PR discovery, never partial evidence."""
+
+    branch = (
+        f"agent/{_CHANGE}"
+        if action == "merge-implementation-pr"
+        else f"agent/archive-{_CHANGE}"
+    )
+    ref = f"refs/heads/{branch}"
+    reads: list[str] = []
+
+    def native_read(_repository: str, _token: str, path: str) -> object:
+        reads.append(path)
+        if path.startswith("pulls?state=all&head="):
+            assert "&base=main&per_page=100&page=" in path
+            assert inventory in {
+                "single", "duplicate", "malformed", "incomplete-page", "second-page"
+            }
+            if path.endswith("page=1"):
+                if inventory == "single":
+                    return [{"number": 7}]
+                if inventory == "duplicate":
+                    return [{"number": 7}, {"number": 7}]
+                if inventory == "malformed":
+                    return [{"number": 7}, None]
+                return [{"number": 0} for _ in range(100)]
+            assert path.endswith("page=2")
+            if inventory == "second-page":
+                return [{"number": 7}]
+            assert inventory == "incomplete-page"
+            return None
+        if path == "pulls/7":
+            return {"merge_commit_sha": _REVISION}
+        raise AssertionError(f"unexpected GitHub read: {path}")
+
+    monkeypatch.setattr(effects, "_github_json", native_read)
+    monkeypatch.setattr(
+        effects,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: SimpleNamespace(
+            qualified=True,
+            disposition="HISTORICAL_MERGED",
+            branch=branch,
+            head_sha=_REVISION,
+        ),
+    )
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        WorkerRequest(138, "executor", action),
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+    )
+    monkeypatch.setattr(adapter, "_default_branch_revision", lambda _branch: _REVISION)
+    monkeypatch.setattr(adapter, "_pull_request_matches_source", lambda *_a, **_k: True)
+    monkeypatch.setattr(adapter, "_historical_merged_pr", lambda *_a: True)
+    monkeypatch.setattr(adapter, "_merge_commit_is_in_current_default", lambda *_a: True)
+    observation = SimpleNamespace(change=_CHANGE)
+
+    if action == "merge-implementation-pr":
+        proven = adapter._implementation_ref_matches_source(
+            ref, _REVISION, observation, "main", require_merged=True
+        )
+    else:
+        proven = adapter._archive_ref_matches_merged_source(
+            ref, _REVISION, observation, "main"
+        )
+    assert proven is expected
+    assert ("page=2" in reads[-1]) is (inventory in {"incomplete-page", "second-page"})
+
+
 @pytest.mark.parametrize(
     ("action", "ref", "proof_method"),
     (
