@@ -4138,6 +4138,14 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         # Application typed proof and native Bridge selection remain real.
         patch.setattr(application_bridge, "_github_json", bridge_read)
         patch.setattr(dispatch_bridge, "read_github_artifact_bytes", artifact_read)
+        # Even a qualified native Exception Artifact cannot promote a stale
+        # original Git observation to Application continuation authority.
+        original_read_fault["active"] = True
+        before_repair = native_completion()
+        assert before_repair.state != "COMPLETE", before_repair
+        assert before_repair.qualified_carrier is None
+        assert proof_git.head == witness and proof_git.mutations == []
+        original_read_fault["active"] = False
         completed = native_completion()
         assert completed.state == "RESUMABLE", completed
         assert completed.reason == "application-completion-continuation-required"
