@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from email.message import Message
 from pathlib import Path
@@ -4280,7 +4280,9 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     event_path = tmp_path / "435-continuation-event.json"
     event_path.write_text(json.dumps(event), encoding="utf-8")
     entered: list[tuple[effects.EffectBatch, effects.ApplyResult]] = []
-    actual_owner = application_bridge.run_guarded_effect_application
+    actual_owner: Callable[..., tuple[effects.EffectBatch, effects.ApplyResult]] = (
+        application_bridge.run_guarded_effect_application
+    )
 
     def traced_owner(
         raw_worker_result: str, **kwargs: object
@@ -4297,9 +4299,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             "acquire_current_github_preflight",
             lambda *_args: fresh_preflight(),
         )
-        fresh_entry.setattr(
-            application_bridge, "run_guarded_effect_application", traced_owner
-        )
+        fresh_entry.setattr(application_bridge, "run_guarded_effect_application", traced_owner)
         fresh_entry.setenv("GITHUB_REPOSITORY", proof_git.repository)
         fresh_entry.setenv("GITHUB_TOKEN", _TOKEN)
         fresh_entry.setenv("GITHUB_RUN_ID", "43029179129")
@@ -4321,9 +4321,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         )
         # The Formal POST was accepted but its HTTP response was lost.
         assert (
-            application_bridge._main_unprotected(
-                application_bridge.ApplicationExceptionContext()
-            )
+            application_bridge._main_unprotected(application_bridge.ApplicationExceptionContext())
             == 1
         )
     assert len(entered) == 1
