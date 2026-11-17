@@ -4641,8 +4641,12 @@ def test_fresh_process_reconstructs_lead_materialization_from_canonical_observer
         default_branch: str,
         allow_pending_continuation: bool = False,
         accepted_authorization_revision: str | None = None,
+        accepted_successor_routing: tuple[str, str] | None = None,
         accepted_intent: bool = False,
+        committed_formal_result: bool = False,
     ) -> ValidationResourceTarget:
+        assert accepted_successor_routing is None
+        assert not committed_formal_result
         assert not allow_pending_continuation
         assert default_branch == "main"
         observed.append(
@@ -4730,7 +4734,9 @@ def test_accepted_materialization_reconciles_after_successor_route(
         accepted_authorization_revision: str | None = None,
         accepted_successor_routing: tuple[str, str] | None = None,
         accepted_intent: bool = False,
+        committed_formal_result: bool = False,
     ) -> ValidationResourceTarget:
+        assert not committed_formal_result
         assert (repository, token, current_revision, default_branch) == (
             "owner/repo",
             _TEST_TOKEN,
