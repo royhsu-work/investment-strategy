@@ -2372,8 +2372,6 @@ def _prior_dispatch_handoff_reason(
             token,
             f"actions/runs/{run_id}/artifacts?per_page=100",
         )
-        if not isinstance(artifacts_payload, Mapping):
-            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
         try:
             artifact = _single_run_artifact(artifacts_payload, name="dispatch-result.json")
             if artifact is None:
