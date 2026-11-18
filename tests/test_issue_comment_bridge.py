@@ -4136,6 +4136,157 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
     assert fresh_calls == ([record.request_comment_id] if artifact_identity_valid else [])
 
 
+@pytest.mark.parametrize(
+    ("original_case", "exception_selected"),
+    [
+        ("materialization", True),
+        ("physically-zero", True),
+        ("carrier-merge", False),
+        ("tampered-source", False),
+    ],
+)
+def test_elided_original_exception_selection_preserves_carrier_ownership(
+    monkeypatch: pytest.MonkeyPatch, original_case: str, exception_selected: bool
+) -> None:
+    """A signed v2 projection cannot erase original ownership or invent zero writes."""
+
+    repository = "royhsu-work/investment-strategy"
+    change = "restore-t1-dispatch-artifact-consumption"
+    source = bridge.WorkerRequest(435, "executor", "implement-change")
+    original = {
+        "issue_number": source.issue_number,
+        "role": source.role,
+        "action": source.action,
+        "change": change,
+        "result_kind": "blocked",
+        "evidence_ref": "native-original",
+        "result_content": "immutable accepted result",
+        "requested_effects": [],
+    }
+    if original_case != "physically-zero":
+        operation = (
+            "pull-request-merge" if original_case == "carrier-merge" else "application-materialize"
+        )
+        original["requested_effects"] = [
+            {
+                "kind": "github-mutation",
+                "payload_json": json.dumps(
+                    {"operation": operation, "issue_number": source.issue_number}
+                ),
+            }
+        ]
+    original_body = render_application_request(
+        bridge.ApplicationRequest(
+            authorization_revision=REVISION,
+            raw_worker_result=json.dumps(original),
+            dispatch_correlation=bridge.dispatch_correlation_for(repository, source, REVISION),
+        )
+    )
+    projected = dict(original, requested_effects=[], _semantic_intent_version=2)
+    accepted_raw = json.dumps(projected)
+    record = replace(
+        _accepted_carrier_record(),
+        request_comment_id=90,
+        request_body_sha256=hashlib.sha256(original_body.encode()).hexdigest(),
+        authorization_revision=REVISION,
+        issue_number=source.issue_number,
+        role=source.role,
+        action=source.action,
+        change=change,
+        result_kind="blocked",
+        raw_worker_result=accepted_raw,
+        worker_result_sha256=hashlib.sha256(accepted_raw.encode()).hexdigest(),
+    )
+    exception = application.ApplicationExceptionArtifact(
+        run_id=777,
+        run_attempt=1,
+        job_id=888,
+        artifact_id=999,
+        artifact_digest="sha256:" + "a" * 64,
+        request_comment_id=record.request_comment_id,
+        accepted_decision_sha256="b" * 64,
+        failure_evidence_sha256="c" * 64,
+        recovery_episode_sha256="d" * 64,
+        document={
+            "issue_number": record.issue_number,
+            "role": record.role,
+            "action": record.action,
+            "change": record.change,
+        },
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_runs",
+        lambda *_args, **_kwargs: (
+            {"id": 777, "run_attempt": 1, "status": "completed",
+             "conclusion": "failure", "head_sha": REVISION},
+        ),
+    )
+    monkeypatch.setattr(
+        bridge, "_qualified_unapplied_terminal_carrier_effect", lambda *_a, **_k: False
+    )
+    selected: list[str] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        assert _repository == repository
+        if path == "actions/runs/777/attempts/1/jobs":
+            return {
+                "total_count": 1,
+                "jobs": [{
+                    "id": 888, "name": "apply", "run_attempt": 1,
+                    "status": "completed", "conclusion": "failure",
+                    "steps": [
+                        {"name": "Upload exact application recovery evidence", "conclusion": "skipped"},
+                        {
+                            "name": "Upload pre-ACCEPT or interrupted application exception evidence",
+                            "conclusion": "success",
+                        },
+                    ],
+                }],
+            }
+        if path == "issues/comments/90":
+            return {
+                "id": 90,
+                "body": original_body + (" " if original_case == "tampered-source" else ""),
+                "user": {"login": "royhsu-work"},
+                "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+            }
+        raise AssertionError(f"unexpected source read: {path}")
+
+    def read_exception(*_args: object, **_kwargs: object) -> application.ApplicationExceptionArtifact:
+        selected.append("exception")
+        return exception
+
+    def read_recovery(*_args: object, **_kwargs: object) -> None:
+        selected.append("recovery")
+        return None
+
+    monkeypatch.setattr(bridge, "read_application_exception_artifact", read_exception)
+    monkeypatch.setattr(bridge, "read_application_recovery_artifact", read_recovery)
+    monkeypatch.setattr(
+        application,
+        "_fresh_accepted_activation_proof",
+        lambda *_args, **_kwargs: application.AcceptedPostEffectProof(
+            "COMPLETE", "positive original observation"
+        ),
+    )
+
+    observed = bridge._application_job(
+        repository,
+        "token",
+        record.request_comment_id,
+        read=read,
+        record=record,
+        accepted_decision_sha256=exception.accepted_decision_sha256,
+    )
+    assert selected == (["exception"] if exception_selected else ["recovery"])
+    assert observed.state == ("RESUMABLE" if exception_selected else "INVALID")
+    if exception_selected:
+        assert observed.reason == "application-completion-continuation-required"
+    else:
+        assert observed.reason == "application-completion-recovery-evidence-missing"
+
+
 def test_exception_continuation_uses_existing_wire_and_cross_shard_no_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
