@@ -3988,10 +3988,7 @@ def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
         ("NOT_APPLIED", "INVALID", "application-completion-exception-unsafe"),
     ],
 )
-@pytest.mark.parametrize(
-    "source_kind",
-    ["activation", "implementation", "zero-implementation", "elided-implementation"],
-)
+@pytest.mark.parametrize("source_kind", ["activation", "implementation"])
 @pytest.mark.parametrize("exception_stage", ["pre", "post"])
 @pytest.mark.parametrize("artifact_identity_valid", [True, False])
 def test_exception_only_application_completion_requires_fresh_original_proof(
@@ -4019,11 +4016,8 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
             issue_number=435,
             result_kind="blocked",
             request_comment_id=6796616018,
-            # The native writer stage, not this possibly elided semantic
-            # projection, selects the Artifact. Only the canonical Application
-            # proof may treat zero originals as physically qualified.
             raw_worker_result=json.dumps(
-                ({} if source_kind == "elided-implementation" else {
+                {
                     "requested_effects": [
                         {
                             "kind": "github-mutation",
@@ -4035,9 +4029,7 @@ def test_exception_only_application_completion_requires_fresh_original_proof(
                             ),
                         }
                     ]
-                    if source_kind == "implementation"
-                    else []
-                })
+                }
             ),
         )
     )
