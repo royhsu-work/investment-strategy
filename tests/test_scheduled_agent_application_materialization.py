@@ -4196,6 +4196,49 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
                 qualify=lambda *_a, **_kw: native_completion(),
             )
 
+        def observe_read_fault(
+            path: str, observation: object
+        ) -> dispatch_bridge.ApplicationCompletion:
+            def validation_read(
+                repository: str, token: str, api_path: str, **kwargs: object
+            ) -> object:
+                return (
+                    observation
+                    if api_path == path
+                    else native_read(repository, token, api_path, **kwargs)
+                )
+
+            with monkeypatch.context() as validation:
+                validation.setattr(validation_resource, "_github_json", validation_read)
+                result = native_completion()
+                assert result.accepted_proof is not None
+                if result.accepted_proof.disposition == "INDETERMINATE":
+                    assert repair_admission(repair_event) is None
+                assert formal_comment_posts == successor_patches == proof_git.mutations == []
+                return result
+
+        incomplete_reads: tuple[tuple[str, object], ...] = (
+            ("", {}),
+            ("git/ref/heads/main", {"object": {}}),
+        )
+        for path, observation in incomplete_reads:
+            incomplete = observe_read_fault(path, observation)
+            assert incomplete.accepted_proof is not None
+            assert incomplete.accepted_proof.disposition == "INDETERMINATE", incomplete
+            original_proof = incomplete.accepted_proof.original_effect_proof
+            assert original_proof is not None and original_proof.disposition == "UNKNOWN"
+            assert native_completion().reason == "application-completion-continuation-required"
+
+        for path, observation in (
+            ("", {"default_branch": "other-main"}),
+            ("git/ref/heads/main", {"object": {"sha": "f" * 40}}),
+        ):
+            different = observe_read_fault(path, observation)
+            assert different.accepted_proof is not None
+            assert different.accepted_proof.disposition == "UNSAFE", different
+            original_proof = different.accepted_proof.original_effect_proof
+            assert original_proof is not None and original_proof.disposition == "CONFLICT"
+
         # Contradictory PR metadata is durable even though the Original Git
         # commit is intact. The conflict needs independent maintenance.
         previous_base = pr["base"]

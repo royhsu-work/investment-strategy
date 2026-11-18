@@ -292,7 +292,9 @@ def _current_default_branch(repository: str, token: str) -> str:
     payload = _as_mapping(cast(object, _github_json(repository, token, "")))
     branch = None if payload is None else payload.get("default_branch")
     if not _valid_branch(branch):
-        raise RuntimeError("validation resource repository default branch is incomplete")
+        raise IncompleteGitHubObservation(
+            "validation resource repository default branch is incomplete"
+        )
     return cast(str, branch)
 
 
@@ -1197,7 +1199,7 @@ def _ref_head_sha(
     obj = None if state is None else _as_mapping(state.get("object"))
     sha = None if obj is None else obj.get("sha")
     if not _valid_sha(sha):
-        raise RuntimeError("work-product ref observation is incomplete")
+        raise IncompleteGitHubObservation("work-product ref observation is incomplete")
     return cast(str, sha)
 
 
