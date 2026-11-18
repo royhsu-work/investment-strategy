@@ -1293,18 +1293,18 @@ def _accepted_worker_result_for_continuation(
     return json.dumps(recovered, sort_keys=True, separators=(",", ":"))
 
 
-def _verified_zero_original_accepted_effects(
+def _qualified_physical_original_accepted_effects(
     *,
     record: ApplicationDecisionRecord,
     source: WorkerRequest,
     repository: str,
     token: str,
     read: Callable[[str, str, str], object] | None = None,
-) -> bool:
-    """Prove zero *physical* original Effects, not an empty semantic projection.
+) -> EffectBatch | None:
+    """Read the immutable physical Original, not its mutable v2 projection.
 
-    This additional proof is required only at exception reconciliation; normal
-    accepted continuations remain independent of mutable ingress transport.
+    This is a read-only source-qualification owner. A non-unique or edited
+    original is never evidence of zero writes or authority to replay.
     """
 
     if record.disposition != "ACCEPTED" or (record.issue_number, record.role, record.action) != (
@@ -1312,23 +1312,18 @@ def _verified_zero_original_accepted_effects(
         source.role,
         source.action,
     ):
-        return False
-    decoded = json.loads(record.raw_worker_result)
-    if not isinstance(decoded, dict) or decoded.get("requested_effects") != []:
-        return False
+        return None
     reader = _github_json if read is None else read
-    source_comment = _as_mapping(
-        reader(repository, token, f"issues/comments/{record.request_comment_id}")
-    )
-    body = None if source_comment is None else source_comment.get("body")
+    comment = _as_mapping(reader(repository, token, f"issues/comments/{record.request_comment_id}"))
+    body = None if comment is None else comment.get("body")
     if (
-        source_comment is None
-        or source_comment.get("id") != record.request_comment_id
+        comment is None
+        or comment.get("id") != record.request_comment_id
         or not isinstance(body, str)
-        or not _trusted_connector_comment(source_comment, repository.split("/", 1)[0])
+        or not _trusted_connector_comment(comment, repository.split("/", 1)[0])
         or hashlib.sha256(body.encode()).hexdigest() != record.request_body_sha256
     ):
-        return False
+        return None
     original = parse_application_request(body)
     if (
         original is None
@@ -1340,19 +1335,40 @@ def _verified_zero_original_accepted_effects(
         )
         or _claimed_source(original.raw_worker_result) != source
     ):
-        return False
-    parsed = parse_worker_result(
+        return None
+    decoded = json.loads(original.raw_worker_result)
+    if not isinstance(decoded, dict) or not isinstance(decoded.get("requested_effects"), list):
+        return None
+    physical = parse_effect_batch(
         original.raw_worker_result, source, authorized_change=record.change
     )
-    original_decoded = json.loads(original.raw_worker_result)
-    return bool(
-        isinstance(original_decoded, dict)
-        and original_decoded.get("requested_effects") == []
-        and parsed.change == record.change
-        and parsed.typed_result.result.kind.value == record.result_kind
-        and _worker_semantic_projection(original.raw_worker_result)
-        == _worker_semantic_projection(record.raw_worker_result)
+    if (
+        physical.typed_result is None
+        or physical.typed_result.result.kind.value != record.result_kind
+        or _worker_semantic_projection(original.raw_worker_result)
+        != _worker_semantic_projection(record.raw_worker_result)
+    ):
+        return None
+    return physical
+
+
+def _verified_zero_original_accepted_effects(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    read: Callable[[str, str, str], object] | None = None,
+) -> bool:
+    """Only a qualified physically empty Original proves zero Effects."""
+
+    decoded = json.loads(record.raw_worker_result)
+    if not isinstance(decoded, dict) or decoded.get("requested_effects") != []:
+        return False
+    physical = _qualified_physical_original_accepted_effects(
+        record=record, source=source, repository=repository, token=token, read=read
     )
+    return physical is not None and not physical.effects
 
 
 def _github_timestamp(value: object) -> datetime:
@@ -6534,6 +6550,26 @@ def _qualified_accepted_original_effects(
         )
     if batch.effects:
         return batch
+    # v2 may remove already-applied original Effects. Recover their exact
+    # source identity for READ-ONLY proof only; never feed these Effects to
+    # the execution planner or treat a source failure as NOT_APPLIED.
+    projected = json.loads(raw_worker_result)
+    if isinstance(projected, dict) and projected.get("_semantic_intent_version") == 2:
+        try:
+            physical = _qualified_physical_original_accepted_effects(
+                record=record, source=source, repository=repository, token=token
+            )
+        except OSError:
+            physical = None
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return TypedEvidenceError(
+                "CONFLICT",
+                "ORIGINAL_SOURCE",
+                "immutable physical original cannot be qualified",
+                record.request_comment_id,
+            )
+        if physical is not None and physical.effects:
+            return physical
     # Physical-zero truth is a source qualification, not a projection shape.
     # Only a positive native source witness returns an empty qualified batch.
     category: Literal["UNKNOWN", "CONFLICT"] = "UNKNOWN"
