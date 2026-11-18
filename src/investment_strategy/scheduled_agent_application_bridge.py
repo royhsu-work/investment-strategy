@@ -1300,6 +1300,7 @@ def _qualified_physical_original_accepted_effects(
     repository: str,
     token: str,
     read: Callable[[str, str, str], object] | None = None,
+    require_dispatch_correlation: bool = False,
 ) -> EffectBatch | None:
     """Read the immutable physical Original, not its mutable v2 projection.
 
@@ -1329,7 +1330,7 @@ def _qualified_physical_original_accepted_effects(
         original is None
         or original.authorization_revision != record.authorization_revision
         or (
-            original.dispatch_correlation is not None
+            (original.dispatch_correlation is not None or require_dispatch_correlation)
             and original.dispatch_correlation
             != dispatch_correlation_for(repository, source, original.authorization_revision)
         )
@@ -1342,9 +1343,14 @@ def _qualified_physical_original_accepted_effects(
     physical = parse_effect_batch(
         original.raw_worker_result, source, authorized_change=record.change
     )
+    accepted = parse_effect_batch(
+        record.raw_worker_result, source, authorized_change=record.change
+    )
     if (
         physical.typed_result is None
+        or accepted.typed_result is None
         or physical.typed_result.result.kind.value != record.result_kind
+        or accepted.typed_result.result.kind.value != record.result_kind
         or _worker_semantic_projection(original.raw_worker_result)
         != _worker_semantic_projection(record.raw_worker_result)
     ):
