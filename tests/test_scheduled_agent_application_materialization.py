@@ -4074,6 +4074,38 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     read_paths: list[str] = []
     continuation_comments: list[dict[str, object]] = []
     transient_source_read = {"unavailable": False}
+    actor = {"login": "royhsu-work", "id": 77, "type": "User"}
+    repair_comment = {
+        "id": 90008,
+        "user": actor,
+        "performed_via_github_app": None,
+        "issue_url": f"https://api.github.com/repos/{proof_git.repository}/issues/435",
+        "body": dispatch_bridge.RUNTIME_REPAIR_REQUEST_WIRE.render(
+            {
+                "Issue": "435",
+                "Change": change,
+                "Action": original.action,
+                "Accepted-Request-Comment": str(accepted.request_comment_id),
+                "Accepted-Decision-SHA256": decision_digest,
+                "Repair-PR": "443",
+                "Repair-HEAD": proof_git.main,
+            }
+        ),
+    }
+    repair_event = {
+        "action": "created",
+        "repository": {"full_name": proof_git.repository, "default_branch": "main"},
+        "issue": {"number": 435},
+        "sender": actor,
+        "comment": repair_comment,
+    }
+    maintenance_pr = {
+        "number": 443,
+        "state": "open",
+        "merged": False,
+        "head": {"sha": proof_git.main, "repo": {"full_name": proof_git.repository}},
+        "base": {"ref": "main", "repo": {"full_name": proof_git.repository}},
+    }
 
     def bridge_read(repository: str, token: str, path: str, **kwargs: object) -> object:
         assert kwargs.get("method", "GET") == "GET"
@@ -4114,6 +4146,10 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             }
         if path == "issues/comments/90007":
             return continuation_comments[0] if continuation_comments else None
+        if path == "issues/comments/90008":
+            return repair_comment
+        if path == "pulls/443":
+            return maintenance_pr
         return native_read(repository, token, path, **kwargs)
 
     def artifact_read(repository: str, token: str, path: str) -> bytes:
@@ -4146,6 +4182,52 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         assert before_repair.qualified_carrier is None
         assert proof_git.head == witness and proof_git.mutations == []
         original_read_fault["active"] = False
+
+        def repair_admission(
+            event: Mapping[str, object],
+        ) -> dispatch_bridge.RuntimeRepairAdmission | None:
+            return dispatch_bridge.qualify_runtime_repair_admission(
+                event,
+                repository=proof_git.repository,
+                token=_TOKEN,
+                current_revision=proof_git.main,
+                read=bridge_read,
+                # Exercise the real native job/Artifact reader on the exact ACCEPT.
+                qualify=lambda *_a, **_kw: native_completion(),
+            )
+
+        # Contradictory PR metadata is durable even though the Original Git
+        # commit is intact. The conflict needs independent maintenance.
+        previous_base = pr["base"]
+        pr["base"] = {**cast(dict[str, object], previous_base), "ref": "other-base"}
+        conflict = native_completion()
+        assert conflict.state == "INVALID", conflict
+        assert conflict.accepted_proof is not None
+        assert conflict.accepted_proof.disposition == "UNSAFE", conflict
+        assert (
+            repair_admission(
+                {
+                    **repair_event,
+                    "comment": {**repair_comment, "performed_via_github_app": {"id": 1}},
+                }
+            )
+            is None
+        )
+        admission = repair_admission(repair_event)
+        assert admission is not None
+        assert admission.frontier_proof.disposition == "CONFLICT"
+        assert admission.frontier_proof.remaining_obligation == "ORIGINAL_EFFECT"
+        assert (
+            dispatch_bridge._runtime_repair_admission_document(
+                admission, repository=proof_git.repository
+            )["effect_authority"]
+            == "NONE"
+        )
+        assert formal_comment_posts == successor_patches == proof_git.mutations == []
+
+        # Stand-in for an independently authorized external disposition. Only
+        # simulated GitHub metadata changes; no old Git write is replayed.
+        pr["base"] = previous_base
         completed = native_completion()
         assert completed.state == "RESUMABLE", completed
         assert completed.reason == "application-completion-continuation-required"

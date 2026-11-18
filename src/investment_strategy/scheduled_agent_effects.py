@@ -44,10 +44,10 @@ from investment_strategy.scheduled_agent_application_carrier import (
     qualify_supersession_branch,
 )
 from investment_strategy.scheduled_agent_application_materialization import (
+    MaterializationProof,
     MaterializationRequest,
     apply_materialization,
     find_materialization_payload,
-    materialization_postcondition,
     observe_materialization_target,
     prove_materialization,
 )
@@ -3948,6 +3948,23 @@ class GitHubEffectAdapter:
 
         raise RuntimeError(f"unsupported effect kind: {effect.kind}")
 
+    def observe_materialization_proof(self, payload: Mapping[str, object]) -> MaterializationProof:
+        """Observe materialization through the same proof used by ordinary Effects."""
+        default_branch = self._default_branch()
+        if default_branch is None or self.current_revision is None:
+            return MaterializationProof("UNKNOWN", reason="current default branch unavailable")
+        return prove_materialization(
+            payload,
+            self.source,
+            repository=self.repository,
+            token=self.token,
+            current_revision=self.current_revision,
+            default_branch=default_branch,
+            accepted_authorization_revision=self.authorization_revision,
+            allow_pending_continuation=self.allow_pending_continuation,
+            accepted_intent=self.accepted_intent,
+        )
+
     def _observe_github_mutation(
         self,
         effect: StagedEffect,
@@ -3955,23 +3972,7 @@ class GitHubEffectAdapter:
     ) -> bool:
         operation = cast(str, payload["operation"])
         if operation == "application-materialize":
-            default_branch = self._default_branch()
-            return (
-                default_branch is not None
-                and self.current_revision is not None
-                and materialization_postcondition(
-                    payload,
-                    self.source,
-                    repository=self.repository,
-                    token=self.token,
-                    current_revision=self.current_revision,
-                    default_branch=default_branch,
-                    accepted_authorization_revision=self.authorization_revision,
-                    target=self._materialization_targets.get(effect),
-                    allow_pending_continuation=self.allow_pending_continuation,
-                    accepted_intent=self.accepted_intent,
-                )
-            )
+            return self.observe_materialization_proof(payload).disposition == "COMPLETE"
         if operation == "issue-update":
             current = self._current_issue()
             fields = payload.get("fields")

@@ -2263,8 +2263,10 @@ def test_runtime_repair_frontier_keeps_first_unsettled_obligation(
         assert frontier is pending
 
 
+@pytest.mark.parametrize("has_conflict", [False, True])
 def test_r9_entered_original_frontier_comes_from_real_read_only_classifier(
     monkeypatch: pytest.MonkeyPatch,
+    has_conflict: bool,
 ) -> None:
     """An entered original write yields a non-writing R9 frontier from real owners.
 
@@ -2287,7 +2289,7 @@ def test_r9_entered_original_frontier_comes_from_real_read_only_classifier(
         "message": "source-qualified native R9 witness",
         "files": [
             {
-                "path": f"openspec/changes/{change}/proposal.md",
+                "path": "src/investment_strategy/scheduled_agent_carrier.py",
                 "blob_sha": "a" * 40,
                 "expected_sha": "b" * 40,
             }
@@ -2355,7 +2357,20 @@ def test_r9_entered_original_frontier_comes_from_real_read_only_classifier(
         # Returning an absent read is not evidence of a never-called write.
         return {"default_branch": "main"} if path == "" else None
 
+    def failed_git_read(*_a: object, **_kw: object) -> object:
+        if has_conflict:
+            return {"default_branch": "other-main"}
+        raise OSError("temporary Git source read failure")
+
     monkeypatch.setattr(effects, "_github_json", read_only)
+    monkeypatch.setattr(
+        "investment_strategy.scheduled_agent_application_materialization._github_json",
+        failed_git_read,
+    )
+    monkeypatch.setattr(
+        "investment_strategy.scheduled_agent_validation_resource._github_json",
+        failed_git_read,
+    )
     proof = bridge.classify_accepted_read_only_effects(
         record=record,
         source=source,
@@ -2367,9 +2382,9 @@ def test_r9_entered_original_frontier_comes_from_real_read_only_classifier(
         recovery_artifact=artifact,
     )
     frontier = proof.runtime_repair_frontier
-    assert proof.disposition == "INDETERMINATE"
+    assert proof.disposition == ("UNSAFE" if has_conflict else "INDETERMINATE")
     assert frontier is not None
-    assert frontier.disposition == "UNKNOWN"
+    assert frontier.disposition == ("CONFLICT" if has_conflict else "UNKNOWN")
     assert frontier.remaining_obligation == "ORIGINAL_EFFECT"
     assert frontier.frontier_index == 0
     assert isinstance(frontier.witness, bridge.RecoveryEvidenceNode)
@@ -3043,18 +3058,16 @@ def test_incident_435_accepted_blocked_materialization_is_read_only_proven(
         current_revision=_REVISION,
         request_comment_id=record.request_comment_id,
     )
-    checked: list[StagedEffect] = []
+    checked: list[dict[str, object]] = []
 
     class Observer:
         def __init__(self, *_args: object, **kwargs: object) -> None:
             assert kwargs["accepted_intent"] is True
             assert kwargs["request_comment_id"] == record.request_comment_id
 
-        def observe_postcondition(self, effect: StagedEffect) -> bool:
-            checked.append(effect)
-            payload = json.loads(effect.payload_json)
-            assert payload == materialization
-            return observed
+        def observe_materialization_proof(self, payload: dict[str, object]) -> SimpleNamespace:
+            checked.append(payload)
+            return SimpleNamespace(disposition="COMPLETE" if observed else "UNKNOWN")
 
     monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
     proof = bridge._observe_accepted_post_effect_result(

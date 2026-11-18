@@ -10056,7 +10056,7 @@ def test_r9_real_application_qualifier_reobserves_across_fresh_reads(
             "message": "source-qualified native R9 original",
             "files": [
                 {
-                    "path": f"openspec/changes/{change}/proposal.md",
+                    "path": "src/investment_strategy/scheduled_agent_carrier.py",
                     "blob_sha": "a" * 40,
                     "expected_sha": "b" * 40,
                 }
@@ -10212,6 +10212,17 @@ def test_r9_real_application_qualifier_reobserves_across_fresh_reads(
         )
         return raw_artifact
 
+    def failed_git_read(*_a: object, **_kw: object) -> object:
+        raise OSError("temporary Git source read failure")
+
+    monkeypatch.setattr(
+        "investment_strategy.scheduled_agent_application_materialization._github_json",
+        failed_git_read,
+    )
+    monkeypatch.setattr(
+        "investment_strategy.scheduled_agent_validation_resource._github_json",
+        failed_git_read,
+    )
     monkeypatch.setattr(application, "_github_json", read)
     monkeypatch.setattr(effects, "_github_json", read)
     monkeypatch.setattr(bridge, "read_github_artifact_bytes", artifact_get)

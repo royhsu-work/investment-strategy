@@ -6320,6 +6320,19 @@ def _observe_accepted_effect_fact(
             final_postcondition=source_ref is not None,
             source_object_ref=source_ref,
         )
+    payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
+    if (
+        effect.kind == GITHUB_MUTATION_KIND
+        and payload is not None
+        and payload.get("operation") == "application-materialize"
+    ):
+        materialization = adapter.observe_materialization_proof(payload)
+        return RecoveryEvidenceNode(
+            _recovery_obligation(effect, source),
+            effect,
+            final_postcondition=materialization.disposition == "COMPLETE",
+            source_conflict=materialization.disposition == "CONTRADICTORY",
+        )
     return RecoveryEvidenceNode(
         _recovery_obligation(effect, source),
         effect,
@@ -7125,10 +7138,14 @@ def classify_accepted_read_only_effects(
         # the exact checkpoint has len(attempted) == index + 1.
         if 0 <= index < len(original.effects):
             original_effect_proof = attempted_proof
-        if attempted_proof.disposition != "SATISFIED" and not non_entry:
+        if attempted_proof.disposition == "CONFLICT" or (
+            attempted_proof.disposition != "SATISFIED" and not non_entry
+        ):
             return AcceptedPostEffectProof(
-                "INDETERMINATE",
-                "attempted accepted Effect is not yet proven complete",
+                "UNSAFE" if attempted_proof.disposition == "CONFLICT" else "INDETERMINATE",
+                "attempted accepted Effect conflicts with the current source"
+                if attempted_proof.disposition == "CONFLICT"
+                else "attempted accepted Effect is not yet proven complete",
                 original_effect_proof=original_effect_proof,
                 pending_frontier_proof=(
                     attempted_proof if index >= len(original.effects) else None
