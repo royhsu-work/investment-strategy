@@ -2840,6 +2840,71 @@ def test_accepted_zero_effect_source_requires_exact_original_request(
 
 
 @pytest.mark.parametrize(
+    ("original_count", "tampered"),
+    [(0, False), (1, False), (2, False), (1, True)],
+)
+def test_elided_v2_immutable_original_proof_preserves_physical_effects(
+    monkeypatch: pytest.MonkeyPatch, original_count: int, tampered: bool
+) -> None:
+    """v2 semantic zero is not proof of zero immutable physical Effects."""
+
+    source = WorkerRequest(435, "executor", "implement-change")
+    change = "restore-t1-dispatch-artifact-consumption"
+    physical = _worker_result(action=source.action, role=source.role, result_kind="blocked")
+    physical["issue_number"] = source.issue_number
+    physical["change"] = change
+    physical["requested_effects"] = [
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps(
+                {"issue_number": source.issue_number, "body": f"original-{index}"}
+            ),
+        }
+        for index in range(original_count)
+    ]
+    body = _effect_request(physical)
+    projected = dict(physical, _semantic_intent_version=2, requested_effects=[])
+    record = _accepted_record(
+        json.dumps(projected),
+        body,
+        source=source,
+        change=change,
+        result_kind="blocked",
+        request_comment_id=102,
+    )
+    original_comment = {
+        "id": record.request_comment_id,
+        "body": body + (" " if tampered else ""),
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+    read_paths: list[str] = []
+
+    def native_read(_repo: str, _token: str, path: str, **_kwargs: object) -> object:
+        assert _repo == _REPOSITORY
+        assert path == f"issues/comments/{record.request_comment_id}"
+        read_paths.append(path)
+        return original_comment
+
+    monkeypatch.setattr(bridge, "_github_json", native_read)
+    qualified = bridge._qualified_accepted_original_effects(
+        record=record,
+        source=source,
+        raw_worker_result=record.raw_worker_result,
+        repository=_REPOSITORY,
+        token=_REVISION,
+    )
+    assert read_paths
+    if tampered:
+        assert isinstance(qualified, bridge.TypedEvidenceError)
+        assert qualified.category in {"UNKNOWN", "CONFLICT"}
+    else:
+        assert isinstance(qualified, EffectBatch)
+        assert len(qualified.effects) == original_count
+        assert all(effect.kind == "issue-comment" for effect in qualified.effects)
+
+
+@pytest.mark.parametrize(
     ("observed", "expected"),
     [(True, "COMPLETE"), (False, "INDETERMINATE")],
 )
