@@ -2723,7 +2723,10 @@ def _application_job(
                     )
                     if original is not None:
                         physical_exception_source = not original.effects
-                        if len(original.effects) == 1 and original.effects[0].kind == "github-mutation":
+                        if (
+                            len(original.effects) == 1
+                            and original.effects[0].kind == "github-mutation"
+                        ):
                             payload = json.loads(original.effects[0].payload_json)
                             physical_exception_source = (
                                 isinstance(payload, Mapping)
