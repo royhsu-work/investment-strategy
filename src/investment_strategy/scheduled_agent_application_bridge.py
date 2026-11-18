@@ -6537,7 +6537,12 @@ def _qualified_accepted_original_effects(
                 record=record, source=source, repository=repository, token=token
             )
         except OSError:
-            physical = None
+            return TypedEvidenceError(
+                "UNKNOWN",
+                "ORIGINAL_SOURCE_GET",
+                "immutable physical original source read unavailable",
+                record.request_comment_id,
+            )
         except (TypeError, ValueError, json.JSONDecodeError):
             return TypedEvidenceError(
                 "CONFLICT",
@@ -6545,10 +6550,16 @@ def _qualified_accepted_original_effects(
                 "immutable physical original cannot be qualified",
                 record.request_comment_id,
             )
-        # Even a physically empty Original is now positively source-qualified;
-        # do not issue a second GET merely to re-prove its cardinality.
-        if physical is not None:
-            return physical
+        # The v2 physical source is qualified exactly once in this invocation.
+        # An unqualified source is UNKNOWN, not a second legacy zero-Effect read.
+        if physical is None:
+            return TypedEvidenceError(
+                "UNKNOWN",
+                "ORIGINAL_SOURCE",
+                "immutable physical original source not qualified",
+                record.request_comment_id,
+            )
+        return physical
     # Physical-zero truth is a source qualification, not a projection shape.
     # Only a positive native source witness returns an empty qualified batch.
     category: Literal["UNKNOWN", "CONFLICT"] = "UNKNOWN"
