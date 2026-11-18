@@ -41,7 +41,6 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _application_owned_worker_result,
     _materialization_effects,
     _qualified_physical_original_accepted_effects,
-    _verified_zero_original_accepted_effects,
     application_artifact_stage,
     application_continuation_correlation,
     classify_accepted_read_only_effects,
@@ -2701,33 +2700,41 @@ def _application_job(
                     accepted_effects = accepted_document.get("requested_effects")
             except json.JSONDecodeError:
                 pass
-            # Only the immutable accepted original Effect set can authorize
-            # general exception recovery. A semantic-only projection with no
-            # accepted Effect must retain its existing terminal classification.
-            # The historically stripped first-activation manifest is the
-            # pre-existing bounded compatibility case, not a new Action rule.
+            # A v2 semantic projection may elide the physical Original.
+            # Only the shared Application source qualifier can establish it.
+            # Carrier-owned PR writes retain the distinct terminal negative
+            # postcondition path above; the native upload step alone cannot
+            # reclassify a merge as an Application-owned Effect.
             has_original_effect = isinstance(accepted_effects, list) and bool(accepted_effects)
             legacy_activation = (record.role, record.action, record.change) == (
                 "lead",
                 "propose-change",
                 "unset",
             )
-            verified_empty_original = False
+            physical_exception_source = False
             if has_exception and accepted_effects == [] and not legacy_activation:
                 try:
-                    verified_empty_original = _verified_zero_original_accepted_effects(
+                    original = _qualified_physical_original_accepted_effects(
                         record=record,
                         source=WorkerRequest(record.issue_number, record.role, record.action),
                         repository=repository,
                         token=token,
                         read=read,
                     )
+                    if original is not None:
+                        physical_exception_source = not original.effects
+                        if len(original.effects) == 1 and original.effects[0].kind == "github-mutation":
+                            payload = json.loads(original.effects[0].payload_json)
+                            physical_exception_source = (
+                                isinstance(payload, Mapping)
+                                and payload.get("operation") == "application-materialize"
+                            )
                 except (HTTPError, OSError, RuntimeError, TypeError, ValueError):
-                    # A signed semantic projection cannot independently prove
-                    # that an older accepted request had zero physical Effects.
-                    verified_empty_original = False
+                    # Unqualified source never licenses a different artifact
+                    # or converts uncertainty into absence/no-write proof.
+                    physical_exception_source = False
             if has_exception and (
-                has_original_effect or legacy_activation or verified_empty_original
+                has_original_effect or legacy_activation or physical_exception_source
             ):
                 recovery_artifact = read_application_exception_artifact(
                     repository,
