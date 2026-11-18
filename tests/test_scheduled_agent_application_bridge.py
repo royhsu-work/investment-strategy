@@ -2839,7 +2839,6 @@ def test_accepted_zero_effect_source_requires_exact_original_request(
     )
 
 
-
 def test_v2_unavailable_physical_source_is_qualified_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
