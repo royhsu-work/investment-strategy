@@ -260,6 +260,53 @@ def github_complete_run_jobs(
         page += 1
 
 
+def github_run_artifact_inventory(
+    payload: object,
+) -> tuple[Mapping[str, object], ...] | None:
+    """Return a complete native Artifact listing, including verified emptiness."""
+
+    if not isinstance(payload, Mapping):
+        return None
+    artifacts = payload.get("artifacts")
+    total_count = payload.get("total_count")
+    if (
+        not isinstance(artifacts, list)
+        or type(total_count) is not int
+        or total_count != len(artifacts)
+        or any(
+            not isinstance(artifact, Mapping) or not isinstance(artifact.get("name"), str)
+            for artifact in artifacts
+        )
+    ):
+        return None
+    return tuple(artifacts)
+
+
+def github_run_artifact_identity(
+    metadata: Mapping[str, object], *, run_id: int, run_head_sha: object
+) -> tuple[int, str] | None:
+    """Qualify unexpired, content-addressed metadata for an exact native run."""
+
+    artifact_id = metadata.get("id")
+    digest = metadata.get("digest")
+    artifact_run = metadata.get("workflow_run")
+    if (
+        type(artifact_id) is not int
+        or artifact_id <= 0
+        or metadata.get("expired") is not False
+        or not isinstance(digest, str)
+        or not digest.startswith("sha256:")
+        or _SHA256.fullmatch(digest.removeprefix("sha256:")) is None
+        or not isinstance(artifact_run, Mapping)
+        or type(artifact_run.get("id")) is not int
+        or artifact_run.get("id") != run_id
+        or not isinstance(run_head_sha, str)
+        or artifact_run.get("head_sha") != run_head_sha
+    ):
+        return None
+    return artifact_id, digest
+
+
 class _NoRedirect(HTTPRedirectHandler):
     """Expose a signed GitHub artifact redirect without forwarding the API bearer token."""
 

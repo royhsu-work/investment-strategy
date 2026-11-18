@@ -6650,8 +6650,11 @@ def test_checkpoint_can_only_rehydrate_known_zero_write_merge_rejection() -> Non
     assert bridge._rejected_merge_result_from_checkpoint(predecessor) is None
 
 
-def test_recovery_artifact_reader_propagates_transient_download_failure() -> None:
-    """An observed upload followed by a failed download is unavailable, not absent."""
+@pytest.mark.parametrize("total_count", [1, 2, True, None])
+def test_recovery_artifact_reader_requires_complete_inventory_before_download(
+    total_count: int | None,
+) -> None:
+    """Reject incomplete native inventory before following a matching Artifact."""
     run_id, job_id, artifact_id = 7001, 7002, 7003
     run_head = _REVISION
     digest = "sha256:" + "a" * 64
@@ -6686,6 +6689,7 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
             }
         if path == f"actions/runs/{run_id}/artifacts?per_page=100":
             return {
+                "total_count": total_count,
                 "artifacts": [
                     {
                         "id": artifact_id,
@@ -6694,7 +6698,7 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
                         "expired": False,
                         "workflow_run": {"id": run_id, "head_sha": run_head},
                     }
-                ]
+                ],
             }
         raise AssertionError(f"unexpected read: {path}")
 
@@ -6702,7 +6706,10 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
         assert path == f"actions/artifacts/{artifact_id}/zip"
         raise OSError("transient artifact read refusal")
 
-    with pytest.raises(OSError, match="transient artifact read refusal"):
+    error = OSError if type(total_count) is int and total_count == 1 else RuntimeError
+    with pytest.raises(
+        error, match="transient artifact read refusal|recovery evidence unavailable"
+    ):
         bridge.read_application_recovery_artifact(
             _REPOSITORY,
             "test-token",
@@ -6713,6 +6720,7 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
             accepted_decision_sha256="b" * 64,
             read=read,
             artifact_reader=failed_download,
+            strict_read=True,
         )
 
 
@@ -7282,6 +7290,7 @@ def test_recovery_reader_binds_rerun_checkout_to_immutable_original_run_head(
             }
         if path == f"actions/runs/{run_id}/artifacts?per_page=100":
             return {
+                "total_count": 1,
                 "artifacts": [
                     {
                         "id": artifact_id,
@@ -7290,7 +7299,7 @@ def test_recovery_reader_binds_rerun_checkout_to_immutable_original_run_head(
                         "expired": False,
                         "workflow_run": {"id": run_id, "head_sha": original_head},
                     }
-                ]
+                ],
             }
         if path == f"compare/{original_head}...{checkout}":
             if comparison_status is None:
@@ -7366,7 +7375,7 @@ def test_strict_recovery_reader_distinguishes_legacy_absence_from_missing_upload
                 ],
             }
         if path == f"actions/runs/{run_id}/artifacts?per_page=100":
-            return {"artifacts": []}
+            return {"total_count": 0, "artifacts": []}
         raise AssertionError(f"unexpected read: {path}")
 
     def qualify() -> object:

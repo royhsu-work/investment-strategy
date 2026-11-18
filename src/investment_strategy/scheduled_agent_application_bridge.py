@@ -55,6 +55,8 @@ from investment_strategy.scheduled_agent_carrier import (
     github_paginated_mappings,
     github_read_bytes_with_retry,
     github_repository_api_url,
+    github_run_artifact_identity,
+    github_run_artifact_inventory,
     read_github_artifact_bytes,
 )
 from investment_strategy.scheduled_agent_checkin import (
@@ -4895,19 +4897,10 @@ def _read_verified_application_artifact(
     contracts. This reader cannot admit a continuation or authorize a write.
     """
 
-    artifact_id = _strict_positive_int(metadata.get("id"))
-    digest = metadata.get("digest")
-    artifact_run = metadata.get("workflow_run")
-    if (
-        artifact_id is None
-        or metadata.get("expired") is not False
-        or not isinstance(digest, str)
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
-        or not isinstance(artifact_run, Mapping)
-        or artifact_run.get("id") != run_id
-        or artifact_run.get("head_sha") != run_head_sha
-    ):
+    identity = github_run_artifact_identity(metadata, run_id=run_id, run_head_sha=run_head_sha)
+    if identity is None:
         return None
+    artifact_id, digest = identity
     raw = download(repository, token, f"actions/artifacts/{artifact_id}/zip")
     if (
         not raw
@@ -4992,23 +4985,17 @@ def read_application_recovery_artifact(
             # missing artifact after a successful native upload.
             return None
         return unavailable()
-    artifacts_payload = api_read(
-        repository,
-        token,
-        f"actions/runs/{run_id}/artifacts?per_page=100",
+    artifact_inventory = github_run_artifact_inventory(
+        api_read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100")
     )
-    if not isinstance(artifacts_payload, Mapping) or not isinstance(
-        artifacts_payload.get("artifacts"), list
-    ):
+    if artifact_inventory is None:
         return unavailable()
     artifacts = [
-        item
-        for item in cast(list[object], artifacts_payload["artifacts"])
-        if isinstance(item, Mapping) and item.get("name") == _APPLICATION_RECOVERY_ARTIFACT
+        item for item in artifact_inventory if item.get("name") == _APPLICATION_RECOVERY_ARTIFACT
     ]
     if len(artifacts) != 1:
         return unavailable()
-    artifact = cast(Mapping[str, object], artifacts[0])
+    artifact = artifacts[0]
     verified = _read_verified_application_artifact(
         repository,
         token,
@@ -5302,33 +5289,19 @@ def _qualified_exception_artifact_metadata(
 ) -> Mapping[str, object] | None:
     """Qualify a later exception without discarding a prior-phase checkpoint."""
 
-    payload = _as_mapping(inventory)
-    artifacts = None if payload is None else payload.get("artifacts")
-    if not isinstance(artifacts, list) or payload is None:
-        return None
-    if type(payload.get("total_count")) is not int or payload["total_count"] != len(artifacts):
-        return None
-    if any(not isinstance(item, Mapping) for item in artifacts):
-        return None
-    if any(item.get("name") == "carrier-plan.json" for item in artifacts):
+    artifacts = github_run_artifact_inventory(inventory)
+    if artifacts is None or any(item.get("name") == "carrier-plan.json" for item in artifacts):
         return None
     prior = [item for item in artifacts if item.get("name") == _APPLICATION_RECOVERY_ARTIFACT]
     if len(prior) != (1 if predecessor_recovery else 0):
         return None
-    if prior:
-        prior_run = _as_mapping(prior[0].get("workflow_run"))
-        if (
-            prior_run is None
-            or not _matches_required_fields(prior_run, {"id": run_id, "head_sha": run_head_sha})
-            or prior[0].get("expired") is not False
-            or not isinstance(prior[0].get("digest"), str)
-            or re.fullmatch(r"sha256:[0-9a-f]{64}", cast(str, prior[0]["digest"])) is None
-        ):
-            return None
+    if (
+        prior
+        and github_run_artifact_identity(prior[0], run_id=run_id, run_head_sha=run_head_sha) is None
+    ):
+        return None
     candidates = [
-        item
-        for item in artifacts
-        if isinstance(item, Mapping) and item.get("name") in _APPLICATION_EXCEPTION_ARTIFACTS
+        item for item in artifacts if item.get("name") in _APPLICATION_EXCEPTION_ARTIFACTS
     ]
     if len(candidates) != 1:
         return None

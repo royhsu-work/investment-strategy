@@ -71,6 +71,8 @@ from investment_strategy.scheduled_agent_carrier import (
     github_paginated_mappings,
     github_read_bytes_with_retry,
     github_repository_api_url,
+    github_run_artifact_identity,
+    github_run_artifact_inventory,
     parse_carrier_outcome_report,
     parse_carrier_plan_document,
     parse_qualified_carrier_document,
@@ -1893,46 +1895,13 @@ def _carrier_change_matches_accepted_intent(
 def _single_run_artifact(payload: object, *, name: str) -> Mapping[str, object] | None:
     """Qualify a complete run inventory and at most one named Artifact."""
 
-    if not isinstance(payload, Mapping):
+    inventory = github_run_artifact_inventory(payload)
+    if inventory is None:
         raise ValueError("incomplete")
-    raw_artifacts = payload.get("artifacts")
-    total_count = payload.get("total_count")
-    if (
-        not isinstance(raw_artifacts, list)
-        or isinstance(total_count, bool)
-        or not isinstance(total_count, int)
-        or total_count != len(raw_artifacts)
-    ):
-        raise ValueError("incomplete")
-    matches = [
-        cast(Mapping[str, object], item)
-        for item in raw_artifacts
-        if isinstance(item, Mapping) and item.get("name") == name
-    ]
+    matches = [item for item in inventory if item.get("name") == name]
     if len(matches) > 1:
         raise LookupError("multiple matching run artifacts")
     return matches[0] if matches else None
-
-
-def _exact_run_artifact_identity(
-    artifact: Mapping[str, object], *, run: Mapping[str, object], run_id: int
-) -> tuple[int, str]:
-    """Qualify the exact run-bound, unexpired content-addressed Artifact."""
-
-    artifact_id = _positive_int(artifact.get("id"))
-    digest = artifact.get("digest")
-    workflow_run = artifact.get("workflow_run")
-    if (
-        artifact_id is None
-        or artifact.get("expired") is not False
-        or not isinstance(digest, str)
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
-        or not isinstance(workflow_run, Mapping)
-        or workflow_run.get("id") != run_id
-        or workflow_run.get("head_sha") != run.get("head_sha")
-    ):
-        raise ValueError("invalid")
-    return artifact_id, digest
 
 
 def _qualified_carrier_for_application_run(
@@ -1973,10 +1942,12 @@ def _qualified_carrier_for_application_run(
     if upload_conclusion != "success":
         raise RuntimeError("application carrier Artifact is not current-attempt evidence")
 
-    try:
-        artifact_id, digest = _exact_run_artifact_identity(artifact, run=run, run_id=run_id)
-    except ValueError as exc:
-        raise RuntimeError("application carrier Artifact identity is invalid") from exc
+    identity = github_run_artifact_identity(
+        artifact, run_id=run_id, run_head_sha=run.get("head_sha")
+    )
+    if identity is None:
+        raise RuntimeError("application carrier Artifact identity is invalid")
+    artifact_id, digest = identity
 
     raw = read_github_artifact_bytes(repository, token, f"actions/artifacts/{artifact_id}/zip")
     if f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest:
@@ -2347,11 +2318,16 @@ def _prior_dispatch_handoff_reason(
         )
         try:
             artifact = _single_run_artifact(artifacts_payload, name="dispatch-result.json")
-            if artifact is None:
-                return "application-completion-carrier-prior-dispatch-artifact-unavailable"
-            artifact_id, digest = _exact_run_artifact_identity(artifact, run=run, run_id=run_id)
         except (ValueError, LookupError):
             return "application-completion-carrier-prior-dispatch-artifact-unavailable"
+        if artifact is None:
+            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
+        identity = github_run_artifact_identity(
+            artifact, run_id=run_id, run_head_sha=run.get("head_sha")
+        )
+        if identity is None:
+            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
+        artifact_id, digest = identity
         try:
             raw = read_github_artifact_bytes(
                 repository,
@@ -2497,23 +2473,12 @@ def _qualified_unapplied_terminal_carrier_effect(
     ):
         return False
 
-    artifacts_payload = read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100")
-    if not isinstance(artifacts_payload, Mapping):
+    artifacts = github_run_artifact_inventory(
+        read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100")
+    )
+    if artifacts is None:
         return False
-    artifacts = artifacts_payload.get("artifacts")
-    total_count = artifacts_payload.get("total_count")
-    if (
-        not isinstance(artifacts, list)
-        or type(total_count) is not int
-        or total_count != len(artifacts)
-    ):
-        return False
-    if not all(
-        isinstance(artifact, Mapping)
-        and _positive_int(artifact.get("id")) is not None
-        and isinstance(artifact.get("name"), str)
-        for artifact in artifacts
-    ):
+    if any(_positive_int(artifact.get("id")) is None for artifact in artifacts):
         return False
     if any(
         artifact["name"] in {"carrier-plan.json", "application-recovery-evidence"}

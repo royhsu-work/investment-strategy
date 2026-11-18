@@ -3070,6 +3070,7 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
             return {"total_count": 1, "jobs": [job]}
         if path == "actions/runs/7001/artifacts?per_page=100":
             return {
+                "total_count": 1,
                 "artifacts": [
                     {
                         "id": 7003,
@@ -3078,7 +3079,7 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
                         "expired": False,
                         "workflow_run": {"id": 7001, "head_sha": REVISION},
                     }
-                ]
+                ],
             }
         raise AssertionError(f"unexpected GitHub read: {path}")
 
@@ -3209,6 +3210,7 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
             return {"total_count": 1, "jobs": [second_job]}
         if path == "actions/runs/7004/artifacts?per_page=100":
             return {
+                "total_count": 1,
                 "artifacts": [
                     {
                         "id": 7006,
@@ -3217,7 +3219,7 @@ def test_unknown_recovery_crosses_real_artifact_dispatch_and_continuation(
                         "expired": False,
                         "workflow_run": {"id": 7004, "head_sha": REVISION},
                     }
-                ]
+                ],
             }
         raise AssertionError(f"unexpected read-only observation: {path}")
 
