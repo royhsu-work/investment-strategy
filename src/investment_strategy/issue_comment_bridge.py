@@ -41,7 +41,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _application_owned_worker_result,
     _materialization_effects,
     _verified_zero_original_accepted_effects,
-    _worker_semantic_projection,
+    _qualified_physical_original_accepted_effects,
     application_artifact_stage,
     application_continuation_correlation,
     classify_accepted_read_only_effects,
@@ -2465,50 +2465,23 @@ def _qualified_unapplied_terminal_carrier_effect(
     ):
         return False
 
-    # ACCEPTED retains a semantic projection, not the mechanical effects.
-    # Recover the exact requested effect from its immutable, trusted source,
-    # and bind both versions to the same authorized semantic intent.
-    original_comment = read(repository, token, f"issues/comments/{record.request_comment_id}")
-    if not isinstance(original_comment, Mapping):
-        return False
-    original_body = original_comment.get("body")
-    if (
-        original_comment.get("id") != record.request_comment_id
-        or not _trusted_connector_comment(original_comment, repository.split("/", 1)[0])
-        or not isinstance(original_body, str)
-        or hashlib.sha256(original_body.encode("utf-8")).hexdigest() != record.request_body_sha256
-    ):
-        return False
+    # Terminal writes keep the stricter original dispatch correlation
+    # requirement, but use the same immutable-source proof as read-only
+    # Application recovery. This is evidence, never Effect permission.
     try:
-        original = parse_application_request(original_body)
-        source = WorkerRequest(record.issue_number, record.role, record.action)
-        original_worker = (
-            None
-            if original is None
-            else parse_worker_result(
-                original.raw_worker_result, source, authorized_change=record.change
-            )
+        original = _qualified_physical_original_accepted_effects(
+            record=record,
+            source=WorkerRequest(record.issue_number, record.role, record.action),
+            repository=repository,
+            token=token,
+            read=read,
+            require_dispatch_correlation=True,
         )
-        accepted_worker = parse_worker_result(
-            record.raw_worker_result, source, authorized_change=record.change
-        )
-        if (
-            original is None
-            or original_worker is None
-            or original.authorization_revision != record.authorization_revision
-            or original.dispatch_correlation
-            != dispatch_correlation_for(repository, source, original.authorization_revision)
-            or original_worker.typed_result.result.kind.value != record.result_kind
-            or accepted_worker.typed_result.result.kind.value != record.result_kind
-            or _worker_semantic_projection(original.raw_worker_result)
-            != _worker_semantic_projection(record.raw_worker_result)
-        ):
-            return False
     except (ValueError, TypeError, RuntimeError, json.JSONDecodeError):
         return False
-    if len(original_worker.requested_effects) != 1:
+    if original is None or len(original.effects) != 1:
         return False
-    effect = original_worker.requested_effects[0]
+    effect = original.effects[0]
     if effect.kind != "github-mutation":
         return False
     try:
