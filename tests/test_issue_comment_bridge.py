@@ -4218,8 +4218,13 @@ def test_elided_original_exception_selection_preserves_carrier_ownership(
         bridge,
         "_application_runs",
         lambda *_args, **_kwargs: (
-            {"id": 777, "run_attempt": 1, "status": "completed",
-             "conclusion": "failure", "head_sha": REVISION},
+            {
+                "id": 777,
+                "run_attempt": 1,
+                "status": "completed",
+                "conclusion": "failure",
+                "head_sha": REVISION,
+            },
         ),
     )
     monkeypatch.setattr(
@@ -4232,22 +4237,27 @@ def test_elided_original_exception_selection_preserves_carrier_ownership(
         if path == "actions/runs/777/attempts/1/jobs":
             return {
                 "total_count": 1,
-                "jobs": [{
-                    "id": 888, "name": "apply", "run_attempt": 1,
-                    "status": "completed", "conclusion": "failure",
-                    "steps": [
-                        {
-                            "name": "Upload exact application recovery evidence",
-                            "conclusion": "skipped",
-                        },
-                        {
-                            "name": (
-                                "Upload pre-ACCEPT or interrupted application exception evidence"
-                            ),
-                            "conclusion": "success",
-                        },
-                    ],
-                }],
+                "jobs": [
+                    {
+                        "id": 888,
+                        "name": "apply",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "steps": [
+                            {
+                                "name": "Upload exact application recovery evidence",
+                                "conclusion": "skipped",
+                            },
+                            {
+                                "name": (
+                                    "Upload pre-ACCEPT or interrupted application exception evidence"
+                                ),
+                                "conclusion": "success",
+                            },
+                        ],
+                    }
+                ],
             }
         if path == "issues/comments/90":
             return {
