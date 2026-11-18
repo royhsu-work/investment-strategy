@@ -40,6 +40,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _accepted_recovery_boundary,
     _application_owned_worker_result,
     _materialization_effects,
+    _verified_zero_original_accepted_effects,
     _worker_semantic_projection,
     application_artifact_stage,
     application_continuation_correlation,
@@ -2719,11 +2720,42 @@ def _application_job(
                     "application-completion-artifact-writers-ambiguous",
                     request_comment_id=request_comment_id,
                 )
-            # The native attempt-scoped writer stage chooses the Artifact
-            # type. Accepted Effect cardinality and eligibility belong only
-            # to Application's immutable-source proof after strict ingestion;
-            # selecting an Exception Artifact never authorizes a write.
-            if stage in {"PRE_EXCEPTION", "POST_EXCEPTION"}:
+            has_exception = stage in {"PRE_EXCEPTION", "POST_EXCEPTION"}
+            accepted_effects: object = None
+            try:
+                accepted_document = json.loads(record.raw_worker_result)
+                if isinstance(accepted_document, Mapping):
+                    accepted_effects = accepted_document.get("requested_effects")
+            except json.JSONDecodeError:
+                pass
+            # Only the immutable accepted original Effect set can authorize
+            # general exception recovery. A semantic-only projection with no
+            # accepted Effect must retain its existing terminal classification.
+            # The historically stripped first-activation manifest is the
+            # pre-existing bounded compatibility case, not a new Action rule.
+            has_original_effect = isinstance(accepted_effects, list) and bool(accepted_effects)
+            legacy_activation = (record.role, record.action, record.change) == (
+                "lead",
+                "propose-change",
+                "unset",
+            )
+            verified_empty_original = False
+            if has_exception and accepted_effects == [] and not legacy_activation:
+                try:
+                    verified_empty_original = _verified_zero_original_accepted_effects(
+                        record=record,
+                        source=WorkerRequest(record.issue_number, record.role, record.action),
+                        repository=repository,
+                        token=token,
+                        read=read,
+                    )
+                except (HTTPError, OSError, RuntimeError, TypeError, ValueError):
+                    # A signed semantic projection cannot independently prove
+                    # that an older accepted request had zero physical Effects.
+                    verified_empty_original = False
+            if has_exception and (
+                has_original_effect or legacy_activation or verified_empty_original
+            ):
                 recovery_artifact = read_application_exception_artifact(
                     repository,
                     token,
