@@ -4197,7 +4197,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             )
 
         def observe_read_fault(
-            path: str, observation: object
+            path: str, observation: object, *, initial_issue_read: bool = False
         ) -> dispatch_bridge.ApplicationCompletion:
             def validation_read(
                 repository: str, token: str, api_path: str, **kwargs: object
@@ -4209,7 +4209,8 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
                 )
 
             with monkeypatch.context() as validation:
-                validation.setattr(validation_resource, "_github_json", validation_read)
+                reader = materialization if initial_issue_read else validation_resource
+                validation.setattr(reader, "_github_json", validation_read)
                 result = native_completion()
                 assert result.accepted_proof is not None
                 if result.accepted_proof.disposition == "INDETERMINATE":
@@ -4238,6 +4239,33 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             assert different.accepted_proof.disposition == "UNSAFE", different
             original_proof = different.accepted_proof.original_effect_proof
             assert original_proof is not None and original_proof.disposition == "CONFLICT"
+
+        issue_path = "issues/435"
+        source_issue = cast(
+            dict[str, object], native_read(proof_git.repository, _TOKEN, issue_path)
+        )
+        for initial_issue_read in (True, False):
+            for observation in (
+                None,
+                {key: value for key, value in source_issue.items() if key != "state"},
+                {key: value for key, value in source_issue.items() if key != "body"},
+            ):
+                incomplete = observe_read_fault(
+                    issue_path, observation, initial_issue_read=initial_issue_read
+                )
+                assert incomplete.accepted_proof is not None
+                assert incomplete.accepted_proof.disposition == "INDETERMINATE", incomplete
+                original_proof = incomplete.accepted_proof.original_effect_proof
+                assert original_proof is not None and original_proof.disposition == "UNKNOWN"
+            assert native_completion().reason == "application-completion-continuation-required"
+            for override in ({"number": 999}, {"state": "closed"}):
+                different = observe_read_fault(
+                    issue_path, {**source_issue, **override}, initial_issue_read=initial_issue_read
+                )
+                assert different.accepted_proof is not None
+                assert different.accepted_proof.disposition == "UNSAFE", different
+                original_proof = different.accepted_proof.original_effect_proof
+                assert original_proof is not None and original_proof.disposition == "CONFLICT"
 
         # Contradictory PR metadata is durable even though the Original Git
         # commit is intact. The conflict needs independent maintenance.
