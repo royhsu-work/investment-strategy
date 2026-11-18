@@ -2839,6 +2839,47 @@ def test_accepted_zero_effect_source_requires_exact_original_request(
     )
 
 
+
+def test_v2_unavailable_physical_source_is_qualified_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One immutable v2 source read, never a legacy zero-Effect second opinion."""
+
+    source = WorkerRequest(435, "executor", "implement-change")
+    change = "restore-t1-dispatch-artifact-consumption"
+    original = _worker_result(action=source.action, role=source.role, result_kind="blocked")
+    original["issue_number"] = source.issue_number
+    original["change"] = change
+    original["requested_effects"] = []
+    body = _effect_request(original)
+    projected = dict(original, _semantic_intent_version=2, requested_effects=[])
+    record = _accepted_record(
+        json.dumps(projected),
+        body,
+        source=source,
+        change=change,
+        result_kind="blocked",
+        request_comment_id=102,
+    )
+    reads: list[str] = []
+
+    def unavailable(_repo: str, _token: str, api_path: str) -> object:
+        reads.append(api_path)
+        return None
+
+    monkeypatch.setattr(bridge, "_github_json", unavailable)
+    outcome = bridge._qualified_accepted_original_effects(
+        record=record,
+        source=source,
+        raw_worker_result=record.raw_worker_result,
+        repository=_REPOSITORY,
+        token=_REVISION,
+    )
+    assert isinstance(outcome, bridge.TypedEvidenceError)
+    assert outcome.category == "UNKNOWN"
+    assert reads == ["issues/comments/102"]
+
+
 @pytest.mark.parametrize(
     ("original_count", "tampered"),
     [(0, False), (1, False), (2, False), (1, True)],
