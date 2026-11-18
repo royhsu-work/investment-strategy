@@ -4251,7 +4251,8 @@ def test_elided_original_exception_selection_preserves_carrier_ownership(
                             },
                             {
                                 "name": (
-                                    "Upload pre-ACCEPT or interrupted application exception evidence"
+                                    "Upload pre-ACCEPT or interrupted "
+                                    "application exception evidence"
                                 ),
                                 "conclusion": "success",
                             },
