@@ -1343,9 +1343,7 @@ def _qualified_physical_original_accepted_effects(
     physical = parse_effect_batch(
         original.raw_worker_result, source, authorized_change=record.change
     )
-    accepted = parse_effect_batch(
-        record.raw_worker_result, source, authorized_change=record.change
-    )
+    accepted = parse_effect_batch(record.raw_worker_result, source, authorized_change=record.change)
     if (
         physical.typed_result is None
         or accepted.typed_result is None
