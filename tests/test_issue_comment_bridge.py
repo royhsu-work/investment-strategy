@@ -6832,6 +6832,7 @@ def _terminal_carrier_issue(action: str) -> dict[str, object]:
         "untrusted-request",
         "changed-request-body",
         "wrong-dispatch-correlation",
+        "missing-dispatch-correlation",
         "different-semantic-result",
         "wrong-accepted-authorization",
         "changed-action",
@@ -6910,11 +6911,12 @@ def test_terminal_merge_effect_reconciles_without_error_semantics(
         ingress_comment["performed_via_github_app"] = {"slug": "untrusted"}
     if alteration == "changed-request-body":
         ingress_comment["body"] = cast(str, ingress_comment["body"]) + "\n"
-    if alteration == "wrong-dispatch-correlation":
+    if alteration in {"wrong-dispatch-correlation", "missing-dispatch-correlation"}:
         request = bridge.parse_application_request(cast(str, ingress_comment["body"]))
         assert request is not None
+        correlation = "0" * 64 if alteration == "wrong-dispatch-correlation" else None
         ingress_comment["body"] = render_application_request(
-            replace(request, dispatch_correlation="0" * 64)
+            replace(request, dispatch_correlation=correlation)
         )
         record = replace(
             record,
