@@ -4236,9 +4236,14 @@ def test_elided_original_exception_selection_preserves_carrier_ownership(
                     "id": 888, "name": "apply", "run_attempt": 1,
                     "status": "completed", "conclusion": "failure",
                     "steps": [
-                        {"name": "Upload exact application recovery evidence", "conclusion": "skipped"},
                         {
-                            "name": "Upload pre-ACCEPT or interrupted application exception evidence",
+                            "name": "Upload exact application recovery evidence",
+                            "conclusion": "skipped",
+                        },
+                        {
+                            "name": (
+                                "Upload pre-ACCEPT or interrupted application exception evidence"
+                            ),
                             "conclusion": "success",
                         },
                     ],
@@ -4253,7 +4258,9 @@ def test_elided_original_exception_selection_preserves_carrier_ownership(
             }
         raise AssertionError(f"unexpected source read: {path}")
 
-    def read_exception(*_args: object, **_kwargs: object) -> application.ApplicationExceptionArtifact:
+    def read_exception(
+        *_args: object, **_kwargs: object
+    ) -> application.ApplicationExceptionArtifact:
         selected.append("exception")
         return exception
 
