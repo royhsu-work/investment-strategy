@@ -6568,7 +6568,9 @@ def _qualified_accepted_original_effects(
                 "immutable physical original cannot be qualified",
                 record.request_comment_id,
             )
-        if physical is not None and physical.effects:
+        # Even a physically empty Original is now positively source-qualified;
+        # do not issue a second GET merely to re-prove its cardinality.
+        if physical is not None:
             return physical
     # Physical-zero truth is a source qualification, not a projection shape.
     # Only a positive native source witness returns an empty qualified batch.
