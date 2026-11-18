@@ -2737,6 +2737,117 @@ def test_terminal_transition_closes_and_clears_routing_atomically(
     assert adapter.observe_postcondition(effect)
 
 
+@pytest.mark.parametrize(
+    ("formal_case", "expected"),
+    [("qualified", True), ("missing", False), ("wrong-request", False)],
+)
+def test_accepted_terminal_postcondition_reobserves_after_process_restart(
+    monkeypatch: pytest.MonkeyPatch,
+    formal_case: str,
+    expected: bool,
+) -> None:
+    """RED: a durable accepted terminal needs source proof, not a local receipt.
+
+    A fresh adapter has no _terminal_transitions cache. Terminal recovery
+    must use native formal/timeline evidence, and an unrelated closure or
+    wrong accepted correlation must not be attributed to this request.
+    """
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "lead", "finalize-archive")
+    correct_correlation = formal_application_correlation(
+        source,
+        change=_CHANGE,
+        result_kind="lifecycle-complete",
+        request_comment_id=_REQUEST_COMMENT_ID,
+        current_revision=_REVISION,
+    )
+    observed_correlation = formal_application_correlation(
+        source,
+        change=_CHANGE,
+        result_kind="lifecycle-complete",
+        request_comment_id=(
+            _REQUEST_COMMENT_ID + 1 if formal_case == "wrong-request" else _REQUEST_COMMENT_ID
+        ),
+        current_revision=_REVISION,
+    )
+    formal_comment = {
+        "id": 992,
+        "body": (
+            "ACTION_RESULT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Action: finalize-archive\n"
+            "Role: lead\n"
+            "Result: LIFECYCLE_COMPLETE\n"
+            f"Revision: {_REVISION}\n"
+            f"Default-Branch-Revision: {_REVISION}\n"
+            f"Application-Correlation: {observed_correlation}\n"
+            "Repository-derived successor: terminal\n"
+            "Evidence: qualified final archive result"
+        ),
+        "created_at": "2026-09-03T01:00:00Z",
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    issue = {
+        "number": 138,
+        "state": "closed",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-03T00:00:00Z",
+        "closed_at": "2026-09-03T01:03:00Z",
+        "labels": [{"name": "human:notified"}],
+    }
+    timeline = [
+        {"id": 992, "event": "commented", "created_at": "2026-09-03T01:00:00Z"},
+        {
+            "id": 993,
+            "event": "unlabeled",
+            "label": {"name": "action:finalize-archive"},
+            "created_at": "2026-09-03T01:01:00Z",
+        },
+        {"id": 994, "event": "closed", "created_at": "2026-09-03T01:03:00Z"},
+    ]
+    observed_reads: list[str] = []
+
+    def read(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        **_kwargs: object,
+    ) -> object:
+        assert method == "GET", "read-only recovery must not retry terminal PATCH"
+        observed_reads.append(api_path)
+        if api_path == "issues/138":
+            return issue
+        if api_path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return [] if formal_case == "missing" else [formal_comment]
+        if api_path == "issues/138/timeline?per_page=100&page=1":
+            return timeline
+        raise AssertionError(f"unexpected recovery read: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    fresh = GitHubEffectAdapter(
+        repository,
+        _TEST_TOKEN,
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="lifecycle-complete",
+        request_comment_id=_REQUEST_COMMENT_ID,
+        accepted_intent=True,
+    )
+    effect = StagedEffect(
+        "terminal-transition",
+        json.dumps({"issue_number": 138, "expected_change": _CHANGE}),
+        derived=True,
+    )
+    assert (observed_correlation == correct_correlation) is (formal_case != "wrong-request")
+    assert fresh.observe_postcondition(effect) is expected
+    assert observed_reads
+
+
 def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2880,6 +2991,92 @@ def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
 
     assert ref_adapter.guard(correct_ref)
     assert not ref_adapter.guard(foreign_ref)
+
+
+@pytest.mark.parametrize("action", ["merge-implementation-pr", "merge-archive-pr"])
+@pytest.mark.parametrize(
+    ("inventory", "expected"),
+    [
+        ("single", True),
+        ("duplicate", False),
+        ("malformed", False),
+        ("incomplete-page", False),
+        ("second-page", True),
+    ],
+)
+def test_ref_delete_pr_inventory_uses_one_complete_page_reader(
+    monkeypatch: pytest.MonkeyPatch, action: str, inventory: str, expected: bool
+) -> None:
+    """Distinct merge proofs share complete bounded PR discovery, never partial evidence."""
+
+    branch = (
+        f"agent/{_CHANGE}" if action == "merge-implementation-pr" else f"agent/archive-{_CHANGE}"
+    )
+    ref = f"refs/heads/{branch}"
+    reads: list[str] = []
+
+    def native_read(_repository: str, _token: str, path: str) -> object:
+        reads.append(path)
+        if path.startswith("pulls?state=all&head="):
+            assert "&base=main&per_page=100&page=" in path
+            assert inventory in {
+                "single",
+                "duplicate",
+                "malformed",
+                "incomplete-page",
+                "second-page",
+            }
+            if path.endswith("page=1"):
+                if inventory == "single":
+                    return [{"number": 7}]
+                if inventory == "duplicate":
+                    return [{"number": 7}, {"number": 7}]
+                if inventory == "malformed":
+                    return [{"number": 7}, None]
+                return [{"number": 0} for _ in range(100)]
+            assert path.endswith("page=2")
+            if inventory == "second-page":
+                return [{"number": 7}]
+            assert inventory == "incomplete-page"
+            return None
+        if path == "pulls/7":
+            return {"merge_commit_sha": _REVISION}
+        raise AssertionError(f"unexpected GitHub read: {path}")
+
+    monkeypatch.setattr(effects, "_github_json", native_read)
+    monkeypatch.setattr(
+        effects,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: SimpleNamespace(
+            qualified=True,
+            disposition="HISTORICAL_MERGED",
+            branch=branch,
+            head_sha=_REVISION,
+        ),
+    )
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        WorkerRequest(138, "executor", action),
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+    )
+    monkeypatch.setattr(adapter, "_default_branch_revision", lambda _branch: _REVISION)
+    monkeypatch.setattr(adapter, "_pull_request_matches_source", lambda *_a, **_k: True)
+    monkeypatch.setattr(adapter, "_historical_merged_pr", lambda *_a: True)
+    monkeypatch.setattr(adapter, "_merge_commit_is_in_current_default", lambda *_a: True)
+    observation = cast(GitHubIssueObservation, SimpleNamespace(change=_CHANGE))
+
+    if action == "merge-implementation-pr":
+        proven = adapter._implementation_ref_matches_source(
+            ref, _REVISION, observation, "main", require_merged=True
+        )
+    else:
+        proven = adapter._archive_ref_matches_merged_source(ref, _REVISION, observation, "main")
+    assert proven is expected
+    assert any(path.endswith("page=2") for path in reads) is (
+        inventory in {"incomplete-page", "second-page"}
+    )
 
 
 @pytest.mark.parametrize(
@@ -4530,8 +4727,12 @@ def test_fresh_process_reconstructs_lead_materialization_from_canonical_observer
         default_branch: str,
         allow_pending_continuation: bool = False,
         accepted_authorization_revision: str | None = None,
+        accepted_successor_routing: tuple[str, str] | None = None,
         accepted_intent: bool = False,
+        committed_formal_result: bool = False,
     ) -> ValidationResourceTarget:
+        assert accepted_successor_routing is None
+        assert not committed_formal_result
         assert not allow_pending_continuation
         assert default_branch == "main"
         observed.append(
@@ -4619,7 +4820,9 @@ def test_accepted_materialization_reconciles_after_successor_route(
         accepted_authorization_revision: str | None = None,
         accepted_successor_routing: tuple[str, str] | None = None,
         accepted_intent: bool = False,
+        committed_formal_result: bool = False,
     ) -> ValidationResourceTarget:
+        assert not committed_formal_result
         assert (repository, token, current_revision, default_branch) == (
             "owner/repo",
             _TEST_TOKEN,

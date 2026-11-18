@@ -44,10 +44,10 @@ from investment_strategy.scheduled_agent_application_carrier import (
     qualify_supersession_branch,
 )
 from investment_strategy.scheduled_agent_application_materialization import (
+    MaterializationProof,
     MaterializationRequest,
     apply_materialization,
     find_materialization_payload,
-    materialization_postcondition,
     observe_materialization_target,
     prove_materialization,
 )
@@ -73,6 +73,7 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
     qualify_current_formal_consequence,
 )
+from investment_strategy.scheduled_agent_formal_result import FormalLifecycleEvent
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     WorkerRequest,
@@ -369,6 +370,9 @@ class EffectRecoveryEvidence:
     mutation_status: str
     unfinished_boundary: str
     rejection: ApplicationRejection | None = None
+    operation_stage: str | None = None
+    write_call_entered: bool | None = None
+    raw_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1396,6 +1400,7 @@ def apply_effect_batch(
     accepted_intent: bool = False,
     reconcile_only: bool = False,
     uncertain_effect_index: int | None = None,
+    proven_empty_original_effects: bool = False,
     durable_checkpoint_revision: str | None = None,
     persist_application_decision: (
         Callable[[ActionApplicationDecision, str, str], bool] | None
@@ -1491,6 +1496,9 @@ def apply_effect_batch(
         completed_indexes: tuple[int, ...] = (),
         unfinished_boundary: str = "effect-precondition",
         mutation_status: str = "not-complete",
+        operation_stage: str | None = None,
+        write_call_entered: bool | None = None,
+        raw_error: str | None = None,
     ) -> ApplyResult:
         failed_effect = (
             effects_to_apply[effect_index]
@@ -1518,8 +1526,30 @@ def apply_effect_batch(
             mutation_status=mutation_status,
             unfinished_boundary=unfinished_boundary,
             rejection=rejection,
+            operation_stage=operation_stage,
+            write_call_entered=write_call_entered,
+            raw_error=raw_error,
         )
         return ApplyResult(False, reason, rejection=rejection, recovery_evidence=evidence)
+
+    def interrupted_before_write(
+        effect_index: int,
+        completed: tuple[int, ...],
+        exc: OSError,
+        *,
+        operation_stage: str = "BEFORE-WRITE",
+    ) -> ApplyResult:
+        # These are *invocation-local* facts, never historical NOT_APPLIED proof.
+        return rejected(
+            f"effect observation raised before write: {type(exc).__qualname__}",
+            effect_index,
+            completed_indexes=completed,
+            unfinished_boundary="effect-precondition-exception",
+            mutation_status="not-complete",
+            operation_stage=operation_stage,
+            write_call_entered=False,
+            raw_error=str(exc),
+        )
 
     # ACCEPT is the immutable linearization point.  A new process may enter
     # after any GitHub write (including a write whose HTTP response was lost).
@@ -1527,11 +1557,19 @@ def apply_effect_batch(
     # the latter normally describes the pre-write state and can no longer
     # hold once the effect is durable.  Never infer completion from a failed
     # guard, and never apply this shortcut to an unaccepted worker request.
-    completed_before = {
-        index
-        for index, effect in enumerate(effects_to_apply)
-        if accepted_intent and observe_postcondition(effect)
-    }
+    completed_before: set[int] = set()
+    if accepted_intent:
+        for index, effect in enumerate(effects_to_apply):
+            try:
+                if observe_postcondition(effect):
+                    completed_before.add(index)
+            except OSError as exc:
+                # The first observation is also an I/O boundary. Preserve
+                # the exact observed prefix instead of escaping without a
+                # recovery checkpoint or inferring historical non-attempt.
+                return interrupted_before_write(
+                    index, tuple(sorted(completed_before)), exc, operation_stage="READ"
+                )
 
     def unproven_effect(missing: int | None) -> ApplyResult:
         failed_effect = effects_to_apply[missing] if missing is not None else derived_effect
@@ -1567,15 +1605,37 @@ def apply_effect_batch(
     # may apply it (notably the original formal result and legal successor).
     # An absent boundary retains the older, more restrictive read-only mode.
     if reconcile_only:
-        if not accepted_intent or (
-            uncertain_effect_index is not None
-            and (
-                type(uncertain_effect_index) is not int
-                or uncertain_effect_index < 0
-                or uncertain_effect_index > len(batch.effects)
-            )
+        valid_index = uncertain_effect_index is None or (
+            type(uncertain_effect_index) is int
+            and (uncertain_effect_index >= 0 or proven_empty_original_effects)
+            and uncertain_effect_index <= len(batch.effects)
+        )
+        if (
+            not accepted_intent
+            or not valid_index
+            or (proven_empty_original_effects and uncertain_effect_index != -1)
         ):
             return ApplyResult(False, "indeterminate accepted effects require reconciliation")
+        if proven_empty_original_effects:
+            # The caller has already proven an exact empty immutable source.
+            # Only the Application-owned formal result may follow that empty
+            # attempted frontier; no untrusted/new control write can enter.
+            expected_marker = (
+                "REVIEW_RESULT"
+                if batch.source.role == "reviewer"
+                else "MERGE_RESULT"
+                if batch.source.action.startswith("merge-")
+                else "ACTION_RESULT"
+            )
+            if len(batch.effects) != 1 or batch.effects[0].kind != "issue-comment":
+                return ApplyResult(False, "empty accepted original has unexpected Effects")
+            payload = _effect_payload(batch.effects[0])
+            if (
+                not isinstance(payload, Mapping)
+                or not isinstance(payload.get("body"), str)
+                or not cast(str, payload["body"]).startswith(expected_marker + "\n")
+            ):
+                return ApplyResult(False, "empty accepted original has no bounded formal result")
         observed_through = (
             len(batch.effects) if uncertain_effect_index is None else uncertain_effect_index
         )
@@ -1600,8 +1660,32 @@ def apply_effect_batch(
     for index, effect in enumerate(effects_to_apply):
         if index in completed_before:
             continue
-        if not effect_guard(effect):
-            return rejected("effect precondition rejected", index)
+        try:
+            guard_ok = effect_guard(effect)
+        except OSError as exc:
+            # The preflight guard pass has issued *no* Effects yet. Point
+            # the checkpoint at the earliest unobserved Effect, not the
+            # later guard whose GET failed.
+            first_pending = next(
+                (position for position in range(index + 1) if position not in completed_before),
+                index,
+            )
+            proven_prefix = tuple(
+                sorted(position for position in completed_before if position < first_pending)
+            )
+            return interrupted_before_write(first_pending, proven_prefix, exc)
+        if not guard_ok:
+            # Evidence describes the exact completed prefix at this boundary.
+            # Later completed Effects are not a sequential write certificate.
+            return rejected(
+                "effect precondition rejected",
+                index,
+                completed_indexes=tuple(
+                    sorted(position for position in completed_before if position < index)
+                ),
+                operation_stage="BEFORE-WRITE",
+                write_call_entered=False,
+            )
 
     if (
         not accepted_intent
@@ -1614,52 +1698,85 @@ def apply_effect_batch(
     ):
         return ApplyResult(False, "application decision postcondition not observed")
 
+    # Execute original and Application-derived Effects through the same
+    # guard/write/postcondition boundary. Derived Effects remain last, after
+    # the original frontier is fully observed or durably applied.
     completed_indexes: list[int] = []
-    for index, effect in enumerate(effects_to_apply):
-        if index in completed_before or (accepted_intent and observe_postcondition(effect)):
+    execution_order = (*effects_to_apply, derived_effect) if apply_derived else effects_to_apply
+    for index, effect in enumerate(execution_order):
+        is_derived = index == len(effects_to_apply)
+        try:
+            observed = index in completed_before or (
+                accepted_intent and observe_postcondition(effect)
+            )
+        except OSError as exc:
+            return interrupted_before_write(
+                index, tuple(completed_indexes), exc, operation_stage="READ"
+            )
+        if observed:
+            if is_derived:
+                return ApplyResult(True, "already-durable")
             completed_indexes.append(index)
             continue
-        if not effect_guard(effect):
+        try:
+            guard_ok = effect_guard(effect)
+        except OSError as exc:
+            return interrupted_before_write(index, tuple(completed_indexes), exc)
+        if not guard_ok:
             return rejected(
                 "effect precondition rejected",
                 index,
                 completed_indexes=tuple(completed_indexes),
+                operation_stage="BEFORE-WRITE",
+                write_call_entered=False,
             )
+
+        boundary = "derived-effect-postcondition" if is_derived else "effect-postcondition"
         try:
             apply_effect(effect)
         except CarrierRequired:
             raise
-        if not observe_postcondition(effect):
+        except OSError as exc:
+            operation = "derived" if is_derived else "effect"
+            return rejected(
+                f"{operation} write outcome unavailable: {type(exc).__qualname__}",
+                index,
+                completed_indexes=tuple(completed_indexes),
+                unfinished_boundary=boundary,
+                mutation_status="unknown",
+                operation_stage="WRITE",
+                write_call_entered=True,
+                raw_error=str(exc),
+            )
+        try:
+            observed_after = observe_postcondition(effect)
+        except OSError as exc:
+            return rejected(
+                (
+                    "derived postcondition observation unavailable"
+                    if is_derived
+                    else "durable postcondition observation unavailable"
+                ),
+                index,
+                completed_indexes=tuple(completed_indexes),
+                unfinished_boundary=boundary,
+                mutation_status="unknown",
+                operation_stage="AFTER-WRITE",
+                write_call_entered=True,
+                raw_error=str(exc),
+            )
+        if not observed_after:
             return rejected(
                 "durable postcondition not observed",
                 index,
                 completed_indexes=tuple(completed_indexes),
-                unfinished_boundary="effect-postcondition",
+                unfinished_boundary=boundary,
                 mutation_status="unknown",
+                operation_stage="AFTER-WRITE",
+                write_call_entered=True,
             )
-        completed_indexes.append(index)
-
-    if apply_derived:
-        if accepted_intent and observe_postcondition(derived_effect):
-            return ApplyResult(True, "already-durable")
-        if not effect_guard(derived_effect):
-            return rejected(
-                "effect precondition rejected",
-                len(effects_to_apply),
-                completed_indexes=tuple(completed_indexes),
-            )
-        try:
-            apply_effect(derived_effect)
-        except CarrierRequired:
-            raise
-        if not observe_postcondition(derived_effect):
-            return rejected(
-                "durable postcondition not observed",
-                len(effects_to_apply),
-                completed_indexes=tuple(completed_indexes),
-                unfinished_boundary="derived-effect-postcondition",
-                mutation_status="unknown",
-            )
+        if not is_derived:
+            completed_indexes.append(index)
 
     return ApplyResult(True, "applied")
 
@@ -1681,6 +1798,60 @@ def _paged_github_list(
         incomplete_error="application evidence comment list is incomplete",
         malformed_error="application evidence comment list is malformed",
     )
+
+
+def persist_native_application_evidence_comment(
+    *,
+    repository: str,
+    token: str,
+    issue_number: int,
+    body: str,
+    errors: tuple[str, str, str, str],
+    read: Callable[..., object | None],
+    list_comments: Callable[[str, str, str], tuple[Mapping[str, object], ...]],
+) -> int:
+    """Single native comment lookup/write/fresh-proof owner for Application evidence.
+
+    The callers retain distinct accepted/activation/recovery authorization and
+    error contracts. Only durable GitHub Actions provenance can satisfy a write.
+    """
+    comments = list_comments(repository, token, f"issues/{issue_number}/comments?sort=created")
+    matches = [
+        item for item in comments if is_github_actions_comment(item) and item.get("body") == body
+    ]
+    if len(matches) > 1:
+        raise RuntimeError(errors[0])
+    if matches:
+        existing_id = _positive_comment_id(matches[0].get("id"))
+        if existing_id is None:
+            raise RuntimeError(errors[1])
+        return existing_id
+    response = read(
+        repository,
+        token,
+        f"issues/{issue_number}/comments",
+        method="POST",
+        payload={"body": body},
+    )
+    comment_id = (
+        None if not isinstance(response, Mapping) else _positive_comment_id(response.get("id"))
+    )
+    if (
+        not isinstance(response, Mapping)
+        or comment_id is None
+        or response.get("body") != body
+        or not is_github_actions_comment(response)
+    ):
+        raise RuntimeError(errors[2])
+    observed = read(repository, token, f"issues/comments/{comment_id}")
+    if (
+        not isinstance(observed, Mapping)
+        or observed.get("id") != comment_id
+        or observed.get("body") != body
+        or not is_github_actions_comment(observed)
+    ):
+        raise RuntimeError(errors[3])
+    return comment_id
 
 
 def _github_json(
@@ -2130,17 +2301,16 @@ class GitHubEffectAdapter:
         owner = self.repository.split("/", 1)[0]
         head = quote(f"{owner}:{branch}", safe="")
         base = quote(default_branch, safe="")
-        payload = _github_json(
-            self.repository,
-            self.token,
-            f"pulls?state=all&head={head}&base={base}&per_page=100",
-        )
-        if not isinstance(payload, list) or len(payload) >= 100:
+        try:
+            candidates = _paged_github_list(
+                self.repository,
+                self.token,
+                f"pulls?state=all&head={head}&base={base}",
+            )
+        except RuntimeError:
             return False
         matches = 0
-        for item in payload:
-            if not isinstance(item, Mapping):
-                continue
+        for item in candidates:
             number = item.get("number")
             if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
                 continue
@@ -2197,17 +2367,16 @@ class GitHubEffectAdapter:
         branch = ref.removeprefix("refs/heads/")
         head = quote(f"{owner}:{branch}", safe="")
         base = quote(default_branch, safe="")
-        payload = _github_json(
-            self.repository,
-            self.token,
-            f"pulls?state=all&head={head}&base={base}&per_page=100",
-        )
-        if not isinstance(payload, list) or len(payload) >= 100:
+        try:
+            candidates = _paged_github_list(
+                self.repository,
+                self.token,
+                f"pulls?state=all&head={head}&base={base}",
+            )
+        except RuntimeError:
             return False
         matches = 0
-        for item in payload:
-            if not isinstance(item, Mapping):
-                continue
+        for item in candidates:
             number = item.get("number")
             if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
                 continue
@@ -2286,8 +2455,6 @@ class GitHubEffectAdapter:
         expected_head_sha = request.get("expected_head_sha")
         if expected_head_sha is not None and head.get("sha") != expected_head_sha:
             return False
-        if request.get("head") == _archive_branch(self.authorized_change):
-            return _valid_sha(self.current_revision) and base.get("sha") == self.current_revision
         return _valid_sha(self.current_revision) and base.get("sha") == self.current_revision
 
     def _source_pull_request(
@@ -3094,9 +3261,11 @@ class GitHubEffectAdapter:
                 return tuple(events)
             page += 1
 
-    def _formal_transition_is_qualified(self, effect: StagedEffect) -> bool:
+    def _formal_transition_is_qualified(
+        self, effect: StagedEffect, *, terminal_postcondition: bool = False
+    ) -> bool:
         if self.authorized_change == "unset":
-            return True
+            return not terminal_postcondition
         payload = _effect_payload(effect)
         current = self._current_issue()
         observation = None if current is None else normalize_github_issue(current)
@@ -3105,7 +3274,7 @@ class GitHubEffectAdapter:
             or observation is None
             or not observation.authoritative
             or observation.issue_number != self.source.issue_number
-            or observation.state != "open"
+            or observation.state != ("closed" if terminal_postcondition else "open")
             or observation.change != self.authorized_change
             or self.current_revision is None
         ):
@@ -3128,7 +3297,10 @@ class GitHubEffectAdapter:
             and observation.routing == expected_routing
             and expected_routing == self._accepted_successor_routing()
         )
-        if not at_source_frontier and not at_accepted_successor_frontier:
+        if terminal_postcondition:
+            if not self.accepted_intent or not expected_terminal or observation.routing is not None:
+                return False
+        elif not at_source_frontier and not at_accepted_successor_frontier:
             return False
         formal_comments = self._formal_comments()
         lifecycle_events = self._formal_lifecycle_events() if formal_comments else ()
@@ -3139,7 +3311,7 @@ class GitHubEffectAdapter:
             current_routing=observation.routing,
             comments=formal_comments,
             current_revision=self.current_revision,
-            mode="pending",
+            mode="current" if terminal_postcondition else "pending",
             expected_routing=expected_routing,
             expected_terminal=expected_terminal,
             source_routing=(self.source.role, self.source.action),
@@ -3201,7 +3373,19 @@ class GitHubEffectAdapter:
                     qualification_input,
                     authorization_ancestry=tuple(ancestry),
                 )
-        return qualify_current_formal_consequence(qualification_input).qualified
+        qualified = qualify_current_formal_consequence(qualification_input)
+        if not terminal_postcondition:
+            return qualified.qualified
+        # A closed Issue is attributable to this accepted request only when
+        # the exact formal result and terminal lifecycle are also qualified.
+        formal = qualified.event
+        return bool(
+            qualified.qualified
+            and isinstance(formal, FormalLifecycleEvent)
+            and (formal.role, formal.action) == (self.source.role, self.source.action)
+            and formal.result_kind == self.expected_result_kind
+            and formal.application_correlation == self._expected_formal_correlation()
+        )
 
     def guard(self, effect: StagedEffect) -> bool:
         self._last_rejection = None
@@ -3612,49 +3796,21 @@ class GitHubEffectAdapter:
         body: str,
         marker: str,
     ) -> bool:
-        """Create one immutable application evidence comment and fresh-verify it."""
-
-        comments = _paged_github_list(
-            self.repository,
-            self.token,
-            f"issues/{self.source.issue_number}/comments?sort=created&direction=asc",
+        """Reuse the same native comment owner as activation/recovery evidence."""
+        persist_native_application_evidence_comment(
+            repository=self.repository,
+            token=self.token,
+            issue_number=self.source.issue_number,
+            body=body,
+            errors=(
+                f"{marker} evidence is duplicated",
+                f"{marker} evidence postcondition was not observed",
+                f"{marker} evidence postcondition was not observed",
+                f"{marker} evidence fresh postcondition was not observed",
+            ),
+            read=_github_json,
+            list_comments=_paged_github_list,
         )
-        existing = [
-            item
-            for item in comments
-            if is_github_actions_comment(item) and item.get("body") == body
-        ]
-        if len(existing) > 1:
-            raise RuntimeError(f"{marker} evidence is duplicated")
-        if existing:
-            return True
-        response = _github_json(
-            self.repository,
-            self.token,
-            f"issues/{self.source.issue_number}/comments",
-            method="POST",
-            payload={"body": body},
-        )
-        comment_id = (
-            None if not isinstance(response, Mapping) else _positive_comment_id(response.get("id"))
-        )
-        if (
-            not isinstance(response, Mapping)
-            or comment_id is None
-            or response.get("body") != body
-            or not is_github_actions_comment(response)
-        ):
-            raise RuntimeError(f"{marker} evidence postcondition was not observed")
-        observed = _as_mapping(
-            _github_json(self.repository, self.token, f"issues/comments/{comment_id}")
-        )
-        if (
-            observed is None
-            or observed.get("id") != comment_id
-            or observed.get("body") != body
-            or not is_github_actions_comment(observed)
-        ):
-            raise RuntimeError(f"{marker} evidence fresh postcondition was not observed")
         return True
 
     def persist_application_decision(
@@ -3792,6 +3948,23 @@ class GitHubEffectAdapter:
 
         raise RuntimeError(f"unsupported effect kind: {effect.kind}")
 
+    def observe_materialization_proof(self, payload: Mapping[str, object]) -> MaterializationProof:
+        """Observe materialization through the same proof used by ordinary Effects."""
+        default_branch = self._default_branch()
+        if default_branch is None or self.current_revision is None:
+            return MaterializationProof("UNKNOWN", reason="current default branch unavailable")
+        return prove_materialization(
+            payload,
+            self.source,
+            repository=self.repository,
+            token=self.token,
+            current_revision=self.current_revision,
+            default_branch=default_branch,
+            accepted_authorization_revision=self.authorization_revision,
+            allow_pending_continuation=self.allow_pending_continuation,
+            accepted_intent=self.accepted_intent,
+        )
+
     def _observe_github_mutation(
         self,
         effect: StagedEffect,
@@ -3799,23 +3972,7 @@ class GitHubEffectAdapter:
     ) -> bool:
         operation = cast(str, payload["operation"])
         if operation == "application-materialize":
-            default_branch = self._default_branch()
-            return (
-                default_branch is not None
-                and self.current_revision is not None
-                and materialization_postcondition(
-                    payload,
-                    self.source,
-                    repository=self.repository,
-                    token=self.token,
-                    current_revision=self.current_revision,
-                    default_branch=default_branch,
-                    accepted_authorization_revision=self.authorization_revision,
-                    target=self._materialization_targets.get(effect),
-                    allow_pending_continuation=self.allow_pending_continuation,
-                    accepted_intent=self.accepted_intent,
-                )
-            )
+            return self.observe_materialization_proof(payload).disposition == "COMPLETE"
         if operation == "issue-update":
             current = self._current_issue()
             fields = payload.get("fields")
@@ -3936,31 +4093,37 @@ class GitHubEffectAdapter:
             )
         return False
 
+    def observe_issue_comment_source_ref(self, effect: StagedEffect) -> str | None:
+        """Return the native object ref only after full postcondition qualification."""
+        if effect.kind != "issue-comment":
+            return None
+        payload = _effect_payload(effect)
+        if payload is None:
+            return None
+        bound_body = self._application_bound_comment_body(cast(str, payload["body"]))
+        comment_id = self._comment_ids.get(effect)
+        if comment_id is None:
+            # A later invocation has no process-local write receipt.
+            comment_id = self._existing_issue_comment(bound_body)
+        if comment_id is None:
+            return None
+        response = _github_json(
+            self.repository,
+            self.token,
+            f"issues/comments/{comment_id}",
+        )
+        if (
+            isinstance(response, Mapping)
+            and response.get("body") == bound_body
+            and response.get("id") == comment_id
+            and is_github_actions_comment(response)
+        ):
+            return f"issues/comments/{comment_id}"
+        return None
+
     def observe_postcondition(self, effect: StagedEffect) -> bool:
         if effect.kind == "issue-comment":
-            payload = _effect_payload(effect)
-            if payload is None:
-                return False
-            bound_body = self._application_bound_comment_body(cast(str, payload["body"]))
-            comment_id = self._comment_ids.get(effect)
-            if comment_id is None:
-                # An interrupted application has no process-local receipt.
-                # Reconstruct the exact durable comment by read-only GitHub
-                # observation, then verify its individual source object.
-                comment_id = self._existing_issue_comment(bound_body)
-            if comment_id is None:
-                return False
-            response = _github_json(
-                self.repository,
-                self.token,
-                f"issues/comments/{comment_id}",
-            )
-            return bool(
-                isinstance(response, Mapping)
-                and response.get("body") == bound_body
-                and response.get("id") == comment_id
-                and is_github_actions_comment(response)
-            )
+            return self.observe_issue_comment_source_ref(effect) is not None
 
         if effect.kind == "routing-transition":
             # A successor route can be committed just before interruption.
@@ -4002,7 +4165,15 @@ class GitHubEffectAdapter:
             current = self._current_issue()
             observation = None if current is None else normalize_github_issue(current)
             return bool(
-                effect in self._terminal_transitions
+                (
+                    effect in self._terminal_transitions
+                    or (
+                        self.accepted_intent
+                        and self._formal_transition_is_qualified(
+                            effect, terminal_postcondition=True
+                        )
+                    )
+                )
                 and payload is not None
                 and observation is not None
                 and observation.authoritative
@@ -4181,33 +4352,21 @@ def _fresh_materialization_target(
     if request is None or default_branch is None:
         return None
     try:
-        if accepted_successor_routing is None:
-            target = observe_materialization_target(
-                payload,
-                source,
-                repository=adapter.repository,
-                token=adapter.token,
-                current_revision=current_revision,
-                default_branch=default_branch,
-                accepted_authorization_revision=adapter.authorization_revision,
-                allow_pending_continuation=allow_pending_continuation,
-                accepted_intent=adapter.accepted_intent,
-            )
-        else:
-            extra = {"committed_formal_result": True} if committed_formal_result else {}
-            target = observe_materialization_target(
-                payload,
-                source,
-                repository=adapter.repository,
-                token=adapter.token,
-                current_revision=current_revision,
-                default_branch=default_branch,
-                accepted_authorization_revision=adapter.authorization_revision,
-                allow_pending_continuation=allow_pending_continuation,
-                accepted_successor_routing=accepted_successor_routing,
-                accepted_intent=adapter.accepted_intent,
-                **extra,
-            )
+        target = observe_materialization_target(
+            payload,
+            source,
+            repository=adapter.repository,
+            token=adapter.token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            accepted_authorization_revision=adapter.authorization_revision,
+            allow_pending_continuation=allow_pending_continuation,
+            accepted_successor_routing=accepted_successor_routing,
+            accepted_intent=adapter.accepted_intent,
+            committed_formal_result=(
+                committed_formal_result and accepted_successor_routing is not None
+            ),
+        )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return None
     if (
@@ -4346,15 +4505,40 @@ def consequence_postconditions_complete(
             # separate callers.  Once the formal event is qualified, the
             # default branch itself is the affirmative evidence target.
             return _valid_sha(current_revision)
-        if spec.evidence_target is EvidenceTarget.MATERIALIZED_REVISION:
-            materializations = tuple(
-                effect
-                for effect in batch.effects
-                if effect.kind == GITHUB_MUTATION_KIND
-                and (_effect_payload(effect) or {}).get("operation") == "application-materialize"
+        if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
+            return merged_pr_readiness_complete(
+                repository=repository,
+                token=token,
+                issue_number=source.issue_number,
+                action=source.action,
+                change=change,
+                current_revision=current_revision,
             )
-            if len(materializations) != 1:
-                return False
+
+        # Both materialization evidence targets consume the same immutable
+        # effect identities; each retains its own canonical postcondition.
+        materializations = tuple(
+            effect
+            for effect in batch.effects
+            if effect.kind == GITHUB_MUTATION_KIND
+            and (_effect_payload(effect) or {}).get("operation") == "application-materialize"
+        )
+        if len(materializations) > 1 or (
+            spec.evidence_target is EvidenceTarget.MATERIALIZED_REVISION and not materializations
+        ):
+            return False
+        checkpoints = tuple(
+            effect
+            for effect in batch.effects
+            if effect.kind == "issue-comment"
+            and isinstance((_effect_payload(effect) or {}).get("body"), str)
+            and cast(str, (_effect_payload(effect) or {})["body"]).splitlines()[:1]
+            == ["SLICE_CHECKPOINT"]
+        )
+        if len(checkpoints) > 1:
+            return False
+
+        if spec.evidence_target is EvidenceTarget.MATERIALIZED_REVISION:
             adapter = GitHubEffectAdapter(
                 repository,
                 token,
@@ -4384,26 +4568,7 @@ def consequence_postconditions_complete(
             # distinct obligations of one immutable accepted result. The
             # carrier's positive witness alone must not complete a checkpoint
             # whose exact trusted Issue comment has not been observed.
-            checkpoints = tuple(
-                effect
-                for effect in batch.effects
-                if effect.kind == "issue-comment"
-                and isinstance((_effect_payload(effect) or {}).get("body"), str)
-                and cast(str, (_effect_payload(effect) or {})["body"]).splitlines()[:1]
-                == ["SLICE_CHECKPOINT"]
-            )
-            if len(checkpoints) > 1:
-                return False
             return all(adapter.observe_postcondition(effect) for effect in checkpoints)
-        if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
-            return merged_pr_readiness_complete(
-                repository=repository,
-                token=token,
-                issue_number=source.issue_number,
-                action=source.action,
-                change=change,
-                current_revision=current_revision,
-            )
 
         # Implementation carrier qualification stays with its existing owner,
         # even when a new process must reconstruct a materialization effect.
@@ -4420,36 +4585,27 @@ def consequence_postconditions_complete(
             pending_application_correlation=observed_application_correlation,
         )
         materialized_revision: str | None = None
-        if spec.evidence_target is EvidenceTarget.IMPLEMENTATION_PR_HEAD:
-            materializations = tuple(
-                effect
-                for effect in batch.effects
-                if effect.kind == GITHUB_MUTATION_KIND
-                and (_effect_payload(effect) or {}).get("operation") == "application-materialize"
-            )
-            if len(materializations) > 1:
-                return False
-            if materializations:
-                payload = _effect_payload(materializations[0])
-                target = (
-                    None
-                    if payload is None
-                    else _fresh_materialization_target(
-                        payload,
-                        adapter=adapter,
-                        source=source,
-                        current_revision=current_revision,
-                        allow_pending_continuation=allow_pending_continuation,
-                        accepted_successor_routing=accepted_successor_routing,
-                        committed_formal_result=(
-                            formal_result_observed
-                            and batch.typed_result.action == ModelAction.IMPLEMENT_CHANGE
-                        ),
-                    )
+        if spec.evidence_target is EvidenceTarget.IMPLEMENTATION_PR_HEAD and materializations:
+            payload = _effect_payload(materializations[0])
+            target = (
+                None
+                if payload is None
+                else _fresh_materialization_target(
+                    payload,
+                    adapter=adapter,
+                    source=source,
+                    current_revision=current_revision,
+                    allow_pending_continuation=allow_pending_continuation,
+                    accepted_successor_routing=accepted_successor_routing,
+                    committed_formal_result=(
+                        formal_result_observed
+                        and batch.typed_result.action == ModelAction.IMPLEMENT_CHANGE
+                    ),
                 )
-                if target is None:
-                    return False
-                materialized_revision = target.revision
+            )
+            if target is None:
+                return False
+            materialized_revision = target.revision
         for effect in batch.effects:
             payload = _effect_payload(effect)
             if effect.kind == GITHUB_MUTATION_KIND and payload is not None:
@@ -4465,16 +4621,6 @@ def consequence_postconditions_complete(
         # READY and MORE_IMPLEMENTATION_REQUIRED use IMPLEMENTATION_PR_HEAD,
         # not MATERIALIZED_REVISION. Before formal commit, the PR witness
         # cannot silently satisfy the separately accepted checkpoint effect.
-        checkpoints = tuple(
-            effect
-            for effect in batch.effects
-            if effect.kind == "issue-comment"
-            and isinstance((_effect_payload(effect) or {}).get("body"), str)
-            and cast(str, (_effect_payload(effect) or {})["body"]).splitlines()[:1]
-            == ["SLICE_CHECKPOINT"]
-        )
-        if len(checkpoints) > 1:
-            return False
         if formal_result_observed and batch.typed_result.action == ModelAction.IMPLEMENT_CHANGE:
             if checkpoints:
                 if len(materializations) != 1:

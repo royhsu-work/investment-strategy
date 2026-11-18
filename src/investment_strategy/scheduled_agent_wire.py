@@ -83,3 +83,17 @@ APPLICATION_CONTINUATION_WIRE = LineWireContract(
     ),
 )
 DISPATCH_REQUEST_WIRE = LineWireContract("DISPATCH_REQUEST", ("Requested-At",))
+# A direct-Human request for a NON-WRITING maintenance intake. This is
+# neither an EFFECT_REQUEST nor a repository-dispatched Action/Result.
+RUNTIME_REPAIR_REQUEST_WIRE = LineWireContract(
+    "RUNTIME_REPAIR_REQUEST",
+    (
+        "Issue",
+        "Change",
+        "Action",
+        "Accepted-Request-Comment",
+        "Accepted-Decision-SHA256",
+        "Repair-PR",
+        "Repair-HEAD",
+    ),
+)

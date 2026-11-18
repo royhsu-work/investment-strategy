@@ -58,6 +58,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _is_historical_merged_carrier,
     _open_pr_payload,
     _pending_source_is_current,
+    _read_source_issue,
     _ref_head_sha,
     _replacement_branch,
     _review_openspec_required,
@@ -2293,13 +2294,11 @@ def prove_materialization(
             raise RuntimeError("materialization default branch identity changed")
         if _ref_head_sha(repository, token, default_branch) != current_revision:
             raise RuntimeError("materialization current default revision changed")
-        issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
-        if (
-            issue is None
-            or issue.get("number") != source.issue_number
-            or issue.get("state") != "open"
-        ):
+        issue = _read_source_issue(repository, token, source.issue_number, read=_github_json)
+        if issue["number"] != source.issue_number or issue["state"] != "open":
             raise RuntimeError("materialization source Issue identity changed")
+        if not isinstance(issue.get("body"), str):
+            raise _IncompleteGitHubObservation("materialization source Issue body is incomplete")
         actual_change = _change_from_issue(issue)
         legal_changes = {request.expected_change}
         if request.expected_change == "unset":

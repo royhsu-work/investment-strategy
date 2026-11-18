@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import replace
 from email.message import Message
 from pathlib import Path
 from typing import cast
@@ -3618,6 +3620,1083 @@ def test_accepted_seven_file_manifest_proves_six_effective_changes(
     assert proof.disposition == "COMPLETE", proof
     assert proof.witness is not None and proof.witness.revision == accepted
     assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize(
+    ("result_kind", "successor_action", "successor_role"),
+    [
+        ("blocked", "implement-change", "executor"),
+        ("spec-blocker", "resolve-question", "lead"),
+    ],
+)
+def test_435_accepted_original_git_witness_reobserves_without_replay(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    result_kind: str,
+    successor_action: str,
+    successor_role: str,
+) -> None:
+    """R9/F2: the native #435-shaped Effect has one immutable Git witness.
+
+    This uses actual Git objects and the real shared Application Effect
+    observer. It does not mock the materialization result or persist any
+    Formal/Successor artifact: those have separate Application owners.
+    """
+    import investment_strategy.scheduled_agent_effects as effects
+
+    change = "restore-t1-dispatch-artifact-consumption"
+    original = WorkerRequest(435, "executor", "implement-change")
+    proof_git.repository = "royhsu-work/investment-strategy"
+    proof_git.source = original
+    proof_git.routing = original.action
+    proof_git.issue_change = change
+    proof_git.branch = f"agent/{change}"
+    proof_git.message = (
+        "test: qualify exact T1 Artifact reads [t1-native-artifact-diagnostic] (Refs #435)"
+    )
+    pr = proof_git.prs[0]
+    pr["number"] = 437
+    pr["title"] = f"OpenSpec: {change}"
+    pr["body"] = "Refs #435"
+    cast(dict[str, object], pr["head"])["ref"] = proof_git.branch
+    # The fixture was initialized under its synthetic repository identity.
+    # Rebind both native PR repository fields before proving this #435 carrier.
+    cast(dict[str, object], pr["head"])["repo"] = {"full_name": proof_git.repository}
+    cast(dict[str, object], pr["base"])["repo"] = {"full_name": proof_git.repository}
+
+    paths = (
+        "src/investment_strategy/scheduled_agent_carrier.py",
+        "src/investment_strategy/scheduled_agent_dispatch_result.py",
+        "src/investment_strategy/scheduled_agent_idle_admission.py",
+        "tests/test_scheduled_agent_dispatch_result.py",
+        "tests/test_scheduled_agent_idle_admission.py",
+        ".github/workflows/quality.yml",
+        ".github/scripts/diagnose_dispatch_artifact.py",
+    )
+    proposal_path = f"openspec/changes/{change}/proposal.md"
+    preimage = {path: f"historical preimage {index}" for index, path in enumerate(paths[:-1])}
+    preimage[proposal_path] = "Approved T1 OpenSpec proposal"
+    # The accepted implementation commit is a child of an existing Change
+    # carrier; its historical PR already contains the OpenSpec definition.
+    base = proof_git.commit(preimage, "Existing T1 carrier baseline", ())
+    proof_git.base = base
+    proof_git.authorization = base
+    proof_git.main = base
+    proof_git.set_head(base)
+    cast(dict[str, object], pr["base"])["sha"] = base
+
+    desired = {path: f"accepted T1 content {index}" for index, path in enumerate(paths)}
+    payload = {
+        "issue_number": 435,
+        "operation": "application-materialize",
+        "expected_change": change,
+        "change": change,
+        "branch": proof_git.branch,
+        "base_sha": base,
+        "message": proof_git.message,
+        "pr_number": 437,
+        "files": [
+            {
+                "path": path,
+                "blob_sha": proof_git.blob(content),
+                "expected_sha": proof_git.entries(base).get(path, {}).get("sha"),
+            }
+            for path, content in desired.items()
+        ],
+    }
+    result = {
+        "_semantic_intent_version": 2,
+        "issue_number": 435,
+        "role": "executor",
+        "action": "implement-change",
+        "change": change,
+        "result_kind": result_kind,
+        "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/437",
+        "result_content": "Accepted seven-file implementation diagnostic; no checkpoint.",
+        # Phase A canonicalizes the accepted payload_json, as in the real
+        # #435 APPLICATION_DECISION. The earlier WORKER_RESULT transport
+        # may use a different key order; Phase B compares ACCEPTED bytes.
+        "requested_effects": [
+            {"kind": "github-mutation", "payload_json": json.dumps(payload, sort_keys=True)}
+        ],
+    }
+    raw = json.dumps(result, sort_keys=True)
+    accepted = application_bridge.ApplicationDecisionRecord(
+        request_comment_id=6796616018,
+        request_body_sha256="a" * 64,
+        authorization_revision=base,
+        issue_number=435,
+        role=original.role,
+        action=original.action,
+        change=change,
+        result_kind=result_kind,
+        disposition="ACCEPTED",
+        worker_result_sha256=hashlib.sha256(raw.encode()).hexdigest(),
+        raw_worker_result=raw,
+        reason="accepted",
+    )
+
+    # Recreate the production transport/decision bytes once, instead of a
+    # detached accepted-decision hash. The accepted intent is immutable.
+    source_body = application_bridge._render_accepted_application_wire(
+        application_bridge.ApplicationRequest(
+            authorization_revision=base,
+            raw_worker_result=raw,
+            dispatch_correlation=application_bridge.dispatch_correlation_for(
+                proof_git.repository, original, base
+            ),
+        )
+    )
+    accepted = replace(
+        accepted, request_body_sha256=hashlib.sha256(source_body.encode()).hexdigest()
+    )
+    decision_body = effects._APPLICATION_DECISION_WIRE.render(
+        {
+            "Request-Comment": str(accepted.request_comment_id),
+            "Request-Body-SHA256": accepted.request_body_sha256,
+            "Authorization-Revision": accepted.authorization_revision,
+            "Issue": str(accepted.issue_number),
+            "Role": accepted.role,
+            "Action": accepted.action,
+            "Change": accepted.change,
+            "Result-Kind": accepted.result_kind,
+            "Disposition": accepted.disposition,
+            "Worker-Result-SHA256": accepted.worker_result_sha256,
+            "Application-Intent-B64": base64.b64encode(raw.encode()).decode(),
+            "Reason": accepted.reason,
+        }
+    )
+    assert effects.parse_application_decision(decision_body) == accepted
+    decision_digest = hashlib.sha256(decision_body.encode()).hexdigest()
+    source_comment = {
+        "id": accepted.request_comment_id,
+        "body": source_body,
+        "created_at": "2026-11-11T13:05:53Z",
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+    decision_comment = {
+        "id": 6796662999,
+        "body": decision_body,
+        "created_at": "2026-11-11T13:08:00Z",
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+
+    # Establish the current Executor route using an earlier Actions Review
+    # and its durable label event. The real qualifier must inspect both.
+    import investment_strategy.scheduled_agent_runtime as runtime
+
+    prior_source = WorkerRequest(435, "reviewer", "review-implementation")
+    prior_correlation = application_bridge.formal_application_correlation(
+        prior_source,
+        change=change,
+        result_kind="findings",
+        current_revision=proof_git.main,
+        request_comment_id=89989,
+    )
+    prior_body = "\n".join(
+        (
+            "REVIEW_RESULT",
+            "Workflow: #435",
+            f"Change: {change}",
+            "Role: reviewer",
+            "Action: review-implementation",
+            "Result: FINDINGS",
+            f"Revision: {proof_git.main}",
+            f"Default-Branch-Revision: {proof_git.main}",
+            f"Application-Correlation: {prior_correlation}",
+            "Repository-derived successor: Executor / implement-change",
+            "Evidence: one further implementation slice required",
+        )
+    )
+    prior_comment: dict[str, object] = {
+        "id": 89990,
+        "body": prior_body,
+        "created_at": "2026-11-11T08:20:00Z",
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    prior_timeline: list[dict[str, object]] = [
+        {"id": 89990, "event": "commented", "created_at": "2026-11-11T08:20:00Z"},
+        {
+            "id": 89991,
+            "event": "labeled",
+            "label": {"name": "action:implement-change"},
+            "created_at": "2026-11-11T08:21:00Z",
+        },
+    ]
+    formal_comments: list[dict[str, object]] = []
+    formal_comment_posts: list[str] = []
+    lose_formal_post_response = {"once": True}
+    successor_patches: list[list[str]] = []
+    # Source Git bytes are already durable; an out-of-band maintenance repair
+    # only restores correct observations. It must never replay Original.
+    original_read_fault = {"active": False}
+
+    def native_read(repository: str, token: str, api_path: str, **kwargs: object) -> object:
+        if original_read_fault["active"] and api_path == f"git/ref/heads/{proof_git.branch}":
+            return {"object": {"sha": base}}
+        if api_path == "issues/435":
+            if kwargs.get("method") == "PATCH":
+                payload = kwargs.get("payload")
+                assert isinstance(payload, Mapping)
+                labels = payload.get("labels")
+                assert labels == [f"action:{successor_action}"]
+                assert result_kind == "spec-blocker"
+                successor_patches.append(labels)
+                proof_git.routing = successor_action
+                prior_timeline.extend(
+                    [
+                        {
+                            "id": 90002,
+                            "event": "unlabeled",
+                            "label": {"name": "action:implement-change"},
+                            "created_at": "2026-11-11T13:10:00Z",
+                        },
+                        {
+                            "id": 90003,
+                            "event": "labeled",
+                            "label": {"name": f"action:{successor_action}"},
+                            "created_at": "2026-11-11T13:10:01Z",
+                        },
+                    ]
+                )
+            issue = cast(dict[str, object], proof_git.api(repository, token, "issues/322"))
+            return {**issue, "number": 435, "body": f"Change: {change}"}
+        if api_path == "pulls/437/files?per_page=100":
+            return [{"filename": proposal_path, "status": "modified"}] + [
+                {"filename": item, "status": "modified"} for item in paths
+            ]
+        if api_path == "issues/435/comments?per_page=100&sort=created&direction=desc":
+            return list(reversed([prior_comment, *formal_comments]))
+        if api_path == "issues/435/timeline?per_page=100&page=1":
+            return [
+                *prior_timeline,
+                *(
+                    [{"id": 90001, "event": "commented", "created_at": "2026-11-11T13:09:00Z"}]
+                    if formal_comments
+                    else []
+                ),
+            ]
+        if api_path == "issues/435/comments" and kwargs.get("method") == "POST":
+            request = cast(dict[str, str], kwargs["payload"])
+            formal_comment_posts.append(request["body"])
+            comment: dict[str, object] = {
+                "id": 90001,
+                "body": request["body"],
+                "created_at": "2026-11-11T13:09:00Z",
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+            }
+            formal_comments.append(comment)
+            # Native GitHub accepted the comment; only the client response is
+            # lost. This must not authorize the next wake to replay the POST.
+            if lose_formal_post_response["once"]:
+                lose_formal_post_response["once"] = False
+                raise OSError("simulated lost response after formal POST")
+            return comment
+        if api_path == "issues/comments/90001":
+            return formal_comments[0] if formal_comments else None
+        return proof_git.api(repository, token, api_path, **kwargs)
+
+    monkeypatch.setattr(materialization, "_github_json", native_read)
+    monkeypatch.setattr(validation_resource, "_github_json", native_read)
+    monkeypatch.setattr(effects, "_github_json", native_read)
+    # The separate OpenSpec review gate is established upstream of this
+    # accepted Effect. It is not reimplemented by the Git witness test.
+    monkeypatch.setattr(
+        materialization, "_qualified_implementation_decision", lambda *_a, **_kw: None
+    )
+
+    def observe() -> application_bridge.AcceptedPostEffectProof:
+        return application_bridge._observe_accepted_post_effect_result(
+            record=accepted,
+            source=original,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            default_branch="main",
+        )
+
+    # The original #435 failure was an Application preparation exception.
+    # This fixture starts at the already-validated native Artifact boundary;
+    # it does not replace the actual Application domain classifier with a
+    # synthetic success result or claim to test Artifact download validation.
+    exception = application_bridge.ApplicationExceptionArtifact(
+        run_id=43029179128,
+        run_attempt=1,
+        job_id=130551485662,
+        artifact_id=13860996180,
+        artifact_digest="sha256:6e635bde715bec5b9d282396655b788c414890c6e8ac3a5f9c34bc5c5701d292",
+        request_comment_id=accepted.request_comment_id,
+        accepted_decision_sha256="d" * 64,
+        failure_evidence_sha256="e" * 64,
+        recovery_episode_sha256="f" * 64,
+        document={
+            "issue_number": 435,
+            "role": original.role,
+            "action": original.action,
+            "change": change,
+            "attempted_operation": "application-effect-preparation",
+            "mutation_status": "NO_APPLICATION_WRITE_ATTEMPTED",
+        },
+    )
+
+    def exception_proof(
+        evidence: application_bridge.ApplicationExceptionArtifact,
+    ) -> application_bridge.AcceptedPostEffectProof:
+        with monkeypatch.context() as patch:
+            patch.setattr(application_bridge, "_github_json", native_read)
+            return application_bridge.classify_application_exception_recovery(
+                record=accepted,
+                artifact=evidence,
+                repository=proof_git.repository,
+                token=_TOKEN,
+            )
+
+    # A run-local pre-call exception must never imply intent-wide NOT_APPLIED.
+    assert exception_proof(exception).disposition == "INDETERMINATE"
+    assert (
+        exception_proof(
+            replace(exception, document={**exception.document, "change": "foreign-change"})
+        ).disposition
+        == "UNSAFE"
+    )
+    assert observe().disposition == "INDETERMINATE"  # Missing original Git effect.
+    witness = proof_git.commit(desired, proof_git.message, (base,))
+    proof_git.set_head(witness)
+    # This is a separate maintenance/read-repair boundary, not a replay of
+    # the accepted seven-file Effect. The physical Git witness does not change
+    # between a defective observation and a later fresh Application check.
+    original_read_fault["active"] = True
+    unrepaired = observe()
+    assert unrepaired.continuation in {"OBSERVE", "REJECT"}, unrepaired
+    assert unrepaired.carrier_plan is None
+    assert formal_comment_posts == []
+    assert successor_patches == []
+    assert proof_git.head == witness and proof_git.mutations == []
+    original_read_fault["active"] = False
+    assert observe().disposition == "COMPLETE"
+    assert proof_git.head == witness and proof_git.mutations == []
+    comparison = proof_git.comparison(base, witness)
+    assert comparison["ahead_by"] == 1
+    assert len(cast(list[dict[str, object]], comparison["files"])) == 7
+    canonical = materialization.prove_materialization(
+        payload,
+        original,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        accepted_authorization_revision=base,
+        allow_pending_continuation=True,
+        accepted_intent=True,
+    )
+    assert canonical.disposition == "COMPLETE", canonical
+
+    # Two separate fresh observations qualify one and the same original
+    # accepted Git effect, without calling its historical mutation again.
+    assert observe().disposition == "COMPLETE"
+    assert observe().disposition == "COMPLETE"
+    assert exception_proof(exception).disposition == "COMPLETE"
+    assert proof_git.head == witness
+    assert proof_git.mutations == []
+
+    # R2 integration: the native-shaped failed Application attempt must feed
+    # the real Bridge completion reader, strict exception Artifact reader and
+    # canonical Application/Git postcondition proof. This is the missing
+    # source->completion seam, not a second proof owner or an Effect replay.
+    import investment_strategy.issue_comment_bridge as dispatch_bridge
+
+    native_run = {
+        "id": 43029179128,
+        "run_attempt": 1,
+        "head_sha": proof_git.main,
+        "display_title": "Scheduled Agent Application 6797071043",
+        "status": "completed",
+        "conclusion": "failure",
+    }
+    native_job = {
+        "id": 130551485662,
+        "name": "apply",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "failure",
+        "steps": [
+            {
+                "name": "Freshly authorize and apply repository-owned effects",
+                "conclusion": "failure",
+            },
+            {"name": "Upload exact application recovery evidence", "conclusion": "skipped"},
+            {
+                "name": "Upload pre-ACCEPT or interrupted application exception evidence",
+                "conclusion": "success",
+            },
+            {"name": "Persist exact external carrier plan", "conclusion": "skipped"},
+            {"name": "Upload exact external carrier plan", "conclusion": "skipped"},
+            {
+                "name": "Persist the derived successor after exact validation",
+                "conclusion": "skipped",
+            },
+            {"name": "Upload final exact application recovery evidence", "conclusion": "skipped"},
+        ],
+    }
+    native_document = {
+        "schema": "scheduled-agent-execution-exception/v1",
+        "repository": proof_git.repository,
+        "issue_number": 435,
+        "role": original.role,
+        "action": original.action,
+        "change": change,
+        "revision": proof_git.main,
+        "request_comment_id": accepted.request_comment_id,
+        "trigger_comment_id": 6797071043,
+        "run_id": native_run["id"],
+        "run_attempt": 1,
+        "attempted_operation": "application-effect-preparation",
+        "exception_type": "RuntimeError",
+        "raw_error": "accepted implementation checkpoint identity is incomplete",
+        "raw_traceback": "sanitized test fixture",
+        "mutation_status": "NO_APPLICATION_WRITE_ATTEMPTED",
+        "unfinished_boundary": "application-effect-preparation",
+        "classification": "UNCLASSIFIED_EXECUTION_EXCEPTION",
+    }
+    artifact_bytes = json.dumps(native_document, sort_keys=True).encode()
+    native_artifact = {
+        "id": 13860996180,
+        "name": "application-execution-exception.json",
+        "expired": False,
+        "digest": "sha256:" + hashlib.sha256(artifact_bytes).hexdigest(),
+        "workflow_run": {"id": native_run["id"], "head_sha": proof_git.main},
+    }
+    read_paths: list[str] = []
+    continuation_comments: list[dict[str, object]] = []
+    transient_source_read = {"unavailable": False}
+    actor = {"login": "royhsu-work", "id": 77, "type": "User"}
+    repair_comment = {
+        "id": 90008,
+        "user": actor,
+        "performed_via_github_app": None,
+        "issue_url": f"https://api.github.com/repos/{proof_git.repository}/issues/435",
+        "body": dispatch_bridge.RUNTIME_REPAIR_REQUEST_WIRE.render(
+            {
+                "Issue": "435",
+                "Change": change,
+                "Action": original.action,
+                "Accepted-Request-Comment": str(accepted.request_comment_id),
+                "Accepted-Decision-SHA256": decision_digest,
+                "Repair-PR": "443",
+                "Repair-HEAD": proof_git.main,
+            }
+        ),
+    }
+    repair_event = {
+        "action": "created",
+        "repository": {"full_name": proof_git.repository, "default_branch": "main"},
+        "issue": {"number": 435},
+        "sender": actor,
+        "comment": repair_comment,
+    }
+    maintenance_pr = {
+        "number": 443,
+        "state": "open",
+        "merged": False,
+        "head": {"sha": proof_git.main, "repo": {"full_name": proof_git.repository}},
+        "base": {"ref": "main", "repo": {"full_name": proof_git.repository}},
+    }
+
+    def bridge_read(repository: str, token: str, path: str, **kwargs: object) -> object:
+        assert kwargs.get("method", "GET") == "GET"
+        read_paths.append(path)
+        if path.startswith("actions/workflows/scheduled-agent-application.yml/runs?"):
+            return {
+                "total_count": 1,
+                "workflow_runs": [native_run] if "page=1" in path else [],
+            }
+        if path == "actions/runs/43029179128":
+            return native_run
+        if path == "actions/runs/43029179128/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [native_job]}
+        if path == "actions/runs/43029179128/artifacts?per_page=100":
+            return {"total_count": 1, "artifacts": [native_artifact]}
+        if path.startswith("issues/435/comments?sort=created&direction=asc&per_page=100"):
+            if transient_source_read["unavailable"]:
+                raise OSError("temporary native source inventory failure")
+            return [prior_comment, decision_comment, *formal_comments]
+        if path.startswith("issues/435/comments?sort=created&per_page=100&page="):
+            return (
+                [prior_comment, decision_comment, *formal_comments]
+                if path.endswith("page=1")
+                else []
+            )
+        if path.startswith("issues/448/comments?sort=created&direction=asc&per_page=100"):
+            return continuation_comments
+        if path.startswith("issues/comments?sort=created&direction=asc&since="):
+            return continuation_comments
+        if path == "issues/comments/6796616018":
+            return source_comment
+        if path == "issues/448":
+            return {
+                "number": 448,
+                "title": "[Agent Runtime] 2026-11-17",
+                "state": "open",
+                "labels": [],
+            }
+        if path == "issues/comments/90007":
+            return continuation_comments[0] if continuation_comments else None
+        if path == "issues/comments/90008":
+            return repair_comment
+        if path == "pulls/443":
+            return maintenance_pr
+        return native_read(repository, token, path, **kwargs)
+
+    def artifact_read(repository: str, token: str, path: str) -> bytes:
+        assert repository == proof_git.repository and token == _TOKEN
+        assert path == "actions/artifacts/13860996180/zip"
+        return artifact_bytes
+
+    def native_completion() -> dispatch_bridge.ApplicationCompletion:
+        return dispatch_bridge._application_job(
+            proof_git.repository,
+            _TOKEN,
+            accepted.request_comment_id,
+            read=bridge_read,
+            record=accepted,
+            transport_comment_ids=(6797071043,),
+            accepted_decision_sha256=decision_digest,
+            current_revision=proof_git.main,
+        )
+
+    with monkeypatch.context() as patch:
+        # Only outbound GitHub data transport is injected. Artifact shape,
+        # Application typed proof and native Bridge selection remain real.
+        patch.setattr(application_bridge, "_github_json", bridge_read)
+        patch.setattr(dispatch_bridge, "read_github_artifact_bytes", artifact_read)
+        # Even a qualified native Exception Artifact cannot promote a stale
+        # original Git observation to Application continuation authority.
+        original_read_fault["active"] = True
+        before_repair = native_completion()
+        assert before_repair.state != "COMPLETE", before_repair
+        assert before_repair.qualified_carrier is None
+        assert proof_git.head == witness and proof_git.mutations == []
+        original_read_fault["active"] = False
+
+        def repair_admission(
+            event: Mapping[str, object],
+        ) -> dispatch_bridge.RuntimeRepairAdmission | None:
+            return dispatch_bridge.qualify_runtime_repair_admission(
+                event,
+                repository=proof_git.repository,
+                token=_TOKEN,
+                current_revision=proof_git.main,
+                read=bridge_read,
+                # Exercise the real native job/Artifact reader on the exact ACCEPT.
+                qualify=lambda *_a, **_kw: native_completion(),
+            )
+
+        def observe_read_fault(
+            path: str, observation: object, *, initial_issue_read: bool = False
+        ) -> dispatch_bridge.ApplicationCompletion:
+            def validation_read(
+                repository: str, token: str, api_path: str, **kwargs: object
+            ) -> object:
+                return (
+                    observation
+                    if api_path == path
+                    else native_read(repository, token, api_path, **kwargs)
+                )
+
+            with monkeypatch.context() as validation:
+                reader = materialization if initial_issue_read else validation_resource
+                validation.setattr(reader, "_github_json", validation_read)
+                result = native_completion()
+                assert result.accepted_proof is not None
+                if result.accepted_proof.disposition == "INDETERMINATE":
+                    assert repair_admission(repair_event) is None
+                assert formal_comment_posts == successor_patches == proof_git.mutations == []
+                return result
+
+        incomplete_reads: tuple[tuple[str, object], ...] = (
+            ("", {}),
+            ("git/ref/heads/main", {"object": {}}),
+        )
+        for path, observation in incomplete_reads:
+            incomplete = observe_read_fault(path, observation)
+            assert incomplete.accepted_proof is not None
+            assert incomplete.accepted_proof.disposition == "INDETERMINATE", incomplete
+            original_proof = incomplete.accepted_proof.original_effect_proof
+            assert original_proof is not None and original_proof.disposition == "UNKNOWN"
+            assert native_completion().reason == "application-completion-continuation-required"
+
+        for path, observation in (
+            ("", {"default_branch": "other-main"}),
+            ("git/ref/heads/main", {"object": {"sha": "f" * 40}}),
+        ):
+            different = observe_read_fault(path, observation)
+            assert different.accepted_proof is not None
+            assert different.accepted_proof.disposition == "UNSAFE", different
+            original_proof = different.accepted_proof.original_effect_proof
+            assert original_proof is not None and original_proof.disposition == "CONFLICT"
+
+        issue_path = "issues/435"
+        source_issue = cast(
+            dict[str, object], native_read(proof_git.repository, _TOKEN, issue_path)
+        )
+        for initial_issue_read in (True, False):
+            for observation in (
+                None,
+                {key: value for key, value in source_issue.items() if key != "state"},
+                {key: value for key, value in source_issue.items() if key != "body"},
+            ):
+                incomplete = observe_read_fault(
+                    issue_path, observation, initial_issue_read=initial_issue_read
+                )
+                assert incomplete.accepted_proof is not None
+                assert incomplete.accepted_proof.disposition == "INDETERMINATE", incomplete
+                original_proof = incomplete.accepted_proof.original_effect_proof
+                assert original_proof is not None and original_proof.disposition == "UNKNOWN"
+            assert native_completion().reason == "application-completion-continuation-required"
+            for override in ({"number": 999}, {"state": "closed"}):
+                different = observe_read_fault(
+                    issue_path, {**source_issue, **override}, initial_issue_read=initial_issue_read
+                )
+                assert different.accepted_proof is not None
+                assert different.accepted_proof.disposition == "UNSAFE", different
+                original_proof = different.accepted_proof.original_effect_proof
+                assert original_proof is not None and original_proof.disposition == "CONFLICT"
+
+        # Contradictory PR metadata is durable even though the Original Git
+        # commit is intact. The conflict needs independent maintenance.
+        previous_base = pr["base"]
+        pr["base"] = {**cast(dict[str, object], previous_base), "ref": "other-base"}
+        conflict = native_completion()
+        assert conflict.state == "INVALID", conflict
+        assert conflict.accepted_proof is not None
+        assert conflict.accepted_proof.disposition == "UNSAFE", conflict
+        assert (
+            repair_admission(
+                {
+                    **repair_event,
+                    "comment": {**repair_comment, "performed_via_github_app": {"id": 1}},
+                }
+            )
+            is None
+        )
+        admission = repair_admission(repair_event)
+        assert admission is not None
+        assert admission.frontier_proof.disposition == "CONFLICT"
+        assert admission.frontier_proof.remaining_obligation == "ORIGINAL_EFFECT"
+        assert (
+            dispatch_bridge._runtime_repair_admission_document(
+                admission, repository=proof_git.repository
+            )["effect_authority"]
+            == "NONE"
+        )
+        assert formal_comment_posts == successor_patches == proof_git.mutations == []
+
+        # Stand-in for an independently authorized external disposition. Only
+        # simulated GitHub metadata changes; no old Git write is replayed.
+        pr["base"] = previous_base
+        completed = native_completion()
+        assert completed.state == "RESUMABLE", completed
+        assert completed.reason == "application-completion-continuation-required"
+        assert isinstance(
+            completed.recovery_artifact, application_bridge.ApplicationExceptionArtifact
+        )
+        assert completed.recovery_artifact.artifact_id == 13860996180
+        assert completed.recovery_artifact.request_comment_id == 6796616018
+        assert completed.recovery_artifact.accepted_decision_sha256 == decision_digest
+        assert proof_git.head == witness and proof_git.mutations == []
+        assert "actions/runs/43029179128/attempts/1/jobs" in read_paths
+
+        # The *same* qualified failed Application now emits its actual
+        # repository wire, and the next wake re-reads the exact predecessor.
+        continuation_body = dispatch_bridge._application_continuation_body(
+            repository=proof_git.repository,
+            token=_TOKEN,
+            source=original,
+            request_comment_id=accepted.request_comment_id,
+            predecessor_evidence=completed.recovery_artifact,
+            read=bridge_read,
+        )
+        assert isinstance(continuation_body, str)
+        parsed_continuation = application_bridge.parse_application_continuation_request(
+            continuation_body
+        )
+        assert parsed_continuation is not None
+        assert parsed_continuation.accepted_decision_sha256 == decision_digest
+        assert parsed_continuation.predecessor_artifact_id == 13860996180
+        continuation_comments.append(
+            {
+                "id": 90007,
+                "body": continuation_body,
+                "created_at": "2026-11-17T05:37:00Z",
+                "user": {"login": "royhsu-work"},
+                "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+            }
+        )
+
+        def fresh_predecessor() -> (
+            application_bridge.ApplicationRecoveryArtifact
+            | application_bridge.ApplicationExceptionArtifact
+            | None
+        ):
+            return application_bridge.qualify_application_continuation_predecessor(
+                proof_git.repository,
+                _TOKEN,
+                parsed_continuation,
+                current_comment_id=90007,
+                transport_issue_number=448,
+                read=bridge_read,
+                artifact_reader=artifact_read,
+            )
+
+        qualified = fresh_predecessor()
+        assert isinstance(qualified, application_bridge.ApplicationExceptionArtifact)
+        assert qualified == completed.recovery_artifact
+        assert qualified.accepted_decision_sha256 == decision_digest
+        assert proof_git.mutations == []
+        # Duplicated/foreign native sources never authorize a second consumer.
+        continuation_comments.append({**continuation_comments[0], "id": 90008})
+        assert fresh_predecessor() is None
+        continuation_comments.pop()
+        decision_comment["body"] = decision_body.replace(
+            f"Change: {change}", "Change: unrelated", 1
+        )
+        assert fresh_predecessor() is None
+        decision_comment["body"] = decision_body
+        transient_source_read["unavailable"] = True
+        with pytest.raises(OSError, match="temporary native source inventory failure"):
+            fresh_predecessor()
+        transient_source_read["unavailable"] = False
+        assert fresh_predecessor() == qualified
+        # A reobservation cannot emit another request for an existing lineage.
+        assert (
+            dispatch_bridge._application_continuation_body(
+                repository=proof_git.repository,
+                token=_TOKEN,
+                source=original,
+                request_comment_id=accepted.request_comment_id,
+                predecessor_evidence=qualified,
+                read=bridge_read,
+            )
+            is None
+        )
+        accepted_from_continuation = effects.parse_application_decision(decision_comment["body"])
+        assert accepted_from_continuation == accepted
+
+        # A tampered native Artifact cannot inherit the positive Git witness
+        # as permission for Formal/Successor or an Original Effect retry.
+        native_artifact["digest"] = "sha256:" + "0" * 64
+        unqualified = native_completion()
+        assert unqualified.state == "INVALID"
+        assert unqualified.reason == "application-completion-recovery-evidence-unavailable"
+        assert proof_git.mutations == []
+
+    # Restore the native Artifact after the adversarial digest test. The
+    # independent entrypoint below must verify the original qualified bytes,
+    # not inherit this intentionally corrupted fixture state.
+    native_artifact["digest"] = "sha256:" + hashlib.sha256(artifact_bytes).hexdigest()
+
+    # Formal and Successor now consume the exact parsed accepted source that
+    # qualified the predecessor at the fresh continuation wake, not a detached
+    # worker fixture or a new worker decision.
+    assert (
+        accepted_from_continuation.worker_result_sha256
+        == hashlib.sha256(accepted_from_continuation.raw_worker_result.encode()).hexdigest()
+    )
+    # Original-effect completion is not a Formal result. Reuse the already
+    # source-proven Git witness as the fresh carrier revision and exercise the
+    # real Application-owned formal projection, not a mocked Formal status.
+    monkeypatch.setattr(application_bridge, "_machine_result_revision", lambda *_a, **_kw: witness)
+
+    def project_formal() -> str:
+        return application_bridge._fresh_application_worker_result(
+            accepted_from_continuation.raw_worker_result,
+            source=original,
+            change=change,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            default_branch="main",
+            request_comment_id=accepted.request_comment_id,
+        )
+
+    projection = project_formal()
+    projected = application_bridge.parse_effect_batch(
+        projection, original, authorized_change=change
+    )
+    assert len(projected.effects) == 2
+    original_effect, formal_effect = projected.effects
+    assert original_effect.kind == "github-mutation"
+    assert json.loads(original_effect.payload_json) == payload
+    assert formal_effect.kind == "issue-comment"
+    formal = cast(str, json.loads(formal_effect.payload_json)["body"])
+    assert formal.splitlines()[0] == "ACTION_RESULT"
+    assert "Workflow: #435" in formal.splitlines()
+    assert f"Result: {result_kind.upper().replace('-', '_')}" in formal.splitlines()
+    assert f"Revision: {witness}" in formal.splitlines()
+    assert (
+        f"Repository-derived successor: {successor_role.capitalize()} / {successor_action}"
+        in formal.splitlines()
+    )
+    correlation = application_bridge.formal_application_correlation(
+        original,
+        change=change,
+        result_kind=result_kind,
+        current_revision=proof_git.main,
+        request_comment_id=accepted.request_comment_id,
+    )
+    assert f"Application-Correlation: {correlation}" in formal.splitlines()
+    assert "SLICE_CHECKPOINT" not in projection
+    assert project_formal() == projection
+    assert proof_git.mutations == []
+
+    # R1: enter through the real guarded Application effect owner while
+    # Original is already source-proven and Formal is still absent. Its first
+    # non-idempotent Formal POST succeeds at GitHub but loses the HTTP response.
+    # The next independent process must read/reconcile that exact Formal and
+    # derive the still-needed Successor without retrying either original write.
+    import investment_strategy.scheduled_agent_merge_acceptance as merge_acceptance
+    from investment_strategy.workflow_dispatch import classify_dispatch
+
+    api_root = f"https://api.github.com/repos/{proof_git.repository}"
+    preflight_read_paths: list[str] = []
+
+    def runtime_page(url: str, token: str) -> tuple[Mapping[str, object], ...]:
+        assert token == _TOKEN and url.startswith(api_root + "/")
+        path = url.removeprefix(api_root + "/")
+        preflight_read_paths.append(path)
+        if path == "issues?state=all&per_page=100&page=1":
+            issue = native_read(proof_git.repository, token, "issues/435")
+            assert isinstance(issue, Mapping)
+            return (issue,)
+        if path == "issues/435/comments?per_page=100&sort=created&direction=desc":
+            return tuple(reversed([prior_comment, *formal_comments]))
+        if path == "issues/435/timeline?per_page=100&page=1":
+            timeline = native_read(
+                proof_git.repository, token, "issues/435/timeline?per_page=100&page=1"
+            )
+            assert isinstance(timeline, list)
+            return tuple(timeline)
+        raise AssertionError(f"unexpected runtime preflight GET: {path}")
+
+    def runtime_object(url: str, token: str) -> Mapping[str, object]:
+        assert token == _TOKEN
+        preflight_read_paths.append(url.removeprefix(api_root))
+        if url == api_root:
+            return {"default_branch": "main"}
+        if url == api_root + "/git/ref/heads/main":
+            return {"object": {"sha": proof_git.main}}
+        raise AssertionError(f"unexpected preflight identity GET: {url}")
+
+    monkeypatch.setattr(runtime, "_github_get_list_page", runtime_page)
+    monkeypatch.setattr(runtime, "_github_get_object", runtime_object)
+    # All decision consumers use the genuine preflight + classifier; only
+    # outbound GitHub GETs are replaced with native-shaped fixture payloads.
+    monkeypatch.setattr(
+        merge_acceptance,
+        "acquire_current_github_preflight",
+        runtime.acquire_current_github_preflight,
+    )
+    monkeypatch.setattr(
+        effects,
+        "acquire_current_github_preflight",
+        runtime.acquire_current_github_preflight,
+    )
+    qualified_preflight = runtime.acquire_current_github_preflight(proof_git.repository, _TOKEN)
+    dispatch = classify_dispatch(qualified_preflight)
+    assert dispatch.disposition == "AUTHORIZE", dispatch
+    assert dispatch.selected_issue_id == 435
+    assert dispatch.selected_routing == ("executor", "implement-change")
+    route_event = prior_timeline.pop()
+    try:
+        rejected = classify_dispatch(
+            runtime.acquire_current_github_preflight(proof_git.repository, _TOKEN)
+        )
+        assert rejected.disposition == "FAIL_CLOSED", rejected
+    finally:
+        prior_timeline.append(route_event)
+    assert (
+        classify_dispatch(
+            runtime.acquire_current_github_preflight(proof_git.repository, _TOKEN)
+        ).disposition
+        == "AUTHORIZE"
+    )
+
+    def guarded(
+        *, reconcile_only: bool = False, uncertain_effect_index: int | None = None
+    ) -> tuple[effects.EffectBatch, effects.ApplyResult]:
+        return merge_acceptance.run_guarded_effect_application(
+            projection,
+            source=original,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            request_comment_id=accepted.request_comment_id,
+            authorized_change=change,
+            authorization_revision=accepted.authorization_revision,
+            allow_pending_continuation=True,
+            accepted_intent=True,
+            reconcile_only=reconcile_only,
+            uncertain_effect_index=uncertain_effect_index,
+        )
+
+    def new_application() -> effects.GitHubEffectAdapter:
+        return effects.GitHubEffectAdapter(
+            proof_git.repository,
+            _TOKEN,
+            original,
+            authorized_change=change,
+            current_revision=proof_git.main,
+            expected_result_kind=result_kind,
+            request_comment_id=accepted.request_comment_id,
+            authorization_revision=accepted.authorization_revision,
+            allow_pending_continuation=True,
+            accepted_intent=True,
+        )
+
+    first = new_application()
+    assert first.observe_postcondition(original_effect)
+    assert first.guard(formal_effect)
+    assert not first.observe_postcondition(formal_effect)
+    assert formal_comment_posts == []
+
+    # A fresh Application process uses the same immutable accepted source.
+    # The second run represents a new native run attempt of the SAME event,
+    # not a fabricated second Dispatch request or a second recovery owner.
+    event = {
+        "action": "created",
+        "issue": {
+            "number": 448,
+            "title": "[Agent Runtime] 2026-11-17",
+            "state": "open",
+            "labels": [],
+        },
+        "comment": dict(continuation_comments[0]),
+    }
+    event_path = tmp_path / "435-continuation-event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    actual_owner: Callable[..., tuple[effects.EffectBatch, effects.ApplyResult]] = (
+        application_bridge.run_guarded_effect_application
+    )
+
+    def native_continuation_attempt(
+        attempt: int,
+    ) -> tuple[int, list[tuple[effects.EffectBatch, effects.ApplyResult]]]:
+        entered: list[tuple[effects.EffectBatch, effects.ApplyResult]] = []
+
+        def traced_owner(
+            raw_worker_result: str, **kwargs: object
+        ) -> tuple[effects.EffectBatch, effects.ApplyResult]:
+            outcome = actual_owner(raw_worker_result, **kwargs)
+            entered.append(outcome)
+            return outcome
+
+        with monkeypatch.context() as fresh_entry:
+            fresh_entry.setattr(application_bridge, "_github_json", bridge_read)
+            fresh_entry.setattr(application_bridge, "read_github_artifact_bytes", artifact_read)
+            fresh_entry.setattr(
+                application_bridge,
+                "acquire_current_github_preflight",
+                runtime.acquire_current_github_preflight,
+            )
+            fresh_entry.setattr(application_bridge, "run_guarded_effect_application", traced_owner)
+            fresh_entry.setenv("GITHUB_REPOSITORY", proof_git.repository)
+            fresh_entry.setenv("GITHUB_TOKEN", _TOKEN)
+            fresh_entry.setenv("GITHUB_RUN_ID", "43029179129")
+            fresh_entry.setenv("GITHUB_OUTPUT", str(tmp_path / f"435-entry-output-{attempt}"))
+            fresh_entry.setattr(
+                application_bridge.sys,
+                "argv",
+                [
+                    "application-bridge",
+                    "--event-path",
+                    str(event_path),
+                    "--revision",
+                    proof_git.main,
+                    "--default-branch",
+                    "main",
+                    "--run-attempt",
+                    str(attempt),
+                    "--recovery-evidence-path",
+                    str(tmp_path / f"435-entry-recovery-{attempt}.json"),
+                ],
+            )
+            code = application_bridge._main_unprotected(
+                application_bridge.ApplicationExceptionContext()
+            )
+        return code, entered
+
+    # Formal POST succeeds at GitHub but its client response is lost.
+    first_exit, entered = native_continuation_attempt(1)
+    assert first_exit == 1
+    assert len(entered) == 1
+    initial_batch, interrupted = entered[0]
+    assert len(initial_batch.effects) == 2
+    assert not interrupted.applied
+    assert interrupted.recovery_evidence is not None
+    assert interrupted.recovery_evidence.failed_effect_index == 1
+    assert interrupted.recovery_evidence.write_call_entered is True
+    assert interrupted.recovery_evidence.mutation_status == "unknown"
+    assert interrupted.recovery_evidence.completed_effect_indexes == (0,)
+    assert formal_comment_posts == [formal]
+    assert len(formal_comments) == 1
+    assert proof_git.head == witness
+    assert proof_git.mutations == []
+
+    # A separately reconstructed Application has no invocation-local write
+    # receipt. Its existing Effect owner must positively observe Original and
+    # Formal, then complete/verify only the derived Successor.
+    next_wake = new_application()
+    assert next_wake.observe_postcondition(original_effect)
+    assert next_wake.observe_postcondition(formal_effect)
+    successor = effects.StagedEffect(
+        "routing-transition",
+        json.dumps({"issue_number": 435, "action": successor_action}),
+        derived=True,
+    )
+    assert next_wake.guard(successor)
+    # The distinct-action variant still has a missing successor label after
+    # Formal became durable. Recovery must write ONLY the missing transition;
+    # the same-action variant instead has an already-durable successor.
+    second_exit, resumed_entries = native_continuation_attempt(2)
+    assert second_exit == 0
+    if result_kind == "blocked":
+        assert resumed_entries == []
+        assert successor_patches == []
+    else:
+        assert len(resumed_entries) == 1
+        _, resumed = resumed_entries[0]
+        assert resumed.applied, resumed
+        assert successor_patches == [[f"action:{successor_action}"]]
+    assert new_application().observe_postcondition(formal_effect)
+    assert new_application().observe_postcondition(successor)
+    assert formal_comment_posts == [formal]
+    assert proof_git.mutations == []
+
+    # The historical same-action case also remains idempotent when directly
+    # revisiting its original Effect owner.
+    if result_kind == "blocked":
+        final_batch, repeated = guarded()
+        assert repeated.applied, repeated
+        assert len(final_batch.effects) == 2
+    assert formal_comment_posts == [formal]
+    assert proof_git.head == witness
+    assert proof_git.mutations == []
+
+    assert preflight_read_paths.count("issues?state=all&per_page=100&page=1") >= 4
+    assert "issues/435/timeline?per_page=100&page=1" in preflight_read_paths
+
+    # A durable original is not a durable Formal or Successor.
+    assert (
+        application_bridge.AcceptedPostEffectProof(
+            "COMPLETE", "original observed"
+        ).runtime_repair_frontier
+        is None
+    )
 
 
 def test_accepted_noop_manifest_still_rejects_unrelated_commit_delta(

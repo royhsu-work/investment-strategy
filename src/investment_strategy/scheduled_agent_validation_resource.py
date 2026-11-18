@@ -245,6 +245,23 @@ def _current_authorized_request(repository: str, token: str) -> WorkerRequest | 
     )
 
 
+def _read_source_issue(
+    repository: str,
+    token: str,
+    issue_number: int,
+    *,
+    read: Callable[[str, str, str], object],
+) -> Mapping[str, object]:
+    issue = _as_mapping(read(repository, token, f"issues/{issue_number}"))
+    if issue is not None:
+        number = issue.get("number")
+        if type(number) is int and number > 0 and issue.get("state") in ("open", "closed"):
+            return issue
+    raise IncompleteGitHubObservation(
+        "source Issue identity or lifecycle observation is incomplete"
+    )
+
+
 def _pending_source_is_current(
     repository: str,
     token: str,
@@ -253,16 +270,16 @@ def _pending_source_is_current(
     *,
     accepted_successor_routing: tuple[str, str] | None = None,
 ) -> bool:
-    issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
-    observation = None if issue is None else normalize_github_issue(issue)
-    current_routing = None if observation is None else observation.routing
+    issue = _read_source_issue(repository, token, source.issue_number, read=_github_json)
+    if issue["number"] != source.issue_number or issue["state"] != "open":
+        return False
+    observation = normalize_github_issue(issue)
+    if observation is None or not observation.authoritative:
+        raise IncompleteGitHubObservation("source Issue routing observation is incomplete")
+    current_routing = observation.routing
     source_routing = (source.role, source.action)
     return bool(
-        observation is not None
-        and observation.authoritative
-        and observation.issue_number == source.issue_number
-        and observation.state == "open"
-        and observation.change == expected_change
+        observation.change == expected_change
         and (
             current_routing == source_routing
             or (
@@ -292,7 +309,9 @@ def _current_default_branch(repository: str, token: str) -> str:
     payload = _as_mapping(cast(object, _github_json(repository, token, "")))
     branch = None if payload is None else payload.get("default_branch")
     if not _valid_branch(branch):
-        raise RuntimeError("validation resource repository default branch is incomplete")
+        raise IncompleteGitHubObservation(
+            "validation resource repository default branch is incomplete"
+        )
     return cast(str, branch)
 
 
@@ -1197,7 +1216,7 @@ def _ref_head_sha(
     obj = None if state is None else _as_mapping(state.get("object"))
     sha = None if obj is None else obj.get("sha")
     if not _valid_sha(sha):
-        raise RuntimeError("work-product ref observation is incomplete")
+        raise IncompleteGitHubObservation("work-product ref observation is incomplete")
     return cast(str, sha)
 
 

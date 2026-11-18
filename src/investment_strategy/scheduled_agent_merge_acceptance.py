@@ -39,6 +39,8 @@ from investment_strategy.scheduled_agent_effects import (
     EffectBatch,
     GitHubEffectAdapter,
     StagedEffect,
+    _source_from_environment,
+    _write_github_outputs,
     apply_effect_batch,
     parse_effect_batch,
 )
@@ -768,6 +770,7 @@ def run_effect_application(
     accepted_intent: bool = False,
     reconcile_only: bool = False,
     uncertain_effect_index: int | None = None,
+    proven_empty_original_effects: bool = False,
     original_322_recovery: bool = False,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Apply through shared effect guards plus an optional mutation-adjacent guard."""
@@ -844,6 +847,7 @@ def run_effect_application(
             accepted_intent=accepted_intent,
             reconcile_only=reconcile_only,
             uncertain_effect_index=uncertain_effect_index,
+            proven_empty_original_effects=proven_empty_original_effects,
             durable_checkpoint_revision=(
                 validated_materialization_revision if accepted_intent else None
             ),
@@ -875,6 +879,7 @@ def run_guarded_effect_application(
     accepted_intent: bool = False,
     reconcile_only: bool = False,
     uncertain_effect_index: int | None = None,
+    proven_empty_original_effects: bool = False,
     original_322_recovery: bool = False,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Reject stale merge acceptance before and immediately adjacent to merge application."""
@@ -923,6 +928,7 @@ def run_guarded_effect_application(
         accepted_intent=accepted_intent,
         reconcile_only=reconcile_only,
         uncertain_effect_index=uncertain_effect_index,
+        proven_empty_original_effects=proven_empty_original_effects,
         original_322_recovery=original_322_recovery,
         pre_apply_guard=lambda effect: _merge_effect_allows(
             effect,
@@ -937,31 +943,6 @@ def run_guarded_effect_application(
     if not result.applied and rejections:
         result = replace(result, rejection=rejections[-1])
     return applied_batch, result
-
-
-def _source_from_environment() -> WorkerRequest:
-    issue = os.environ.get("AUTHORIZED_ISSUE")
-    role = os.environ.get("AUTHORIZED_ROLE")
-    action = os.environ.get("AUTHORIZED_ACTION")
-    if not issue or not role or not action:
-        raise RuntimeError("machine-authorized Issue/role/action environment is required")
-    try:
-        issue_number = int(issue)
-    except ValueError as exc:
-        raise RuntimeError("AUTHORIZED_ISSUE must be an integer") from exc
-    return WorkerRequest(
-        issue_number=issue_number,
-        role=role,
-        action=action,
-    )
-
-
-def _write_github_outputs(result: ApplyResult) -> None:
-    output_path = os.environ.get("GITHUB_OUTPUT")
-    if not output_path:
-        return
-    with Path(output_path).open("a", encoding="utf-8") as output:
-        output.write(f"applied={'true' if result.applied else 'false'}\n")
 
 
 def main() -> int:

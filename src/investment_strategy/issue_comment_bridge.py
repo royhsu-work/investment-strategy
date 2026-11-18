@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -29,16 +30,20 @@ from investment_strategy.human_authority import (
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import next_action, role_for
 from investment_strategy.scheduled_agent_application_bridge import (
+    AcceptedPostEffectProof,
     ApplicationContinuationRequest,
     ApplicationExceptionArtifact,
     ApplicationRecoveryArtifact,
     ApplicationRequest,
+    RecoveryProofResult,
+    TypedEvidenceError,
     _accepted_recovery_boundary,
     _application_owned_worker_result,
     _materialization_effects,
-    _worker_semantic_projection,
-    accepted_read_only_effects_complete,
+    _qualified_physical_original_accepted_effects,
+    application_artifact_stage,
     application_continuation_correlation,
+    classify_accepted_read_only_effects,
     classify_application_exception_recovery,
     classify_post_effect_result_recovery,
     dispatch_correlation_for,
@@ -66,6 +71,8 @@ from investment_strategy.scheduled_agent_carrier import (
     github_paginated_mappings,
     github_read_bytes_with_retry,
     github_repository_api_url,
+    github_run_artifact_identity,
+    github_run_artifact_inventory,
     parse_carrier_outcome_report,
     parse_carrier_plan_document,
     parse_qualified_carrier_document,
@@ -97,6 +104,7 @@ from investment_strategy.scheduled_agent_runtime import (
     is_github_actions_comment,
     normalize_github_issue,
 )
+from investment_strategy.scheduled_agent_wire import RUNTIME_REPAIR_REQUEST_WIRE
 from investment_strategy.scheduled_agent_worker import (
     WorkerActionResult,
     parse_worker_result,
@@ -161,6 +169,56 @@ class ApplicationCompletion:
     job_id: int | None = None
     qualified_carrier: QualifiedCarrierPlan | None = None
     recovery_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None = None
+    # Only the Application's actual accepted proof can propose an R9 intake.
+    accepted_proof: AcceptedPostEffectProof | None = None
+    # Application-owned exact accepted-source proof, not Bridge-local history.
+    accepted_record: ApplicationDecisionRecord | None = None
+    accepted_decision_sha256: str | None = None
+
+
+# The canonical proof owns permission. This Bridge-only table preserves the
+# existing reason vocabulary without inventing a second recovery decision.
+_ACCEPTED_PROOF_FAILURE_REASONS = {
+    "EXCEPTION": {
+        "INDETERMINATE": "application-completion-exception-observing",
+        "NOT_APPLIED": "application-completion-exception-unsafe",
+        "UNSAFE": "application-completion-exception-unsafe",
+    },
+    "POST_EFFECT": {
+        "INDETERMINATE": "application-completion-post-effect-observing",
+        "NOT_APPLIED": "application-completion-original-effect-incomplete",
+        "UNSAFE": "application-completion-original-effect-unsafe",
+    },
+    "READ_ONLY": {
+        "INDETERMINATE": "application-completion-read-only-observing",
+        "NOT_APPLIED": "application-completion-read-only-proof-conflict",
+        "UNSAFE": "application-completion-read-only-proof-conflict",
+    },
+}
+
+
+def _unresolved_accepted_proof_completion(
+    proof: AcceptedPostEffectProof,
+    *,
+    origin: Literal["EXCEPTION", "POST_EFFECT", "READ_ONLY"],
+    request_comment_id: int,
+    recovery_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None,
+    accepted_record: ApplicationDecisionRecord | None = None,
+    accepted_decision_sha256: str | None = None,
+) -> ApplicationCompletion | None:
+    """Project one accepted-source Application proof into non-authorizing evidence."""
+
+    if proof.continuation == "CONTINUE":
+        return None
+    return ApplicationCompletion(
+        "RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID",
+        _ACCEPTED_PROOF_FAILURE_REASONS[origin][proof.disposition],
+        request_comment_id=request_comment_id,
+        recovery_artifact=recovery_artifact,
+        accepted_proof=proof,
+        accepted_record=accepted_record,
+        accepted_decision_sha256=accepted_decision_sha256,
+    )
 
 
 RecoveryPredicate = Literal["COMPLETE", "INCOMPLETE", "UNKNOWN", "CONFLICT"]
@@ -202,13 +260,6 @@ def _recovery_predicate_result(
     raise ValueError("recovery predicate state is invalid")
 
 
-def _strictest_recovery_status(*statuses: RecoveryPredicate) -> RecoveryPredicate:
-    for status in ("CONFLICT", "UNKNOWN", "INCOMPLETE", "COMPLETE"):
-        if status in statuses:
-            return cast(RecoveryPredicate, status)
-    raise ValueError("recovery predicate state is invalid")
-
-
 def _recovery_task_disposition(raw_tasks: object) -> RecoveryPredicate:
     """Classify task progress only; a checked marker is never effect proof."""
 
@@ -223,22 +274,6 @@ def _recovery_task_disposition(raw_tasks: object) -> RecoveryPredicate:
     return "COMPLETE"
 
 
-_RECOVERY_CORRECTION_FILES = frozenset(
-    {
-        ".github/workflows/scheduled-agent-application.yml",
-        "openspec/changes/restore-no-work-idle-discovery/tasks.md",
-        "src/investment_strategy/issue_comment_bridge.py",
-        "src/investment_strategy/scheduled_agent_effects.py",
-        "src/investment_strategy/scheduled_agent_formal_qualification.py",
-        "src/investment_strategy/scheduled_agent_idle_admission.py",
-        "src/investment_strategy/scheduled_agent_merge_acceptance.py",
-        "tests/fixtures/issue322-application-recovery.json",
-        "tests/test_issue_comment_bridge.py",
-        "tests/test_scheduled_agent_effects.py",
-        "tests/test_scheduled_agent_formal_qualification.py",
-        "tests/test_scheduled_agent_idle_admission.py",
-    }
-)
 _RECOVERY_NECESSARY_EXECUTABLE_FILES = frozenset(
     {
         "src/investment_strategy/issue_comment_bridge.py",
@@ -247,106 +282,6 @@ _RECOVERY_NECESSARY_EXECUTABLE_FILES = frozenset(
         "tests/test_scheduled_agent_effects.py",
     }
 )
-
-
-def _recovery_correction_disposition(
-    repository: str,
-    token: str,
-    *,
-    reviewed_revision: str | None,
-    head_sha: str,
-    task_blob_sha: str,
-    read: GitHubReader,
-) -> RecoveryPredicate:
-    """Observe the actual corrective Git consequence, not its task checkbox.
-
-    The separately Human-authorized, content-addressed corrections have no
-    new normal Action/worker manifest. The immutable reviewed revision is the
-    source preimage, the PR head/tree is T_new, and the complete Git compare
-    plus exact tree blob identities is W_new. This does not certify old effects.
-    """
-    if reviewed_revision is None or _SHA.fullmatch(reviewed_revision) is None:
-        return "UNKNOWN"
-    if reviewed_revision == head_sha:
-        return "INCOMPLETE"
-    comparison = read(repository, token, f"compare/{reviewed_revision}...{head_sha}")
-    commit = read(repository, token, f"git/commits/{head_sha}")
-    if not isinstance(comparison, Mapping) or not isinstance(commit, Mapping):
-        return "UNKNOWN"
-    parents = commit.get("parents")
-    tree_ref = commit.get("tree")
-    tree_sha = tree_ref.get("sha") if isinstance(tree_ref, Mapping) else None
-    if (
-        commit.get("sha") != head_sha
-        or not isinstance(parents, list)
-        or not parents
-        or not all(
-            isinstance(parent, Mapping)
-            and isinstance(parent.get("sha"), str)
-            and _SHA.fullmatch(parent["sha"]) is not None
-            for parent in parents
-        )
-        or not isinstance(tree_sha, str)
-        or _SHA.fullmatch(tree_sha) is None
-    ):
-        return "CONFLICT"
-    listing = read(repository, token, f"git/trees/{tree_sha}?recursive=1")
-    if (
-        not isinstance(listing, Mapping)
-        or listing.get("truncated") is not False
-        or not isinstance(listing.get("tree"), list)
-    ):
-        return "UNKNOWN"
-    blobs: dict[str, str] = {}
-    for item in listing["tree"]:
-        if not isinstance(item, Mapping):
-            return "UNKNOWN"
-        path, sha = item.get("path"), item.get("sha")
-        if item.get("type") == "blob" and isinstance(path, str):
-            if path in blobs or not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
-                return "CONFLICT"
-            blobs[path] = sha
-    if blobs.get("openspec/changes/restore-no-work-idle-discovery/tasks.md") != task_blob_sha:
-        return "CONFLICT"
-    files = comparison.get("files")
-    commits = comparison.get("commits")
-    ahead = comparison.get("ahead_by")
-    base = comparison.get("base_commit")
-    if (
-        comparison.get("status") != "ahead"
-        or not isinstance(base, Mapping)
-        or base.get("sha") != reviewed_revision
-    ):
-        return "CONFLICT"
-    if (
-        not isinstance(files, list)
-        or not isinstance(commits, list)
-        or not isinstance(ahead, int)
-        or ahead < 1
-        or ahead > 250
-        or len(commits) != ahead
-        or len(files) >= 300  # GitHub compare truncates changed files at 300.
-    ):
-        return "UNKNOWN"
-    changed: set[str] = set()
-    for file in files:
-        if not isinstance(file, Mapping):
-            return "UNKNOWN"
-        path, sha = file.get("filename"), file.get("sha")
-        if not isinstance(path, str) or not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
-            return "UNKNOWN"
-        if path in changed or file.get("status") != "modified":
-            return "CONFLICT"
-        if blobs.get(path) != sha:
-            return "CONFLICT"
-        changed.add(path)
-    # Verified disjoint descendant changes are not obsolete-SHA blockers.
-    # Only the bounded correction paths count as its materialization witness;
-    # this recovery writes no repository files and cannot overwrite others.
-    correction_changes = changed & _RECOVERY_CORRECTION_FILES
-    if not _RECOVERY_NECESSARY_EXECUTABLE_FILES.issubset(correction_changes):
-        return "INCOMPLETE"
-    return "COMPLETE"
 
 
 _RECOVERY_REVIEW_MARKER = "RECOVERY_OPENSPEC_REVIEW"
@@ -1957,6 +1892,18 @@ def _carrier_change_matches_accepted_intent(
     )
 
 
+def _single_run_artifact(payload: object, *, name: str) -> Mapping[str, object] | None:
+    """Qualify a complete run inventory and at most one named Artifact."""
+
+    inventory = github_run_artifact_inventory(payload)
+    if inventory is None:
+        raise ValueError("incomplete")
+    matches = [item for item in inventory if item.get("name") == name]
+    if len(matches) > 1:
+        raise LookupError("multiple matching run artifacts")
+    return matches[0] if matches else None
+
+
 def _qualified_carrier_for_application_run(
     repository: str,
     token: str,
@@ -1972,26 +1919,14 @@ def _qualified_carrier_for_application_run(
     """Recover one current-attempt carrier Artifact without replaying its producer."""
 
     artifacts_payload = read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100")
-    if not isinstance(artifacts_payload, Mapping):
-        raise RuntimeError("application carrier artifact listing is incomplete")
-    raw_artifacts = artifacts_payload.get("artifacts")
-    total_count = artifacts_payload.get("total_count")
-    if (
-        not isinstance(raw_artifacts, list)
-        or isinstance(total_count, bool)
-        or not isinstance(total_count, int)
-        or total_count != len(raw_artifacts)
-    ):
-        raise RuntimeError("application carrier artifact listing is incomplete")
-    artifacts = [
-        cast(Mapping[str, object], item)
-        for item in raw_artifacts
-        if isinstance(item, Mapping) and item.get("name") == "carrier-plan.json"
-    ]
-    if not artifacts:
+    try:
+        artifact = _single_run_artifact(artifacts_payload, name="carrier-plan.json")
+    except LookupError as exc:
+        raise RuntimeError("application carrier artifact identity is ambiguous") from exc
+    except ValueError as exc:
+        raise RuntimeError("application carrier artifact listing is incomplete") from exc
+    if artifact is None:
         return None
-    if len(artifacts) != 1:
-        raise RuntimeError("application carrier artifact identity is ambiguous")
 
     steps = job.steps
     if steps is None:
@@ -2007,20 +1942,12 @@ def _qualified_carrier_for_application_run(
     if upload_conclusion != "success":
         raise RuntimeError("application carrier Artifact is not current-attempt evidence")
 
-    artifact = artifacts[0]
-    artifact_id = _positive_int(artifact.get("id"))
-    digest = artifact.get("digest")
-    workflow_run = artifact.get("workflow_run")
-    if (
-        artifact_id is None
-        or artifact.get("expired") is not False
-        or not isinstance(digest, str)
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
-        or not isinstance(workflow_run, Mapping)
-        or workflow_run.get("id") != run_id
-        or workflow_run.get("head_sha") != run.get("head_sha")
-    ):
+    identity = github_run_artifact_identity(
+        artifact, run_id=run_id, run_head_sha=run.get("head_sha")
+    )
+    if identity is None:
         raise RuntimeError("application carrier Artifact identity is invalid")
+    artifact_id, digest = identity
 
     raw = read_github_artifact_bytes(repository, token, f"actions/artifacts/{artifact_id}/zip")
     if f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest:
@@ -2243,12 +2170,12 @@ def _complete_workflow_runs(
     *,
     read: GitHubReader,
 ) -> tuple[Mapping[str, object], ...] | None:
-    """Read complete issue-comment runs without GitHub's filtered 1,000-run cap.
+    """Read one complete workflow-run history with a single counted-page proof.
 
-    GitHub caps event-filtered workflow-run searches at 1,000 results even when
-    ``total_count`` reports more.  The unfiltered endpoint is paginated without
-    that search cap.  Fetch its independent pages concurrently and fail closed
-    if the run count changes while constructing the observation.
+    Event-filtered GitHub searches are capped at 1,000 runs. When the count
+    exceeds that cap, switch to unfiltered pages and require native event
+    provenance before selecting issue_comment runs. A failed/inconsistent
+    observation never proves absence.
     """
 
     path = f"actions/workflows/{quote(workflow, safe='')}/runs"
@@ -2266,75 +2193,49 @@ def _complete_workflow_runs(
     if first is None:
         return None
     total_count = first.get("total_count")
-    if type(total_count) is int and total_count > 1000:
-        first = page(1, filtered=False)
-        if first is None:
-            return None
-        unfiltered_count = first.get("total_count")
-        if type(unfiltered_count) is not int or unfiltered_count < total_count:
-            return None
-        pages = (unfiltered_count + 99) // 100
-        if pages == 0:
-            return None
+    if total_count is not None and (type(total_count) is not int or total_count < 0):
+        return None
+
+    if type(total_count) is int:
+        filtered = total_count <= 1000
+        if not filtered:
+            unfiltered_first = page(1, filtered=False)
+            if unfiltered_first is None:
+                return None
+            unfiltered_count = unfiltered_first.get("total_count")
+            if type(unfiltered_count) is not int or unfiltered_count < total_count:
+                return None
+            first = unfiltered_first
+            total_count = unfiltered_count
+
+        # Both counted modes use the same complete-page, stable-count and
+        # unique-run-ID qualification. The event proof differs only when the
+        # GitHub search cap forces an unfiltered history.
+        pages = max(1, (total_count + 99) // 100)
         with ThreadPoolExecutor(max_workers=min(8, pages)) as pool:
-            remaining = tuple(pool.map(lambda n: page(n, filtered=False), range(2, pages + 1)))
-        payloads = (first, *remaining)
-        if any(
-            payload is None
-            or payload.get("total_count") != unfiltered_count
-            or len(cast(list[object], payload["workflow_runs"]))
-            != min(100, unfiltered_count - index * 100)
-            for index, payload in enumerate(payloads)
-        ):
-            return None
-        complete_runs: list[Mapping[str, object]] = []
-        for payload in payloads:
-            if payload is None:
+            remaining = tuple(pool.map(lambda n: page(n, filtered=filtered), range(2, pages + 1)))
+        runs: list[Mapping[str, object]] = []
+        for index, payload in enumerate((first, *remaining)):
+            if payload is None or payload.get("total_count") != total_count:
                 return None
-            raw_runs = payload["workflow_runs"]
-            if not isinstance(raw_runs, list):
+            rows = payload.get("workflow_runs")
+            if not isinstance(rows, list) or len(rows) != min(100, total_count - index * 100):
                 return None
-            for run in raw_runs:
+            for run in rows:
                 if (
                     not isinstance(run, Mapping)
                     or type(run.get("id")) is not int
-                    or not isinstance(run.get("event"), str)
+                    or (not filtered and not isinstance(run.get("event"), str))
                 ):
                     return None
-                complete_runs.append(cast(Mapping[str, object], run))
-        ids = [cast(int, run["id"]) for run in complete_runs]
+                runs.append(cast(Mapping[str, object], run))
+        ids = [cast(int, run["id"]) for run in runs]
         if len(ids) != len(set(ids)):
             return None
-        return tuple(run for run in complete_runs if run.get("event") == "issue_comment")
+        return tuple(run for run in runs if filtered or run.get("event") == "issue_comment")
 
-    if total_count is not None and (type(total_count) is not int or total_count < 0):
-        return None
-    if isinstance(total_count, int):
-        count_pages = max(1, (total_count + 99) // 100)
-        with ThreadPoolExecutor(max_workers=min(8, count_pages)) as pool:
-            remaining = tuple(pool.map(lambda n: page(n, filtered=True), range(2, count_pages + 1)))
-        payloads = (first, *remaining)
-        filtered_runs: list[Mapping[str, object]] = []
-        for index, payload in enumerate(payloads):
-            if payload is None or payload.get("total_count") != total_count:
-                return None
-            raw_runs = payload["workflow_runs"]
-            if not isinstance(raw_runs, list) or len(raw_runs) != min(
-                100, total_count - index * 100
-            ):
-                return None
-            for run in raw_runs:
-                if not isinstance(run, Mapping) or type(run.get("id")) is not int:
-                    return None
-                filtered_runs.append(cast(Mapping[str, object], run))
-        ids = [cast(int, run["id"]) for run in filtered_runs]
-        if len(ids) != len(set(ids)):
-            return None
-        return tuple(filtered_runs)
-
-    # Legacy injected readers may omit the GitHub total_count field. A short
-    # final page is still an explicit pagination terminator, but the search
-    # cannot prove completeness at GitHub's 1,000-result filtered cap.
+    # Historical injected readers without total_count retain a bounded
+    # short-page terminator; do not trust a filtered 1,000-result cap.
     legacy_runs: list[Mapping[str, object]] = []
     current = first
     number = 1
@@ -2415,38 +2316,18 @@ def _prior_dispatch_handoff_reason(
             token,
             f"actions/runs/{run_id}/artifacts?per_page=100",
         )
-        if not isinstance(artifacts_payload, Mapping):
+        try:
+            artifact = _single_run_artifact(artifacts_payload, name="dispatch-result.json")
+        except (ValueError, LookupError):
             return "application-completion-carrier-prior-dispatch-artifact-unavailable"
-        raw_artifacts = artifacts_payload.get("artifacts")
-        total_count = artifacts_payload.get("total_count")
-        if (
-            not isinstance(raw_artifacts, list)
-            or isinstance(total_count, bool)
-            or not isinstance(total_count, int)
-            or total_count != len(raw_artifacts)
-        ):
+        if artifact is None:
             return "application-completion-carrier-prior-dispatch-artifact-unavailable"
-        artifacts = [
-            cast(Mapping[str, object], item)
-            for item in raw_artifacts
-            if isinstance(item, Mapping) and item.get("name") == "dispatch-result.json"
-        ]
-        if len(artifacts) != 1:
+        identity = github_run_artifact_identity(
+            artifact, run_id=run_id, run_head_sha=run.get("head_sha")
+        )
+        if identity is None:
             return "application-completion-carrier-prior-dispatch-artifact-unavailable"
-        artifact = artifacts[0]
-        artifact_id = _positive_int(artifact.get("id"))
-        digest = artifact.get("digest")
-        workflow_run = artifact.get("workflow_run")
-        if (
-            artifact_id is None
-            or artifact.get("expired") is not False
-            or not isinstance(digest, str)
-            or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
-            or not isinstance(workflow_run, Mapping)
-            or workflow_run.get("id") != run_id
-            or workflow_run.get("head_sha") != run.get("head_sha")
-        ):
-            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
+        artifact_id, digest = identity
         try:
             raw = read_github_artifact_bytes(
                 repository,
@@ -2559,50 +2440,23 @@ def _qualified_unapplied_terminal_carrier_effect(
     ):
         return False
 
-    # ACCEPTED retains a semantic projection, not the mechanical effects.
-    # Recover the exact requested effect from its immutable, trusted source,
-    # and bind both versions to the same authorized semantic intent.
-    original_comment = read(repository, token, f"issues/comments/{record.request_comment_id}")
-    if not isinstance(original_comment, Mapping):
-        return False
-    original_body = original_comment.get("body")
-    if (
-        original_comment.get("id") != record.request_comment_id
-        or not _trusted_connector_comment(original_comment, repository.split("/", 1)[0])
-        or not isinstance(original_body, str)
-        or hashlib.sha256(original_body.encode("utf-8")).hexdigest() != record.request_body_sha256
-    ):
-        return False
+    # Terminal writes keep the stricter original dispatch correlation
+    # requirement, but use the same immutable-source proof as read-only
+    # Application recovery. This is evidence, never Effect permission.
     try:
-        original = parse_application_request(original_body)
-        source = WorkerRequest(record.issue_number, record.role, record.action)
-        original_worker = (
-            None
-            if original is None
-            else parse_worker_result(
-                original.raw_worker_result, source, authorized_change=record.change
-            )
+        original = _qualified_physical_original_accepted_effects(
+            record=record,
+            source=WorkerRequest(record.issue_number, record.role, record.action),
+            repository=repository,
+            token=token,
+            read=read,
+            require_dispatch_correlation=True,
         )
-        accepted_worker = parse_worker_result(
-            record.raw_worker_result, source, authorized_change=record.change
-        )
-        if (
-            original is None
-            or original_worker is None
-            or original.authorization_revision != record.authorization_revision
-            or original.dispatch_correlation
-            != dispatch_correlation_for(repository, source, original.authorization_revision)
-            or original_worker.typed_result.result.kind.value != record.result_kind
-            or accepted_worker.typed_result.result.kind.value != record.result_kind
-            or _worker_semantic_projection(original.raw_worker_result)
-            != _worker_semantic_projection(record.raw_worker_result)
-        ):
-            return False
     except (ValueError, TypeError, RuntimeError, json.JSONDecodeError):
         return False
-    if len(original_worker.requested_effects) != 1:
+    if original is None or len(original.effects) != 1:
         return False
-    effect = original_worker.requested_effects[0]
+    effect = original.effects[0]
     if effect.kind != "github-mutation":
         return False
     try:
@@ -2619,23 +2473,12 @@ def _qualified_unapplied_terminal_carrier_effect(
     ):
         return False
 
-    artifacts_payload = read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100")
-    if not isinstance(artifacts_payload, Mapping):
+    artifacts = github_run_artifact_inventory(
+        read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100")
+    )
+    if artifacts is None:
         return False
-    artifacts = artifacts_payload.get("artifacts")
-    total_count = artifacts_payload.get("total_count")
-    if (
-        not isinstance(artifacts, list)
-        or type(total_count) is not int
-        or total_count != len(artifacts)
-    ):
-        return False
-    if not all(
-        isinstance(artifact, Mapping)
-        and _positive_int(artifact.get("id")) is not None
-        and isinstance(artifact.get("name"), str)
-        for artifact in artifacts
-    ):
+    if any(_positive_int(artifact.get("id")) is None for artifact in artifacts):
         return False
     if any(
         artifact["name"] in {"carrier-plan.json", "application-recovery-evidence"}
@@ -2804,23 +2647,62 @@ def _application_job(
     ):
         try:
             steps = job.steps
-            has_exception = (
-                steps is not None
-                and (
-                    "Upload pre-ACCEPT or interrupted application exception evidence",
-                    "success",
+            # Both native Application stages can fail after ACCEPT. The
+            # complete attempt-scoped job inventory selects the evidence type,
+            # not the Role, error message or the historical request shape.
+            stage = application_artifact_stage(steps)
+            if stage == "INVALID":
+                return ApplicationCompletion(
+                    "INVALID",
+                    "application-completion-artifact-writers-ambiguous",
+                    request_comment_id=request_comment_id,
                 )
-                in steps
+            has_exception = stage in {"PRE_EXCEPTION", "POST_EXCEPTION"}
+            accepted_effects: object = None
+            try:
+                accepted_document = json.loads(record.raw_worker_result)
+                if isinstance(accepted_document, Mapping):
+                    accepted_effects = accepted_document.get("requested_effects")
+            except json.JSONDecodeError:
+                pass
+            # A v2 semantic projection may elide the physical Original.
+            # Only the shared Application source qualifier can establish it.
+            # Carrier-owned PR writes retain the distinct terminal negative
+            # postcondition path above; the native upload step alone cannot
+            # reclassify a merge as an Application-owned Effect.
+            has_original_effect = isinstance(accepted_effects, list) and bool(accepted_effects)
+            legacy_activation = (record.role, record.action, record.change) == (
+                "lead",
+                "propose-change",
+                "unset",
             )
-            has_recovery = (
-                steps is not None
-                and ("Upload exact application recovery evidence", "success") in steps
-            )
-            if (
-                has_exception
-                and not has_recovery
-                and (record.role, record.action, record.change)
-                == ("lead", "propose-change", "unset")
+            physical_exception_source = False
+            if has_exception and accepted_effects == [] and not legacy_activation:
+                try:
+                    original = _qualified_physical_original_accepted_effects(
+                        record=record,
+                        source=WorkerRequest(record.issue_number, record.role, record.action),
+                        repository=repository,
+                        token=token,
+                        read=read,
+                    )
+                    if original is not None:
+                        physical_exception_source = not original.effects
+                        if (
+                            len(original.effects) == 1
+                            and original.effects[0].kind == "github-mutation"
+                        ):
+                            payload = json.loads(original.effects[0].payload_json)
+                            physical_exception_source = (
+                                isinstance(payload, Mapping)
+                                and payload.get("operation") == "application-materialize"
+                            )
+                except (HTTPError, OSError, RuntimeError, TypeError, ValueError):
+                    # Unqualified source never licenses a different artifact
+                    # or converts uncertainty into absence/no-write proof.
+                    physical_exception_source = False
+            if has_exception and (
+                has_original_effect or legacy_activation or physical_exception_source
             ):
                 recovery_artifact = read_application_exception_artifact(
                     repository,
@@ -2894,18 +2776,19 @@ def _application_job(
         proof = classify_application_exception_recovery(
             record=record, artifact=recovery_artifact, repository=repository, token=token
         )
-        if proof.continuation == "CONTINUE":
-            return ApplicationCompletion(
-                "RESUMABLE",
-                "application-completion-continuation-required",
-                request_comment_id=request_comment_id,
-                recovery_artifact=recovery_artifact,
-            )
+        unresolved = _unresolved_accepted_proof_completion(
+            proof,
+            origin="EXCEPTION",
+            request_comment_id=request_comment_id,
+            recovery_artifact=recovery_artifact,
+            accepted_record=record,
+            accepted_decision_sha256=accepted_decision_sha256,
+        )
+        if unresolved is not None:
+            return unresolved
         return ApplicationCompletion(
-            "RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID",
-            "application-completion-exception-observing"
-            if proof.continuation == "OBSERVE"
-            else "application-completion-exception-unsafe",
+            "RESUMABLE",
+            "application-completion-continuation-required",
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
         )
@@ -2941,24 +2824,24 @@ def _application_job(
     post_effect_proven = bool(
         post_effect_proof is not None and post_effect_proof.continuation == "CONTINUE"
     )
-    if post_effect_candidate and not post_effect_proven:
-        # A transient GET failure can be observed on a later wake. A proven
-        # contradictory original is a distinct governed-resolution boundary;
-        # neither status authorizes a GitHub write or a semantic rerun.
-        disposition = None if post_effect_proof is None else post_effect_proof.disposition
-        status, reason = {
-            "INDETERMINATE": ("RESUMABLE", "application-completion-post-effect-observing"),
-            "NOT_APPLIED": ("INVALID", "application-completion-original-effect-incomplete"),
-            "UNSAFE": ("INVALID", "application-completion-original-effect-unsafe"),
-        }.get(
-            disposition or "INVALID", ("INVALID", "application-completion-recovery-proof-missing")
-        )
-        return ApplicationCompletion(
-            cast(Literal["RESUMABLE", "INVALID"], status),
-            reason,
+    if post_effect_candidate:
+        if post_effect_proof is None:
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-recovery-proof-missing",
+                request_comment_id=request_comment_id,
+                recovery_artifact=recovery_artifact,
+            )
+        unresolved = _unresolved_accepted_proof_completion(
+            post_effect_proof,
+            origin="POST_EFFECT",
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
+            accepted_record=record,
+            accepted_decision_sha256=accepted_decision_sha256,
         )
+        if unresolved is not None:
+            return unresolved
 
     if record is not None:
         try:
@@ -3053,7 +2936,11 @@ def _application_job(
     if (
         isinstance(failure_evidence, Mapping)
         and _accepted_recovery_boundary(failure_evidence) == "READ_ONLY"
-        and failure_evidence.get("unfinished_boundary") == "effect-reconciliation"
+        and failure_evidence.get("unfinished_boundary")
+        in {
+            "effect-reconciliation",
+            "effect-precondition-exception",
+        }
     ):
         # The previous read-only invocation obtained no sufficient proof.
         # Re-observe the *same* immutable accepted effects in each fresh
@@ -3079,7 +2966,7 @@ def _application_job(
                 recovery_artifact=recovery_artifact,
             )
         source = WorkerRequest(record.issue_number, record.role, record.action)
-        if not accepted_read_only_effects_complete(
+        proof = classify_accepted_read_only_effects(
             record=record,
             source=source,
             recovery_evidence=failure_evidence,
@@ -3087,13 +2974,22 @@ def _application_job(
             token=token,
             current_revision=current_revision,
             default_branch=branch,
-        ):
-            return ApplicationCompletion(
-                "RESUMABLE",
-                "application-completion-read-only-observing",
-                request_comment_id=request_comment_id,
-                recovery_artifact=recovery_artifact,
-            )
+            recovery_artifact=(
+                recovery_artifact
+                if isinstance(recovery_artifact, ApplicationRecoveryArtifact)
+                else None
+            ),
+        )
+        unresolved = _unresolved_accepted_proof_completion(
+            proof,
+            origin="READ_ONLY",
+            request_comment_id=request_comment_id,
+            recovery_artifact=recovery_artifact,
+            accepted_record=record,
+            accepted_decision_sha256=accepted_decision_sha256,
+        )
+        if unresolved is not None:
+            return unresolved
     return ApplicationCompletion(
         "RESUMABLE",
         "application-completion-continuation-required",
@@ -3758,12 +3654,11 @@ def _accepted_application_state(
             "application-completion-continuation-chain-ambiguous",
             request_comment_id=record.request_comment_id,
         )
-    # An accepted semantic intent may intentionally have no worker-owned
-    # requested effects.  New application-owned envelopes carry an explicit
-    # semantic-intent marker so Phase B still resumes their job; historical
-    # raw envelopes remain compatible with the old formal-only fixtures.
-    if worker.requested_effects or semantic_intent:
-        resumed = _application_job(
+
+    # One native Application observation per accepted frontier. Later
+    # formal/successor proof checks must not replace its read-only witness.
+    def observe_application_job() -> ApplicationCompletion:
+        return _application_job(
             repository,
             token,
             record.request_comment_id,
@@ -3775,6 +3670,12 @@ def _accepted_application_state(
             current_dispatch_request_comment_id=current_dispatch_request_comment_id,
             current_revision=current_revision,
         )
+
+    # New semantic envelopes resume Phase B even with zero worker Effects.
+    # Historical raw envelopes retain their existing formal-only path.
+    resumed: ApplicationCompletion | None = None
+    if worker.requested_effects or semantic_intent:
+        resumed = observe_application_job()
         if resumed.state == "RESUMABLE":
             return resumed
     if (
@@ -3835,18 +3736,7 @@ def _accepted_application_state(
             request_comment_id=record.request_comment_id,
         )
     if observation.routing == (source.role, source.action):
-        return _application_job(
-            repository,
-            token,
-            record.request_comment_id,
-            read=read,
-            record=record,
-            transport_comment_ids=continuation_transport_comment_ids,
-            accepted_decision_sha256=accepted_decision_sha256,
-            recent_comments=recent_comments,
-            current_dispatch_request_comment_id=current_dispatch_request_comment_id,
-            current_revision=current_revision,
-        )
+        return resumed if resumed is not None else observe_application_job()
     if successor is not None and observation.routing == expected_routing:
         return ApplicationCompletion(
             "RESUMABLE",
@@ -5135,6 +5025,37 @@ def qualify_application_completion(
         f"issues/{source.issue_number}/timeline",
         read=read,
     )
+
+    # One accepted-source proof owner for unqualified, predecessor and
+    # current frontiers. Reconstruct the continuation transport from this
+    # invocation's fresh sources; never memoize an earlier wake's proof.
+    def accepted_state(
+        accepted_record: ApplicationDecisionRecord, accepted_source: WorkerRequest
+    ) -> ApplicationCompletion:
+        return _accepted_application_state(
+            repository=repository,
+            token=token,
+            source=accepted_source,
+            record=accepted_record,
+            issue_comments=issue_comments,
+            lifecycle_events=lifecycle,
+            current_issue=cast(Mapping[str, object], issue),
+            current_revision=current_revision,
+            read=read,
+            recent_comments=runtime_comments,
+            current_dispatch_request_comment_id=current_dispatch_request_comment_id,
+            continuation_transport_comment_ids=_continuation_transport_comment_ids(
+                repository=repository,
+                owner=owner,
+                token=token,
+                read=read,
+                source=accepted_source,
+                record=accepted_record,
+                issue_comments=issue_comments,
+                recent_comments=recent,
+            ),
+        )
+
     frontier, frontier_qualified = _derive_frontier(
         repository=repository,
         token=token,
@@ -5171,29 +5092,7 @@ def qualify_application_completion(
             and observation.routing == (source.role, source.action)
             and len(current_accepted) == 1
         ):
-            resumed = _accepted_application_state(
-                repository=repository,
-                token=token,
-                source=source,
-                record=current_accepted[0],
-                issue_comments=issue_comments,
-                lifecycle_events=lifecycle,
-                current_issue=cast(Mapping[str, object], issue),
-                current_revision=current_revision,
-                read=read,
-                recent_comments=runtime_comments,
-                current_dispatch_request_comment_id=current_dispatch_request_comment_id,
-                continuation_transport_comment_ids=_continuation_transport_comment_ids(
-                    repository=repository,
-                    owner=owner,
-                    token=token,
-                    read=read,
-                    source=source,
-                    record=current_accepted[0],
-                    issue_comments=issue_comments,
-                    recent_comments=recent,
-                ),
-            )
+            resumed = accepted_state(current_accepted[0], source)
             if resumed.state != "NONE":
                 return resumed
         elif len(current_accepted) > 1:
@@ -5276,29 +5175,7 @@ def qualify_application_completion(
                 "application-completion-frontier-owner-invalid",
                 request_comment_id=frontier_owner.request_comment_id,
             )
-        frontier_completion = _accepted_application_state(
-            repository=repository,
-            token=token,
-            source=frontier_source,
-            record=frontier_owner,
-            issue_comments=issue_comments,
-            lifecycle_events=lifecycle,
-            current_issue=cast(Mapping[str, object], issue),
-            current_revision=current_revision,
-            read=read,
-            recent_comments=runtime_comments,
-            current_dispatch_request_comment_id=current_dispatch_request_comment_id,
-            continuation_transport_comment_ids=_continuation_transport_comment_ids(
-                repository=repository,
-                owner=owner,
-                token=token,
-                read=read,
-                source=frontier_source,
-                record=frontier_owner,
-                issue_comments=issue_comments,
-                recent_comments=recent,
-            ),
-        )
+        frontier_completion = accepted_state(frontier_owner, frontier_source)
         if frontier_completion.state != "COMPLETE":
             return frontier_completion
 
@@ -5506,29 +5383,7 @@ def qualify_application_completion(
     # edited or deleted after ACCEPT, do not parse its new text and do not
     # replay worker semantics; the exact accepted record remains the only
     # resumable payload.
-    return _accepted_application_state(
-        repository=repository,
-        token=token,
-        source=source,
-        record=record,
-        issue_comments=issue_comments,
-        lifecycle_events=lifecycle,
-        current_issue=cast(Mapping[str, object], issue),
-        current_revision=current_revision,
-        read=read,
-        recent_comments=runtime_comments,
-        current_dispatch_request_comment_id=current_dispatch_request_comment_id,
-        continuation_transport_comment_ids=_continuation_transport_comment_ids(
-            repository=repository,
-            owner=owner,
-            token=token,
-            read=read,
-            source=source,
-            record=record,
-            issue_comments=issue_comments,
-            recent_comments=recent,
-        ),
-    )
+    return accepted_state(record, source)
 
 
 def render_dispatch_result_document(
@@ -5784,8 +5639,10 @@ def _require_mapping(value: object, name: str) -> Mapping[str, object]:
     return cast(Mapping[str, object], value)
 
 
-def _write_outputs(path: Path, plan: BridgePlan) -> None:
+def _write_outputs(path: Path, plan: BridgePlan, *, repair_admission: bool = False) -> None:
     lines = [f"should_emit={'true' if plan.should_emit else 'false'}"]
+    if repair_admission:
+        lines.append("repair_admission=true")
     if plan.issue_number is not None:
         lines.append(f"issue_number={plan.issue_number}")
     if plan.request_comment_id is not None:
@@ -5798,12 +5655,339 @@ def _write_result_payload(path: Path, plan: BridgePlan) -> None:
         path.write_text(plan.result_body + "\n", encoding="utf-8")
 
 
+@dataclass(frozen=True)
+class RuntimeRepairAdmission:
+    """A native-Human-qualified, non-writing maintenance handoff only."""
+
+    source: WorkerRequest
+    change: str
+    authorization_revision: str
+    trigger_comment_id: int
+    accepted_request_comment_id: int
+    accepted_decision_sha256: str
+    accepted_worker_sha256: str
+    repair_pr: int
+    repair_head: str
+    result_state: str
+    reason: str
+    frontier_proof: RecoveryProofResult
+    # Existing Application-validated native Run/Job/Artifact identity; this
+    # handoff cannot be upgraded from a bare status or a synthetic DAG proof.
+    source_artifact: ApplicationRecoveryArtifact | ApplicationExceptionArtifact
+
+
+def qualify_runtime_repair_admission(
+    event: Mapping[str, object],
+    *,
+    repository: str,
+    token: str,
+    current_revision: str,
+    read: GitHubReader = _github_json,
+    qualify: Callable[..., ApplicationCompletion] = qualify_application_completion,
+) -> RuntimeRepairAdmission | None:
+    """Consume a native Human issue_comment without emitting any repository Effect.
+
+    The existing Application remains the one accepted-intent/evidence owner.
+    This qualified intake is not approval to patch a PR or replay an Effect.
+    The external Human maintenance interaction must fresh-reauthorize writes.
+    """
+
+    comment = event.get("comment")
+    event_issue = event.get("issue")
+    sender = event.get("sender")
+    event_repo = event.get("repository")
+    if (
+        repository != "royhsu-work/investment-strategy"
+        or _SHA.fullmatch(current_revision) is None
+        or event.get("action") != "created"
+        or not isinstance(comment, Mapping)
+        or not isinstance(event_issue, Mapping)
+        or "pull_request" in event_issue
+        or not isinstance(sender, Mapping)
+        or not isinstance(event_repo, Mapping)
+        or event_repo.get("full_name") != repository
+        or event_repo.get("default_branch") != "main"
+    ):
+        return None
+    raw_body = comment.get("body")
+    if not isinstance(raw_body, str):
+        return None
+    fields = RUNTIME_REPAIR_REQUEST_WIRE.parse(raw_body)
+    if fields is None:
+        return None
+    issue_number = _positive_int_string(fields["Issue"])
+    request_comment_id = _positive_int_string(fields["Accepted-Request-Comment"])
+    repair_pr = _positive_int_string(fields["Repair-PR"])
+    trigger_comment_id = _positive_int(comment.get("id"))
+    actor = comment.get("user")
+    native_actor = actor.get("login") if isinstance(actor, Mapping) else None
+    owner = repository.split("/", 1)[0]
+    if (
+        issue_number is None
+        or request_comment_id is None
+        or repair_pr is None
+        or trigger_comment_id is None
+        or issue_number != event_issue.get("number")
+        or not isinstance(actor, Mapping)
+        or native_actor != owner
+        or actor.get("type") != "User"
+        or sender.get("login") != owner
+        or sender.get("id") != actor.get("id")
+        or _positive_int(actor.get("id")) is None
+        or comment.get("performed_via_github_app") is not None
+        or _SHA.fullmatch(fields["Repair-HEAD"]) is None
+        or re.fullmatch(r"[0-9a-f]{64}", fields["Accepted-Decision-SHA256"]) is None
+    ):
+        return None
+    try:
+        role = role_for(ModelAction(fields["Action"])).value
+    except ValueError:
+        return None
+    source = WorkerRequest(issue_number, role, fields["Action"])
+    native = read(repository, token, f"issues/comments/{trigger_comment_id}")
+    main_ref = read(repository, token, "git/ref/heads/main")
+    current_issue = read(repository, token, f"issues/{issue_number}")
+    pr = read(repository, token, f"pulls/{repair_pr}")
+    if not all(isinstance(value, Mapping) for value in (native, main_ref, current_issue, pr)):
+        return None
+    native = cast(Mapping[str, object], native)
+    main_ref = cast(Mapping[str, object], main_ref)
+    current_issue = cast(Mapping[str, object], current_issue)
+    pr = cast(Mapping[str, object], pr)
+    native_user = native.get("user")
+    main_object = main_ref.get("object")
+    pr_head = pr.get("head")
+    pr_base = pr.get("base")
+    head_repo = pr_head.get("repo") if isinstance(pr_head, Mapping) else None
+    base_repo = pr_base.get("repo") if isinstance(pr_base, Mapping) else None
+    if (
+        native.get("id") != trigger_comment_id
+        or native.get("body") != comment.get("body")
+        or native.get("issue_url")
+        != f"https://api.github.com/repos/{repository}/issues/{issue_number}"
+        or not isinstance(native_user, Mapping)
+        or native_user.get("login") != owner
+        or native_user.get("id") != actor.get("id")
+        or native.get("performed_via_github_app") is not None
+        or not isinstance(main_object, Mapping)
+        or main_object.get("sha") != current_revision
+        or pr.get("number") != repair_pr
+        or pr.get("state") != "open"
+        or pr.get("merged") is not False
+        or not isinstance(pr_head, Mapping)
+        or pr_head.get("sha") != fields["Repair-HEAD"]
+        or not isinstance(head_repo, Mapping)
+        or head_repo.get("full_name") != repository
+        or not isinstance(pr_base, Mapping)
+        or pr_base.get("ref") != "main"
+        or not isinstance(base_repo, Mapping)
+        or base_repo.get("full_name") != repository
+    ):
+        return None
+    observation = normalize_github_issue(current_issue)
+    if (
+        observation is None
+        or not observation.authoritative
+        or observation.state != "open"
+        or observation.change != fields["Change"]
+        or observation.routing != (source.role, source.action)
+    ):
+        return None
+    # Application owns the unique native accepted-decision inventory and SHA.
+    # Bridge consumes that result; a second GET is neither atomic nor authority.
+    completion = qualify(
+        repository,
+        token,
+        source=source,
+        current_revision=current_revision,
+        read=read,
+    )
+    accepted = completion.accepted_record
+    if (
+        accepted is None
+        or completion.accepted_decision_sha256 != fields["Accepted-Decision-SHA256"]
+        or accepted.disposition != "ACCEPTED"
+        or accepted.request_comment_id != request_comment_id
+        or (accepted.issue_number, accepted.change, accepted.role, accepted.action)
+        != (issue_number, fields["Change"], source.role, source.action)
+    ):
+        return None
+    # Eligibility comes from the Application-owned typed proof, not a
+    # Bridge status/reason allowlist. A missing or mismatched accepted source
+    # cannot become a positive repair admission just because it is INVALID.
+    proof = completion.accepted_proof
+    if proof is None:
+        return None
+    repair_frontier = proof.runtime_repair_frontier
+    artifact = completion.recovery_artifact
+    # Both Application artifact readers independently qualify the native
+    # Run/Job/Artifact, but their documents use distinct stage schemas:
+    # recovery carries authorization_revision; exception carries change.
+    # Compare the common accepted identity once, then its typed schema field.
+    if repair_frontier is None or not isinstance(
+        artifact, (ApplicationRecoveryArtifact, ApplicationExceptionArtifact)
+    ):
+        return None
+    if (
+        artifact.request_comment_id != request_comment_id
+        or artifact.accepted_decision_sha256 != fields["Accepted-Decision-SHA256"]
+        or (
+            artifact.document.get("issue_number"),
+            artifact.document.get("role"),
+            artifact.document.get("action"),
+        )
+        != (accepted.issue_number, accepted.role, accepted.action)
+        or (
+            artifact.document.get("authorization_revision")
+            if isinstance(artifact, ApplicationRecoveryArtifact)
+            else artifact.document.get("change")
+        )
+        != (
+            accepted.authorization_revision
+            if isinstance(artifact, ApplicationRecoveryArtifact)
+            else accepted.change
+        )
+        or completion.request_comment_id != request_comment_id
+        or completion.state != ("RESUMABLE" if proof.continuation == "OBSERVE" else "INVALID")
+    ):
+        return None
+    return RuntimeRepairAdmission(
+        source=source,
+        change=accepted.change,
+        authorization_revision=accepted.authorization_revision,
+        trigger_comment_id=trigger_comment_id,
+        accepted_request_comment_id=request_comment_id,
+        accepted_decision_sha256=fields["Accepted-Decision-SHA256"],
+        accepted_worker_sha256=accepted.worker_result_sha256,
+        repair_pr=repair_pr,
+        repair_head=fields["Repair-HEAD"],
+        result_state=completion.state,
+        reason=completion.reason,
+        frontier_proof=repair_frontier,
+        source_artifact=artifact,
+    )
+
+
+def _runtime_repair_admission_document(
+    admission: RuntimeRepairAdmission, *, repository: str
+) -> dict[str, object]:
+    """One canonical snapshot for emission and fresh Human/Runtime consumption.
+
+    This is a description of evidence, not an Effect or repair authorization.
+    """
+    evidence_kind = (
+        "recovery"
+        if isinstance(admission.source_artifact, ApplicationRecoveryArtifact)
+        else "exception"
+    )
+    proof = admission.frontier_proof
+    witness = proof.witness
+    stage = witness.stage if isinstance(witness, TypedEvidenceError) else None
+    document: dict[str, object] = {
+        "schema": "scheduled-agent-runtime-repair-admission/v1",
+        "source": {
+            "repository": repository,
+            "issue_number": admission.source.issue_number,
+            "role": admission.source.role,
+            "action": admission.source.action,
+            "change": admission.change,
+            "authorization_revision": admission.authorization_revision,
+            "human_comment_id": admission.trigger_comment_id,
+            "accepted_request_comment_id": admission.accepted_request_comment_id,
+            "accepted_decision_sha256": admission.accepted_decision_sha256,
+            "accepted_worker_sha256": admission.accepted_worker_sha256,
+        },
+        "repair_target": {"pr_number": admission.repair_pr, "head_sha": admission.repair_head},
+        "native_application": {
+            "run_id": admission.source_artifact.run_id,
+            "run_attempt": admission.source_artifact.run_attempt,
+            "job_id": admission.source_artifact.job_id,
+            "artifact_id": admission.source_artifact.artifact_id,
+            "artifact_digest": admission.source_artifact.artifact_digest,
+            "recovery_episode_sha256": admission.source_artifact.recovery_episode_sha256,
+            "kind": evidence_kind,
+        },
+        "frontier": {
+            "obligation": proof.remaining_obligation,
+            "disposition": proof.disposition,
+            "ordinal": proof.frontier_index,
+            "witness_kind": type(witness).__name__,
+            "evidence_stage": stage,
+        },
+        "completion": {"state": admission.result_state, "reason": admission.reason},
+        "effect_authority": "NONE",
+    }
+    return document
+
+
+def _present_runtime_repair_admission(
+    admission: RuntimeRepairAdmission, *, repository: str, evidence_path: Path | None = None
+) -> None:
+    """Present the canonical non-writing Artifact without a second evidence projection."""
+
+    document = _runtime_repair_admission_document(admission, repository=repository)
+    source = cast(Mapping[str, object], document["source"])
+    repair = cast(Mapping[str, object], document["repair_target"])
+    native = cast(Mapping[str, object], document["native_application"])
+    frontier = cast(Mapping[str, object], document["frontier"])
+    completion = cast(Mapping[str, object], document["completion"])
+    evidence_stage = frontier["evidence_stage"]
+    body = "\n".join(
+        (
+            "## Non-writing R9 Human/Runtime repair intake",
+            "",
+            f"- Exact source: {repository} Issue #{source['issue_number']}",
+            f"- Original Action: {source['role']}/{source['action']}",
+            f"- Immutable Change: {source['change']}",
+            f"- Accepted authorization revision: {source['authorization_revision']}",
+            f"- Native Human trigger: issuecomment-{source['human_comment_id']}",
+            f"- Immutable accepted request: issuecomment-{source['accepted_request_comment_id']}",
+            f"- Accepted decision SHA256: {source['accepted_decision_sha256']}",
+            f"- Accepted worker SHA256: {source['accepted_worker_sha256']}",
+            f"- Existing maintenance PR: #{repair['pr_number']}",
+            f"- Exact PR HEAD: {repair['head_sha']}",
+            f"- Native Application run: {native['run_id']} / attempt {native['run_attempt']}",
+            f"- Native Application job: {native['job_id']}",
+            f"- Native evidence kind: {native['kind']}",
+            f"- Evidence Artifact ID: {native['artifact_id']}",
+            f"- Evidence Artifact digest: {native['artifact_digest']}",
+            f"- Recovery episode SHA256: {native['recovery_episode_sha256']}",
+            f"- Read-only proof: {completion['state']}/{completion['reason']}",
+            f"- Pending original/formal/successor frontier: "
+            f"{frontier['obligation']}:{frontier['disposition']}",
+            f"- Verified Effect ordinal: {frontier['ordinal']}",
+            f"- Typed witness: {frontier['witness_kind']}",
+            f"- Evidence error stage: "
+            f"{evidence_stage if evidence_stage is not None else 'not-an-operational-error'}",
+            "",
+            "This native event was consumed by the existing Bridge. It authorizes NO "
+            "Effect, Action, routing, merge, direct workflow run, or PR mutation. "
+            "A separately authorized Human/Runtime maintainer must fresh-qualify "
+            "the exact source, target and gates before any repair; only a later "
+            "ordinary fresh wake may re-observe the accepted obligation.",
+            "",
+        )
+    )
+    # One document owns both machine Artifact and Human summary field values.
+    if evidence_path is not None:
+        evidence_path.write_text(
+            json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+    print(body)
+    destination = os.environ.get("GITHUB_STEP_SUMMARY")
+    if destination:
+        with Path(destination).open("a", encoding="utf-8") as output:
+            output.write(body)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Plan one run-scoped dispatch result")
     parser.add_argument("--event-path", type=Path)
     parser.add_argument("--revision", required=True)
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--result-payload", type=Path)
+    parser.add_argument("--repair-admission-payload", type=Path)
     parser.add_argument("--recovery-exit-request-comment-id", type=int)
     args = parser.parse_args()
 
@@ -5858,6 +6042,38 @@ def main() -> int:
         parser.error("dispatch requires --event-path, --github-output and --result-payload")
 
     event = _require_mapping(json.loads(args.event_path.read_text(encoding="utf-8")), "event")
+    event_comment = event.get("comment")
+    event_body = event_comment.get("body") if isinstance(event_comment, Mapping) else None
+    if isinstance(event_body, str) and event_body.splitlines()[:1] == [
+        RUNTIME_REPAIR_REQUEST_WIRE.marker
+    ]:
+        repository = os.environ.get("GITHUB_REPOSITORY")
+        token = os.environ.get("GITHUB_TOKEN")
+        if not repository or not token or os.environ.get("GITHUB_EVENT_NAME") != "issue_comment":
+            return 1
+        try:
+            admission = qualify_runtime_repair_admission(
+                event,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+            )
+        except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+            admission = None
+        if admission is None:
+            print(
+                "Native R9 repair intake is not source-qualified; no work emitted.",
+                file=sys.stderr,
+            )
+            return 1
+        if args.repair_admission_payload is None:
+            print("Native R9 repair intake has no evidence Artifact destination.", file=sys.stderr)
+            return 1
+        _present_runtime_repair_admission(
+            admission, repository=repository, evidence_path=args.repair_admission_payload
+        )
+        _write_outputs(args.github_output, BridgePlan(False), repair_admission=True)
+        return 0
     identity = _request_identity(event)
     if identity is None:
         plan = BridgePlan(False)
@@ -5869,18 +6085,34 @@ def main() -> int:
         preflight = acquire_current_github_preflight(repository, token)
         decision = classify_dispatch(preflight)
         source = _completion_source(preflight, decision)
-        completion = (
-            ApplicationCompletion("NONE", "application-completion-none")
-            if source is None
-            else qualify_application_completion(
-                repository,
-                token,
-                source=source,
-                current_revision=args.revision,
-                current_dispatch_request_comment_id=identity[1],
-                current_dispatch_issue_number=identity[0],
-            )
-        )
+        if source is None:
+            completion = ApplicationCompletion("NONE", "application-completion-none")
+        else:
+            try:
+                completion = qualify_application_completion(
+                    repository,
+                    token,
+                    source=source,
+                    current_revision=args.revision,
+                    current_dispatch_request_comment_id=identity[1],
+                    current_dispatch_issue_number=identity[0],
+                )
+            except Exception as exc:
+                # The run-scoped dispatch result is the existing durable
+                # pre-dispatch repair entry. Preserve exact source identity
+                # without exposing exception text, replaying accepted effects,
+                # or manufacturing a repository-dispatched successor Action.
+                print(
+                    "Pre-dispatch accepted-completion proof exception: "
+                    f"issue={source.issue_number} action={source.action} "
+                    f"type={type(exc).__qualname__}",
+                    file=sys.stderr,
+                )
+                completion = ApplicationCompletion(
+                    "INVALID",
+                    "application-completion-proof-exception:"
+                    f"issue-{source.issue_number}:{source.action}",
+                )
         continuation_body = None
         if completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
             if (
