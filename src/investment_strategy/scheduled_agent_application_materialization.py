@@ -2616,7 +2616,9 @@ def prove_materialization(
                     main_paths = _proof_ancestry(
                         repository, token, cast(str, fork["sha"]), current_revision
                     )
-                    if main_paths.intersection(file.path for file in request.files):
+                    if not content_only and main_paths.intersection(
+                        file.path for file in request.files
+                    ):
                         raise RuntimeError("materialization missing work overlaps default advance")
                     branch_paths = _proof_ancestry(
                         repository, token, cast(str, fork["sha"]), revision
@@ -2628,7 +2630,9 @@ def prove_materialization(
                             raise RuntimeError(
                                 "materialization missing work has conflicting histories"
                             )
-                elif default_advance.intersection(file.path for file in request.files):
+                elif not content_only and default_advance.intersection(
+                    file.path for file in request.files
+                ):
                     raise RuntimeError("materialization missing work overlaps default advance")
                 for file in request.files:
                     if _content_sha_at(repository, token, path=file.path, revision=revision) != (
@@ -2756,14 +2760,12 @@ def prove_materialization(
         )
         # Current target gates can reject without invalidating the accepted Git witness.
         try:
-            if not committed_formal_result and default_advance.intersection(
-                file.path for file in request.files
-            ):
-                _proof_ancestry(repository, token, witness_revision, current_revision)
             # Whole-branch reconciliation is a separate integration obligation
             # for content-only operations. The witness already binds its parent,
             # exact path delta, and desired blobs.
             if not committed_formal_result and not content_only:
+                if default_advance.intersection(file.path for file in request.files):
+                    _proof_ancestry(repository, token, witness_revision, current_revision)
                 # Compare current default against carrier history without confusing
                 # the mutation preimage with a historical default-branch base.
                 comparison, _commits, _paths = _proof_comparison(

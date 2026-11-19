@@ -2120,7 +2120,6 @@ def test_canonical_proof_separates_current_target_from_immutable_git_witness(
         "wrong-blob",
         "wrong-ref",
         "duplicate-pr",
-        "overlap",
         "incomplete-compare",
         "unrelated-overwrite",
     ],
@@ -2132,11 +2131,7 @@ def test_canonical_git_proof_preserves_conflicts(
     value = "wrong content" if failure == "wrong-blob" else "accepted content"
     accepted = proof_git.commit({proof_git.path: value}, proof_git.message, (proof_git.base,))
     proof_git.set_head(accepted)
-    if failure == "overlap":
-        proof_git.main = proof_git.commit(
-            {proof_git.path: "conflicting main"}, "Main overlap", (proof_git.base,)
-        )
-    elif failure == "unrelated-overwrite":
+    if failure == "unrelated-overwrite":
         proof_git.set_head(
             proof_git.commit(
                 {"README.md": "lost unrelated baseline"}, "Bad descendant", (accepted,)
@@ -3072,7 +3067,6 @@ def test_native_application_bridge_uses_only_the_exact_committed_executor_result
         "wrong-blob",
         "wrong-ref",
         "duplicate-pr",
-        "overlap",
         "incomplete-compare",
         "unrelated-overwrite",
     ],
@@ -3087,11 +3081,7 @@ def test_contradictory_proof_blocks_apply_without_repository_mutation(
         (proof_git.base,),
     )
     proof_git.set_head(accepted)
-    if failure == "overlap":
-        proof_git.main = proof_git.commit(
-            {proof_git.path: "overlapping main"}, "Conflict", (proof_git.main,)
-        )
-    elif failure == "unrelated-overwrite":
+    if failure == "unrelated-overwrite":
         proof_git.set_head(
             proof_git.commit({"README.md": "overwrite"}, "Bad correction", (accepted,))
         )
@@ -5215,6 +5205,66 @@ def test_s1_content_only_witness_survives_native_integration_outcome(
     assert proof.witness is not None and proof.witness.revision == accepted
     _apply_git(fixture, accepted_intent=True)
     assert fixture.mutations == []
+
+
+@pytest.mark.parametrize("conflicting", [False, True], ids=["compatible", "conflict"])
+@pytest.mark.parametrize("materialized", [False, True], ids=["missing", "existing-witness"])
+def test_s1_requested_path_default_advance_preserves_materialization(
+    proof_git: _ProofGitRepository,
+    conflicting: bool,
+    materialized: bool,
+) -> None:
+    import subprocess
+
+    middle = "".join(f"unchanged {index}\n" for index in range(8))
+    path = proof_git.path
+    parent = proof_git.commit({path: f"left\n{middle}right\n"}, "Parent", (proof_git.base,))
+    proof_git.base = proof_git.authorization = parent
+    proof_git.set_head(parent)
+    desired = f"carrier left\n{middle}right\n"
+    proof_git.desired = proof_git.blob(desired)
+    default_content = (
+        f"main left\n{middle}right\n" if conflicting else f"left\n{middle}main right\n"
+    )
+    proof_git.main = proof_git.commit({path: default_content}, "Main advance", (parent,))
+    manifest = cast(list[dict[str, object]], proof_git.payload()["files"])
+    assert manifest[0]["expected_sha"] == proof_git.entries(parent)[path]["sha"]
+    assert manifest[0]["expected_sha"] != proof_git.entries(proof_git.main)[path]["sha"]
+
+    witness = proof_git.commit({path: desired}, proof_git.message, (parent,))
+    integration = subprocess.run(  # noqa: S603 - fixed fixture Git arguments
+        [  # noqa: S607 - fixture Git executable
+            "git",
+            "-C",
+            str(proof_git.directory),
+            "merge-tree",
+            "--write-tree",
+            proof_git.main,
+            witness,
+        ],
+        capture_output=True,
+        check=False,
+    )
+    assert integration.returncode == int(conflicting), integration.stdout
+    if materialized:
+        proof_git.set_head(witness)
+        result = _prove_git(proof_git, accepted_intent=True)
+        assert result.disposition == "COMPLETE", result
+        assert result.witness is not None and result.witness.revision == witness
+        assert _apply_git(proof_git, accepted_intent=True) == result.target
+        assert proof_git.mutations == []
+    else:
+        result = _prove_git(proof_git, accepted_intent=True)
+        assert result.disposition == "INCOMPLETE", result
+        assert proof_git.mutations == []
+        proof_git.allow_writes = True
+        with pytest.raises(CarrierRequired) as raised:
+            _apply_git(proof_git, accepted_intent=True)
+        plan = raised.value.plan
+        assert plan.requested["commit_parents"] == [parent]
+        assert plan.expected["ref_sha"] == parent
+        assert plan.force is False
+        assert proof_git.mutations == ["git/trees", "git/commits"]
 
 
 def test_s1_content_write_rejects_mismatched_accepted_preimage(
