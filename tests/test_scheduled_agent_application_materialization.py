@@ -5136,6 +5136,61 @@ def test_missing_reconciliation_constructs_on_exact_actual_branch_parent(
     assert proof_git.mutations == written
 
 
+@pytest.fixture
+def diverged_content_only_git(proof_git: _ProofGitRepository) -> _ProofGitRepository:
+    common = proof_git.base
+    proof_git.base = proof_git.commit({"README.md": "carrier change"}, "Carrier", (common,))
+    proof_git.set_head(proof_git.base)
+    proof_git.main = proof_git.commit({"README.md": "main change"}, "Main", (common,))
+    proof_git.authorization = proof_git.main
+    return proof_git
+
+
+def test_s1_content_only_construction_preserves_unrelated_paths(
+    diverged_content_only_git: _ProofGitRepository,
+) -> None:
+    fixture = diverged_content_only_git
+    parent_entries = fixture.entries(fixture.head)
+    assert _prove_git(fixture, accepted_intent=True).disposition == "INCOMPLETE"
+    fixture.allow_writes = True
+    with pytest.raises(CarrierRequired) as raised:
+        _apply_git(fixture, accepted_intent=True)
+    plan = raised.value.plan
+    assert plan.expected["ref_sha"] == fixture.head
+    assert plan.requested["force"] is False
+    assert plan.requested["commit_parents"] == [fixture.head]
+    entries = fixture.entries(cast(str, plan.requested["sha"]))
+    assert entries.pop(fixture.path)["sha"] == fixture.desired
+    parent_entries.pop(fixture.path)
+    assert entries == parent_entries
+    assert fixture.mutations == ["git/trees", "git/commits"]
+
+
+def test_s1_content_only_witness_survives_unrelated_conflict(
+    diverged_content_only_git: _ProofGitRepository,
+) -> None:
+    fixture = diverged_content_only_git
+    accepted = fixture.commit({fixture.path: "accepted content"}, fixture.message, (fixture.head,))
+    fixture.set_head(accepted)
+    proof = _prove_git(fixture, accepted_intent=True)
+    assert proof.disposition == "COMPLETE", proof
+    assert proof.witness is not None and proof.witness.revision == accepted
+    _apply_git(fixture, accepted_intent=True)
+    assert fixture.mutations == []
+
+
+def test_s1_content_write_rejects_mismatched_accepted_preimage(
+    proof_git: _ProofGitRepository,
+) -> None:
+    payload = proof_git.payload()
+    cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] = proof_git.blob(
+        "different preimage"
+    )
+    with pytest.raises(RuntimeError, match="preimage|expected content SHA"):
+        _apply_git(proof_git, payload=payload, accepted_intent=True)
+    assert proof_git.mutations == []
+
+
 def test_actual_implementation_constructor_is_proved_by_fresh_consumers(
     proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,

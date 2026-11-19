@@ -700,6 +700,10 @@ Identity SHALL include the exact repository, Issue, immutable Change, source Rol
 
 The accepted authorization revision `A`, declared carrier base `B`, actual prospective mutation parent/preimage `P`, and fresh default-branch revision `D` SHALL be qualified as separate identities and MAY differ. `A` records immutable accepted authorization; `B` is the declared carrier graph anchor; `P` is the actual tree a missing write would extend, including parent zero for an existing-carrier correction/reconciliation; `D` supplies fresh governance and authorization. Before each missing mutation, `expected_sha` SHALL match the requested path in actual prospective parent `P`, not merely in `A`, `B`, or `D`. A reconciliation with parents `[P, D]` and a declared base `B != P` SHALL retain that preimage guard, complete graph/compare/overlap checks, and unrelated-content preservation. A mutation preimage SHALL remain a stale-write authorization guard and MUST NOT be required to remain current as durable completion evidence after the accepted desired consequence is proven at `W`. Lineage SHALL qualify these separate revisions, witness/current target, PR base/head/merge ancestry, and application-built reconciliation lineage from complete actual Git evidence. Non-conflict SHALL reject duplicate or ambiguous carriers, wrong PR/ref/blob, requested-path overlap, broken or incomplete ancestry/compare evidence, unrelated overwritten content, and contradictory repository observations.
 
+Existing-carrier content materialization SHALL use the freshly qualified PR head `P` as its sole parent. The Application SHALL independently qualify `A`, `B`, `P`, and `D`, verify the immutable accepted `expected_sha` of every requested path at `P`, and preserve the mode, type and object identity of every unrelated path. A mismatch SHALL prevent the affected write and preserve the expected and observed values for governed correction. The Application SHALL recheck the exact ref before a non-force update and prove the new ref, parent, requested blobs and unrelated content through the canonical materialization proof. A qualified existing witness SHALL suppress duplicate writes.
+
+Whole-branch integration with `D` SHALL be evaluated at its separately authorized boundary. For content-only materialization, unrelated divergence and whole-PR mergeability SHALL NOT invalidate an otherwise qualified operation or witness. An authorized integration SHALL use native Git merge semantics and retain the existing graph, overlap and preservation checks for the integration, including the checks for `[P, D]` above. A real Git or semantic conflict SHALL retain the affected paths, revisions and correction owner. Applicable exact-head validation and independent review SHALL qualify the integrated revision before merge. First-carrier disjointness requirements remain in force.
+
 Application/apply-side already-complete checks, materialization observation/postcondition, fresh interruption recovery, and consequence completion classification SHALL all consume that same proof owner. Existing exact-manifest, historical-ancestry, merged-witness, reconciliation, and replacement-carrier helpers MAY remain as proof primitives or witness finders, but MUST NOT independently define top-level completion. After any consequential mutation the application SHALL discard local success as authority, fresh-read repository state, and use the same proof; only fresh `COMPLETE` permits completion to proceed.
 
 The existing application-completion owner SHALL reconstruct pending carrier work before selecting a producer continuation. It SHALL qualify one immutable accepted intent and the unique current necessary CarrierPlan from complete source request, application run/attempt, artifact identity/digest/content, plan correlation, and fresh repository evidence. It SHALL preserve current Human disposition, governance, Issue/Change/Role/Action, exact branch/ref/PR/head/base, commit parents/tree/manifest/content, actual preimage, lineage, overlap, and cardinality guards. A saved plan SHALL NOT grant semantic, successor, routing, or terminal authority to the external actuator.
@@ -994,6 +998,28 @@ After a lost or ambiguous write response, recovery SHALL observe/reconcile the e
 - THEN each `expected_sha` must match the requested path in `P`, with complete lineage, overlap, cardinality, and unrelated-content guards
 - AND a preimage that matches only `A`, `B`, or `D` but differs in `P` rejects the write
 - AND after accepted desired content is proven at a qualified witness, the obsolete preimage need not remain current
+
+#### Scenario: Existing-carrier content can be materialized before unrelated integration
+
+- GIVEN the accepted paths match their immutable preimages at exact `P`
+- AND both branches changed a path outside the manifest
+- WHEN the Application materializes the authorized content
+- THEN the single-parent witness contains the desired blobs and preserves every unrelated path from `P`
+- AND the canonical observer can prove the witness without repeating the write
+
+#### Scenario: The immutable preimage or exact ref no longer matches
+
+- GIVEN an accepted content manifest and its qualified PR/ref
+- WHEN the requested preimage or expected ref disagrees with the fresh observation
+- THEN no stale write may proceed
+- AND any corrective operation must be independently requalified by the existing owner
+
+#### Scenario: Integration independently handles compatible changes and true conflicts
+
+- GIVEN a content witness exists and integration is separately authorized
+- WHEN native Git evaluates the exact candidate and default revision
+- THEN compatible changes may proceed through applicable exact-head gates
+- AND a true conflict stops the integration, retaining its paths, revisions and owner without erasing the content witness
 
 ### Requirement: Coordination Issue closure is the durable final lifecycle transition
 
@@ -3967,7 +3993,7 @@ The derived wait SHALL be invalidated by a newer qualifying Human decision or ma
 
 Accepted intent `I`, materialization/effect plan `P`, optional externally executable CarrierPlan `C` (which may be absent), and execution attempt `R` SHALL remain distinct. A failed effect SHALL NOT rewrite or replace `I`. Before an effect-precondition rejection is reduced to a generic batch outcome, the existing application/evidence owner SHALL preserve the exact failed effect and ordinal, operation/target, expected and observed preimage, guard reason, canonical completion proof, effects already proven complete, mutation status (`complete`, `not-complete`, or `unknown`), and unfinished boundary. Evidence SHALL bind the immutable accepted-decision digest and exact request/run/attempt/artifact and any plan ids that exist, and SHALL explicitly represent an absent CarrierPlan rather than guessing one. It SHALL not contain credentials or fabricate unobserved platform errors.
 
-Before any later write, recovery SHALL use current repository truth and fresh authorization. Unknown or lost write outcomes SHALL be reconciled read-only first. A complete canonical proof SHALL skip duplicate mutation. A stale/expired `P` or existing `C` MAY receive a `PLAN_SUPERSEDED` disposition only after its invalidation and already-completed effects are proven; this ends that plan's execution authority without changing `I`. A replacement `P` or `C` MAY be created only when the same accepted intent remains current and the canonical proof plus exact current preimages, lineage, authorization, and non-conflict checks prove the operation remains safe. Same-path overlap or an unresolvable expected/observed preimage conflict SHALL remain fail-closed with its exact blocker and the existing governed correction path; no automatic overwrite, force update, semantic replay, or guessed payload is allowed.
+Before any later write, recovery SHALL use current repository truth and fresh authorization. Unknown or lost write outcomes SHALL be reconciled read-only first. A complete canonical proof SHALL skip duplicate mutation. A stale/expired `P` or existing `C` MAY receive a `PLAN_SUPERSEDED` disposition only after its invalidation and already-completed effects are proven; this ends that plan's execution authority without changing `I`. A replacement `P` or `C` MAY be created only when the same accepted intent remains current and the canonical proof plus exact current preimages, lineage, authorization, and non-conflict checks prove the operation remains safe. Same-path overlap relevant to the proposed operation under the canonical materialization and integration boundaries, or an unresolvable expected/observed preimage conflict SHALL remain fail-closed with its exact blocker and the existing governed correction path; no automatic overwrite, force update, semantic replay, or guessed payload is allowed.
 
 A `run_attempt > 1` value alone SHALL neither permanently block a safe continuation nor authorize rerunning its completed run/job. A continuation SHALL use the existing `APPLICATION_CONTINUATION` path and create a fresh run only after unique intent/current predecessor, current Issue/Change/Role/Action, exact evidence chain, fresh authorization, and a new qualified failure-evidence transition is proven. No new Action, ResultKind, retry registry, counter, queue, cursor, lease, or progress database is introduced.
 
