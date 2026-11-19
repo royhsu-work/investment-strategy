@@ -227,7 +227,6 @@ class ApplicationExceptionContext:
     evidence_path: str | None = None
     stage: str = "application-bootstrap"
     mutation_attempted: bool = False
-    continuation_binding: ApplicationDecisionRecord | None = None
 
 
 _APPLICATION_RECOVERY_ARTIFACT = "application-recovery-evidence"
@@ -5310,6 +5309,33 @@ def _qualified_exception_artifact_metadata(
     return candidates[0]
 
 
+_CONTINUATION_OBSERVATION_STAGE = "application-continuation-predecessor-observation"
+
+
+def _exception_accepted_identity(
+    document: Mapping[str, object], record: ApplicationDecisionRecord
+) -> dict[str, object]:
+    identity: dict[str, object] = {
+        "issue_number": record.issue_number,
+        "role": record.role,
+        "action": record.action,
+        "change": record.change,
+        "request_comment_id": record.request_comment_id,
+    }
+    # A pre-application observation may fail before it learns the accepted
+    # identity. Preserve the raw envelope: only the qualified native trigger
+    # and predecessor chain can subsequently bind it to an accepted intent.
+    if (
+        document.get("attempted_operation") == _CONTINUATION_OBSERVATION_STAGE
+        and document.get("mutation_status") == "NO_APPLICATION_WRITE_ATTEMPTED"
+        and _strict_positive_int(document.get("trigger_comment_id")) is not None
+        and document.get("trigger_comment_id") != record.request_comment_id
+        and all(key in document and document[key] is None for key in identity)
+    ):
+        return dict.fromkeys(identity)
+    return identity
+
+
 def _qualified_exception_document(
     document: object,
     *,
@@ -5326,15 +5352,11 @@ def _qualified_exception_document(
     expected = {
         "schema": "scheduled-agent-execution-exception/v1",
         "repository": repository,
-        "issue_number": record.issue_number,
-        "role": record.role,
-        "action": record.action,
-        "change": record.change,
         "revision": run.get("head_sha"),
-        "request_comment_id": record.request_comment_id,
         "run_id": run_id,
         "run_attempt": run_attempt,
         "classification": "UNCLASSIFIED_EXECUTION_EXCEPTION",
+        **_exception_accepted_identity(document, record),
     }
     if not _matches_required_fields(document, expected):
         return None
@@ -5485,7 +5507,7 @@ def qualify_application_continuation_predecessor(
     continuation: ApplicationContinuationRequest,
     *,
     current_comment_id: int,
-    observe_binding: Callable[[ApplicationDecisionRecord], None] | None = None,
+    expected_record: ApplicationDecisionRecord | None = None,
     transport_issue_number: int,
     read: Callable[[str, str, str], object] | None = None,
     artifact_reader: Callable[[str, str, str], bytes] | None = None,
@@ -5552,8 +5574,8 @@ def qualify_application_continuation_predecessor(
         repository, continuation, accepted_record, decision_sha256
     ):
         return None
-    if observe_binding is not None:
-        observe_binding(accepted_record)
+    if expected_record is not None and accepted_record != expected_record:
+        return None
     evidence = _read_bound_continuation_predecessor(
         repository,
         token,
@@ -7371,9 +7393,6 @@ def classify_post_effect_result_recovery(
     return _fresh_accepted_activation_proof(record, repository=repository, token=token)
 
 
-_CONTINUATION_OBSERVATION_STAGE = "application-continuation-predecessor-observation"
-
-
 def classify_application_exception_recovery(
     *,
     record: ApplicationDecisionRecord,
@@ -7387,23 +7406,13 @@ def classify_application_exception_recovery(
     claimed mutation status authorizes a second Effect invocation.
     """
 
-    identity = (
-        artifact.request_comment_id,
-        artifact.document.get("issue_number"),
-        artifact.document.get("role"),
-        artifact.document.get("action"),
-        artifact.document.get("change"),
-    )
     if (
-        identity
-        != (
-            record.request_comment_id,
-            record.issue_number,
-            record.role,
-            record.action,
-            record.change,
-        )
+        artifact.request_comment_id != record.request_comment_id
         or record.disposition != "ACCEPTED"
+        or not _matches_required_fields(
+            {"request_comment_id": artifact.request_comment_id, **artifact.document},
+            _exception_accepted_identity(artifact.document, record),
+        )
     ):
         return AcceptedPostEffectProof("UNSAFE", "exception accepted identity mismatch")
     # A bound invocation can fail before reading its predecessor. Reconstruct
@@ -7450,6 +7459,27 @@ def classify_application_exception_recovery(
                 )
             ):
                 return AcceptedPostEffectProof("UNSAFE", "continuation trigger identity mismatch")
+            issue_url = comment.get("issue_url")
+            match = (
+                re.fullmatch(
+                    rf"https://api.github.com/repos/{re.escape(repository)}/issues/([1-9][0-9]*)",
+                    issue_url,
+                )
+                if isinstance(issue_url, str)
+                else None
+            )
+            if match is None:
+                return AcceptedPostEffectProof(
+                    "INDETERMINATE", "continuation shard identity unavailable"
+                )
+            issue_number = int(match.group(1))
+            shard = _as_mapping(_github_json(repository, token, f"issues/{issue_number}"))
+            if shard is None:
+                return AcceptedPostEffectProof("INDETERMINATE", "continuation shard unavailable")
+            if shard.get("number") != issue_number or not is_runtime_checkin_issue(shard):
+                return AcceptedPostEffectProof(
+                    "UNSAFE", "continuation trigger is not on its runtime shard"
+                )
             predecessor = _read_bound_continuation_predecessor(
                 repository,
                 token,
@@ -7768,7 +7798,6 @@ def _record_application_exception(context: ApplicationExceptionContext, exc: Exc
     raw_run_id = os.environ.get("GITHUB_RUN_ID", "")
     run_id = _positive_int(int(raw_run_id)) if raw_run_id.isdecimal() else None
     source = context.source
-    binding = context.continuation_binding
     raw_error = redacted(str(exc))
     correlation = (
         f"application:{run_id}:{context.run_attempt}:{context.request_comment_id}"
@@ -7783,18 +7812,12 @@ def _record_application_exception(context: ApplicationExceptionContext, exc: Exc
     document: dict[str, object] = {
         "schema": "scheduled-agent-execution-exception/v1",
         "repository": context.repository,
-        "issue_number": (None if source is None else source.issue_number)
-        if binding is None
-        else binding.issue_number,
-        "role": (None if source is None else source.role) if binding is None else binding.role,
-        "action": (None if source is None else source.action)
-        if binding is None
-        else binding.action,
-        "change": (context.change) if binding is None else binding.change,
+        "issue_number": None if source is None else source.issue_number,
+        "role": None if source is None else source.role,
+        "action": None if source is None else source.action,
+        "change": context.change,
         "revision": context.revision,
-        "request_comment_id": (context.request_comment_id)
-        if binding is None
-        else binding.request_comment_id,
+        "request_comment_id": context.request_comment_id,
         "trigger_comment_id": context.trigger_comment_id,
         "run_id": run_id,
         "run_attempt": context.run_attempt,
@@ -7962,6 +7985,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     if continuation is not None:
         if event_comment_id is None:
             raise ValueError("application continuation event comment id is invalid")
+        context.stage = _CONTINUATION_OBSERVATION_STAGE
         if _fresh_event_observation(event, body, repository, token):
             raise ValueError("application continuation current comment was mutated")
         preflight = acquire_current_github_preflight(repository, token)
@@ -7977,20 +8001,6 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             or accepted_intent.issue_number != continuation.issue_number
         ):
             raise ValueError("application continuation accepted intent is unavailable")
-        decision_comments = _application_decision_comment_for_request(
-            repository=repository,
-            token=token,
-            issue_number=accepted_intent.issue_number,
-            request_comment_id=accepted_intent.request_comment_id,
-        )
-        if decision_comments is None:
-            raise ValueError("application continuation decision evidence is unavailable")
-        _decision_record, decision_body = decision_comments
-        decision_sha256 = hashlib.sha256(decision_body.encode("utf-8")).hexdigest()
-        if not _continuation_matches_accepted_decision(
-            repository, continuation, accepted_intent, decision_sha256
-        ):
-            raise ValueError("application continuation correlation is invalid")
         event_issue = _as_mapping(event.get("issue"))
         transport_issue_number = (
             None if event_issue is None else _positive_int(event_issue.get("number"))
@@ -7998,23 +8008,16 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         if transport_issue_number is None:
             raise ValueError("application continuation transport Issue is invalid")
 
-        def record_continuation_binding(record: ApplicationDecisionRecord) -> None:
-            if record != accepted_intent:
-                raise ValueError("application continuation accepted decision changed")
-            context.continuation_binding = record
-            context.stage = _CONTINUATION_OBSERVATION_STAGE
-
         predecessor_evidence = qualify_application_continuation_predecessor(
             repository,
             token,
             continuation,
             current_comment_id=event_comment_id,
-            observe_binding=record_continuation_binding,
+            expected_record=accepted_intent,
             transport_issue_number=transport_issue_number,
         )
         if predecessor_evidence is None:
             raise ValueError("application continuation predecessor evidence is invalid")
-        context.continuation_binding = None
 
     if (
         continuation is None

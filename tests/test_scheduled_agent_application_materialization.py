@@ -3629,6 +3629,8 @@ def test_accepted_seven_file_manifest_proves_six_effective_changes(
         ("spec-blocker", "resolve-question", "lead", None),
         ("blocked", "implement-change", "executor", "download"),
         ("blocked", "implement-change", "executor", "digest"),
+        ("blocked", "implement-change", "executor", "trigger"),
+        ("blocked", "implement-change", "executor", "accepted"),
     ],
 )
 def test_435_accepted_original_git_witness_reobserves_without_replay(
@@ -4379,6 +4381,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         continuation_comments.append(
             {
                 "id": 90007,
+                "issue_url": f"https://api.github.com/repos/{proof_git.repository}/issues/448",
                 "body": continuation_body,
                 "created_at": "2026-11-17T05:37:00Z",
                 "updated_at": "2026-11-17T05:37:00Z",
@@ -4687,36 +4690,47 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
 
     # Formal POST succeeds at GitHub but its client response is lost.
     if predecessor_failure is not None:
-        predecessor_read = artifact_read
-        download_attempts: list[str] = []
+        original_bridge_reader = bridge_read
+        original_artifact_reader = artifact_read
+        fault_path = {
+            "trigger": "issues/comments/90007",
+            "accepted": "issues/435/comments?sort=created&direction=asc",
+            "download": "actions/artifacts/13860996180/zip",
+            "digest": "actions/artifacts/13860996180/zip",
+        }[predecessor_failure]
+        failed_paths: list[str] = []
 
-        def temporarily_unavailable(repository: str, token: str, path: str) -> bytes:
-            download_attempts.append(path)
-            raise RuntimeError("exact GitHub artifact read failed")
+        def fail_observation(path: str) -> None:
+            if path.partition("&per_page=100")[0] == fault_path and not failed_paths:
+                failed_paths.append(fault_path)
+                raise OSError("temporary continuation evidence read failure")
 
-        artifact_read = temporarily_unavailable
-        with pytest.raises(RuntimeError, match="exact GitHub artifact read failed"):
+        def interrupted_bridge_read(
+            repository: str, token: str, path: str, **kwargs: object
+        ) -> object:
+            fail_observation(path)
+            return original_bridge_reader(repository, token, path, **kwargs)
+
+        def interrupted_artifact_read(repository: str, token: str, path: str) -> bytes:
+            fail_observation(path)
+            return original_artifact_reader(repository, token, path)
+
+        bridge_read = interrupted_bridge_read
+        artifact_read = interrupted_artifact_read
+        with pytest.raises(
+            (OSError, ValueError),
+            match="temporary continuation evidence read failure|decision evidence is unavailable",
+        ):
             native_continuation_attempt(1)
-        assert download_attempts == ["actions/artifacts/13860996180/zip"]
-        artifact_read = predecessor_read
-        restored = artifact_read(proof_git.repository, _TOKEN, download_attempts[0])
+        assert failed_paths == [fault_path]
+        bridge_read = original_bridge_reader
+        artifact_read = original_artifact_reader
+        restored = artifact_read(proof_git.repository, _TOKEN, "actions/artifacts/13860996180/zip")
         assert "sha256:" + hashlib.sha256(restored).hexdigest() == native_artifact["digest"]
         failed = json.loads((tmp_path / "435-entry-exception-1.json").read_text())
         assert failed["trigger_comment_id"] == 90007
-        assert failed["request_comment_id"] == accepted.request_comment_id
-        assert failed["issue_number"] == 435
-        assert failed["change"] == change
         assert failed["mutation_status"] == "NO_APPLICATION_WRITE_ATTEMPTED"
         assert not formal_comment_posts and not successor_patches and not proof_git.mutations
-        qualified_document = application_bridge._qualified_exception_document(
-            failed,
-            repository=proof_git.repository,
-            record=accepted,
-            run={"head_sha": proof_git.main, "display_title": "Scheduled Agent Application 90007"},
-            run_id=43029179129,
-            run_attempt=1,
-        )
-        assert qualified_document is not None
         pr["mergeable"] = False
         with monkeypatch.context() as fresh:
             fresh.setattr(application_bridge, "_github_json", bridge_read)
