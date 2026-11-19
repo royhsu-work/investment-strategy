@@ -3061,13 +3061,17 @@ def test_incident_435_accepted_blocked_materialization_is_read_only_proven(
     checked: list[dict[str, object]] = []
 
     class Observer:
+        accepted_intent = True
+
         def __init__(self, *_args: object, **kwargs: object) -> None:
             assert kwargs["accepted_intent"] is True
             assert kwargs["request_comment_id"] == record.request_comment_id
 
         def observe_materialization_proof(self, payload: dict[str, object]) -> SimpleNamespace:
             checked.append(payload)
-            return SimpleNamespace(disposition="COMPLETE" if observed else "UNKNOWN")
+            return SimpleNamespace(
+                disposition="COMPLETE" if observed else "UNKNOWN", historical_witness=None
+            )
 
     monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
     proof = bridge._observe_accepted_post_effect_result(
@@ -4624,7 +4628,7 @@ def test_continuation_predecessor_qualifies_runtime_shard_transport_separately_f
         bridge,
         "parse_application_decision",
         lambda value: (
-            SimpleNamespace(request_comment_id=102, disposition="ACCEPTED")
+            SimpleNamespace(issue_number=322, request_comment_id=102, disposition="ACCEPTED")
             if value == decision_body
             else None
         ),

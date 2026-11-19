@@ -3972,7 +3972,17 @@ class GitHubEffectAdapter:
     ) -> bool:
         operation = cast(str, payload["operation"])
         if operation == "application-materialize":
-            return self.observe_materialization_proof(payload).disposition == "COMPLETE"
+            proof = self.observe_materialization_proof(payload)
+            return proof.disposition == "COMPLETE" or (
+                self.accepted_intent
+                and self.allow_pending_continuation
+                and self.expected_result_kind is not None
+                and consequence_spec_for(
+                    self.source.action, self.expected_result_kind
+                ).evidence_target
+                is EvidenceTarget.DEFAULT_BRANCH
+                and proof.historical_witness is not None
+            )
         if operation == "issue-update":
             current = self._current_issue()
             fields = payload.get("fields")

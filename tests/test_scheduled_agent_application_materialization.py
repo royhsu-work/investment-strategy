@@ -3623,10 +3623,12 @@ def test_accepted_seven_file_manifest_proves_six_effective_changes(
 
 
 @pytest.mark.parametrize(
-    ("result_kind", "successor_action", "successor_role"),
+    ("result_kind", "successor_action", "successor_role", "predecessor_failure"),
     [
-        ("blocked", "implement-change", "executor"),
-        ("spec-blocker", "resolve-question", "lead"),
+        ("blocked", "implement-change", "executor", None),
+        ("spec-blocker", "resolve-question", "lead", None),
+        ("blocked", "implement-change", "executor", "download"),
+        ("blocked", "implement-change", "executor", "digest"),
     ],
 )
 def test_435_accepted_original_git_witness_reobserves_without_replay(
@@ -3636,6 +3638,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     result_kind: str,
     successor_action: str,
     successor_role: str,
+    predecessor_failure: str | None,
 ) -> None:
     """R9/F2: the native #435-shaped Effect has one immutable Git witness.
 
@@ -3865,7 +3868,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
                 )
             issue = cast(dict[str, object], proof_git.api(repository, token, "issues/322"))
             return {**issue, "number": 435, "body": f"Change: {change}"}
-        if api_path == "pulls/437/files?per_page=100":
+        if api_path.startswith("pulls/437/files?"):
             return [{"filename": proposal_path, "status": "modified"}] + [
                 {"filename": item, "status": "modified"} for item in paths
             ]
@@ -3906,9 +3909,13 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     monkeypatch.setattr(effects, "_github_json", native_read)
     # The separate OpenSpec review gate is established upstream of this
     # accepted Effect. It is not reimplemented by the Git witness test.
-    monkeypatch.setattr(
-        materialization, "_qualified_implementation_decision", lambda *_a, **_kw: None
-    )
+    from investment_strategy import scheduled_agent_application_carrier as application_carrier
+
+    monkeypatch.setattr(application_carrier, "_github_json", native_read)
+    if predecessor_failure is None:
+        monkeypatch.setattr(
+            materialization, "_qualified_implementation_decision", lambda *_a, **_kw: None
+        )
 
     def observe() -> application_bridge.AcceptedPostEffectProof:
         return application_bridge._observe_accepted_post_effect_result(
@@ -4145,7 +4152,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
                 "labels": [],
             }
         if path == "issues/comments/90007":
-            return continuation_comments[0] if continuation_comments else None
+            return next((item for item in continuation_comments if item["id"] == 90007), None)
         if path == "issues/comments/90008":
             return repair_comment
         if path == "pulls/443":
@@ -4299,9 +4306,50 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         # Stand-in for an independently authorized external disposition. Only
         # simulated GitHub metadata changes; no old Git write is replayed.
         pr["base"] = previous_base
+        if predecessor_failure is not None:
+            proof_git.main = proof_git.commit(
+                {paths[0]: "conflicting maintenance delivered to main"},
+                "Maintenance squash merge",
+                (base,),
+            )
+            import subprocess
+
+            git_integration = subprocess.run(  # noqa: S603 - local fixture commits
+                [  # noqa: S607 - repository test uses the installed Git executable
+                    "git",
+                    "-C",
+                    str(proof_git.directory),
+                    "merge-tree",
+                    "--write-tree",
+                    proof_git.main,
+                    witness,
+                ],
+                capture_output=True,
+                check=False,
+            )
+            assert git_integration.returncode == 1
+            pr["mergeable"] = False
+            pr["mergeable_state"] = "dirty"
+            composite = materialization.prove_materialization(
+                payload,
+                original,
+                repository=proof_git.repository,
+                token=_TOKEN,
+                current_revision=proof_git.main,
+                default_branch="main",
+                accepted_authorization_revision=base,
+                allow_pending_continuation=True,
+                accepted_intent=True,
+            )
+            assert composite.disposition == "CONTRADICTORY" and composite.target is None
         completed = native_completion()
         assert completed.state == "RESUMABLE", completed
         assert completed.reason == "application-completion-continuation-required"
+        if predecessor_failure is not None:
+            assert (
+                composite.historical_witness is not None
+                and composite.historical_witness.revision == witness
+            )
         assert isinstance(
             completed.recovery_artifact, application_bridge.ApplicationExceptionArtifact
         )
@@ -4333,6 +4381,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
                 "id": 90007,
                 "body": continuation_body,
                 "created_at": "2026-11-17T05:37:00Z",
+                "updated_at": "2026-11-17T05:37:00Z",
                 "user": {"login": "royhsu-work"},
                 "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
             }
@@ -4410,7 +4459,10 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     # Original-effect completion is not a Formal result. Reuse the already
     # source-proven Git witness as the fresh carrier revision and exercise the
     # real Application-owned formal projection, not a mocked Formal status.
-    monkeypatch.setattr(application_bridge, "_machine_result_revision", lambda *_a, **_kw: witness)
+    if predecessor_failure is None:
+        monkeypatch.setattr(
+            application_bridge, "_machine_result_revision", lambda *_a, **_kw: witness
+        )
 
     def project_formal() -> str:
         return application_bridge._fresh_application_worker_result(
@@ -4490,6 +4542,9 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             return {"default_branch": "main"}
         if url == api_root + "/git/ref/heads/main":
             return {"object": {"sha": proof_git.main}}
+        if url.startswith(api_root + "/compare/"):
+            left, right = url.removeprefix(api_root + "/compare/").split("...")
+            return proof_git.comparison(left, right)
         raise AssertionError(f"unexpected preflight identity GET: {url}")
 
     monkeypatch.setattr(runtime, "_github_get_list_page", runtime_page)
@@ -4623,14 +4678,277 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
                     str(attempt),
                     "--recovery-evidence-path",
                     str(tmp_path / f"435-entry-recovery-{attempt}.json"),
+                    "--exception-evidence-path",
+                    str(tmp_path / f"435-entry-exception-{attempt}.json"),
                 ],
             )
-            code = application_bridge._main_unprotected(
-                application_bridge.ApplicationExceptionContext()
-            )
+            code = application_bridge.main()
         return code, entered
 
     # Formal POST succeeds at GitHub but its client response is lost.
+    if predecessor_failure is not None:
+        predecessor_read = artifact_read
+        download_attempts: list[str] = []
+
+        def temporarily_unavailable(repository: str, token: str, path: str) -> bytes:
+            download_attempts.append(path)
+            raise RuntimeError("exact GitHub artifact read failed")
+
+        artifact_read = temporarily_unavailable
+        with pytest.raises(RuntimeError, match="exact GitHub artifact read failed"):
+            native_continuation_attempt(1)
+        assert download_attempts == ["actions/artifacts/13860996180/zip"]
+        artifact_read = predecessor_read
+        restored = artifact_read(proof_git.repository, _TOKEN, download_attempts[0])
+        assert "sha256:" + hashlib.sha256(restored).hexdigest() == native_artifact["digest"]
+        failed = json.loads((tmp_path / "435-entry-exception-1.json").read_text())
+        assert failed["trigger_comment_id"] == 90007
+        assert failed["request_comment_id"] == accepted.request_comment_id
+        assert failed["issue_number"] == 435
+        assert failed["change"] == change
+        assert failed["mutation_status"] == "NO_APPLICATION_WRITE_ATTEMPTED"
+        assert not formal_comment_posts and not successor_patches and not proof_git.mutations
+        qualified_document = application_bridge._qualified_exception_document(
+            failed,
+            repository=proof_git.repository,
+            record=accepted,
+            run={"head_sha": proof_git.main, "display_title": "Scheduled Agent Application 90007"},
+            run_id=43029179129,
+            run_attempt=1,
+        )
+        assert qualified_document is not None
+        pr["mergeable"] = False
+        with monkeypatch.context() as fresh:
+            fresh.setattr(application_bridge, "_github_json", bridge_read)
+            repeated_transport = dispatch_bridge._application_continuation_body(
+                repository=proof_git.repository,
+                token=_TOKEN,
+                source=original,
+                request_comment_id=accepted.request_comment_id,
+                predecessor_evidence=completed.recovery_artifact,
+                read=bridge_read,
+            )
+        assert repeated_transport is None
+        next_bytes = (tmp_path / "435-entry-exception-1.json").read_bytes()
+        next_digest = "sha256:" + hashlib.sha256(next_bytes).hexdigest()
+        new_run_id, new_artifact_id, new_job_id = 43029179129, 13860996181, 130551485663
+        next_run = dict(
+            native_run,
+            id=new_run_id,
+            head_sha=proof_git.main,
+            display_title="Scheduled Agent Application 90007",
+        )
+        next_job = dict(native_job, id=new_job_id)
+        next_metadata = dict(
+            native_artifact,
+            id=new_artifact_id,
+            digest=next_digest,
+            workflow_run={"id": new_run_id, "head_sha": proof_git.main},
+        )
+        root_id = 43026063126
+        root_run = dict(
+            native_run,
+            id=root_id,
+            display_title=f"Scheduled Agent Application {accepted.request_comment_id}",
+        )
+        historical_body = application_bridge.render_application_continuation_request(
+            repository=proof_git.repository,
+            issue_number=original.issue_number,
+            original_request_comment_id=accepted.request_comment_id,
+            accepted_decision_sha256=decision_digest,
+            predecessor_run_id=root_id,
+            predecessor_run_attempt=1,
+            predecessor_job_id=130540945992,
+            predecessor_artifact_id=13857063093,
+            predecessor_artifact_digest="sha256:" + "1" * 64,
+            failure_evidence_sha256="2" * 64,
+            recovery_episode_sha256=parsed_continuation.recovery_episode_sha256,
+        )
+        historical_comment = {
+            **continuation_comments[0],
+            "id": 6797071043,
+            "body": historical_body,
+            "created_at": "2026-11-11T13:26:00Z",
+        }
+        continuation_comments.insert(0, historical_comment)
+        run_inventory = [next_run, native_run, root_run]
+        original_bridge_read = bridge_read
+        original_artifact_read = artifact_read
+
+        def next_read(repository: str, token: str, path: str, **kwargs: object) -> object:
+            if path == "issues/comments/90009":
+                return next_comment
+            if path.startswith("actions/workflows/scheduled-agent-application.yml/runs?"):
+                return {
+                    "total_count": len(run_inventory),
+                    "workflow_runs": run_inventory if "page=1" in path else [],
+                }
+            if path == f"actions/runs/{new_run_id}":
+                return next_run
+            if path == f"actions/runs/{new_run_id}/attempts/1/jobs":
+                return {"total_count": 1, "jobs": [next_job]}
+            if path == f"actions/runs/{new_run_id}/artifacts?per_page=100":
+                return {"total_count": 1, "artifacts": [next_metadata]}
+            return original_bridge_read(repository, token, path, **kwargs)
+
+        def next_download(repository: str, token: str, path: str) -> bytes:
+            if path == f"actions/artifacts/{new_artifact_id}/zip":
+                return next_bytes
+            raw = original_artifact_read(repository, token, path)
+            return raw + b" " if predecessor_failure == "digest" else raw
+
+        with monkeypatch.context() as redispatch:
+            redispatch.setattr(application_bridge, "_github_json", next_read)
+            redispatch.setattr(dispatch_bridge, "read_github_artifact_bytes", next_download)
+            redispatch.setattr(application_bridge, "read_github_artifact_bytes", next_download)
+            known_issue = cast(
+                Mapping[str, object], native_read(proof_git.repository, _TOKEN, "issues/435")
+            )
+            known_comments = (prior_comment, decision_comment)
+            known_timeline = tuple(
+                cast(
+                    list[Mapping[str, object]],
+                    native_read(
+                        proof_git.repository, _TOKEN, "issues/435/timeline?per_page=100&page=1"
+                    ),
+                )
+            )
+
+            def inspect_frontier() -> tuple[
+                tuple[int, ...] | None, dispatch_bridge.ApplicationCompletion
+            ]:
+                leaf = dispatch_bridge._continuation_transport_comment_ids(
+                    repository=proof_git.repository,
+                    owner="royhsu-work",
+                    source=original,
+                    record=accepted,
+                    issue_comments=known_comments,
+                    recent_comments=tuple(continuation_comments),
+                    token=_TOKEN,
+                    read=next_read,
+                )
+                result = dispatch_bridge._accepted_application_state(
+                    repository=proof_git.repository,
+                    token=_TOKEN,
+                    source=original,
+                    record=accepted,
+                    issue_comments=known_comments,
+                    lifecycle_events=known_timeline,
+                    current_issue=known_issue,
+                    current_revision=proof_git.main,
+                    read=next_read,
+                    continuation_transport_comment_ids=leaf,
+                    recent_comments=tuple(continuation_comments),
+                )
+                return leaf, result
+
+            run_inventory.pop()
+            missing, missing_result = inspect_frontier()
+            assert (
+                missing is None
+                and missing_result.reason == "application-completion-continuation-chain-incomplete"
+            )
+            run_inventory.append(root_run)
+            duplicate = {**continuation_comments[-1], "id": 90010}
+            continuation_comments.append(duplicate)
+            run_inventory.append(
+                dict(next_run, id=43029179131, display_title="Scheduled Agent Application 90010")
+            )
+            fork, fork_result = inspect_frontier()
+            assert (
+                fork == (90007, 90010)
+                and fork_result.reason == "application-completion-continuation-chain-ambiguous"
+            )
+            continuation_comments.pop()
+            run_inventory.pop()
+            trigger_comment = continuation_comments[-1]
+            trigger_comment["updated_at"] = "2026-11-17T05:45:00Z"
+            changed_leaf, changed_trigger = inspect_frontier()
+            assert changed_leaf == (90007,)
+            assert changed_trigger.state == "INVALID"
+            assert changed_trigger.accepted_proof is not None
+            assert changed_trigger.accepted_proof.reason == "continuation trigger was edited"
+            trigger_comment["updated_at"] = trigger_comment["created_at"]
+            leaf, next_completion = inspect_frontier()
+            assert leaf == (90007,)
+            if predecessor_failure == "digest":
+                assert next_completion.state == "RESUMABLE"
+                assert next_completion.reason == "application-completion-exception-observing"
+                assert next_completion.accepted_proof is not None
+                assert next_completion.accepted_proof.continuation == "OBSERVE"
+                assert next_completion.recovery_artifact is not None
+                assert (
+                    dispatch_bridge._application_continuation_body(
+                        repository=proof_git.repository,
+                        token=_TOKEN,
+                        source=original,
+                        request_comment_id=accepted.request_comment_id,
+                        predecessor_evidence=next_completion.recovery_artifact,
+                        read=next_read,
+                    )
+                    is None
+                )
+                assert (
+                    not formal_comment_posts and not successor_patches and not proof_git.mutations
+                )
+                return
+            assert next_completion.state == "RESUMABLE", next_completion
+            assert next_completion.recovery_artifact is not None
+            assert next_completion.recovery_artifact.artifact_id == new_artifact_id
+            next_body = dispatch_bridge._application_continuation_body(
+                repository=proof_git.repository,
+                token=_TOKEN,
+                source=original,
+                request_comment_id=accepted.request_comment_id,
+                predecessor_evidence=next_completion.recovery_artifact,
+                read=next_read,
+            )
+        assert isinstance(next_body, str)
+        new_wire = application_bridge.parse_application_continuation_request(next_body)
+        assert new_wire is not None
+        assert new_wire.continuation_correlation != parsed_continuation.continuation_correlation
+        assert (
+            new_wire.predecessor_run_id == new_run_id
+            and new_wire.predecessor_artifact_id == new_artifact_id
+        )
+        assert new_wire.recovery_episode_sha256 == parsed_continuation.recovery_episode_sha256
+        next_comment = {
+            **continuation_comments[-1],
+            "id": 90009,
+            "body": next_body,
+            "created_at": "2026-11-17T05:49:00Z",
+        }
+        continuation_comments.append(next_comment)
+        event["comment"] = next_comment
+        event_path.write_text(json.dumps(event), encoding="utf-8")
+        bridge_read, artifact_read = next_read, next_download
+        final_exit, journal = native_continuation_attempt(1)
+        assert final_exit == 1 and len(journal) == 1
+        assert journal[0][1].recovery_evidence is not None
+        assert len(formal_comment_posts) == 1
+        with monkeypatch.context() as repeated_wake:
+            repeated_wake.setattr(application_bridge, "_github_json", next_read)
+            repeated_wake.setattr(application_bridge, "read_github_artifact_bytes", next_download)
+            assert (
+                dispatch_bridge._application_continuation_body(
+                    repository=proof_git.repository,
+                    token=_TOKEN,
+                    source=original,
+                    request_comment_id=accepted.request_comment_id,
+                    predecessor_evidence=next_completion.recovery_artifact,
+                    read=next_read,
+                )
+                is None
+            )
+        proof_git.main = proof_git.commit(
+            {"README.md": "advance after lost Formal response"},
+            "Post-Formal main advance",
+            (proof_git.main,),
+        )
+        resumed_exit, resumed_journal = native_continuation_attempt(2)
+        assert resumed_exit == 0 and resumed_journal == []
+        assert len(formal_comment_posts) == 1 and not successor_patches and not proof_git.mutations
+        return
     first_exit, entered = native_continuation_attempt(1)
     assert first_exit == 1
     assert len(entered) == 1
@@ -4669,8 +4987,8 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         assert successor_patches == []
     else:
         assert len(resumed_entries) == 1
-        _, resumed = resumed_entries[0]
-        assert resumed.applied, resumed
+        _, resume_result = resumed_entries[0]
+        assert resume_result.applied, resume_result
         assert successor_patches == [[f"action:{successor_action}"]]
     assert new_application().observe_postcondition(formal_effect)
     assert new_application().observe_postcondition(successor)

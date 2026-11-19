@@ -133,6 +133,7 @@ class MaterializationProof:
     reason: str | None = None
     application_request: MaterializationRequest | None = None
     carrier_plan: CarrierPlan | None = None
+    historical_witness: MaterializationWitness | None = None
 
     def __post_init__(self) -> None:
         if self.disposition == "COMPLETE":
@@ -2694,32 +2695,6 @@ def prove_materialization(
         # commit, so importing disjoint main history is not mistaken for a
         # semantic edit by this source Action.
         _proof_ancestry(repository, token, witness_revision, revision)
-        if not committed_formal_result and default_advance.intersection(
-            file.path for file in request.files
-        ):
-            _proof_ancestry(repository, token, witness_revision, current_revision)
-        # Before formal commit, competing default-branch edits remain a write
-        # safety gate. After the exact result was committed, they are a future
-        # review/merge concern, not grounds to undo the immutable prior Action.
-        # The accepted witness and current PR identity still qualify above.
-        if not committed_formal_result:
-            # Compare current default against carrier history without confusing
-            # the mutation preimage with a historical default-branch base.
-            comparison, _commits, _paths = _proof_comparison(
-                repository, token, current_revision, revision
-            )
-            merge_base = cast(Mapping[str, object], comparison["merge_base_commit"])
-            default_paths = _proof_ancestry(
-                repository, token, cast(str, merge_base["sha"]), current_revision
-            )
-            carrier_paths = _proof_ancestry(
-                repository, token, cast(str, merge_base["sha"]), revision
-            )
-            for path in default_paths & carrier_paths:
-                if _content_sha_at(repository, token, path=path, revision=current_revision) != (
-                    _content_sha_at(repository, token, path=path, revision=revision)
-                ):
-                    raise RuntimeError("materialization carrier overlaps default-branch changes")
         # A reconciliation after the accepted mutation must preserve the exact
         # application overlay, even when its final desired blobs were later changed.
         _lineage, descendants, _paths = _proof_comparison(
@@ -2771,6 +2746,49 @@ def prove_materialization(
         immutable_witness = MaterializationWitness(
             witness_revision, tuple((file.path, file.blob_sha) for file in request.files), revisions
         )
+        # Current target gates can reject without invalidating the accepted Git witness.
+        try:
+            if not committed_formal_result and default_advance.intersection(
+                file.path for file in request.files
+            ):
+                _proof_ancestry(repository, token, witness_revision, current_revision)
+            # Before formal commit, competing default-branch edits remain a write
+            # safety gate. After the exact result was committed, they are a future
+            # review/merge concern, not grounds to undo the immutable prior Action.
+            # The accepted witness and current PR identity still qualify above.
+            if not committed_formal_result:
+                # Compare current default against carrier history without confusing
+                # the mutation preimage with a historical default-branch base.
+                comparison, _commits, _paths = _proof_comparison(
+                    repository, token, current_revision, revision
+                )
+                merge_base = cast(Mapping[str, object], comparison["merge_base_commit"])
+                default_paths = _proof_ancestry(
+                    repository, token, cast(str, merge_base["sha"]), current_revision
+                )
+                carrier_paths = _proof_ancestry(
+                    repository, token, cast(str, merge_base["sha"]), revision
+                )
+                for path in default_paths & carrier_paths:
+                    if _content_sha_at(repository, token, path=path, revision=current_revision) != (
+                        _content_sha_at(repository, token, path=path, revision=revision)
+                    ):
+                        raise RuntimeError(
+                            "materialization carrier overlaps default-branch changes"
+                        )
+        except (
+            OSError,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+            _IncompleteGitHubObservation,
+        ) as error:
+            return MaterializationProof(
+                "UNKNOWN", reason=str(error), historical_witness=immutable_witness
+            )
+        except (RuntimeError, ValueError, TypeError) as error:
+            return MaterializationProof(
+                "CONTRADICTORY", reason=str(error), historical_witness=immutable_witness
+            )
         return MaterializationProof(
             "COMPLETE",
             target=target,

@@ -4494,6 +4494,7 @@ def test_read_only_deferral_preserves_immutable_execution_frontier(
         },
     )
     monkeypatch.setenv("GITHUB_RUN_ID", "7004")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "github-output"))
     deferred = application.ApplyResult(
         False, "accepted original effect not currently proven complete"
     )
