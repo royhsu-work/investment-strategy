@@ -3493,25 +3493,22 @@ def test_new_materialization_rejects_wrong_preimage_before_acceptance(
     assert proof_git.mutations == []
 
 
-def test_accepted_zero_write_failure_recovers_only_exact_declared_base_preimage(
+def test_accepted_zero_write_failure_preserves_exact_declared_base_preimage(
     proof_git: _ProofGitRepository,
 ) -> None:
     payload = proof_git.payload()
     raw_files = cast(list[dict[str, object]], payload["files"])
-    accepted_raw_preimage = "f" * 40
-    raw_files[0]["expected_sha"] = accepted_raw_preimage
+    expected_preimage = raw_files[0]["expected_sha"]
 
-    unaccepted = _prove_payload_git(proof_git, payload)
-    assert unaccepted.disposition == "CONTRADICTORY", unaccepted
+    mismatched_payload = {**payload, "files": [{**raw_files[0], "expected_sha": "f" * 40}]}
+    with pytest.raises(RuntimeError, match="materialization missing work preimage is stale"):
+        _apply_git(proof_git, payload=mismatched_payload, accepted_intent=True)
+    assert proof_git.mutations == []
 
     proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
     assert proof.disposition == "INCOMPLETE", proof
     assert proof.application_request is not None
-    expected_preimage = proof_git.entries(proof_git.base)[proof_git.path]["sha"]
     assert proof.application_request.files[0].expected_sha == expected_preimage
-    assert cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] == (
-        accepted_raw_preimage
-    )
 
     proof_git.allow_writes = True
     with pytest.raises(CarrierRequired) as raised:
@@ -3525,9 +3522,7 @@ def test_accepted_zero_write_failure_recovers_only_exact_declared_base_preimage(
     completed = _prove_payload_git(proof_git, payload, accepted_intent=True)
     assert completed.disposition == "COMPLETE", completed
     assert completed.witness is not None and completed.witness.revision == revision
-    assert cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] == (
-        accepted_raw_preimage
-    )
+    assert raw_files[0]["expected_sha"] == expected_preimage
 
 
 def test_accepted_preimage_recovery_rejects_changed_carrier_path(
@@ -3974,7 +3969,22 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         == "UNSAFE"
     )
     assert observe().disposition == "INDETERMINATE"  # Missing original Git effect.
-    witness = proof_git.commit(desired, proof_git.message, (base,))
+    correction = proof_git.commit(
+        {"README.md": "independently corrected documentation"},
+        "Apply separate maintenance correction",
+        (base,),
+    )
+    proof_git.set_head(correction)
+    for _ in range(2):
+        pending = exception_proof(exception)
+        assert pending.continuation == "OBSERVE", pending
+        assert pending.runtime_repair_frontier is not None
+        assert pending.runtime_repair_frontier.remaining_obligation == "ORIGINAL_EFFECT"
+    assert formal_comment_posts == []
+    assert successor_patches == []
+    assert proof_git.mutations == []
+
+    witness = proof_git.commit(desired, proof_git.message, (correction,))
     proof_git.set_head(witness)
     # This is a separate maintenance/read-repair boundary, not a replay of
     # the accepted seven-file Effect. The physical Git witness does not change
@@ -3989,7 +3999,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     original_read_fault["active"] = False
     assert observe().disposition == "COMPLETE"
     assert proof_git.head == witness and proof_git.mutations == []
-    comparison = proof_git.comparison(base, witness)
+    comparison = proof_git.comparison(correction, witness)
     assert comparison["ahead_by"] == 1
     assert len(cast(list[dict[str, object]], comparison["files"])) == 7
     canonical = materialization.prove_materialization(
@@ -5093,7 +5103,7 @@ def test_missing_first_branch_recovers_after_disjoint_default_advance(
     assert proof_git.mutations == ["git/trees", "git/commits", "git/refs"]
 
 
-def test_missing_reconciliation_constructs_on_exact_actual_branch_parent(
+def test_content_only_construction_and_proof_use_exact_actual_branch_parent(
     proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5121,7 +5131,7 @@ def test_missing_reconciliation_constructs_on_exact_actual_branch_parent(
         _apply_git(proof_git)
     plan = raised.value.plan
     assert plan.expected["ref_sha"] == branch_parent
-    assert plan.requested["commit_parents"] == [branch_parent, proof_git.main]
+    assert plan.requested["commit_parents"] == [branch_parent]
     proof_git.set_head(cast(str, plan.requested["sha"]))
     result = _prove_git(proof_git)
     assert result.disposition == "COMPLETE", result
@@ -5129,7 +5139,7 @@ def test_missing_reconciliation_constructs_on_exact_actual_branch_parent(
     assert result.witness.revisions.mutation_preimage == branch_parent
     assert (
         proof_git.entries(proof_git.head)["README.md"]["sha"]
-        == (proof_git.entries(proof_git.main)["README.md"]["sha"])
+        == proof_git.entries(branch_parent)["README.md"]["sha"]
     )
     written = list(proof_git.mutations)
     _apply_git(proof_git)
@@ -5166,12 +5176,34 @@ def test_s1_content_only_construction_preserves_unrelated_paths(
     assert fixture.mutations == ["git/trees", "git/commits"]
 
 
-def test_s1_content_only_witness_survives_unrelated_conflict(
-    diverged_content_only_git: _ProofGitRepository,
+@pytest.mark.parametrize("conflicting", [False, True])
+def test_s1_content_only_witness_survives_native_integration_outcome(
+    proof_git: _ProofGitRepository,
+    conflicting: bool,
 ) -> None:
-    fixture = diverged_content_only_git
+    import subprocess
+
+    fixture = proof_git
+    middle = "".join(f"unchanged {index}\n" for index in range(8))
+    common = fixture.commit(
+        {"README.md": f"left\n{middle}right\n"}, "Integration base", (fixture.base,)
+    )
+    fixture.base = fixture.commit(
+        {"README.md": f"carrier left\n{middle}right\n"}, "Carrier", (common,)
+    )
+    main_readme = f"main left\n{middle}right\n" if conflicting else f"left\n{middle}main right\n"
+    fixture.main = fixture.commit({"README.md": main_readme}, "Main", (common,))
+    fixture.authorization = fixture.main
+    fixture.set_head(fixture.base)
     accepted = fixture.commit({fixture.path: "accepted content"}, fixture.message, (fixture.head,))
     fixture.set_head(accepted)
+    integration = subprocess.run(  # noqa: S603 - fixed fixture Git arguments
+        ["git", "-C", str(fixture.directory), "merge-tree", "--write-tree", fixture.main, accepted],  # noqa: S607
+        capture_output=True,
+        check=False,
+    )
+    assert integration.returncode == int(conflicting), integration.stdout
+    assert fixture.head == accepted
     proof = _prove_git(fixture, accepted_intent=True)
     assert proof.disposition == "COMPLETE", proof
     assert proof.witness is not None and proof.witness.revision == accepted

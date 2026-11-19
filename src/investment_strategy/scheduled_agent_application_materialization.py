@@ -1600,6 +1600,7 @@ def _existing_target(
             authorization_revision=authorization_revision,
             allow_pending_continuation=allow_pending_continuation,
             before_write=before_write,
+            content_only=source.role == "lead",
         )
     else:
         target = resolve_validation_resource_target(
@@ -2089,15 +2090,25 @@ def _proof_witness(
     token: str,
     revision: str,
     current_revision: str,
+    carrier_lineage_base: str | None = None,
 ) -> str | None:
     """Find accepted content in the complete carrier graph, never in a local API result."""
     comparison, commits, _paths = _proof_comparison(repository, token, request.base_sha, revision)
-    if comparison.get("behind_by") != 0:
-        return None
+    carrier_diverged = comparison.get("behind_by") != 0
+    if carrier_diverged:
+        if carrier_lineage_base is None:
+            return None
+        _proof_ancestry(repository, token, carrier_lineage_base, request.base_sha)
+        relation, commits, _paths = _proof_comparison(
+            repository, token, carrier_lineage_base, revision
+        )
+        if relation.get("behind_by") != 0:
+            raise RuntimeError("materialization carrier lineage contradicts its PR base")
     desired_paths = frozenset(file.path for file in request.files)
     witness: str | None = None
     if (
-        request.files
+        not carrier_diverged
+        and request.files
         and all(file.blob_sha == file.expected_sha for file in request.files)
         and _manifest_is_current(
             request, repository=repository, token=token, revision=request.base_sha
@@ -2120,8 +2131,10 @@ def _proof_witness(
                         raise RuntimeError(
                             "materialization write parent overlaps accepted preimage"
                         )
-                elif len(parents) != 2:
-                    continue
+                elif len(parents) == 1:
+                    if not carrier_diverged or carrier_lineage_base is None:
+                        continue
+                    _proof_ancestry(repository, token, carrier_lineage_base, parents[0])
                 else:
                     _proof_ancestry(repository, token, request.base_sha, parents[1])
             for file in request.files:
@@ -2169,7 +2182,7 @@ def _request_with_observed_preimage(
     return replace(request, files=tuple(files))
 
 
-def _accepted_preimage_projection(
+def _historical_accepted_preimage(
     request: MaterializationRequest,
     *,
     repository: str,
@@ -2178,12 +2191,10 @@ def _accepted_preimage_projection(
     merged: bool,
     accepted_intent: bool,
 ) -> MaterializationRequest:
-    """Recover an accepted exact-base write guard from authoritative Git objects.
+    """Recover an existing exact-base witness from authoritative Git objects.
 
-    The accepted worker result remains immutable. For missing work, the PR
-    head must still equal its declared base. For completed work, exactly one
-    direct child must carry the accepted message, exact path delta, and desired
-    blobs. Other branch evolution is never normalized.
+    Only an existing commit may establish a historical write preimage.
+    Missing work must retain the preimages of the accepted request.
     """
 
     if (
@@ -2191,21 +2202,8 @@ def _accepted_preimage_projection(
         or merged
         or request.expected_change == "unset"
         or request.pr_number is None
+        or current_carrier_revision == request.base_sha
     ):
-        return request
-
-    if current_carrier_revision == request.base_sha:
-        projected = _request_with_observed_preimage(
-            request,
-            repository=repository,
-            token=token,
-            revision=request.base_sha,
-        )
-        if any(
-            actual.expected_sha != original.expected_sha
-            for actual, original in zip(projected.files, request.files, strict=True)
-        ):
-            return projected
         return request
 
     comparison, commits, _paths = _proof_comparison(
@@ -2567,22 +2565,18 @@ def prove_materialization(
                             "materialization orphan replacement contradicts accepted intent"
                         )
                     _proof_ancestry(repository, token, current_revision, orphan)
-        if (
-            not merged
-            and any(
-                _content_sha_at(repository, token, path=file.path, revision=cast(str, revision))
-                is None
-                for file in request.files
-            )
-            and revision != request.base_sha
-        ):
-            raise RuntimeError("materialization current carrier is missing an accepted path")
         if not merged and (len(claimed) != 1 or claimed[0].get("number") != number):
             raise RuntimeError("materialization current carrier cardinality contradicts")
         if merged and claimed:
             raise RuntimeError("materialization merged target has a competing active carrier")
         revision = cast(str, revision)
-        request = _accepted_preimage_projection(
+        content_only = (
+            source.role == "lead"
+            and not merged
+            and request.expected_change != "unset"
+            and number == request.pr_number
+        )
+        request = _historical_accepted_preimage(
             request,
             repository=repository,
             token=token,
@@ -2600,6 +2594,11 @@ def prove_materialization(
                 token=token,
                 revision=revision,
                 current_revision=current_revision,
+                carrier_lineage_base=(
+                    cast(str, base_revision)
+                    if content_only and request.base_sha == accepted_revision
+                    else None
+                ),
             )
         if witness_revision is None:
             if request.expected_change == "unset":
@@ -2617,12 +2616,12 @@ def prove_materialization(
                     main_paths = _proof_ancestry(
                         repository, token, cast(str, fork["sha"]), current_revision
                     )
+                    if main_paths.intersection(file.path for file in request.files):
+                        raise RuntimeError("materialization missing work overlaps default advance")
                     branch_paths = _proof_ancestry(
                         repository, token, cast(str, fork["sha"]), revision
                     )
-                    if main_paths.intersection(file.path for file in request.files):
-                        raise RuntimeError("materialization missing work overlaps default advance")
-                    for path in main_paths & branch_paths:
+                    for path in () if content_only else main_paths & branch_paths:
                         if _content_sha_at(
                             repository, token, path=path, revision=current_revision
                         ) != (_content_sha_at(repository, token, path=path, revision=revision)):
@@ -2650,6 +2649,15 @@ def prove_materialization(
                         raise RuntimeError("materialization missing replacement preimage is stale")
                 return MaterializationProof("INCOMPLETE", application_request=request)
             raise RuntimeError("materialization accepted consequence has no qualified witness")
+        if (
+            not merged
+            and revision != request.base_sha
+            and any(
+                _content_sha_at(repository, token, path=file.path, revision=revision) is None
+                for file in request.files
+            )
+        ):
+            raise RuntimeError("materialization current carrier is missing an accepted path")
         if merged:
             history = _historical_carriers(
                 repository,
@@ -2752,11 +2760,10 @@ def prove_materialization(
                 file.path for file in request.files
             ):
                 _proof_ancestry(repository, token, witness_revision, current_revision)
-            # Before formal commit, competing default-branch edits remain a write
-            # safety gate. After the exact result was committed, they are a future
-            # review/merge concern, not grounds to undo the immutable prior Action.
-            # The accepted witness and current PR identity still qualify above.
-            if not committed_formal_result:
+            # Whole-branch reconciliation is a separate integration obligation
+            # for content-only operations. The witness already binds its parent,
+            # exact path delta, and desired blobs.
+            if not committed_formal_result and not content_only:
                 # Compare current default against carrier history without confusing
                 # the mutation preimage with a historical default-branch base.
                 comparison, _commits, _paths = _proof_comparison(

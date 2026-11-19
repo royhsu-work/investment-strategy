@@ -1801,6 +1801,7 @@ def _construct_work_product(
     authorization_revision: str,
     allow_pending_continuation: bool = False,
     before_write: Callable[[], None] | None = None,
+    content_only: bool = False,
 ) -> ValidationResourceTarget:
     """Construct one exact commit and hand open-PR head movement to a carrier."""
 
@@ -1917,7 +1918,7 @@ def _construct_work_product(
     replacement_pr_number: int | None = None
     replacement_reconciliation_required = False
     replacement_base_requires_reconciliation = False
-    safe_historical_reconciliation = False
+    qualified_historical_carrier = False
     if historical_merged_carrier:
         merge_commit_sha = pr.get("merge_commit_sha")
         if not _valid_sha(merge_commit_sha) or not _default_branch_is_ancestor(
@@ -2081,20 +2082,28 @@ def _construct_work_product(
             )
             if len(historical_prs) != 1 or historical_prs[0].get("number") != plan.pr_number:
                 raise RuntimeError("work-product historical PR identity is ambiguous")
-            _safe_historical_carrier_reconciliation(
-                repository,
-                token,
-                historical_base_sha=cast(str, historical_base_sha),
-                authorization_revision=authorization_revision,
-                carrier_revision=current_head,
-                manifest=plan.manifest,
-            )
-            safe_historical_reconciliation = True
+            if content_only:
+                _ancestor_comparison_paths(
+                    repository,
+                    token,
+                    base_sha=cast(str, historical_base_sha),
+                    revision=current_head,
+                )
+            else:
+                _safe_historical_carrier_reconciliation(
+                    repository,
+                    token,
+                    historical_base_sha=cast(str, historical_base_sha),
+                    authorization_revision=authorization_revision,
+                    carrier_revision=current_head,
+                    manifest=plan.manifest,
+                )
+            qualified_historical_carrier = True
     # COMPLETE is handled only by the public proof. This primitive plans
     # missing writes and checks expected content at its actual first parent.
     if current_head != plan.manifest.base_sha and not (
         replacement_branch is not None
-        or safe_historical_reconciliation
+        or qualified_historical_carrier
         or plan.manifest.base_sha == authorization_revision
     ):
         advance_paths = _ancestor_comparison_paths(
@@ -2105,7 +2114,9 @@ def _construct_work_product(
         )
         if advance_paths.intersection(file.path for file in plan.manifest.files):
             raise RuntimeError("work-product PR head/base identity is stale")
-    needs_default_reconciliation = not default_branch_is_ancestor
+    needs_default_reconciliation = not default_branch_is_ancestor and (
+        not content_only or historical_merged_carrier
+    )
     reconcile_replacement_from_default = (
         needs_default_reconciliation
         and replacement_reconciliation_required
