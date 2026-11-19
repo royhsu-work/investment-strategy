@@ -5309,6 +5309,33 @@ def _qualified_exception_artifact_metadata(
     return candidates[0]
 
 
+_CONTINUATION_OBSERVATION_STAGE = "application-continuation-predecessor-observation"
+
+
+def _exception_accepted_identity(
+    document: Mapping[str, object], record: ApplicationDecisionRecord
+) -> dict[str, object]:
+    identity: dict[str, object] = {
+        "issue_number": record.issue_number,
+        "role": record.role,
+        "action": record.action,
+        "change": record.change,
+        "request_comment_id": record.request_comment_id,
+    }
+    # A pre-application observation may fail before it learns the accepted
+    # identity. Preserve the raw envelope: only the qualified native trigger
+    # and predecessor chain can subsequently bind it to an accepted intent.
+    if (
+        document.get("attempted_operation") == _CONTINUATION_OBSERVATION_STAGE
+        and document.get("mutation_status") == "NO_APPLICATION_WRITE_ATTEMPTED"
+        and _strict_positive_int(document.get("trigger_comment_id")) is not None
+        and document.get("trigger_comment_id") != record.request_comment_id
+        and all(key in document and document[key] is None for key in identity)
+    ):
+        return dict.fromkeys(identity)
+    return identity
+
+
 def _qualified_exception_document(
     document: object,
     *,
@@ -5325,15 +5352,11 @@ def _qualified_exception_document(
     expected = {
         "schema": "scheduled-agent-execution-exception/v1",
         "repository": repository,
-        "issue_number": record.issue_number,
-        "role": record.role,
-        "action": record.action,
-        "change": record.change,
         "revision": run.get("head_sha"),
-        "request_comment_id": record.request_comment_id,
         "run_id": run_id,
         "run_attempt": run_attempt,
         "classification": "UNCLASSIFIED_EXECUTION_EXCEPTION",
+        **_exception_accepted_identity(document, record),
     }
     if not _matches_required_fields(document, expected):
         return None
@@ -5450,12 +5473,41 @@ def read_application_exception_artifact(
     )
 
 
+def _continuation_matches_accepted_decision(
+    repository: str,
+    continuation: ApplicationContinuationRequest,
+    record: ApplicationDecisionRecord,
+    decision_sha256: str,
+) -> bool:
+    return (
+        record.disposition == "ACCEPTED"
+        and continuation.issue_number == record.issue_number
+        and continuation.original_request_comment_id == record.request_comment_id
+        and continuation.accepted_decision_sha256 == decision_sha256
+        and continuation.continuation_correlation
+        == application_continuation_correlation(
+            repository,
+            record.issue_number,
+            record.request_comment_id,
+            decision_sha256,
+            continuation.predecessor_run_id,
+            continuation.predecessor_run_attempt,
+            continuation.predecessor_job_id,
+            continuation.predecessor_artifact_id,
+            continuation.predecessor_artifact_digest,
+            continuation.failure_evidence_sha256,
+            continuation.recovery_episode_sha256,
+        )
+    )
+
+
 def qualify_application_continuation_predecessor(
     repository: str,
     token: str,
     continuation: ApplicationContinuationRequest,
     *,
     current_comment_id: int,
+    expected_record: ApplicationDecisionRecord | None = None,
     transport_issue_number: int,
     read: Callable[[str, str, str], object] | None = None,
     artifact_reader: Callable[[str, str, str], bytes] | None = None,
@@ -5517,48 +5569,23 @@ def qualify_application_continuation_predecessor(
     ):
         return None
     decision_sha256 = hashlib.sha256(accepted_bodies[0].encode("utf-8")).hexdigest()
-    if decision_sha256 != continuation.accepted_decision_sha256:
-        return None
     accepted_record = parse_application_decision(accepted_bodies[0])
-    if accepted_record is None:
+    if accepted_record is None or not _continuation_matches_accepted_decision(
+        repository, continuation, accepted_record, decision_sha256
+    ):
         return None
-    evidence: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None = (
-        read_application_recovery_artifact(
-            repository,
-            token,
-            run_id=continuation.predecessor_run_id,
-            run_attempt=continuation.predecessor_run_attempt,
-            job_id=continuation.predecessor_job_id,
-            request_comment_id=continuation.original_request_comment_id,
-            accepted_decision_sha256=decision_sha256,
-            read=api_read,
-            artifact_reader=artifact_reader,
-        )
+    if expected_record is not None and accepted_record != expected_record:
+        return None
+    evidence = _read_bound_continuation_predecessor(
+        repository,
+        token,
+        continuation,
+        accepted_record,
+        decision_sha256,
+        read=api_read,
+        artifact_reader=artifact_reader,
     )
     if evidence is None:
-        evidence = read_application_exception_artifact(
-            repository,
-            token,
-            run_id=continuation.predecessor_run_id,
-            run_attempt=continuation.predecessor_run_attempt,
-            job_id=continuation.predecessor_job_id,
-            record=accepted_record,
-            accepted_decision_sha256=decision_sha256,
-            read=api_read,
-            artifact_reader=artifact_reader,
-        )
-    if (
-        evidence is None
-        or evidence.artifact_id != continuation.predecessor_artifact_id
-        or evidence.artifact_digest != continuation.predecessor_artifact_digest
-        or evidence.failure_evidence_sha256 != continuation.failure_evidence_sha256
-        or evidence.recovery_episode_sha256 != continuation.recovery_episode_sha256
-        or (
-            isinstance(evidence, ApplicationRecoveryArtifact)
-            and evidence.failure_evidence_sha256
-            in cast(list[str], evidence.document["prior_failure_evidence_sha256"])
-        )
-    ):
         return None
     proof = (
         classify_application_exception_recovery(
@@ -5574,6 +5601,58 @@ def qualify_application_continuation_predecessor(
         )
     )
     if proof is not None and proof.continuation != "CONTINUE":
+        return None
+    return evidence
+
+
+def _read_bound_continuation_predecessor(
+    repository: str,
+    token: str,
+    continuation: ApplicationContinuationRequest,
+    accepted_record: ApplicationDecisionRecord,
+    accepted_decision_sha256: str,
+    *,
+    read: Callable[[str, str, str], object],
+    artifact_reader: Callable[[str, str, str], bytes] | None = None,
+) -> ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None:
+    """Re-read one content-addressed lineage edge without interpreting its Effect."""
+    evidence: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None = (
+        read_application_recovery_artifact(
+            repository,
+            token,
+            run_id=continuation.predecessor_run_id,
+            run_attempt=continuation.predecessor_run_attempt,
+            job_id=continuation.predecessor_job_id,
+            request_comment_id=continuation.original_request_comment_id,
+            accepted_decision_sha256=accepted_decision_sha256,
+            read=read,
+            artifact_reader=artifact_reader,
+        )
+    )
+    if evidence is None:
+        evidence = read_application_exception_artifact(
+            repository,
+            token,
+            run_id=continuation.predecessor_run_id,
+            run_attempt=continuation.predecessor_run_attempt,
+            job_id=continuation.predecessor_job_id,
+            record=accepted_record,
+            accepted_decision_sha256=accepted_decision_sha256,
+            read=read,
+            artifact_reader=artifact_reader,
+        )
+    if (
+        evidence is None
+        or evidence.artifact_id != continuation.predecessor_artifact_id
+        or evidence.artifact_digest != continuation.predecessor_artifact_digest
+        or evidence.failure_evidence_sha256 != continuation.failure_evidence_sha256
+        or evidence.recovery_episode_sha256 != continuation.recovery_episode_sha256
+        or (
+            isinstance(evidence, ApplicationRecoveryArtifact)
+            and evidence.failure_evidence_sha256
+            in cast(list[str], evidence.document["prior_failure_evidence_sha256"])
+        )
+    ):
         return None
     return evidence
 
@@ -6327,11 +6406,18 @@ def _observe_accepted_effect_fact(
         and payload.get("operation") == "application-materialize"
     ):
         materialization = adapter.observe_materialization_proof(payload)
+        obligation = _recovery_obligation(effect, source)
+        historical_original = (
+            adapter.accepted_intent
+            and obligation == "ORIGINAL_EFFECT"
+            and materialization.historical_witness is not None
+        )
         return RecoveryEvidenceNode(
-            _recovery_obligation(effect, source),
+            obligation,
             effect,
-            final_postcondition=materialization.disposition == "COMPLETE",
-            source_conflict=materialization.disposition == "CONTRADICTORY",
+            final_postcondition=materialization.disposition == "COMPLETE" or historical_original,
+            source_conflict=materialization.disposition == "CONTRADICTORY"
+            and not historical_original,
         )
     return RecoveryEvidenceNode(
         _recovery_obligation(effect, source),
@@ -7320,25 +7406,103 @@ def classify_application_exception_recovery(
     claimed mutation status authorizes a second Effect invocation.
     """
 
-    identity = (
-        artifact.request_comment_id,
-        artifact.document.get("issue_number"),
-        artifact.document.get("role"),
-        artifact.document.get("action"),
-        artifact.document.get("change"),
-    )
     if (
-        identity
-        != (
-            record.request_comment_id,
-            record.issue_number,
-            record.role,
-            record.action,
-            record.change,
-        )
+        artifact.request_comment_id != record.request_comment_id
         or record.disposition != "ACCEPTED"
+        or not _matches_required_fields(
+            {"request_comment_id": artifact.request_comment_id, **artifact.document},
+            _exception_accepted_identity(artifact.document, record),
+        )
     ):
         return AcceptedPostEffectProof("UNSAFE", "exception accepted identity mismatch")
+    # A bound invocation can fail before reading its predecessor. Reconstruct
+    # that edge from its native trigger and exact artifact identity. The
+    # failed read itself is neither positive Effect proof nor proof of absence.
+    try:
+        seen: set[tuple[int, int]] = set()
+        predecessor: ApplicationRecoveryArtifact | ApplicationExceptionArtifact | None = artifact
+        while (
+            isinstance(predecessor, ApplicationExceptionArtifact)
+            and predecessor.document.get("attempted_operation") == _CONTINUATION_OBSERVATION_STAGE
+        ):
+            run_identity = (predecessor.run_id, predecessor.run_attempt)
+            trigger = _strict_positive_int(predecessor.document.get("trigger_comment_id"))
+            if (
+                run_identity in seen
+                or trigger is None
+                or predecessor.document.get("mutation_status") != "NO_APPLICATION_WRITE_ATTEMPTED"
+            ):
+                return AcceptedPostEffectProof("UNSAFE", "invalid continuation observation lineage")
+            seen.add(run_identity)
+            comment = _as_mapping(_github_json(repository, token, f"issues/comments/{trigger}"))
+            if comment is None:
+                return AcceptedPostEffectProof("INDETERMINATE", "continuation trigger unavailable")
+            created_at = comment.get("created_at")
+            updated_at = comment.get("updated_at")
+            if not isinstance(created_at, str) or not isinstance(updated_at, str):
+                return AcceptedPostEffectProof(
+                    "INDETERMINATE", "continuation trigger history unavailable"
+                )
+            if created_at != updated_at:
+                return AcceptedPostEffectProof("UNSAFE", "continuation trigger was edited")
+            body = comment.get("body")
+            continuation = (
+                parse_application_continuation_request(body) if isinstance(body, str) else None
+            )
+            if (
+                comment.get("id") != trigger
+                or not _trusted_connector_comment(comment, repository.split("/", 1)[0])
+                or continuation is None
+                or continuation.recovery_episode_sha256 != artifact.recovery_episode_sha256
+                or not _continuation_matches_accepted_decision(
+                    repository, continuation, record, artifact.accepted_decision_sha256
+                )
+            ):
+                return AcceptedPostEffectProof("UNSAFE", "continuation trigger identity mismatch")
+            issue_url = comment.get("issue_url")
+            match = (
+                re.fullmatch(
+                    rf"https://api.github.com/repos/{re.escape(repository)}/issues/([1-9][0-9]*)",
+                    issue_url,
+                )
+                if isinstance(issue_url, str)
+                else None
+            )
+            if match is None:
+                return AcceptedPostEffectProof(
+                    "INDETERMINATE", "continuation shard identity unavailable"
+                )
+            issue_number = int(match.group(1))
+            shard = _as_mapping(_github_json(repository, token, f"issues/{issue_number}"))
+            if shard is None:
+                return AcceptedPostEffectProof("INDETERMINATE", "continuation shard unavailable")
+            if shard.get("number") != issue_number or not is_runtime_checkin_issue(shard):
+                return AcceptedPostEffectProof(
+                    "UNSAFE", "continuation trigger is not on its runtime shard"
+                )
+            predecessor = _read_bound_continuation_predecessor(
+                repository,
+                token,
+                continuation,
+                record,
+                artifact.accepted_decision_sha256,
+                read=_github_json,
+            )
+            if predecessor is None:
+                return AcceptedPostEffectProof(
+                    "INDETERMINATE", "exact continuation predecessor unavailable"
+                )
+    except (OSError, RuntimeError):
+        return AcceptedPostEffectProof(
+            "INDETERMINATE", "exact continuation predecessor unavailable"
+        )
+    if (
+        isinstance(predecessor, ApplicationRecoveryArtifact)
+        and not predecessor.continuation_eligible
+    ):
+        return classify_post_effect_result_recovery(
+            record=record, artifact=predecessor, repository=repository, token=token
+        )
     return _fresh_accepted_activation_proof(record, repository=repository, token=token)
 
 
@@ -7821,6 +7985,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     if continuation is not None:
         if event_comment_id is None:
             raise ValueError("application continuation event comment id is invalid")
+        context.stage = _CONTINUATION_OBSERVATION_STAGE
         if _fresh_event_observation(event, body, repository, token):
             raise ValueError("application continuation current comment was mutated")
         preflight = acquire_current_github_preflight(repository, token)
@@ -7836,45 +8001,19 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             or accepted_intent.issue_number != continuation.issue_number
         ):
             raise ValueError("application continuation accepted intent is unavailable")
-        decision_comments = _application_decision_comment_for_request(
-            repository=repository,
-            token=token,
-            issue_number=accepted_intent.issue_number,
-            request_comment_id=accepted_intent.request_comment_id,
-        )
-        if decision_comments is None:
-            raise ValueError("application continuation decision evidence is unavailable")
-        _decision_record, decision_body = decision_comments
-        decision_sha256 = hashlib.sha256(decision_body.encode("utf-8")).hexdigest()
-        expected_correlation = application_continuation_correlation(
-            repository,
-            accepted_intent.issue_number,
-            accepted_intent.request_comment_id,
-            decision_sha256,
-            continuation.predecessor_run_id,
-            continuation.predecessor_run_attempt,
-            continuation.predecessor_job_id,
-            continuation.predecessor_artifact_id,
-            continuation.predecessor_artifact_digest,
-            continuation.failure_evidence_sha256,
-            continuation.recovery_episode_sha256,
-        )
-        if (
-            decision_sha256 != continuation.accepted_decision_sha256
-            or expected_correlation != continuation.continuation_correlation
-        ):
-            raise ValueError("application continuation correlation is invalid")
         event_issue = _as_mapping(event.get("issue"))
         transport_issue_number = (
             None if event_issue is None else _positive_int(event_issue.get("number"))
         )
         if transport_issue_number is None:
             raise ValueError("application continuation transport Issue is invalid")
+
         predecessor_evidence = qualify_application_continuation_predecessor(
             repository,
             token,
             continuation,
             current_comment_id=event_comment_id,
+            expected_record=accepted_intent,
             transport_issue_number=transport_issue_number,
         )
         if predecessor_evidence is None:
@@ -8135,6 +8274,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     # First construct the exact carrier without comments or routing; only a
     # later fresh proof of its actual head may bind and persist the checkpoint.
     defer_accepted_checkpoint = False
+    historical_formal_only = False
     if (
         accepted_intent is not None
         and plan.source.role == "executor"
@@ -8198,6 +8338,15 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 _write_carrier_outputs(ApplyResult(True, "already-formally-committed"))
                 _write_validation_outputs(None)
                 return 0
+        elif (
+            continuation is not None
+            and checkpoint_proof.historical_witness is not None
+            and consequence_spec_for(
+                plan.source.action, worker_result.typed_result.result.kind
+            ).evidence_target
+            is EvidenceTarget.DEFAULT_BRANCH
+        ):
+            historical_formal_only = True
         elif checkpoint_proof.disposition == "INCOMPLETE" and committed_result is None:
             defer_accepted_checkpoint = True
         else:
@@ -8206,7 +8355,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 or "accepted implementation materialization proof is unavailable"
             )
 
-    pending_continuation = plan.pending_continuation
+    pending_continuation = plan.pending_continuation or historical_formal_only
     context.stage = "application-effect-preparation"
     if (
         first_activation
