@@ -9471,6 +9471,7 @@ def _native_r9_exception_artifact(
         ("different-native-artifact-request", False),
         ("different-native-artifact-source", False),
         ("exception-artifact", True),
+        ("exception-incomplete-materialization", True),
         ("exception-foreign-change", False),
         ("exception-different-request", False),
         ("exception-unqualified-proof", False),
@@ -9593,6 +9594,30 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
         }:
             fact = application.RecoveryEvidenceNode(
                 "ORIGINAL_EFFECT", None, None, source_conflict=True
+            )
+        elif fault == "exception-incomplete-materialization":
+            payload = {
+                "operation": "application-materialize",
+                "issue_number": 435,
+                "expected_change": accepted_record.change,
+                "change": accepted_record.change,
+                "branch": f"agent/{accepted_record.change}",
+                "base_sha": REVISION,
+                "pr_number": 437,
+                "message": "Refs #435",
+                "files": [],
+            }
+            request = application.find_materialization_payload(
+                payload, application.WorkerRequest(435, "executor", "implement-change")
+            )
+            assert request is not None
+            fact = application.RecoveryEvidenceNode(
+                "ORIGINAL_EFFECT",
+                application.StagedEffect("github-mutation", json.dumps(payload)),
+                False,
+                materialization_observation=application.MaterializationProof(
+                    "INCOMPLETE", application_request=request
+                ),
             )
         elif fault == "positive-proof":
             fact = application.RecoveryEvidenceNode("ORIGINAL_EFFECT", None, True)
@@ -9734,6 +9759,9 @@ def test_native_r9_repair_admission_reuses_real_bridge_and_application_owner(
             bridge._runtime_repair_admission_document(result, repository=repository)["frontier"],
         )
         assert f"{frontier['obligation']}:{frontier['disposition']}" == expected_frontier
+        if fault == "exception-incomplete-materialization":
+            assert frontier["evidence_stage"] == "MATERIALIZATION_INCOMPLETE"
+            assert result.result_state == "RESUMABLE"
         assert frontier["ordinal"] == (
             1 if fault == "pending-formal" else 2 if fault == "pending-successor" else 0
         )

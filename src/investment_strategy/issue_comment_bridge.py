@@ -35,6 +35,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     ApplicationExceptionArtifact,
     ApplicationRecoveryArtifact,
     ApplicationRequest,
+    RecoveryEvidenceNode,
     RecoveryProofResult,
     TypedEvidenceError,
     _accepted_recovery_boundary,
@@ -5883,6 +5884,11 @@ def _runtime_repair_admission_document(
     proof = admission.frontier_proof
     witness = proof.witness
     stage = witness.stage if isinstance(witness, TypedEvidenceError) else None
+    if (
+        isinstance(witness, RecoveryEvidenceNode)
+        and witness.materialization_observation is not None
+    ):
+        stage = f"MATERIALIZATION_{witness.materialization_observation.disposition}"
     document: dict[str, object] = {
         "schema": "scheduled-agent-runtime-repair-admission/v1",
         "source": {
