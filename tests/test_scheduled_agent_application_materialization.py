@@ -5103,9 +5103,11 @@ def test_missing_first_branch_recovers_after_disjoint_default_advance(
     assert proof_git.mutations == ["git/trees", "git/commits", "git/refs"]
 
 
+@pytest.mark.parametrize("default_advances", [False, True])
 def test_content_only_construction_and_proof_use_exact_actual_branch_parent(
     proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
+    default_advances: bool,
 ) -> None:
     branch_parent = proof_git.commit(
         {proof_git.path: "branch preimage"},
@@ -5125,6 +5127,10 @@ def test_content_only_construction_and_proof_use_exact_actual_branch_parent(
         branch_parent
     )[proof_git.path]["sha"]
     monkeypatch.setattr(proof_git, "payload", lambda: payload)
+    if default_advances:
+        proof_git.main = proof_git.commit(
+            {"README.md": "another disjoint main advance"}, "Advance again", (proof_git.main,)
+        )
     proof_git.allow_writes = True
     assert _prove_git(proof_git).disposition == "INCOMPLETE"
     with pytest.raises(CarrierRequired) as raised:

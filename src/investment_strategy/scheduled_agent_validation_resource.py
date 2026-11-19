@@ -2070,7 +2070,10 @@ def _construct_work_product(
             default_revision=authorization_revision,
             revision=current_head,
         )
-        if not default_branch_is_ancestor and plan.manifest.base_sha == authorization_revision:
+        if not default_branch_is_ancestor and (
+            plan.manifest.base_sha == authorization_revision
+            or (content_only and plan.manifest.base_sha != current_head)
+        ):
             historical_base_sha = base.get("sha")
             if not _valid_sha(historical_base_sha):
                 raise RuntimeError("work-product historical PR base identity is incomplete")
@@ -2083,6 +2086,12 @@ def _construct_work_product(
             if len(historical_prs) != 1 or historical_prs[0].get("number") != plan.pr_number:
                 raise RuntimeError("work-product historical PR identity is ambiguous")
             if content_only:
+                _ancestor_comparison_paths(
+                    repository,
+                    token,
+                    base_sha=cast(str, historical_base_sha),
+                    revision=plan.manifest.base_sha,
+                )
                 _ancestor_comparison_paths(
                     repository,
                     token,
