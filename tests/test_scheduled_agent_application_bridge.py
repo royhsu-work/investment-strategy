@@ -1413,14 +1413,67 @@ def test_uncertain_effect_exception_does_not_claim_no_write(
         request_comment_id=102,
         evidence_path=str(tmp_path / "execution-exception.json"),
         stage="application-effect-and-postcondition",
-        mutation_attempted=True,
     )
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
-    bridge._record_application_exception(context, RuntimeError("lost write response"))
+    bridge._record_application_exception(
+        context, RuntimeError("lost write response"), bridge.GitHubWriteObservation(calls=1)
+    )
     document = json.loads((tmp_path / "execution-exception.json").read_text(encoding="utf-8"))
     assert document["mutation_status"] == "UNKNOWN_REQUIRES_FRESH_RECONCILIATION"
     assert document["raw_error"] == "lost write response"
+
+
+@pytest.mark.parametrize(
+    ("fault", "calls", "responses", "git_calls"),
+    [
+        ("before-call", 0, 0, 0),
+        ("lost-response", 1, 0, 1),
+        ("after-response", 1, 1, 1),
+        ("earlier-response", 1, 1, 0),
+    ],
+)
+def test_exception_reports_actual_write_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fault: str,
+    calls: int,
+    responses: int,
+    git_calls: int,
+) -> None:
+    import investment_strategy.scheduled_agent_validation_resource as resource
+
+    path = tmp_path / "exception.json"
+
+    def open_request(*_args: object, **_kwargs: object) -> BytesIO:
+        if fault == "lost-response":
+            raise OSError("lost response")
+        return BytesIO(b'{"sha":"fixture"}')
+
+    def apply(context: bridge.ApplicationExceptionContext) -> int:
+        context.evidence_path = str(path)
+        context.stage = "application-effect-and-postcondition"
+        if fault == "earlier-response":
+            bridge._github_json("owner/repo", "", "issues/1/comments", method="POST")
+        payload: dict[str, object] = (
+            {"tree": object()} if fault in {"before-call", "earlier-response"} else {"tree": []}
+        )
+        resource._github_json("owner/repo", "", "git/trees", method="POST", payload=payload)
+        raise RuntimeError("postcondition failed")
+
+    monkeypatch.setattr(resource, "urlopen", open_request)
+    monkeypatch.setattr(bridge, "urlopen", open_request)
+    monkeypatch.setattr(bridge, "_main_unprotected", apply)
+    with pytest.raises((TypeError, OSError, RuntimeError)):
+        bridge.main()
+
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document["mutation_status"] == (
+        "UNKNOWN_REQUIRES_FRESH_RECONCILIATION" if calls else "NO_APPLICATION_WRITE_ATTEMPTED"
+    )
+    assert document["write_calls"] == calls
+    assert document["write_responses"] == responses
+    assert document["git_write_calls"] == git_calls
 
 
 def _worker_result(
@@ -2960,11 +3013,17 @@ def test_elided_v2_immutable_original_proof_preserves_physical_effects(
 
 
 @pytest.mark.parametrize(
-    ("observed", "expected"),
-    [(True, "COMPLETE"), (False, "INDETERMINATE")],
+    ("observed", "expected", "repairable"),
+    [
+        ("COMPLETE", "COMPLETE", False),
+        ("UNKNOWN", "INDETERMINATE", False),
+        ("INCOMPLETE", "INDETERMINATE", True),
+        ("PROJECTED", "INDETERMINATE", False),
+        ("CONTRADICTORY", "UNSAFE", True),
+    ],
 )
 def test_incident_435_accepted_blocked_materialization_is_read_only_proven(
-    monkeypatch: pytest.MonkeyPatch, observed: bool, expected: str
+    monkeypatch: pytest.MonkeyPatch, observed: str, expected: str, repairable: bool
 ) -> None:
     """Incident source shape: the one accepted Effect is seven exact PR blobs."""
 
@@ -3069,8 +3128,15 @@ def test_incident_435_accepted_blocked_materialization_is_read_only_proven(
 
         def observe_materialization_proof(self, payload: dict[str, object]) -> SimpleNamespace:
             checked.append(payload)
+            request = bridge.find_materialization_payload(payload, source)
+            assert request is not None
+            if observed == "PROJECTED":
+                request = replace(request, base_sha="d" * 40)
             return SimpleNamespace(
-                disposition="COMPLETE" if observed else "UNKNOWN", historical_witness=None
+                disposition="INCOMPLETE" if observed == "PROJECTED" else observed,
+                historical_witness=None,
+                application_request=request,
+                carrier_plan=None,
             )
 
     monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
@@ -3084,6 +3150,13 @@ def test_incident_435_accepted_blocked_materialization_is_read_only_proven(
     )
     assert proof.disposition == expected
     assert len(checked) == 1
+    frontier = proof.runtime_repair_frontier
+    assert (frontier is not None) is repairable
+    if frontier is not None:
+        assert frontier.remaining_obligation == "ORIGINAL_EFFECT"
+        assert frontier.frontier_index == 0
+    if observed in {"UNKNOWN", "INCOMPLETE", "PROJECTED"}:
+        assert proof.continuation == "OBSERVE"
 
 
 def test_accepted_intent_lookup_includes_indeterminate_current_issue(

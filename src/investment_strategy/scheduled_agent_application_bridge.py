@@ -41,6 +41,7 @@ from investment_strategy.scheduled_agent_application_carrier import (
     qualify_supersession_branch,
 )
 from investment_strategy.scheduled_agent_application_materialization import (
+    MaterializationProof,
     find_materialization_payload,
     materialization_requires_validation,
     observe_materialization_target,
@@ -49,6 +50,7 @@ from investment_strategy.scheduled_agent_application_materialization import (
 from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
     CarrierRequired,
+    GitHubWriteObservation,
     carrier_plan_document,
     github_comment_has_app_provenance,
     github_complete_run_jobs,
@@ -57,6 +59,8 @@ from investment_strategy.scheduled_agent_carrier import (
     github_repository_api_url,
     github_run_artifact_identity,
     github_run_artifact_inventory,
+    github_write_bytes,
+    observe_github_writes,
     read_github_artifact_bytes,
 )
 from investment_strategy.scheduled_agent_checkin import (
@@ -226,7 +230,6 @@ class ApplicationExceptionContext:
     run_attempt: int = 1
     evidence_path: str | None = None
     stage: str = "application-bootstrap"
-    mutation_attempted: bool = False
 
 
 _APPLICATION_RECOVERY_ARTIFACT = "application-recovery-evidence"
@@ -1042,8 +1045,7 @@ def _github_json(
                 return None
             raise
     else:
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - trusted API host
-            raw = response.read()
+        raw = github_write_bytes(request, api_path=api_path, open_request=urlopen)
     return None if not raw else json.loads(raw.decode("utf-8"))
 
 
@@ -5347,7 +5349,26 @@ def _qualified_exception_document(
 ) -> Mapping[str, object] | None:
     """Canonical typed identity; diagnostic strings never determine admission."""
 
-    if not isinstance(document, Mapping) or set(document) != _EXCEPTION_DOCUMENT_KEYS:
+    if not isinstance(document, Mapping):
+        return None
+    keys = set(document)
+    if keys == _EXCEPTION_DOCUMENT_KEYS | {"write_calls", "write_responses", "git_write_calls"}:
+        calls = document["write_calls"]
+        responses = document["write_responses"]
+        git_calls = document["git_write_calls"]
+        if (
+            not isinstance(calls, int)
+            or isinstance(calls, bool)
+            or not isinstance(responses, int)
+            or isinstance(responses, bool)
+            or not isinstance(git_calls, int)
+            or isinstance(git_calls, bool)
+            or not 0 <= git_calls <= calls
+            or not 0 <= responses <= calls
+            or (calls == 0) != (document["mutation_status"] == "NO_APPLICATION_WRITE_ATTEMPTED")
+        ):
+            return None
+    elif keys != _EXCEPTION_DOCUMENT_KEYS:
         return None
     expected = {
         "schema": "scheduled-agent-execution-exception/v1",
@@ -6199,6 +6220,7 @@ class RecoveryEvidenceNode:
     source_object_ref: str | None = None
     # Original native checkpoint fact; never a write or replay permission.
     write_call_entered: bool | None = None
+    materialization_observation: MaterializationProof | None = None
 
 
 @dataclass(frozen=True)
@@ -6407,6 +6429,14 @@ def _observe_accepted_effect_fact(
     ):
         materialization = adapter.observe_materialization_proof(payload)
         obligation = _recovery_obligation(effect, source)
+        observation: MaterializationProof | None = materialization
+        if materialization.disposition == "INCOMPLETE" and (
+            materialization.application_request is None
+            or materialization.application_request != find_materialization_payload(payload, source)
+        ):
+            # A compatibility projection may change a write preimage. It
+            # cannot establish an exact missing frontier for this intent.
+            observation = None
         historical_original = (
             adapter.accepted_intent
             and obligation == "ORIGINAL_EFFECT"
@@ -6418,6 +6448,7 @@ def _observe_accepted_effect_fact(
             final_postcondition=materialization.disposition == "COMPLETE" or historical_original,
             source_conflict=materialization.disposition == "CONTRADICTORY"
             and not historical_original,
+            materialization_observation=observation,
         )
     return RecoveryEvidenceNode(
         _recovery_obligation(effect, source),
@@ -6486,8 +6517,9 @@ class AcceptedPostEffectProof:
 
         This is not write permission. An observation error or a naked UNKNOWN
         cannot prove an irreducible repair obligation; only the canonical
-        witness of an entered write, an unprovable history boundary, or an
-        actual source conflict may be presented for Human maintenance.
+        witness of an entered write, an unprovable history boundary, an
+        exact missing materialization, or a source conflict may be presented
+        for Human maintenance.
         """
 
         # Original Effects must be settled before Formal Result / Successor.
@@ -6508,14 +6540,20 @@ class AcceptedPostEffectProof:
             witness = proof.witness
             if isinstance(witness, TypedEvidenceError):
                 return proof if witness.intervention_required else None
-            if isinstance(witness, RecoveryEvidenceNode):
-                return (
-                    proof
-                    if witness.write_call_entered is True
-                    and witness.final_postcondition is False
-                    and witness.effect is not None
-                    else None
-                )
+            if (
+                isinstance(witness, RecoveryEvidenceNode)
+                and witness.final_postcondition is False
+                and witness.effect is not None
+            ):
+                materialization = witness.materialization_observation
+                if witness.write_call_entered is True or (
+                    materialization is not None
+                    and materialization.disposition == "INCOMPLETE"
+                    and materialization.carrier_plan is None
+                ):
+                    # A qualified read can prove the consequence is missing.
+                    # It cannot prove the accepted intent was never called.
+                    return proof
             return None
         return proof
 
@@ -7782,7 +7820,9 @@ def _write_application_recovery_evidence(
     return bool(output_path)
 
 
-def _record_application_exception(context: ApplicationExceptionContext, exc: Exception) -> None:
+def _record_application_exception(
+    context: ApplicationExceptionContext, exc: Exception, writes: GitHubWriteObservation
+) -> None:
     """Retain a catchable failure without manufacturing ACCEPT or a route.
 
     A run-scoped artifact survives even when a separate GitHub comment write
@@ -7806,7 +7846,7 @@ def _record_application_exception(context: ApplicationExceptionContext, exc: Exc
     )
     mutation_status = (
         "UNKNOWN_REQUIRES_FRESH_RECONCILIATION"
-        if context.mutation_attempted
+        if writes.calls
         else "NO_APPLICATION_WRITE_ATTEMPTED"
     )
     document: dict[str, object] = {
@@ -7826,6 +7866,9 @@ def _record_application_exception(context: ApplicationExceptionContext, exc: Exc
         "raw_error": raw_error,
         "raw_traceback": redacted("".join(traceback.format_exception(exc))),
         "mutation_status": mutation_status,
+        "write_calls": writes.calls,
+        "write_responses": writes.responses,
+        "git_write_calls": writes.git_calls,
         "unfinished_boundary": context.stage,
         "classification": "UNCLASSIFIED_EXECUTION_EXCEPTION",
     }
@@ -7912,19 +7955,20 @@ def main() -> int:
     """Apply an exact worker result and capture exceptions at its outer boundary."""
 
     context = ApplicationExceptionContext()
-    try:
-        return _main_unprotected(context)
-    except Exception as exc:
+    with observe_github_writes() as writes:
         try:
-            _record_application_exception(context, exc)
-        except Exception as capture_error:
-            # The original exception remains primary; an uncertain audit write
-            # must never be retried blindly or obscure the failed boundary.
-            print(
-                f"Execution exception evidence persistence failed: {capture_error}",
-                file=sys.stderr,
-            )
-        raise
+            return _main_unprotected(context)
+        except Exception as exc:
+            try:
+                # Snapshot the transport observations before any audit write.
+                _record_application_exception(context, exc, writes)
+            except Exception as capture_error:
+                # A failed audit write must not hide the original exception.
+                print(
+                    f"Execution exception evidence persistence failed: {capture_error}",
+                    file=sys.stderr,
+                )
+            raise
 
 
 def _main_unprotected(context: ApplicationExceptionContext) -> int:
@@ -8363,8 +8407,6 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         and request.authorization_revision != args.revision
     ):
         pending_continuation = True
-    if first_activation and materialization is not None and accepted_intent is not None:
-        context.mutation_attempted = True
     if (
         first_activation
         and materialization is not None
@@ -8630,7 +8672,6 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         and _fresh_event_observation(event, body, repository, token)
     ):
         raise ValueError("WORKER_RESULT comment changed before Phase-A ACCEPT")
-    context.mutation_attempted = True
     try:
         if missing_pr_only_plan is not None:
             # Native carrier actuator is the mutation boundary and rechecks

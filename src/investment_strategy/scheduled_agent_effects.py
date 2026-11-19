@@ -61,6 +61,7 @@ from investment_strategy.scheduled_agent_carrier import (
     carrier_pr_identity,
     github_paginated_mappings,
     github_read_bytes_with_retry,
+    github_write_bytes,
     make_carrier_plan,
 )
 from investment_strategy.scheduled_agent_effect_contract import (
@@ -1886,8 +1887,7 @@ def _github_json(
             )
         else:
             # Unknown write outcome: never replay this request at transport.
-            with urlopen(request, timeout=30) as response:  # noqa: S310 - trusted API host
-                raw = response.read()
+            raw = github_write_bytes(request, api_path=api_path, open_request=urlopen)
     except HTTPError as exc:
         if allow_not_found and exc.code == 404:
             return None

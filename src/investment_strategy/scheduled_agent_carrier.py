@@ -6,7 +6,9 @@ import base64
 import hashlib
 import json
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 from urllib.error import HTTPError, URLError
@@ -29,6 +31,51 @@ def github_repository_api_url(repository: str, api_path: str) -> str:
     root = f"https://api.github.com/repos/{repository}"
     relative = api_path.lstrip("/")
     return root if not relative else f"{root}/{relative}"
+
+
+@dataclass
+class GitHubWriteObservation:
+    """Counts for a single invocation. Responses do not prove postconditions."""
+
+    calls: int = 0
+    responses: int = 0
+    git_calls: int = 0
+
+
+_github_writes: ContextVar[GitHubWriteObservation | None] = ContextVar(
+    "github_writes", default=None
+)
+
+
+@contextmanager
+def observe_github_writes() -> Iterator[GitHubWriteObservation]:
+    observation = GitHubWriteObservation()
+    token = _github_writes.set(observation)
+    try:
+        yield observation
+    finally:
+        _github_writes.reset(token)
+
+
+def github_write_bytes(
+    request: Request, *, api_path: str, open_request: Callable[..., Any]
+) -> bytes:
+    """Enter one write call without retrying, even if the response is lost."""
+    observation = _github_writes.get()
+    if observation is not None:
+        observation.calls += 1
+        if api_path.lstrip("/").startswith("git/"):
+            observation.git_calls += 1
+    try:
+        response = open_request(request, timeout=30)
+    except HTTPError:
+        if observation is not None:
+            observation.responses += 1
+        raise
+    if observation is not None:
+        observation.responses += 1
+    with response as body:
+        return cast(bytes, body.read())
 
 
 def github_read_bytes_with_retry(
