@@ -1896,9 +1896,9 @@ class _ProofGitRepository:
                 if page > 1:
                     comparison.pop("files", None)
             elif len(commits) > 250:
-                # GitHub compare is unpaginated by default; even when full
-                # compare metadata and diff are available, commits cap at 250.
-                comparison["commits"] = commits[:250]
+                # Actual GitHub API returns the most recent 250, not the
+                # earliest 250, when compare is requested without pagination.
+                comparison["commits"] = commits[-250:]
             return comparison
         if path.startswith("git/blobs/"):
             sha = path.removeprefix("git/blobs/")
@@ -5976,6 +5976,13 @@ def test_long_B_to_P_carrier_paginates_complete_canonical_witness(
     )
     assert len(cast(dict[str, object], capped)["commits"]) == 250
     assert cast(dict[str, object], capped)["ahead_by"] > 250
+    complete_shas = [
+        commit["sha"] for commit in proof_git.comparison(declared, proof_git.head)["commits"]
+    ]
+    assert [
+        commit["sha"] for commit in cast(dict[str, object], capped)["commits"]
+    ] == complete_shas[-250:]
+    assert complete_shas[:250] != complete_shas[-250:]
     page2 = cast(
         dict[str, object],
         proof_git.api(
