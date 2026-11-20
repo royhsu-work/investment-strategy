@@ -1942,6 +1942,54 @@ def _proof_ancestry(repository: str, token: str, ancestor: str, revision: str) -
     return frozenset(paths)
 
 
+def _divergent_path_evidence(
+    repository: str,
+    token: str,
+    *,
+    current_revision: str,
+    carrier_revision: str,
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Qualify merge-base and both exact path diffs without a capped commit list."""
+    comparison = _as_mapping(
+        _github_json(repository, token, f"compare/{current_revision}...{carrier_revision}")
+    )
+    base = None if comparison is None else _as_mapping(comparison.get("base_commit"))
+    fork = None if comparison is None else _as_mapping(comparison.get("merge_base_commit"))
+    ahead = None if comparison is None else comparison.get("ahead_by")
+    behind = None if comparison is None else comparison.get("behind_by")
+    files = None if comparison is None else comparison.get("files")
+    if (
+        comparison is None
+        or base is None
+        or base.get("sha") != current_revision
+        or fork is None
+        or not _valid_sha(fork.get("sha"))
+        or comparison.get("too_large") is True
+        or not isinstance(ahead, int)
+        or isinstance(ahead, bool)
+        or ahead < 0
+        or not isinstance(behind, int)
+        or isinstance(behind, bool)
+        or behind < 0
+        or comparison.get("total_commits") != ahead
+        or not isinstance(files, list)
+        or len(files) >= 300
+    ):
+        raise _IncompleteGitHubObservation("materialization divergent path evidence is incomplete")
+    status = (
+        "diverged" if ahead and behind
+        else "ahead" if ahead
+        else "behind" if behind
+        else "identical"
+    )
+    if comparison.get("status") != status:
+        raise RuntimeError("materialization divergent graph observations contradict")
+    common = cast(str, fork["sha"])
+    default_paths = _proof_ancestry(repository, token, common, current_revision)
+    carrier_paths = _proof_ancestry(repository, token, common, carrier_revision)
+    return default_paths, carrier_paths
+
+
 def _requested_path_default_overlap(
     request: MaterializationRequest,
     *,
@@ -1950,14 +1998,10 @@ def _requested_path_default_overlap(
     current_revision: str,
     carrier_revision: str,
 ) -> bool:
-    """Retain manifest non-conflict even when unrelated integration is deferred."""
-    comparison, _commits, _paths = _proof_comparison(
-        repository, token, current_revision, carrier_revision
+    """Check the accepted path set, not whole-branch integration conflicts."""
+    default_paths, _carrier_paths = _divergent_path_evidence(
+        repository, token, current_revision=current_revision, carrier_revision=carrier_revision
     )
-    fork = cast(Mapping[str, object], comparison["merge_base_commit"])
-    fork_sha = cast(str, fork["sha"])
-    _proof_ancestry(repository, token, fork_sha, carrier_revision)
-    default_paths = _proof_ancestry(repository, token, fork_sha, current_revision)
     return bool(default_paths.intersection(file.path for file in request.files))
 
 
@@ -2485,28 +2529,34 @@ def prove_materialization(
             if not merged:
                 if revision != request.base_sha:
                     if request.base_sha != accepted_revision:
-                        raise RuntimeError(
-                            "materialization missing work has unqualified write parent"
+                        # Qualify B -> actual P before relying on the preimage at P.
+                        advanced_paths = _proof_ancestry(
+                            repository, token, request.base_sha, revision
                         )
-                    relation, _commits, _paths = _proof_comparison(
-                        repository, token, current_revision, revision
-                    )
-                    fork = cast(Mapping[str, object], relation["merge_base_commit"])
-                    main_paths = _proof_ancestry(
-                        repository, token, cast(str, fork["sha"]), current_revision
-                    )
-                    branch_paths = _proof_ancestry(
-                        repository, token, cast(str, fork["sha"]), revision
-                    )
-                    if main_paths.intersection(file.path for file in request.files):
-                        raise RuntimeError("materialization missing work overlaps default advance")
-                    for path in main_paths & branch_paths:
-                        if _content_sha_at(
-                            repository, token, path=path, revision=current_revision
-                        ) != (_content_sha_at(repository, token, path=path, revision=revision)):
+                        if advanced_paths.intersection(file.path for file in request.files):
                             raise RuntimeError(
-                                "materialization missing work has conflicting histories"
+                                "materialization missing work overlaps declared carrier base"
                             )
+                    else:
+                        # Historical default-base reconciliation is a distinct
+                        # two-parent operation; retain its whole-tree conflict guard.
+                        main_paths, branch_paths = _divergent_path_evidence(
+                            repository,
+                            token,
+                            current_revision=current_revision,
+                            carrier_revision=revision,
+                        )
+                        if main_paths.intersection(file.path for file in request.files):
+                            raise RuntimeError(
+                                "materialization missing work overlaps default advance"
+                            )
+                        for path in main_paths & branch_paths:
+                            if _content_sha_at(
+                                repository, token, path=path, revision=current_revision
+                            ) != (_content_sha_at(repository, token, path=path, revision=revision)):
+                                raise RuntimeError(
+                                    "materialization missing work has conflicting histories"
+                                )
                 elif default_advance.intersection(file.path for file in request.files):
                     raise RuntimeError("materialization missing work overlaps default advance")
                 if request.base_sha != accepted_revision and _requested_path_default_overlap(
@@ -2637,13 +2687,20 @@ def prove_materialization(
         # content-write conflict. A reconciliation/merge witness still requires
         # the canonical overlap and graph checks below.
         _witness_commit, witness_parents = _proof_commit(repository, token, witness_revision)
-        content_only_witness = (
+        content_only_witness = False
+        if (
             request.pr_number is not None
             and request.expected_change != "unset"
+            and witness_revision != request.base_sha
             and len(witness_parents) == 1
-            and witness_parents[0] == request.base_sha
             and request.base_sha != accepted_revision
-        )
+        ):
+            advanced_paths = _proof_ancestry(
+                repository, token, request.base_sha, witness_parents[0]
+            )
+            content_only_witness = not advanced_paths.intersection(
+                file.path for file in request.files
+            )
         # Requested-path default changes remain a canonical non-conflict gate.
         # Only divergences entirely outside the accepted Manifest are deferred
         # to the independent native Git integration boundary.
@@ -2667,15 +2724,11 @@ def prove_materialization(
             if not committed_formal_result and not content_only_witness:
                 # Compare current default against carrier history without confusing
                 # the mutation preimage with a historical default-branch base.
-                comparison, _commits, _paths = _proof_comparison(
-                    repository, token, current_revision, revision
-                )
-                merge_base = cast(Mapping[str, object], comparison["merge_base_commit"])
-                default_paths = _proof_ancestry(
-                    repository, token, cast(str, merge_base["sha"]), current_revision
-                )
-                carrier_paths = _proof_ancestry(
-                    repository, token, cast(str, merge_base["sha"]), revision
+                default_paths, carrier_paths = _divergent_path_evidence(
+                    repository,
+                    token,
+                    current_revision=current_revision,
+                    carrier_revision=revision,
                 )
                 for path in default_paths & carrier_paths:
                     if _content_sha_at(repository, token, path=path, revision=current_revision) != (
