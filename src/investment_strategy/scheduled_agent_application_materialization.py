@@ -2713,6 +2713,8 @@ def prove_materialization(
             request.pr_number is not None
             and request.expected_change != "unset"
             and len(witness_parents) == 1
+            and witness_parents[0] == request.base_sha
+            and request.base_sha != accepted_revision
         )
         # Requested-path default changes remain a canonical non-conflict gate.
         # Only divergences entirely outside the accepted Manifest are deferred
