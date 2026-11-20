@@ -27,6 +27,8 @@ from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
     CarrierRequired,
     carrier_pr_identity,
+    create_exact_git_commit,
+    create_exact_git_tree,
     make_carrier_plan,
 )
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
@@ -584,49 +586,24 @@ def _create_revision(
         raise RuntimeError("application materialization base tree identity is incomplete")
     if before_write is not None:
         before_write()
-    tree = _as_mapping(
-        cast(
-            object,
-            _github_json(
-                repository,
-                token,
-                "git/trees",
-                method="POST",
-                payload={
-                    "base_tree": cast(str, base_tree_sha),
-                    "tree": [
-                        {"path": f.path, "mode": "100644", "type": "blob", "sha": f.blob_sha}
-                        for f in request.files
-                    ],
-                },
-            ),
-        )
+    tree_sha = create_exact_git_tree(
+        lambda api_path, **kwargs: _github_json(repository, token, api_path, **kwargs),
+        base_tree_sha=cast(str, base_tree_sha),
+        elements=[
+            {"path": f.path, "mode": "100644", "type": "blob", "sha": f.blob_sha}
+            for f in request.files
+        ],
+        label="application materialization",
     )
-    tree_sha = None if tree is None else tree.get("sha")
-    if not _valid_sha(tree_sha):
-        raise RuntimeError("application materialization tree creation returned no SHA")
     if before_write is not None:
         before_write()
-    created = _as_mapping(
-        cast(
-            object,
-            _github_json(
-                repository,
-                token,
-                "git/commits",
-                method="POST",
-                payload={
-                    "message": request.message,
-                    "tree": cast(str, tree_sha),
-                    "parents": [request.base_sha],
-                },
-            ),
-        )
+    return create_exact_git_commit(
+        lambda api_path, **kwargs: _github_json(repository, token, api_path, **kwargs),
+        message=request.message,
+        tree_sha=tree_sha,
+        parents=[request.base_sha],
+        label="application materialization",
     )
-    revision = None if created is None else created.get("sha")
-    if not _valid_sha(revision):
-        raise RuntimeError("application materialization commit creation returned no SHA")
-    return cast(str, revision)
 
 
 def _verify_new_carrier_base_is_empty(
@@ -1466,22 +1443,12 @@ def _materialize_implementation_target(
             current_revision=current_revision,
             expected_head=current_head,
         )
-        tree = _as_mapping(
-            cast(
-                object,
-                _github_json(
-                    repository,
-                    token,
-                    "git/trees",
-                    method="POST",
-                    payload={"base_tree": base_tree_sha, "tree": tree_elements},
-                ),
-            )
+        tree_sha = create_exact_git_tree(
+            lambda api_path, **kwargs: _github_json(repository, token, api_path, **kwargs),
+            base_tree_sha=base_tree_sha,
+            elements=tree_elements,
+            label="implementation materialization",
         )
-        observed_tree_sha = None if tree is None else tree.get("sha")
-        if not _valid_sha(observed_tree_sha):
-            raise RuntimeError("implementation materialization tree creation returned no SHA")
-        tree_sha = cast(str, observed_tree_sha)
 
     _fresh_implementation_write_authorization(
         request,
@@ -1492,22 +1459,13 @@ def _materialize_implementation_target(
         current_revision=current_revision,
         expected_head=current_head,
     )
-    created = _as_mapping(
-        cast(
-            object,
-            _github_json(
-                repository,
-                token,
-                "git/commits",
-                method="POST",
-                payload={"message": message, "tree": tree_sha, "parents": parents},
-            ),
-        )
+    revision = create_exact_git_commit(
+        lambda api_path, **kwargs: _github_json(repository, token, api_path, **kwargs),
+        message=message,
+        tree_sha=tree_sha,
+        parents=parents,
+        label="implementation materialization",
     )
-    revision = None if created is None else created.get("sha")
-    if not _valid_sha(revision):
-        raise RuntimeError("implementation materialization commit creation returned no SHA")
-    revision = cast(str, revision)
 
     observed = _as_mapping(cast(object, _github_json(repository, token, f"git/commits/{revision}")))
     observed_tree = None if observed is None else _as_mapping(observed.get("tree"))
