@@ -6,7 +6,7 @@ import base64
 import hashlib
 import json
 import re
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -37,7 +37,7 @@ def create_exact_git_tree(
     write: Callable[..., object],
     *,
     base_tree_sha: str,
-    elements: list[dict[str, object]],
+    elements: Sequence[Mapping[str, object]],
     label: str,
 ) -> str:
     """Create a Git tree with exact supplied entries; do not authorize any effect.
