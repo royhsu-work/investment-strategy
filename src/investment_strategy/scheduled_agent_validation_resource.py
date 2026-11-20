@@ -1919,6 +1919,7 @@ def _construct_work_product(
     replacement_pr_number: int | None = None
     replacement_reconciliation_required = False
     replacement_base_requires_reconciliation = False
+    safe_historical_reconciliation = False
     if historical_merged_carrier:
         merge_commit_sha = pr.get("merge_commit_sha")
         if not _valid_sha(merge_commit_sha) or not _default_branch_is_ancestor(
@@ -2070,10 +2071,32 @@ def _construct_work_product(
             default_revision=authorization_revision,
             revision=current_head,
         )
+        if not default_branch_is_ancestor and plan.manifest.base_sha == authorization_revision:
+            historical_base_sha = base.get("sha")
+            if not _valid_sha(historical_base_sha):
+                raise RuntimeError("work-product historical PR base identity is incomplete")
+            historical_prs = _open_prs_for_branch(
+                repository,
+                token,
+                branch=expected_branch,
+                default_branch=default_branch,
+            )
+            if len(historical_prs) != 1 or historical_prs[0].get("number") != plan.pr_number:
+                raise RuntimeError("work-product historical PR identity is ambiguous")
+            _safe_historical_carrier_reconciliation(
+                repository,
+                token,
+                historical_base_sha=cast(str, historical_base_sha),
+                authorization_revision=authorization_revision,
+                carrier_revision=current_head,
+                manifest=plan.manifest,
+            )
+            safe_historical_reconciliation = True
     # COMPLETE is handled only by the public proof. This primitive plans
     # missing writes and checks expected content at its actual first parent.
     if current_head != plan.manifest.base_sha and not (
         replacement_branch is not None
+        or safe_historical_reconciliation
         or plan.manifest.base_sha == authorization_revision
     ):
         advance_paths = _ancestor_comparison_paths(
@@ -2084,10 +2107,13 @@ def _construct_work_product(
         )
         if advance_paths.intersection(file.path for file in plan.manifest.files):
             raise RuntimeError("work-product PR head/base identity is stale")
-    # An open PR content write extends its qualified exact parent P. It never
-    # integrates unrelated default-branch changes; that is a separate Git merge.
-    # Merged historical carriers still follow their distinct replacement path.
-    needs_default_reconciliation = not default_branch_is_ancestor and historical_merged_carrier
+    # An exact-carrier-parent content write (B == P) preserves P's unrelated
+    # tree. Historic correction plans declared on D while P diverged keep
+    # their existing, separately qualified reconciliation and overlap guards.
+    # The GitHub operation contract, not the worker role, chooses the boundary.
+    needs_default_reconciliation = not default_branch_is_ancestor and (
+        historical_merged_carrier or safe_historical_reconciliation
+    )
     reconcile_replacement_from_default = (
         needs_default_reconciliation
         and replacement_reconciliation_required
