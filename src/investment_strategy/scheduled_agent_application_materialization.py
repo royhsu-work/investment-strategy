@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Literal, cast
 from urllib.parse import quote, urlencode
 
@@ -2128,97 +2128,6 @@ def _proof_witness(
     return witness
 
 
-def _request_with_observed_preimage(
-    request: MaterializationRequest,
-    *,
-    repository: str,
-    token: str,
-    revision: str,
-) -> MaterializationRequest:
-    """Project the exact observed write preimage without changing accepted intent."""
-
-    files: list[WorkProductFile] = []
-    for file in request.files:
-        observed = _content_sha_at(repository, token, path=file.path, revision=revision)
-        if observed is not None and not _valid_sha(observed):
-            raise RuntimeError("materialization observed preimage identity is invalid")
-        files.append(WorkProductFile(file.path, file.blob_sha, observed))
-    return replace(request, files=tuple(files))
-
-
-def _accepted_preimage_projection(
-    request: MaterializationRequest,
-    *,
-    repository: str,
-    token: str,
-    current_carrier_revision: str,
-    merged: bool,
-    accepted_intent: bool,
-) -> MaterializationRequest:
-    """Recover an accepted exact-base write guard from authoritative Git objects.
-
-    The accepted worker result remains immutable. For missing work, the PR
-    head must still equal its declared base. For completed work, exactly one
-    direct child must carry the accepted message, exact path delta, and desired
-    blobs. Other branch evolution is never normalized.
-    """
-
-    if (
-        not accepted_intent
-        or merged
-        or request.expected_change == "unset"
-        or request.pr_number is None
-    ):
-        return request
-
-    if current_carrier_revision == request.base_sha:
-        projected = _request_with_observed_preimage(
-            request,
-            repository=repository,
-            token=token,
-            revision=request.base_sha,
-        )
-        if any(
-            actual.expected_sha != original.expected_sha
-            for actual, original in zip(projected.files, request.files, strict=True)
-        ):
-            return projected
-        return request
-
-    comparison, commits, _paths = _proof_comparison(
-        repository, token, request.base_sha, current_carrier_revision
-    )
-    if comparison.get("behind_by") != 0:
-        return request
-    candidates: list[MaterializationRequest] = []
-    for revision in commits:
-        commit, parents = _proof_commit(repository, token, revision)
-        if len(parents) != 1 or parents[0] != request.base_sha:
-            continue
-        if commit.get("message") != request.message:
-            continue
-        projected = _request_with_observed_preimage(
-            request,
-            repository=repository,
-            token=token,
-            revision=request.base_sha,
-        )
-        if _proof_ancestry(
-            repository, token, request.base_sha, revision
-        ) != _effective_materialization_paths(projected):
-            continue
-        if _manifest_is_current(
-            projected,
-            repository=repository,
-            token=token,
-            revision=revision,
-        ):
-            candidates.append(projected)
-    if len(candidates) > 1:
-        raise RuntimeError("materialization accepted write preimage recovery is ambiguous")
-    return candidates[0] if candidates else request
-
-
 def prove_materialization(
     payload: Mapping[str, object],
     source: WorkerRequest,
@@ -2559,14 +2468,6 @@ def prove_materialization(
         if merged and claimed:
             raise RuntimeError("materialization merged target has a competing active carrier")
         revision = cast(str, revision)
-        request = _accepted_preimage_projection(
-            request,
-            repository=repository,
-            token=token,
-            current_carrier_revision=revision,
-            merged=merged,
-            accepted_intent=accepted_intent,
-        )
         witness_revision: str | None
         if not request.files:
             witness_revision = revision
