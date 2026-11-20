@@ -5976,12 +5976,13 @@ def test_long_B_to_P_carrier_paginates_complete_canonical_witness(
     )
     assert len(cast(dict[str, object], capped)["commits"]) == 250
     assert cast(dict[str, object], capped)["ahead_by"] > 250
-    complete_shas = [
-        commit["sha"] for commit in proof_git.comparison(declared, proof_git.head)["commits"]
-    ]
-    assert [
-        commit["sha"] for commit in cast(dict[str, object], capped)["commits"]
-    ] == complete_shas[-250:]
+    complete_records = cast(
+        list[dict[str, object]],
+        proof_git.comparison(declared, proof_git.head)["commits"],
+    )
+    capped_records = cast(list[dict[str, object]], cast(dict[str, object], capped)["commits"])
+    complete_shas = [commit["sha"] for commit in complete_records]
+    assert [commit["sha"] for commit in capped_records] == complete_shas[-250:]
     assert complete_shas[:250] != complete_shas[-250:]
     page2 = cast(
         dict[str, object],
