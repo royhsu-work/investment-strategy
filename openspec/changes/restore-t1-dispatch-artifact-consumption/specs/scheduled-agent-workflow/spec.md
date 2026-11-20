@@ -8,6 +8,8 @@ The existing reader/idle boundary SHALL retain a safe machine-readable failure s
 
 GitHub GET reads MAY retry only within an explicit bound after qualifying retryable statuses 500, 502, 503 or 504 or timeouts. Authorization/identity failures, malformed data and contradictory evidence MUST NOT be silently converted into successful admission. No POST, PATCH, Issue create, label or other consequential write may use automatic retry or mutation-based read/probe. An ambiguous prior write SHALL be reconciled by fresh current GitHub source objects and canonical postconditions before any later admission; a transient read failure SHALL remain eligible for the existing legal fresh-wake recovery path when authoritative evidence becomes available. Neither path may add persistent state, routing authority, a queue, lease, registry, cursor, or duplicate candidate.
 
+At the integration boundary T1 SHALL qualify the Artifact/read observation and use the existing idle-admission owner. It MUST preserve the canonical accepted-application recovery contract when the affected consequence already has an accepted intent. The Application SHALL continue to own qualification of that intent and the proof of its original effects, formal result, and derived consequence. A zero original-effect set SHALL NOT stand in for evidence of formal or derived completion. For a partial effect set, validated positive postconditions SHALL suppress re-execution of completed effects. Only a required effect proven absent may enter renewed exact application authorization. An absent Artifact, timed-out read, or unknown write outcome SHALL NOT count as proof of absence. An incomplete observation SHALL leave the accepted obligation recoverable through a lawful later read; irreducible uncertainty or conflicting evidence SHALL preserve the exact blocker and use only an existing source-qualified governed repair or correction boundary when its preconditions are met. The Artifact reader MUST NOT decide or replay an accepted effect, issue a continuation, or grant repair or mutation authority.
+
 **Canonical decision table (the existing reader/idle Application is the only execution owner; this is a specification oracle, not another runtime rules engine).** In every row, the preconditions MUST come from fresh GitHub run/attempt/Artifact/comment/ref/Issue sources, not a copied comment claim. The global postconditions/invariants are: no pre-write mutation; a single canonical producer/parser/disposition contract; no bearer forwarding on signed redirects; no write retry or probe; no duplicate admission; and a later ordinary Action only after a new wake. Each row MUST be covered by the stated rejected case and adjacent lawful-positive twin, with the named concrete blocked harm and recovery path.
 
 | Guard / authoritative precondition | Reject or uncertainty; harm prevented | Adjacent lawful-positive twin; postcondition / continuation |
@@ -18,7 +20,7 @@ GitHub GET reads MAY retry only within an explicit bound after qualifying retrya
 | Valid UTF-8 canonical JSON, schema and exact `NO_WORK / no-routed-work` disposition | `PAYLOAD_FORMAT_INVALID` or non-NO_WORK disposition; prevents malformed/alternate/AUTHORIZE evidence from selecting idle admission | Matching canonical NO_WORK qualifies for fresh normal dispatch; AUTHORIZE/FAIL_CLOSED yields zero idle write |
 | GET 500/502/503/504 or timeout with no result bytes, versus 401/403/404 or invalid payload | `READ_UNAVAILABLE` for transient; observed nonretryable class for permanent/invalid; prevents guessing success or infinite/wrong retry | Bounded GET-only retry or later authorized fresh wake may produce valid exact evidence; unsupported status remains non-mutating |
 | Current default branch and normal dispatch reauthorize NO_WORK; current candidate is eligible | stale/contradictory current formal work: no admission; prevents active WIP override | Current NO_WORK + exact eligible candidate authorizes at most one necessary Application write, followed by fresh full-tuple postcondition |
-| Previous write outcome unknown or another idle attempt overlaps | `INDETERMINATE` on unresolved exact GitHub state; prevents duplicate Issue/label or replay | Fresh full-tuple match is `COMPLETE` with zero write; otherwise only still-needed non-contradictory effect may proceed after a fresh exact reauthorization, never an automatic write retry |
+| Previous write outcome unknown or another idle attempt overlaps | `INDETERMINATE` on unresolved exact GitHub state; prevents duplicate Issue/label or replay | Fresh full-tuple match is `COMPLETE` with zero write; otherwise a required effect may proceed only when the existing owner proves absence and freshly authorizes the exact effect; no automatic write retry |
 
 Table-driven test witnesses MUST include both sides of each row. A failing read with authoritative source unknown stays `UNKNOWN` for causal diagnosis, not converted to `PERMANENT_INVALID`. No row authorizes a new persisted state or independent router.
 
@@ -87,6 +89,15 @@ Table-driven test witnesses MUST include both sides of each row. A failing read 
 - THEN safety properties hold for every prefix: no unauthorized mutation, no duplicate Issue/routing, no blind write retry, no replay/rewind, preserved unrelated content and no same-wake successor
 - AND for sequences in which authoritative reads eventually recover and a later lawful wake exists, the eligible target can reach one verified complete admission rather than an unclassified permanent stall
 - AND an unavailable upstream read does not itself guarantee completion
+
+#### Scenario: A T1 evidence gap preserves accepted obligations
+
+- GIVEN an immutable accepted application has zero original effects or a partially completed effect set and a formal or derived consequence remains under observation
+- AND the run-scoped reader cannot initially qualify the required observation or a prior write response was lost
+- WHEN later legitimate invocations reconstruct the same obligation through the existing Application using fresh authoritative sources
+- THEN a verified positive postcondition suppresses a repeated write, and an effect proven absent may proceed only after exact reauthorization
+- AND an unresolved read does not prove absence or create an accepted intent, a successor, or a retry; a contradictory observation remains blocked at the existing source-qualified correction boundary
+- AND a distinct later dispatch can proceed only after its own current authorization.
 
 #### Scenario: Production acceptance crosses the real idle boundary
 

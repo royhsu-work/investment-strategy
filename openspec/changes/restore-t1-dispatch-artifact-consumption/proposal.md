@@ -39,6 +39,12 @@ Human requires a general, evidence-backed repair using mature engineering method
 
 Out of scope: #218 direct routing, #419 newline fix, a new library/framework, alternate artifact format, additional scheduler, synthetic `ACTION_RESULT`, manually triggered GitHub Actions, and feature-specific exception patches. This single-purpose Change may use sequential testable vertical slices inside the existing implementation lifecycle; it does not create additional routed Changes or relax the parent outcome.
 
+## Accepted-effect recovery boundary
+
+T1 owns qualification and diagnosis of the run-scoped Artifact read and integration with existing idle admission. It must verify that its read failures and incomplete admission observations preserve the Application's recovery guarantees across wakes. The existing Application retains sole authority over immutable accepted intent, original effects, formal results, and derived consequences. T1 consumes those guarantees at the interface and verifies composition; it does not implement another accepted-effect proof engine, extend repair admission, or make a read status into write authority.
+
+This resolves the [Executor specification blocker](https://github.com/royhsu-work/investment-strategy/issues/435#issuecomment-7001478218) within the existing Change. The [recovery scope record](https://github.com/royhsu-work/investment-strategy/issues/435#issuecomment-6811021359), [engineering decision classification](https://github.com/royhsu-work/investment-strategy/issues/435#issuecomment-6908586427), and [exact-head findings](https://github.com/royhsu-work/investment-strategy/pull/437#pullrequestreview-5867612433) document the gap. The canonical accepted-application recovery and governed correction requirements on the default branch remain the authority. A demonstrated defect in that shared owner requires its existing governed repair path and separate authorization; it cannot be bypassed to finish T1.
+
 ## Production acceptance and continuation
 
 The diagnosis is a proof obligation, not a prerequisite that silently deadlocks implementation: use existing PR-triggered native CI to obtain a read-only representative observation if authorized; otherwise stage generic instrumentation first and report the still-unproven specific cause as an explicit blocker/mandatory continuation. The original historical runner exception cannot be recovered from generic old logs by assertion. No later production acceptance may be claimed while the exact root/fix remains unverified.
