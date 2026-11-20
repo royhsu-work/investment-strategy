@@ -3493,42 +3493,25 @@ def test_new_materialization_rejects_wrong_preimage_before_acceptance(
     assert proof_git.mutations == []
 
 
-def test_accepted_zero_write_failure_recovers_only_exact_declared_base_preimage(
+def test_accepted_zero_write_failure_never_substitutes_immutable_expected_preimage(
     proof_git: _ProofGitRepository,
 ) -> None:
     payload = proof_git.payload()
     raw_files = cast(list[dict[str, object]], payload["files"])
-    accepted_raw_preimage = "f" * 40
-    raw_files[0]["expected_sha"] = accepted_raw_preimage
+    raw_files[0]["expected_sha"] = "f" * 40
+    accepted_copy = json.dumps(payload, sort_keys=True)
 
-    unaccepted = _prove_payload_git(proof_git, payload)
-    assert unaccepted.disposition == "CONTRADICTORY", unaccepted
-
-    proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
-    assert proof.disposition == "INCOMPLETE", proof
-    assert proof.application_request is not None
-    expected_preimage = proof_git.entries(proof_git.base)[proof_git.path]["sha"]
-    assert proof.application_request.files[0].expected_sha == expected_preimage
-    assert cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] == (
-        accepted_raw_preimage
-    )
+    for accepted in (False, True):
+        proof = _prove_payload_git(proof_git, payload, accepted_intent=accepted)
+        assert proof.disposition == "CONTRADICTORY", proof
+        assert proof.reason == "materialization missing work preimage is stale"
+        assert proof.application_request is None
 
     proof_git.allow_writes = True
-    with pytest.raises(CarrierRequired) as raised:
+    with pytest.raises(RuntimeError, match="materialization missing work preimage is stale"):
         _apply_git(proof_git, payload=payload, accepted_intent=True)
-    plan = raised.value.plan
-    assert plan.force is False
-    assert plan.expected["ref_sha"] == proof_git.base
-    revision = cast(str, plan.requested["sha"])
-    proof_git.set_head(revision)
-
-    completed = _prove_payload_git(proof_git, payload, accepted_intent=True)
-    assert completed.disposition == "COMPLETE", completed
-    assert completed.witness is not None and completed.witness.revision == revision
-    assert cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] == (
-        accepted_raw_preimage
-    )
-
+    assert proof_git.mutations == []
+    assert json.dumps(payload, sort_keys=True) == accepted_copy
 
 def test_accepted_preimage_recovery_rejects_changed_carrier_path(
     proof_git: _ProofGitRepository,
@@ -3561,13 +3544,8 @@ def test_accepted_write_commit_recovers_exact_parent_preimage(
 
     proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
 
-    assert proof.disposition == "COMPLETE", proof
-    assert proof.witness is not None and proof.witness.revision == accepted
-    assert proof.application_request is not None
-    assert (
-        proof.application_request.files[0].expected_sha
-        == proof_git.entries(proof_git.base)[proof_git.path]["sha"]
-    )
+    assert proof.disposition == "CONTRADICTORY", proof
+    assert proof.target is None and proof.witness is None
     assert cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] == "f" * 40
     assert proof_git.mutations == []
 
@@ -5827,3 +5805,102 @@ def test_content_only_rejects_concurrent_requested_path_overlap(
     with pytest.raises(RuntimeError):
         _apply_git(proof_git, accepted_intent=True)
     assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize("carrier_overwrites_requested_path", [False, True])
+def test_accepted_carrier_B_to_P_disjoint_evolution_uses_actual_preimage(
+    proof_git: _ProofGitRepository,
+    carrier_overwrites_requested_path: bool,
+) -> None:
+    common = proof_git.base
+    declared = proof_git.commit({"README.md": "branch change"}, "Carrier base", (common,))
+    parent = proof_git.commit(
+        {proof_git.path: "unaccepted edit"}
+        if carrier_overwrites_requested_path
+        else {"docs/unrelated.md": "safe carrier evolution"},
+        "Intervening carrier commit",
+        (declared,),
+    )
+    proof_git.set_head(parent)
+    proof_git.base = declared
+    proof_git.main = proof_git.commit(
+        {"README.md": "divergent default"}, "Default advance", (common,)
+    )
+    proof_git.authorization = proof_git.main
+
+    observed = _prove_git(proof_git, accepted_intent=True)
+    if carrier_overwrites_requested_path:
+        assert observed.disposition == "CONTRADICTORY", observed
+        proof_git.allow_writes = True
+        with pytest.raises(RuntimeError):
+            _apply_git(proof_git, accepted_intent=True)
+        assert proof_git.mutations == []
+        return
+
+    assert observed.disposition == "INCOMPLETE", observed
+    assert observed.application_request is not None
+    assert observed.application_request.base_sha == declared
+    assert observed.application_request.files[0].expected_sha == (
+        proof_git.entries(parent)[proof_git.path]["sha"]
+    )
+    before = proof_git.entries(parent)
+    proof_git.allow_writes = True
+    with pytest.raises(CarrierRequired) as carrier:
+        _apply_git(proof_git, accepted_intent=True)
+    plan = carrier.value.plan
+    assert plan.requested["commit_parents"] == [parent]
+    assert plan.requested["force"] is False
+    created = cast(str, plan.requested["sha"])
+    after = proof_git.entries(created)
+    before.pop(proof_git.path)
+    after.pop(proof_git.path)
+    assert after == before
+    proof_git.set_head(created)
+    complete = _prove_git(proof_git, accepted_intent=True)
+    assert complete.disposition == "COMPLETE", complete
+    assert complete.witness is not None
+    assert complete.witness.revisions.mutation_preimage == parent
+    writes = list(proof_git.mutations)
+    _apply_git(proof_git, accepted_intent=True)
+    assert proof_git.mutations == writes
+
+
+def test_long_diverged_existing_carrier_ignores_250_commit_enumeration_cap(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real >250 Git commits, with the 250-entry GitHub compare API limit."""
+    common = proof_git.base
+    tree = proof_git.git("rev-parse", f"{common}^{{tree}}")
+    parent = common
+    for index in range(252):
+        parent = proof_git.git(
+            "commit-tree", tree, "-p", parent, stdin=f"Disjoint carrier no-op {index}"
+        )
+    proof_git.set_head(parent)
+    proof_git.base = parent
+    proof_git.main = proof_git.commit(
+        {"README.md": "divergent default"}, "Default advance", (common,)
+    )
+    proof_git.authorization = proof_git.main
+    original = proof_git.comparison
+
+    def capped_compare(base: str, revision: str) -> dict[str, object]:
+        comparison = original(base, revision)
+        if cast(int, comparison["ahead_by"]) > 250:
+            comparison["commits"] = cast(list[object], comparison["commits"])[:250]
+        return comparison
+
+    monkeypatch.setattr(proof_git, "comparison", capped_compare)
+    observed = _prove_git(proof_git, accepted_intent=True)
+    assert observed.disposition == "INCOMPLETE", observed
+    proof_git.allow_writes = True
+    with pytest.raises(CarrierRequired) as carrier:
+        _apply_git(proof_git, accepted_intent=True)
+    assert carrier.value.plan.requested["commit_parents"] == [parent]
+    proof_git.set_head(cast(str, carrier.value.plan.requested["sha"]))
+    completed = _prove_git(proof_git, accepted_intent=True)
+    assert completed.disposition == "COMPLETE", completed
+    no_replay = list(proof_git.mutations)
+    _apply_git(proof_git, accepted_intent=True)
+    assert proof_git.mutations == no_replay
