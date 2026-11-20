@@ -5814,9 +5814,7 @@ def test_content_only_rejects_concurrent_requested_path_overlap(
 ) -> None:
     """A divergent change to an accepted path is not unrelated Git integration."""
     common = proof_git.base
-    parent = proof_git.commit(
-        {proof_git.path: "carrier preimage"}, "Change carrier", (common,)
-    )
+    parent = proof_git.commit({proof_git.path: "carrier preimage"}, "Change carrier", (common,))
     proof_git.set_head(parent)
     proof_git.base = parent
     proof_git.main = proof_git.commit(
