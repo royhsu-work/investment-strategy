@@ -1286,7 +1286,7 @@ def test_reconciliation_overlays_default_only_changes_on_a_stale_carrier(
     ]
 
 
-def test_constructor_apply_work_product_reconciles_diverged_default_branch_with_two_parents(
+def test_constructor_content_write_preserves_actual_parent_without_integration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = WorkerRequest(138, "lead", "resolve-question")
@@ -1305,6 +1305,7 @@ def test_constructor_apply_work_product_reconciles_diverged_default_branch_with_
     )
     monkeypatch.setattr(resource, "_current_authorized_request", lambda *_: source)
     commit_payloads: list[object] = []
+    tree_payloads: list[object] = []
 
     def fake_github_json(
         repository: str,
@@ -1371,6 +1372,7 @@ def test_constructor_apply_work_product_reconciles_diverged_default_branch_with_
         if api_path == f"git/commits/{_PR_HEAD}" and method == "GET":
             return {"sha": _PR_HEAD, "tree": {"sha": "e" * 40}, "parents": []}
         if api_path == "git/trees" and method == "POST":
+            tree_payloads.append(payload)
             return {"sha": tree_sha}
         if api_path == f"git/trees/{tree_sha}?recursive=1" and method == "GET":
             return {
@@ -1388,7 +1390,7 @@ def test_constructor_apply_work_product_reconciles_diverged_default_branch_with_
                 "sha": revision,
                 "message": "Correct #138 N-1 ordering",
                 "tree": {"sha": tree_sha},
-                "parents": [{"sha": _PR_HEAD}, {"sha": _REVISION}],
+                "parents": [{"sha": _PR_HEAD}],
             }
         raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
 
@@ -1406,12 +1408,18 @@ def test_constructor_apply_work_product_reconciles_diverged_default_branch_with_
     assert carrier_plan.expected["ref_sha"] == _PR_HEAD
     assert carrier_plan.requested["expected_head_sha"] == _PR_HEAD
     assert carrier_plan.requested["force"] is False
-    assert carrier_plan.requested["commit_parents"] == [_PR_HEAD, _REVISION]
+    assert carrier_plan.requested["commit_parents"] == [_PR_HEAD]
+    assert tree_payloads == [
+        {
+            "base_tree": "e" * 40,
+            "tree": [{"path": path, "mode": "100644", "type": "blob", "sha": blob_sha}],
+        }
+    ]
     assert len(commit_payloads) == 1
     assert commit_payloads[0] == {
         "message": "Correct #138 N-1 ordering",
         "tree": tree_sha,
-        "parents": [_PR_HEAD, _REVISION],
+        "parents": [_PR_HEAD],
     }
 
 
