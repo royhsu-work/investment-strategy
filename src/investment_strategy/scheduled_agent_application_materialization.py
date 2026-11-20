@@ -1879,17 +1879,18 @@ def _proof_comparison(
             ):
                 raise _IncompleteGitHubObservation("materialization paginated graph is incomplete")
             paged_commits.extend(page_items)
-        # The implicit first 250 commits must agree exactly with the separately
-        # fetched full-page sequence. Changed or reordered observations fail closed.
+        # GitHub's unpaginated compare returns the MOST RECENT 250 commits.
+        # Check its suffix against complete chronological pages (confirmed
+        # against a real 307-commit GitHub comparison); never assume a prefix.
         if [
             None if (item := _as_mapping(raw)) is None else item.get("sha")
-            for raw in paged_commits[:250]
+            for raw in paged_commits[-250:]
         ] != [
             None if (item := _as_mapping(raw)) is None else item.get("sha")
             for raw in raw_commits
         ]:
             raise _IncompleteGitHubObservation(
-                "materialization paginated graph contradicts original commit prefix"
+                "materialization paginated graph contradicts original commit suffix"
             )
         raw_commits = paged_commits
 
