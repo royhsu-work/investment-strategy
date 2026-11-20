@@ -538,6 +538,11 @@ def test_retry_limit_dispatch_result_carries_one_content_addressed_continuation(
     parsed = bridge.parse_dispatch_result_document(rendered)
 
     assert parsed.application_continuation == continuation
+    observing = json.loads(rendered)
+    observing["reason"] = "application-completion-exception-observing"
+    with pytest.raises(RuntimeError, match="application continuation"):
+        bridge.parse_dispatch_result_document(json.dumps(observing))
+
     with pytest.raises(ValueError, match="only valid"):
         bridge.render_dispatch_result_document(
             request_comment_id=987,

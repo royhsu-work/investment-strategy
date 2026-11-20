@@ -127,6 +127,13 @@ _APPLICATION_DECISION_PROTOCOL_REVISION = "e874b4bdfc866649c0e7e61c151991d124d5c
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
 _DECISION_DISPOSITIONS = {"AUTHORIZE", "NO_WORK", "FAIL_CLOSED"}
+_APPLICATION_CONTINUATION_REASONS = frozenset(
+    {
+        "application-completion-rerun-limit",
+        "application-completion-continuation-required",
+        "application-completion-carrier-required",
+    }
+)
 _TERMINAL_NO_ACCEPT_CONCLUSIONS = frozenset(
     {"failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale", "skipped"}
 )
@@ -5441,11 +5448,10 @@ def render_dispatch_result_document(
                 raise ValueError("qualified carrier is only valid for carrier-required")
             payload["qualified_carrier"] = qualified_carrier_document(qualified_carrier)
         if application_continuation is not None:
-            if decision.disposition != "FAIL_CLOSED" or decision.reason not in {
-                "application-completion-rerun-limit",
-                "application-completion-continuation-required",
-                "application-completion-carrier-required",
-            }:
+            if (
+                decision.disposition != "FAIL_CLOSED"
+                or decision.reason not in _APPLICATION_CONTINUATION_REASONS
+            ):
                 raise ValueError(
                     "application continuation is only valid for application completion"
                 )
@@ -5543,7 +5549,11 @@ def parse_dispatch_result_document(raw: bytes | str) -> MachineDispatchDecision:
         raise RuntimeError("non-authorizing dispatch reason is invalid")
     application_continuation = payload.get("application_continuation")
     if application_continuation is not None:
-        if disposition != "FAIL_CLOSED" or not isinstance(application_continuation, str):
+        if (
+            disposition != "FAIL_CLOSED"
+            or reason not in _APPLICATION_CONTINUATION_REASONS
+            or not isinstance(application_continuation, str)
+        ):
             raise RuntimeError("exact application continuation is invalid")
         if parse_application_continuation_request(application_continuation) is None:
             raise RuntimeError("exact application continuation is invalid")
@@ -6122,12 +6132,7 @@ def main() -> int:
         continuation_body = None
         if completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
             if (
-                completion.reason
-                in {
-                    "application-completion-rerun-limit",
-                    "application-completion-continuation-required",
-                    "application-completion-carrier-required",
-                }
+                completion.reason in _APPLICATION_CONTINUATION_REASONS
                 and source is not None
                 and completion.request_comment_id is not None
             ):
