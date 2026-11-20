@@ -3513,6 +3513,7 @@ def test_accepted_zero_write_failure_never_substitutes_immutable_expected_preima
     assert proof_git.mutations == []
     assert json.dumps(payload, sort_keys=True) == accepted_copy
 
+
 def test_accepted_preimage_recovery_rejects_changed_carrier_path(
     proof_git: _ProofGitRepository,
 ) -> None:
@@ -5851,8 +5852,9 @@ def test_accepted_carrier_B_to_P_disjoint_evolution_uses_actual_preimage(
     assert observed.disposition == "INCOMPLETE", observed
     assert observed.application_request is not None
     assert observed.application_request.base_sha == declared
-    assert observed.application_request.files[0].expected_sha == (
-        proof_git.entries(parent)[proof_git.path]["sha"]
+    assert (
+        observed.application_request.files[0].expected_sha
+        == (proof_git.entries(parent)[proof_git.path]["sha"])
     )
     before = proof_git.entries(parent)
     proof_git.allow_writes = True
