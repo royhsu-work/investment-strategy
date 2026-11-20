@@ -1883,8 +1883,23 @@ class _ProofGitRepository:
                 return [{"filename": self.path, "status": "modified"}]
             return next(pr for pr in self.prs if pr["number"] == int(segments[1]))
         if path.startswith("compare/"):
-            base, revision = path.removeprefix("compare/").split("...")
-            return self.comparison(base, revision)
+            parsed = urlsplit(path)
+            base, revision = parsed.path.removeprefix("compare/").split("...")
+            comparison = self.comparison(base, revision)
+            commits = cast(list[dict[str, object]], comparison["commits"])
+            params = parse_qs(parsed.query)
+            if params:
+                assert set(params) == {"per_page", "page"}
+                per_page, page = int(params["per_page"][0]), int(params["page"][0])
+                assert 1 <= per_page <= 100 and page >= 1
+                comparison["commits"] = commits[(page - 1) * per_page : page * per_page]
+                if page > 1:
+                    comparison.pop("files", None)
+            elif len(commits) > 250:
+                # GitHub compare is unpaginated by default; even when full
+                # compare metadata and diff are available, commits cap at 250.
+                comparison["commits"] = commits[:250]
+            return comparison
         if path.startswith("git/blobs/"):
             sha = path.removeprefix("git/blobs/")
             return {
@@ -5917,3 +5932,119 @@ def test_long_diverged_existing_carrier_ignores_250_commit_enumeration_cap(
     no_replay = list(proof_git.mutations)
     _apply_git(proof_git, accepted_intent=True)
     assert proof_git.mutations == no_replay
+
+
+@pytest.mark.parametrize("already_applied", [False, True])
+def test_long_B_to_P_carrier_paginates_complete_canonical_witness(
+    proof_git: _ProofGitRepository,
+    already_applied: bool,
+) -> None:
+    """Actual Git B != P, >250 disjoint commits, capped compare, real W and no replay."""
+    common = proof_git.base
+    declared = proof_git.commit(
+        {"docs/declared.md": "declared carrier base"}, "Declared carrier base", (common,)
+    )
+    tree = proof_git.git("rev-parse", f"{declared}^{{tree}}")
+    parent = declared
+    for number in range(252):
+        parent = proof_git.git(
+            "commit-tree", tree, "-p", parent, stdin=f"Unrelated carrier checkpoint {number}"
+        )
+    proof_git.base = declared
+    proof_git.main = proof_git.commit(
+        {"README.md": "independent default evolution"}, "Default advance", (common,)
+    )
+    proof_git.authorization = proof_git.main
+
+    if already_applied:
+        witness = proof_git.commit(
+            {proof_git.path: "accepted content"}, proof_git.message, (parent,)
+        )
+        proof_git.set_head(witness)
+    else:
+        proof_git.set_head(parent)
+
+    capped = proof_git.api(
+        proof_git.repository,
+        _TOKEN,
+        f"compare/{declared}...{proof_git.head}",
+    )
+    assert len(cast(dict[str, object], capped)["commits"]) == 250
+    assert cast(dict[str, object], capped)["ahead_by"] > 250
+    page2 = cast(
+        dict[str, object],
+        proof_git.api(
+            proof_git.repository, _TOKEN, f"compare/{declared}...{proof_git.head}?per_page=100&page=2"
+        ),
+    )
+    assert len(cast(list[object], page2["commits"])) == 100
+    assert "files" not in page2
+
+    first = _prove_git(proof_git, accepted_intent=True)
+    assert first.disposition == ("COMPLETE" if already_applied else "INCOMPLETE"), first
+    proof_git.allow_writes = True
+    if already_applied:
+        assert first.witness is not None
+        assert first.witness.revision == witness
+        assert first.witness.revisions.mutation_preimage == parent
+        _apply_git(proof_git, accepted_intent=True)
+        assert proof_git.mutations == []
+    else:
+        with pytest.raises(CarrierRequired) as carrier:
+            _apply_git(proof_git, accepted_intent=True)
+        plan = carrier.value.plan
+        assert plan.requested["commit_parents"] == [parent]
+        assert plan.requested["force"] is False
+        proof_git.set_head(cast(str, plan.requested["sha"]))
+        complete = _prove_git(proof_git, accepted_intent=True)
+        assert complete.disposition == "COMPLETE", complete
+        assert complete.witness is not None
+        assert complete.witness.revisions.mutation_preimage == parent
+        previous = list(proof_git.mutations)
+        _apply_git(proof_git, accepted_intent=True)
+        assert proof_git.mutations == previous
+
+
+@pytest.mark.parametrize("incomplete_page", ["missing", "duplicate", "wrong_anchor"])
+def test_long_B_to_P_carrier_rejects_incomplete_or_inconsistent_page(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    incomplete_page: str,
+) -> None:
+    """A missing or inconsistent GitHub page cannot authorize a missing write."""
+    declared = proof_git.base
+    tree = proof_git.git("rev-parse", f"{declared}^{{tree}}")
+    parent = declared
+    for number in range(252):
+        parent = proof_git.git(
+            "commit-tree", tree, "-p", parent, stdin=f"Disjoint checkpoint {number}"
+        )
+    proof_git.set_head(parent)
+    proof_git.main = proof_git.commit(
+        {"README.md": "disjoint default change"}, "Default advance", (declared,)
+    )
+    proof_git.authorization = proof_git.main
+    original_api = proof_git.api
+
+    def faulty_page(repository: str, token: str, path: str, **kwargs: object) -> object:
+        reply = original_api(repository, token, path, **kwargs)
+        if path == f"compare/{declared}...{parent}?per_page=100&page=2":
+            response = cast(dict[str, object], reply)
+            if incomplete_page == "missing":
+                response["commits"] = cast(list[object], response["commits"])[:20]
+            elif incomplete_page == "duplicate":
+                commits = cast(list[dict[str, object]], response["commits"])
+                commits[0] = commits[1]
+            else:
+                response["base_commit"] = {"sha": "f" * 40}
+        return reply
+
+    monkeypatch.setattr(materialization, "_github_json", faulty_page)
+    proof = _prove_git(proof_git, accepted_intent=True)
+    assert proof.disposition in {"UNKNOWN", "CONTRADICTORY"}, proof
+    assert proof.target is None
+    assert proof.witness is None
+    proof_git.allow_writes = True
+    with pytest.raises(RuntimeError):
+        _apply_git(proof_git, accepted_intent=True)
+    assert proof_git.mutations == []
