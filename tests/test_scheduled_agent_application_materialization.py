@@ -5807,3 +5807,25 @@ def test_content_materialization_keeps_unrelated_divergent_parent_tree(
     before = list(proof_git.mutations)
     _apply_git(proof_git, accepted_intent=True)
     assert proof_git.mutations == before
+
+
+def test_content_only_rejects_concurrent_requested_path_overlap(
+    proof_git: _ProofGitRepository,
+) -> None:
+    """A divergent change to an accepted path is not unrelated Git integration."""
+    common = proof_git.base
+    parent = proof_git.commit(
+        {proof_git.path: "carrier preimage"}, "Change carrier", (common,)
+    )
+    proof_git.set_head(parent)
+    proof_git.base = parent
+    proof_git.main = proof_git.commit(
+        {proof_git.path: "independent main edit"}, "Conflicting main", (common,)
+    )
+    proof_git.authorization = proof_git.main
+    proof = _prove_git(proof_git, accepted_intent=True)
+    assert proof.disposition == "CONTRADICTORY", proof
+    proof_git.allow_writes = True
+    with pytest.raises(RuntimeError):
+        _apply_git(proof_git, accepted_intent=True)
+    assert proof_git.mutations == []
