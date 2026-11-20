@@ -1977,9 +1977,12 @@ def _divergent_path_evidence(
     ):
         raise _IncompleteGitHubObservation("materialization divergent path evidence is incomplete")
     status = (
-        "diverged" if ahead and behind
-        else "ahead" if ahead
-        else "behind" if behind
+        "diverged"
+        if ahead and behind
+        else "ahead"
+        if ahead
+        else "behind"
+        if behind
         else "identical"
     )
     if comparison.get("status") != status:
