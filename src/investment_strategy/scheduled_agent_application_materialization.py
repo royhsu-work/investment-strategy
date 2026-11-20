@@ -2714,11 +2714,15 @@ def prove_materialization(
             and request.expected_change != "unset"
             and len(witness_parents) == 1
         )
-        # Current target gates cannot invalidate an immutable accepted witness.
+        # Requested-path default changes remain a canonical non-conflict gate.
+        # Only divergences entirely outside the accepted Manifest are deferred
+        # to the independent native Git integration boundary.
         try:
+            if not committed_formal_result and default_advance.intersection(
+                file.path for file in request.files
+            ):
+                _proof_ancestry(repository, token, witness_revision, current_revision)
             if not committed_formal_result and not content_only_witness:
-                if default_advance.intersection(file.path for file in request.files):
-                    _proof_ancestry(repository, token, witness_revision, current_revision)
                 # Compare current default against carrier history without confusing
                 # the mutation preimage with a historical default-branch base.
                 comparison, _commits, _paths = _proof_comparison(
