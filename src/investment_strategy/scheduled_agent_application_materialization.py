@@ -1834,6 +1834,65 @@ def _proof_comparison(
     raw_files = None if comparison is None else comparison.get("files")
     ahead = None if comparison is None else comparison.get("ahead_by")
     behind = None if comparison is None else comparison.get("behind_by")
+
+    # The unpaginated GitHub compare response has a 250-commit cap.  Its
+    # graph metadata and first-page file diff may still be complete; reconstruct
+    # the exact ordered commit sequence rather than treating a known transport
+    # page boundary as a permanently unknowable graph.
+    if (
+        comparison is not None
+        and isinstance(ahead, int)
+        and not isinstance(ahead, bool)
+        and ahead > 250
+        and isinstance(raw_commits, list)
+        and len(raw_commits) == 250
+        and isinstance(raw_files, list)
+    ):
+        paged_commits: list[object] = []
+        for page_number in range(1, (ahead + 99) // 100 + 1):
+            page = _as_mapping(
+                _github_json(
+                    repository,
+                    token,
+                    f"compare/{base_revision}...{revision}?per_page=100&page={page_number}",
+                )
+            )
+            page_base = None if page is None else _as_mapping(page.get("base_commit"))
+            page_fork = None if page is None else _as_mapping(page.get("merge_base_commit"))
+            page_items = None if page is None else page.get("commits")
+            page_size = min(100, ahead - (page_number - 1) * 100)
+            if (
+                page is None
+                or page_base is None
+                or page_base.get("sha") != base_revision
+                or page_fork is None
+                or merge_base is None
+                or page_fork.get("sha") != merge_base.get("sha")
+                or page.get("status") != comparison.get("status")
+                or page.get("ahead_by") != ahead
+                or page.get("behind_by") != behind
+                or page.get("total_commits") != ahead
+                or page.get("too_large") is True
+                or not isinstance(page_items, list)
+                or len(page_items) != page_size
+                or (page_number == 1 and page.get("files") != raw_files)
+            ):
+                raise _IncompleteGitHubObservation("materialization paginated graph is incomplete")
+            paged_commits.extend(page_items)
+        # The implicit first 250 commits must agree exactly with the separately
+        # fetched full-page sequence. Changed or reordered observations fail closed.
+        if [
+            None if (item := _as_mapping(raw)) is None else item.get("sha")
+            for raw in paged_commits[:250]
+        ] != [
+            None if (item := _as_mapping(raw)) is None else item.get("sha")
+            for raw in raw_commits
+        ]:
+            raise _IncompleteGitHubObservation(
+                "materialization paginated graph contradicts original commit prefix"
+            )
+        raw_commits = paged_commits
+
     if (
         comparison is None
         or base is None
