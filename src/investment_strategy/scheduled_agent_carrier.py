@@ -6,7 +6,7 @@ import base64
 import hashlib
 import json
 import re
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -31,6 +31,51 @@ def github_repository_api_url(repository: str, api_path: str) -> str:
     root = f"https://api.github.com/repos/{repository}"
     relative = api_path.lstrip("/")
     return root if not relative else f"{root}/{relative}"
+
+
+def create_exact_git_tree(
+    write: Callable[..., object],
+    *,
+    base_tree_sha: str,
+    elements: Sequence[Mapping[str, object]],
+    label: str,
+) -> str:
+    """Create a Git tree with exact supplied entries; do not authorize any effect.
+
+    All callers retain their own source, parent, blob and ref qualifications.
+    A returned object SHA is not the materialization postcondition.
+    """
+    result = write(
+        "git/trees",
+        method="POST",
+        payload={"base_tree": base_tree_sha, "tree": elements},
+    )
+    tree = result if isinstance(result, Mapping) else None
+    sha = None if tree is None else tree.get("sha")
+    if not isinstance(sha, str) or re.fullmatch(r"[0-9a-f]{40}", sha) is None:
+        raise RuntimeError(f"{label} tree creation returned no SHA")
+    return sha
+
+
+def create_exact_git_commit(
+    write: Callable[..., object],
+    *,
+    message: str,
+    tree_sha: str,
+    parents: list[str],
+    label: str,
+) -> str:
+    """Construct one exact-parent commit; ref CAS and proof remain with Application."""
+    result = write(
+        "git/commits",
+        method="POST",
+        payload={"message": message, "tree": tree_sha, "parents": parents},
+    )
+    commit = result if isinstance(result, Mapping) else None
+    sha = None if commit is None else commit.get("sha")
+    if not isinstance(sha, str) or re.fullmatch(r"[0-9a-f]{40}", sha) is None:
+        raise RuntimeError(f"{label} commit creation returned no SHA")
+    return sha
 
 
 @dataclass

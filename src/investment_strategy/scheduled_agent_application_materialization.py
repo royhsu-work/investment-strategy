@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Literal, cast
 from urllib.parse import quote, urlencode
 
@@ -27,6 +27,8 @@ from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
     CarrierRequired,
     carrier_pr_identity,
+    create_exact_git_commit,
+    create_exact_git_tree,
     make_carrier_plan,
 )
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
@@ -584,49 +586,24 @@ def _create_revision(
         raise RuntimeError("application materialization base tree identity is incomplete")
     if before_write is not None:
         before_write()
-    tree = _as_mapping(
-        cast(
-            object,
-            _github_json(
-                repository,
-                token,
-                "git/trees",
-                method="POST",
-                payload={
-                    "base_tree": cast(str, base_tree_sha),
-                    "tree": [
-                        {"path": f.path, "mode": "100644", "type": "blob", "sha": f.blob_sha}
-                        for f in request.files
-                    ],
-                },
-            ),
-        )
+    tree_sha = create_exact_git_tree(
+        lambda api_path, **kwargs: _github_json(repository, token, api_path, **kwargs),
+        base_tree_sha=cast(str, base_tree_sha),
+        elements=[
+            {"path": f.path, "mode": "100644", "type": "blob", "sha": f.blob_sha}
+            for f in request.files
+        ],
+        label="application materialization",
     )
-    tree_sha = None if tree is None else tree.get("sha")
-    if not _valid_sha(tree_sha):
-        raise RuntimeError("application materialization tree creation returned no SHA")
     if before_write is not None:
         before_write()
-    created = _as_mapping(
-        cast(
-            object,
-            _github_json(
-                repository,
-                token,
-                "git/commits",
-                method="POST",
-                payload={
-                    "message": request.message,
-                    "tree": cast(str, tree_sha),
-                    "parents": [request.base_sha],
-                },
-            ),
-        )
+    return create_exact_git_commit(
+        lambda api_path, **kwargs: _github_json(repository, token, api_path, **kwargs),
+        message=request.message,
+        tree_sha=tree_sha,
+        parents=[request.base_sha],
+        label="application materialization",
     )
-    revision = None if created is None else created.get("sha")
-    if not _valid_sha(revision):
-        raise RuntimeError("application materialization commit creation returned no SHA")
-    return cast(str, revision)
 
 
 def _verify_new_carrier_base_is_empty(
@@ -1466,22 +1443,12 @@ def _materialize_implementation_target(
             current_revision=current_revision,
             expected_head=current_head,
         )
-        tree = _as_mapping(
-            cast(
-                object,
-                _github_json(
-                    repository,
-                    token,
-                    "git/trees",
-                    method="POST",
-                    payload={"base_tree": base_tree_sha, "tree": tree_elements},
-                ),
-            )
+        tree_sha = create_exact_git_tree(
+            lambda api_path, **kwargs: _github_json(repository, token, api_path, **kwargs),
+            base_tree_sha=base_tree_sha,
+            elements=tree_elements,
+            label="implementation materialization",
         )
-        observed_tree_sha = None if tree is None else tree.get("sha")
-        if not _valid_sha(observed_tree_sha):
-            raise RuntimeError("implementation materialization tree creation returned no SHA")
-        tree_sha = cast(str, observed_tree_sha)
 
     _fresh_implementation_write_authorization(
         request,
@@ -1492,22 +1459,13 @@ def _materialize_implementation_target(
         current_revision=current_revision,
         expected_head=current_head,
     )
-    created = _as_mapping(
-        cast(
-            object,
-            _github_json(
-                repository,
-                token,
-                "git/commits",
-                method="POST",
-                payload={"message": message, "tree": tree_sha, "parents": parents},
-            ),
-        )
+    revision = create_exact_git_commit(
+        lambda api_path, **kwargs: _github_json(repository, token, api_path, **kwargs),
+        message=message,
+        tree_sha=tree_sha,
+        parents=parents,
+        label="implementation materialization",
     )
-    revision = None if created is None else created.get("sha")
-    if not _valid_sha(revision):
-        raise RuntimeError("implementation materialization commit creation returned no SHA")
-    revision = cast(str, revision)
 
     observed = _as_mapping(cast(object, _github_json(repository, token, f"git/commits/{revision}")))
     observed_tree = None if observed is None else _as_mapping(observed.get("tree"))
@@ -1876,6 +1834,65 @@ def _proof_comparison(
     raw_files = None if comparison is None else comparison.get("files")
     ahead = None if comparison is None else comparison.get("ahead_by")
     behind = None if comparison is None else comparison.get("behind_by")
+
+    # The unpaginated GitHub compare response has a 250-commit cap.  Its
+    # graph metadata and first-page file diff may still be complete; reconstruct
+    # the exact ordered commit sequence rather than treating a known transport
+    # page boundary as a permanently unknowable graph.
+    if (
+        comparison is not None
+        and isinstance(ahead, int)
+        and not isinstance(ahead, bool)
+        and ahead > 250
+        and isinstance(raw_commits, list)
+        and len(raw_commits) == 250
+        and isinstance(raw_files, list)
+    ):
+        paged_commits: list[object] = []
+        for page_number in range(1, (ahead + 99) // 100 + 1):
+            page = _as_mapping(
+                _github_json(
+                    repository,
+                    token,
+                    f"compare/{base_revision}...{revision}?per_page=100&page={page_number}",
+                )
+            )
+            page_base = None if page is None else _as_mapping(page.get("base_commit"))
+            page_fork = None if page is None else _as_mapping(page.get("merge_base_commit"))
+            page_items = None if page is None else page.get("commits")
+            page_size = min(100, ahead - (page_number - 1) * 100)
+            if (
+                page is None
+                or page_base is None
+                or page_base.get("sha") != base_revision
+                or page_fork is None
+                or merge_base is None
+                or page_fork.get("sha") != merge_base.get("sha")
+                or page.get("status") != comparison.get("status")
+                or page.get("ahead_by") != ahead
+                or page.get("behind_by") != behind
+                or page.get("total_commits") != ahead
+                or page.get("too_large") is True
+                or not isinstance(page_items, list)
+                or len(page_items) != page_size
+                or (page_number == 1 and page.get("files") != raw_files)
+            ):
+                raise _IncompleteGitHubObservation("materialization paginated graph is incomplete")
+            paged_commits.extend(page_items)
+        # GitHub's unpaginated compare returns the MOST RECENT 250 commits.
+        # Check its suffix against complete chronological pages (confirmed
+        # against a real 307-commit GitHub comparison); never assume a prefix.
+        if [
+            None if (item := _as_mapping(raw)) is None else item.get("sha")
+            for raw in paged_commits[-250:]
+        ] != [
+            None if (item := _as_mapping(raw)) is None else item.get("sha") for raw in raw_commits
+        ]:
+            raise _IncompleteGitHubObservation(
+                "materialization paginated graph contradicts original commit suffix"
+            )
+        raw_commits = paged_commits
+
     if (
         comparison is None
         or base is None
@@ -1982,6 +1999,72 @@ def _proof_ancestry(repository: str, token: str, ancestor: str, revision: str) -
             raise
         raise _IncompleteGitHubObservation(str(error)) from error
     return frozenset(paths)
+
+
+def _divergent_path_evidence(
+    repository: str,
+    token: str,
+    *,
+    current_revision: str,
+    carrier_revision: str,
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Qualify merge-base and both exact path diffs without a capped commit list."""
+    comparison = _as_mapping(
+        _github_json(repository, token, f"compare/{current_revision}...{carrier_revision}")
+    )
+    base = None if comparison is None else _as_mapping(comparison.get("base_commit"))
+    fork = None if comparison is None else _as_mapping(comparison.get("merge_base_commit"))
+    ahead = None if comparison is None else comparison.get("ahead_by")
+    behind = None if comparison is None else comparison.get("behind_by")
+    files = None if comparison is None else comparison.get("files")
+    if (
+        comparison is None
+        or base is None
+        or base.get("sha") != current_revision
+        or fork is None
+        or not _valid_sha(fork.get("sha"))
+        or comparison.get("too_large") is True
+        or not isinstance(ahead, int)
+        or isinstance(ahead, bool)
+        or ahead < 0
+        or not isinstance(behind, int)
+        or isinstance(behind, bool)
+        or behind < 0
+        or comparison.get("total_commits") != ahead
+        or not isinstance(files, list)
+        or len(files) >= 300
+    ):
+        raise _IncompleteGitHubObservation("materialization divergent path evidence is incomplete")
+    status = (
+        "diverged"
+        if ahead and behind
+        else "ahead"
+        if ahead
+        else "behind"
+        if behind
+        else "identical"
+    )
+    if comparison.get("status") != status:
+        raise RuntimeError("materialization divergent graph observations contradict")
+    common = cast(str, fork["sha"])
+    default_paths = _proof_ancestry(repository, token, common, current_revision)
+    carrier_paths = _proof_ancestry(repository, token, common, carrier_revision)
+    return default_paths, carrier_paths
+
+
+def _requested_path_default_overlap(
+    request: MaterializationRequest,
+    *,
+    repository: str,
+    token: str,
+    current_revision: str,
+    carrier_revision: str,
+) -> bool:
+    """Check the accepted path set, not whole-branch integration conflicts."""
+    default_paths, _carrier_paths = _divergent_path_evidence(
+        repository, token, current_revision=current_revision, carrier_revision=carrier_revision
+    )
+    return bool(default_paths.intersection(file.path for file in request.files))
 
 
 def _proof_commit(
@@ -2149,97 +2232,6 @@ def _proof_witness(
     if witness is not None:
         _proof_ancestry(repository, token, witness, revision)
     return witness
-
-
-def _request_with_observed_preimage(
-    request: MaterializationRequest,
-    *,
-    repository: str,
-    token: str,
-    revision: str,
-) -> MaterializationRequest:
-    """Project the exact observed write preimage without changing accepted intent."""
-
-    files: list[WorkProductFile] = []
-    for file in request.files:
-        observed = _content_sha_at(repository, token, path=file.path, revision=revision)
-        if observed is not None and not _valid_sha(observed):
-            raise RuntimeError("materialization observed preimage identity is invalid")
-        files.append(WorkProductFile(file.path, file.blob_sha, observed))
-    return replace(request, files=tuple(files))
-
-
-def _accepted_preimage_projection(
-    request: MaterializationRequest,
-    *,
-    repository: str,
-    token: str,
-    current_carrier_revision: str,
-    merged: bool,
-    accepted_intent: bool,
-) -> MaterializationRequest:
-    """Recover an accepted exact-base write guard from authoritative Git objects.
-
-    The accepted worker result remains immutable. For missing work, the PR
-    head must still equal its declared base. For completed work, exactly one
-    direct child must carry the accepted message, exact path delta, and desired
-    blobs. Other branch evolution is never normalized.
-    """
-
-    if (
-        not accepted_intent
-        or merged
-        or request.expected_change == "unset"
-        or request.pr_number is None
-    ):
-        return request
-
-    if current_carrier_revision == request.base_sha:
-        projected = _request_with_observed_preimage(
-            request,
-            repository=repository,
-            token=token,
-            revision=request.base_sha,
-        )
-        if any(
-            actual.expected_sha != original.expected_sha
-            for actual, original in zip(projected.files, request.files, strict=True)
-        ):
-            return projected
-        return request
-
-    comparison, commits, _paths = _proof_comparison(
-        repository, token, request.base_sha, current_carrier_revision
-    )
-    if comparison.get("behind_by") != 0:
-        return request
-    candidates: list[MaterializationRequest] = []
-    for revision in commits:
-        commit, parents = _proof_commit(repository, token, revision)
-        if len(parents) != 1 or parents[0] != request.base_sha:
-            continue
-        if commit.get("message") != request.message:
-            continue
-        projected = _request_with_observed_preimage(
-            request,
-            repository=repository,
-            token=token,
-            revision=request.base_sha,
-        )
-        if _proof_ancestry(
-            repository, token, request.base_sha, revision
-        ) != _effective_materialization_paths(projected):
-            continue
-        if _manifest_is_current(
-            projected,
-            repository=repository,
-            token=token,
-            revision=revision,
-        ):
-            candidates.append(projected)
-    if len(candidates) > 1:
-        raise RuntimeError("materialization accepted write preimage recovery is ambiguous")
-    return candidates[0] if candidates else request
 
 
 def prove_materialization(
@@ -2582,14 +2574,6 @@ def prove_materialization(
         if merged and claimed:
             raise RuntimeError("materialization merged target has a competing active carrier")
         revision = cast(str, revision)
-        request = _accepted_preimage_projection(
-            request,
-            repository=repository,
-            token=token,
-            current_carrier_revision=revision,
-            merged=merged,
-            accepted_intent=accepted_intent,
-        )
         witness_revision: str | None
         if not request.files:
             witness_revision = revision
@@ -2607,30 +2591,44 @@ def prove_materialization(
             if not merged:
                 if revision != request.base_sha:
                     if request.base_sha != accepted_revision:
-                        raise RuntimeError(
-                            "materialization missing work has unqualified write parent"
+                        # Qualify B -> actual P before relying on the preimage at P.
+                        advanced_paths = _proof_ancestry(
+                            repository, token, request.base_sha, revision
                         )
-                    relation, _commits, _paths = _proof_comparison(
-                        repository, token, current_revision, revision
-                    )
-                    fork = cast(Mapping[str, object], relation["merge_base_commit"])
-                    main_paths = _proof_ancestry(
-                        repository, token, cast(str, fork["sha"]), current_revision
-                    )
-                    branch_paths = _proof_ancestry(
-                        repository, token, cast(str, fork["sha"]), revision
-                    )
-                    if main_paths.intersection(file.path for file in request.files):
-                        raise RuntimeError("materialization missing work overlaps default advance")
-                    for path in main_paths & branch_paths:
-                        if _content_sha_at(
-                            repository, token, path=path, revision=current_revision
-                        ) != (_content_sha_at(repository, token, path=path, revision=revision)):
+                        if advanced_paths.intersection(file.path for file in request.files):
                             raise RuntimeError(
-                                "materialization missing work has conflicting histories"
+                                "materialization missing work overlaps declared carrier base"
                             )
+                    else:
+                        # Historical default-base reconciliation is a distinct
+                        # two-parent operation; retain its whole-tree conflict guard.
+                        main_paths, branch_paths = _divergent_path_evidence(
+                            repository,
+                            token,
+                            current_revision=current_revision,
+                            carrier_revision=revision,
+                        )
+                        if main_paths.intersection(file.path for file in request.files):
+                            raise RuntimeError(
+                                "materialization missing work overlaps default advance"
+                            )
+                        for path in main_paths & branch_paths:
+                            if _content_sha_at(
+                                repository, token, path=path, revision=current_revision
+                            ) != (_content_sha_at(repository, token, path=path, revision=revision)):
+                                raise RuntimeError(
+                                    "materialization missing work has conflicting histories"
+                                )
                 elif default_advance.intersection(file.path for file in request.files):
                     raise RuntimeError("materialization missing work overlaps default advance")
+                if request.base_sha != accepted_revision and _requested_path_default_overlap(
+                    request,
+                    repository=repository,
+                    token=token,
+                    current_revision=current_revision,
+                    carrier_revision=revision,
+                ):
+                    raise RuntimeError("materialization missing work overlaps default branch")
                 for file in request.files:
                     if _content_sha_at(repository, token, path=file.path, revision=revision) != (
                         file.expected_sha
@@ -2746,28 +2744,53 @@ def prove_materialization(
         immutable_witness = MaterializationWitness(
             witness_revision, tuple((file.path, file.blob_sha) for file in request.files), revisions
         )
-        # Current target gates can reject without invalidating the accepted Git witness.
+        # The exact single-parent manifest witness preserves P's unrelated tree.
+        # Divergent default-branch paths are an integration concern, not a
+        # content-write conflict. A reconciliation/merge witness still requires
+        # the canonical overlap and graph checks below.
+        _witness_commit, witness_parents = _proof_commit(repository, token, witness_revision)
+        content_only_witness = False
+        if (
+            request.pr_number is not None
+            and request.expected_change != "unset"
+            and witness_revision != request.base_sha
+            and len(witness_parents) == 1
+            and request.base_sha != accepted_revision
+        ):
+            advanced_paths = _proof_ancestry(
+                repository, token, request.base_sha, witness_parents[0]
+            )
+            content_only_witness = not advanced_paths.intersection(
+                file.path for file in request.files
+            )
+        # Requested-path default changes remain a canonical non-conflict gate.
+        # Only divergences entirely outside the accepted Manifest are deferred
+        # to the independent native Git integration boundary.
         try:
+            if (
+                content_only_witness
+                and not committed_formal_result
+                and _requested_path_default_overlap(
+                    request,
+                    repository=repository,
+                    token=token,
+                    current_revision=current_revision,
+                    carrier_revision=revision,
+                )
+            ):
+                raise RuntimeError("materialization carrier overlaps requested default paths")
             if not committed_formal_result and default_advance.intersection(
                 file.path for file in request.files
             ):
                 _proof_ancestry(repository, token, witness_revision, current_revision)
-            # Before formal commit, competing default-branch edits remain a write
-            # safety gate. After the exact result was committed, they are a future
-            # review/merge concern, not grounds to undo the immutable prior Action.
-            # The accepted witness and current PR identity still qualify above.
-            if not committed_formal_result:
+            if not committed_formal_result and not content_only_witness:
                 # Compare current default against carrier history without confusing
                 # the mutation preimage with a historical default-branch base.
-                comparison, _commits, _paths = _proof_comparison(
-                    repository, token, current_revision, revision
-                )
-                merge_base = cast(Mapping[str, object], comparison["merge_base_commit"])
-                default_paths = _proof_ancestry(
-                    repository, token, cast(str, merge_base["sha"]), current_revision
-                )
-                carrier_paths = _proof_ancestry(
-                    repository, token, cast(str, merge_base["sha"]), revision
+                default_paths, carrier_paths = _divergent_path_evidence(
+                    repository,
+                    token,
+                    current_revision=current_revision,
+                    carrier_revision=revision,
                 )
                 for path in default_paths & carrier_paths:
                     if _content_sha_at(repository, token, path=path, revision=current_revision) != (

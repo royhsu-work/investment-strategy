@@ -1883,8 +1883,23 @@ class _ProofGitRepository:
                 return [{"filename": self.path, "status": "modified"}]
             return next(pr for pr in self.prs if pr["number"] == int(segments[1]))
         if path.startswith("compare/"):
-            base, revision = path.removeprefix("compare/").split("...")
-            return self.comparison(base, revision)
+            parsed = urlsplit(path)
+            base, revision = parsed.path.removeprefix("compare/").split("...")
+            comparison = self.comparison(base, revision)
+            commits = cast(list[dict[str, object]], comparison["commits"])
+            params = parse_qs(parsed.query)
+            if params:
+                assert set(params) == {"per_page", "page"}
+                per_page, page = int(params["per_page"][0]), int(params["page"][0])
+                assert 1 <= per_page <= 100 and page >= 1
+                comparison["commits"] = commits[(page - 1) * per_page : page * per_page]
+                if page > 1:
+                    comparison.pop("files", None)
+            elif len(commits) > 250:
+                # Actual GitHub API returns the most recent 250, not the
+                # earliest 250, when compare is requested without pagination.
+                comparison["commits"] = commits[-250:]
+            return comparison
         if path.startswith("git/blobs/"):
             sha = path.removeprefix("git/blobs/")
             return {
@@ -3493,41 +3508,25 @@ def test_new_materialization_rejects_wrong_preimage_before_acceptance(
     assert proof_git.mutations == []
 
 
-def test_accepted_zero_write_failure_recovers_only_exact_declared_base_preimage(
+def test_accepted_zero_write_failure_never_substitutes_immutable_expected_preimage(
     proof_git: _ProofGitRepository,
 ) -> None:
     payload = proof_git.payload()
     raw_files = cast(list[dict[str, object]], payload["files"])
-    accepted_raw_preimage = "f" * 40
-    raw_files[0]["expected_sha"] = accepted_raw_preimage
+    raw_files[0]["expected_sha"] = "f" * 40
+    accepted_copy = json.dumps(payload, sort_keys=True)
 
-    unaccepted = _prove_payload_git(proof_git, payload)
-    assert unaccepted.disposition == "CONTRADICTORY", unaccepted
-
-    proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
-    assert proof.disposition == "INCOMPLETE", proof
-    assert proof.application_request is not None
-    expected_preimage = proof_git.entries(proof_git.base)[proof_git.path]["sha"]
-    assert proof.application_request.files[0].expected_sha == expected_preimage
-    assert cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] == (
-        accepted_raw_preimage
-    )
+    for accepted in (False, True):
+        proof = _prove_payload_git(proof_git, payload, accepted_intent=accepted)
+        assert proof.disposition == "CONTRADICTORY", proof
+        assert proof.reason == "materialization missing work preimage is stale"
+        assert proof.application_request is None
 
     proof_git.allow_writes = True
-    with pytest.raises(CarrierRequired) as raised:
+    with pytest.raises(RuntimeError, match="materialization missing work preimage is stale"):
         _apply_git(proof_git, payload=payload, accepted_intent=True)
-    plan = raised.value.plan
-    assert plan.force is False
-    assert plan.expected["ref_sha"] == proof_git.base
-    revision = cast(str, plan.requested["sha"])
-    proof_git.set_head(revision)
-
-    completed = _prove_payload_git(proof_git, payload, accepted_intent=True)
-    assert completed.disposition == "COMPLETE", completed
-    assert completed.witness is not None and completed.witness.revision == revision
-    assert cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] == (
-        accepted_raw_preimage
-    )
+    assert proof_git.mutations == []
+    assert json.dumps(payload, sort_keys=True) == accepted_copy
 
 
 def test_accepted_preimage_recovery_rejects_changed_carrier_path(
@@ -3549,7 +3548,7 @@ def test_accepted_preimage_recovery_rejects_changed_carrier_path(
     assert proof_git.mutations == []
 
 
-def test_accepted_write_commit_recovers_exact_parent_preimage(
+def test_accepted_commit_with_invalid_preimage_cannot_prove_completion(
     proof_git: _ProofGitRepository,
 ) -> None:
     payload = proof_git.payload()
@@ -3561,13 +3560,8 @@ def test_accepted_write_commit_recovers_exact_parent_preimage(
 
     proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
 
-    assert proof.disposition == "COMPLETE", proof
-    assert proof.witness is not None and proof.witness.revision == accepted
-    assert proof.application_request is not None
-    assert (
-        proof.application_request.files[0].expected_sha
-        == proof_git.entries(proof_git.base)[proof_git.path]["sha"]
-    )
+    assert proof.disposition == "CONTRADICTORY", proof
+    assert proof.target is None and proof.witness is None
     assert cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] == "f" * 40
     assert proof_git.mutations == []
 
@@ -5515,14 +5509,14 @@ def test_concurrent_change_after_commit_rejects_direct_ref_creation(
     assert "git/refs" not in proof_git.mutations
 
 
-def test_bad_accepted_preimage_preserves_witness_across_legal_second_commit(
+def test_exact_accepted_preimage_preserves_witness_across_legal_second_commit(
     proof_git: _ProofGitRepository,
 ) -> None:
-    """A historical manifest error and a later legal commit are distinct identities."""
+    """Legal same-Change descendants retain the exact accepted preimage and witness."""
     payload = proof_git.payload()
     files = cast(list[dict[str, object]], payload["files"])
-    historical_bad_sha = "f" * 40
-    files[0]["expected_sha"] = historical_bad_sha
+    accepted_preimage = proof_git.entries(proof_git.base)[proof_git.path]["sha"]
+    assert files[0]["expected_sha"] == accepted_preimage
     first_parent = proof_git.base
     first_commit = proof_git.commit(
         {proof_git.path: "accepted content"},
@@ -5555,7 +5549,7 @@ def test_bad_accepted_preimage_preserves_witness_across_legal_second_commit(
     assert evolved.target is not None and evolved.target.revision == second_commit
     assert evolved.witness is not None and evolved.witness.revision == first_commit
     assert evolved.witness.revisions.mutation_preimage == first_parent
-    assert files[0]["expected_sha"] == historical_bad_sha
+    assert files[0]["expected_sha"] == accepted_preimage
     assert proof_git.mutations == []
 
 
@@ -5586,9 +5580,11 @@ def test_partial_manifest_blob_match_is_not_a_complete_materialization_witness(
     assert proof_git.mutations == []
 
 
+@pytest.mark.parametrize("wrong_accepted_preimage", [False, True])
 def test_six_file_322_shape_preserves_witness_after_second_legal_commit(
     proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
+    wrong_accepted_preimage: bool,
 ) -> None:
     """A six-file Executor shape must retain W after a fresh later commit.
 
@@ -5614,9 +5610,13 @@ def test_six_file_322_shape_preserves_witness_after_second_legal_commit(
         {
             "path": path,
             "blob_sha": proof_git.blob(desired[path]),
-            # The final incorrect expected value models the real historical
-            # mismatch; the actual Git tree remains the only preimage authority.
-            "expected_sha": "a84065b222bb18b8adb56113b866484743f0e1a2" if index == 5 else None,
+            # The accepted preimage is immutable. A wrong value must never be
+            # reconstructed from an otherwise matching historical Git tree.
+            "expected_sha": (
+                "a84065b222bb18b8adb56113b866484743f0e1a2"
+                if wrong_accepted_preimage and index == 5
+                else None
+            ),
         }
         for index, path in enumerate(paths)
     ]
@@ -5624,6 +5624,11 @@ def test_six_file_322_shape_preserves_witness_after_second_legal_commit(
     first_commit = proof_git.commit(desired, proof_git.message, (initial_parent,))
     proof_git.set_head(first_commit)
     first = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    if wrong_accepted_preimage:
+        assert first.disposition == "CONTRADICTORY", first
+        assert first.witness is None
+        assert proof_git.mutations == []
+        return
     assert first.disposition == "COMPLETE", first
     assert first.witness is not None and first.witness.revision == first_commit
 
@@ -5769,4 +5774,297 @@ def test_imported_reader_incomplete_github_observation_is_unknown(
     assert proof.disposition == "UNKNOWN", (broken_source, proof)
     assert proof.target is None and proof.witness is None
     assert proof.reason
+    assert proof_git.mutations == []
+
+
+def test_content_materialization_keeps_unrelated_divergent_parent_tree(
+    proof_git: _ProofGitRepository,
+) -> None:
+    """Content-only accepted paths must not integrate conflicting main paths."""
+    common = proof_git.base
+    parent = proof_git.commit(
+        {"README.md": "carrier-specific documentation"}, "Carrier work", (common,)
+    )
+    proof_git.set_head(parent)
+    proof_git.base = parent
+    proof_git.main = proof_git.commit(
+        {"README.md": "independent default documentation"}, "Default work", (common,)
+    )
+    proof_git.authorization = proof_git.main
+    unrelated_before = proof_git.entries(parent)["README.md"]
+    assert _prove_git(proof_git, accepted_intent=True).disposition == "INCOMPLETE"
+    proof_git.allow_writes = True
+    with pytest.raises(CarrierRequired) as raised:
+        _apply_git(proof_git, accepted_intent=True)
+    plan = raised.value.plan
+    assert plan.expected["ref_sha"] == parent
+    assert plan.requested["commit_parents"] == [parent]
+    assert plan.requested["force"] is False
+    commit = cast(str, plan.requested["sha"])
+    entries = proof_git.entries(commit)
+    assert entries["README.md"] == unrelated_before
+    assert entries[proof_git.path]["sha"] == proof_git.desired
+    proof_git.set_head(commit)
+    witness = _prove_git(proof_git, accepted_intent=True)
+    assert witness.disposition == "COMPLETE", witness
+    assert witness.witness is not None
+    assert witness.witness.revisions.mutation_preimage == parent
+    before = list(proof_git.mutations)
+    _apply_git(proof_git, accepted_intent=True)
+    assert proof_git.mutations == before
+
+
+def test_content_only_rejects_concurrent_requested_path_overlap(
+    proof_git: _ProofGitRepository,
+) -> None:
+    """A divergent change to an accepted path is not unrelated Git integration."""
+    common = proof_git.base
+    parent = proof_git.commit({proof_git.path: "carrier preimage"}, "Change carrier", (common,))
+    proof_git.set_head(parent)
+    proof_git.base = parent
+    proof_git.main = proof_git.commit(
+        {proof_git.path: "independent main edit"}, "Conflicting main", (common,)
+    )
+    proof_git.authorization = proof_git.main
+    proof = _prove_git(proof_git, accepted_intent=True)
+    assert proof.disposition == "CONTRADICTORY", proof
+    proof_git.allow_writes = True
+    with pytest.raises(RuntimeError):
+        _apply_git(proof_git, accepted_intent=True)
+    assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize("carrier_overwrites_requested_path", [False, True])
+def test_accepted_carrier_B_to_P_disjoint_evolution_uses_actual_preimage(
+    proof_git: _ProofGitRepository,
+    carrier_overwrites_requested_path: bool,
+) -> None:
+    common = proof_git.base
+    declared = proof_git.commit({"README.md": "branch change"}, "Carrier base", (common,))
+    parent = proof_git.commit(
+        {proof_git.path: "unaccepted edit"}
+        if carrier_overwrites_requested_path
+        else {"docs/unrelated.md": "safe carrier evolution"},
+        "Intervening carrier commit",
+        (declared,),
+    )
+    proof_git.set_head(parent)
+    proof_git.base = declared
+    proof_git.main = proof_git.commit(
+        {"README.md": "divergent default"}, "Default advance", (common,)
+    )
+    proof_git.authorization = proof_git.main
+
+    observed = _prove_git(proof_git, accepted_intent=True)
+    if carrier_overwrites_requested_path:
+        assert observed.disposition == "CONTRADICTORY", observed
+        proof_git.allow_writes = True
+        with pytest.raises(RuntimeError):
+            _apply_git(proof_git, accepted_intent=True)
+        assert proof_git.mutations == []
+        return
+
+    assert observed.disposition == "INCOMPLETE", observed
+    assert observed.application_request is not None
+    assert observed.application_request.base_sha == declared
+    assert (
+        observed.application_request.files[0].expected_sha
+        == (proof_git.entries(parent)[proof_git.path]["sha"])
+    )
+    before = proof_git.entries(parent)
+    proof_git.allow_writes = True
+    with pytest.raises(CarrierRequired) as carrier:
+        _apply_git(proof_git, accepted_intent=True)
+    plan = carrier.value.plan
+    assert plan.requested["commit_parents"] == [parent]
+    assert plan.requested["force"] is False
+    created = cast(str, plan.requested["sha"])
+    after = proof_git.entries(created)
+    before.pop(proof_git.path)
+    after.pop(proof_git.path)
+    assert after == before
+    proof_git.set_head(created)
+    complete = _prove_git(proof_git, accepted_intent=True)
+    assert complete.disposition == "COMPLETE", complete
+    assert complete.witness is not None
+    assert complete.witness.revisions.mutation_preimage == parent
+    writes = list(proof_git.mutations)
+    _apply_git(proof_git, accepted_intent=True)
+    assert proof_git.mutations == writes
+
+
+def test_long_diverged_existing_carrier_ignores_250_commit_enumeration_cap(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real >250 Git commits, with the 250-entry GitHub compare API limit."""
+    common = proof_git.base
+    tree = proof_git.git("rev-parse", f"{common}^{{tree}}")
+    parent = common
+    for index in range(252):
+        parent = proof_git.git(
+            "commit-tree", tree, "-p", parent, stdin=f"Disjoint carrier no-op {index}"
+        )
+    proof_git.set_head(parent)
+    proof_git.base = parent
+    proof_git.main = proof_git.commit(
+        {"README.md": "divergent default"}, "Default advance", (common,)
+    )
+    proof_git.authorization = proof_git.main
+    original = proof_git.comparison
+
+    def capped_compare(base: str, revision: str) -> dict[str, object]:
+        comparison = original(base, revision)
+        if cast(int, comparison["ahead_by"]) > 250:
+            comparison["commits"] = cast(list[object], comparison["commits"])[:250]
+        return comparison
+
+    monkeypatch.setattr(proof_git, "comparison", capped_compare)
+    observed = _prove_git(proof_git, accepted_intent=True)
+    assert observed.disposition == "INCOMPLETE", observed
+    proof_git.allow_writes = True
+    with pytest.raises(CarrierRequired) as carrier:
+        _apply_git(proof_git, accepted_intent=True)
+    assert carrier.value.plan.requested["commit_parents"] == [parent]
+    proof_git.set_head(cast(str, carrier.value.plan.requested["sha"]))
+    completed = _prove_git(proof_git, accepted_intent=True)
+    assert completed.disposition == "COMPLETE", completed
+    no_replay = list(proof_git.mutations)
+    _apply_git(proof_git, accepted_intent=True)
+    assert proof_git.mutations == no_replay
+
+
+@pytest.mark.parametrize("already_applied", [False, True])
+def test_long_B_to_P_carrier_paginates_complete_canonical_witness(
+    proof_git: _ProofGitRepository,
+    already_applied: bool,
+) -> None:
+    """Actual Git B != P, >250 disjoint commits, capped compare, real W and no replay."""
+    common = proof_git.base
+    declared = proof_git.commit(
+        {"docs/declared.md": "declared carrier base"}, "Declared carrier base", (common,)
+    )
+    parent = proof_git.commit(
+        {"docs/disjoint-evolution.md": "retained actual carrier content"},
+        "Disjoint carrier evolution",
+        (declared,),
+    )
+    tree = proof_git.git("rev-parse", f"{parent}^{{tree}}")
+    for number in range(251):
+        parent = proof_git.git(
+            "commit-tree", tree, "-p", parent, stdin=f"Unrelated carrier checkpoint {number}"
+        )
+    unrelated_preimage = proof_git.entries(parent)["docs/disjoint-evolution.md"]
+    proof_git.base = declared
+    proof_git.main = proof_git.commit(
+        {"README.md": "independent default evolution"}, "Default advance", (common,)
+    )
+    proof_git.authorization = proof_git.main
+
+    if already_applied:
+        witness = proof_git.commit(
+            {proof_git.path: "accepted content"}, proof_git.message, (parent,)
+        )
+        proof_git.set_head(witness)
+    else:
+        proof_git.set_head(parent)
+
+    capped = proof_git.api(
+        proof_git.repository,
+        _TOKEN,
+        f"compare/{declared}...{proof_git.head}",
+    )
+    capped_response = cast(dict[str, object], capped)
+    capped_records = cast(list[dict[str, object]], capped_response["commits"])
+    assert len(capped_records) == 250
+    assert cast(int, capped_response["ahead_by"]) > 250
+    complete_records = cast(
+        list[dict[str, object]],
+        proof_git.comparison(declared, proof_git.head)["commits"],
+    )
+    complete_shas = [commit["sha"] for commit in complete_records]
+    assert [commit["sha"] for commit in capped_records] == complete_shas[-250:]
+    assert complete_shas[:250] != complete_shas[-250:]
+    page2 = cast(
+        dict[str, object],
+        proof_git.api(
+            proof_git.repository,
+            _TOKEN,
+            f"compare/{declared}...{proof_git.head}?per_page=100&page=2",
+        ),
+    )
+    assert len(cast(list[object], page2["commits"])) == 100
+    assert "files" not in page2
+
+    first = _prove_git(proof_git, accepted_intent=True)
+    assert first.disposition == ("COMPLETE" if already_applied else "INCOMPLETE"), first
+    proof_git.allow_writes = True
+    if already_applied:
+        assert first.witness is not None
+        assert first.witness.revision == witness
+        assert first.witness.revisions.mutation_preimage == parent
+        assert proof_git.entries(witness)["docs/disjoint-evolution.md"] == unrelated_preimage
+        _apply_git(proof_git, accepted_intent=True)
+        assert proof_git.mutations == []
+    else:
+        with pytest.raises(CarrierRequired) as carrier:
+            _apply_git(proof_git, accepted_intent=True)
+        plan = carrier.value.plan
+        assert plan.requested["commit_parents"] == [parent]
+        assert plan.requested["force"] is False
+        proof_git.set_head(cast(str, plan.requested["sha"]))
+        complete = _prove_git(proof_git, accepted_intent=True)
+        assert complete.disposition == "COMPLETE", complete
+        assert complete.witness is not None
+        assert complete.witness.revisions.mutation_preimage == parent
+        assert proof_git.entries(proof_git.head)["docs/disjoint-evolution.md"] == (
+            unrelated_preimage
+        )
+        previous = list(proof_git.mutations)
+        _apply_git(proof_git, accepted_intent=True)
+        assert proof_git.mutations == previous
+
+
+@pytest.mark.parametrize("incomplete_page", ["missing", "duplicate", "wrong_anchor"])
+def test_long_B_to_P_carrier_rejects_incomplete_or_inconsistent_page(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    incomplete_page: str,
+) -> None:
+    """A missing or inconsistent GitHub page cannot authorize a missing write."""
+    declared = proof_git.base
+    tree = proof_git.git("rev-parse", f"{declared}^{{tree}}")
+    parent = declared
+    for number in range(252):
+        parent = proof_git.git(
+            "commit-tree", tree, "-p", parent, stdin=f"Disjoint checkpoint {number}"
+        )
+    proof_git.set_head(parent)
+    proof_git.main = proof_git.commit(
+        {"README.md": "disjoint default change"}, "Default advance", (declared,)
+    )
+    proof_git.authorization = proof_git.main
+    original_api = proof_git.api
+
+    def faulty_page(repository: str, token: str, path: str, **kwargs: object) -> object:
+        reply = original_api(repository, token, path, **kwargs)
+        if path == f"compare/{declared}...{parent}?per_page=100&page=2":
+            response = cast(dict[str, object], reply)
+            if incomplete_page == "missing":
+                response["commits"] = cast(list[object], response["commits"])[:20]
+            elif incomplete_page == "duplicate":
+                commits = cast(list[dict[str, object]], response["commits"])
+                commits[0] = commits[1]
+            else:
+                response["base_commit"] = {"sha": "f" * 40}
+        return reply
+
+    monkeypatch.setattr(materialization, "_github_json", faulty_page)
+    proof = _prove_git(proof_git, accepted_intent=True)
+    assert proof.disposition in {"UNKNOWN", "CONTRADICTORY"}, proof
+    assert proof.target is None
+    assert proof.witness is None
+    proof_git.allow_writes = True
+    with pytest.raises(RuntimeError):
+        _apply_git(proof_git, accepted_intent=True)
     assert proof_git.mutations == []
