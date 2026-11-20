@@ -1942,6 +1942,25 @@ def _proof_ancestry(repository: str, token: str, ancestor: str, revision: str) -
     return frozenset(paths)
 
 
+def _requested_path_default_overlap(
+    request: MaterializationRequest,
+    *,
+    repository: str,
+    token: str,
+    current_revision: str,
+    carrier_revision: str,
+) -> bool:
+    """Retain manifest non-conflict even when unrelated integration is deferred."""
+    comparison, _commits, _paths = _proof_comparison(
+        repository, token, current_revision, carrier_revision
+    )
+    fork = cast(Mapping[str, object], comparison["merge_base_commit"])
+    fork_sha = cast(str, fork["sha"])
+    _proof_ancestry(repository, token, fork_sha, carrier_revision)
+    default_paths = _proof_ancestry(repository, token, fork_sha, current_revision)
+    return bool(default_paths.intersection(file.path for file in request.files))
+
+
 def _proof_commit(
     repository: str, token: str, revision: str
 ) -> tuple[Mapping[str, object], tuple[str, ...]]:
@@ -2589,6 +2608,14 @@ def prove_materialization(
                             )
                 elif default_advance.intersection(file.path for file in request.files):
                     raise RuntimeError("materialization missing work overlaps default advance")
+                if request.base_sha != accepted_revision and _requested_path_default_overlap(
+                    request,
+                    repository=repository,
+                    token=token,
+                    current_revision=current_revision,
+                    carrier_revision=revision,
+                ):
+                    raise RuntimeError("materialization missing work overlaps default branch")
                 for file in request.files:
                     if _content_sha_at(repository, token, path=file.path, revision=revision) != (
                         file.expected_sha
@@ -2720,6 +2747,18 @@ def prove_materialization(
         # Only divergences entirely outside the accepted Manifest are deferred
         # to the independent native Git integration boundary.
         try:
+            if (
+                content_only_witness
+                and not committed_formal_result
+                and _requested_path_default_overlap(
+                    request,
+                    repository=repository,
+                    token=token,
+                    current_revision=current_revision,
+                    carrier_revision=revision,
+                )
+            ):
+                raise RuntimeError("materialization carrier overlaps requested default paths")
             if not committed_formal_result and default_advance.intersection(
                 file.path for file in request.files
             ):
