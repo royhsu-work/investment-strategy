@@ -5974,13 +5974,14 @@ def test_long_B_to_P_carrier_paginates_complete_canonical_witness(
         _TOKEN,
         f"compare/{declared}...{proof_git.head}",
     )
-    assert len(cast(dict[str, object], capped)["commits"]) == 250
-    assert cast(dict[str, object], capped)["ahead_by"] > 250
+    capped_response = cast(dict[str, object], capped)
+    capped_records = cast(list[dict[str, object]], capped_response["commits"])
+    assert len(capped_records) == 250
+    assert cast(int, capped_response["ahead_by"]) > 250
     complete_records = cast(
         list[dict[str, object]],
         proof_git.comparison(declared, proof_git.head)["commits"],
     )
-    capped_records = cast(list[dict[str, object]], cast(dict[str, object], capped)["commits"])
     complete_shas = [commit["sha"] for commit in complete_records]
     assert [commit["sha"] for commit in capped_records] == complete_shas[-250:]
     assert complete_shas[:250] != complete_shas[-250:]
