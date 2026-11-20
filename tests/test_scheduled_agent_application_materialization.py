@@ -5564,9 +5564,11 @@ def test_partial_manifest_blob_match_is_not_a_complete_materialization_witness(
     assert proof_git.mutations == []
 
 
+@pytest.mark.parametrize("wrong_accepted_preimage", [False, True])
 def test_six_file_322_shape_preserves_witness_after_second_legal_commit(
     proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
+    wrong_accepted_preimage: bool,
 ) -> None:
     """A six-file Executor shape must retain W after a fresh later commit.
 
@@ -5592,9 +5594,13 @@ def test_six_file_322_shape_preserves_witness_after_second_legal_commit(
         {
             "path": path,
             "blob_sha": proof_git.blob(desired[path]),
-            # The final incorrect expected value models the real historical
-            # mismatch; the actual Git tree remains the only preimage authority.
-            "expected_sha": "a84065b222bb18b8adb56113b866484743f0e1a2" if index == 5 else None,
+            # The accepted preimage is immutable. A wrong value must never be
+            # reconstructed from an otherwise matching historical Git tree.
+            "expected_sha": (
+                "a84065b222bb18b8adb56113b866484743f0e1a2"
+                if wrong_accepted_preimage and index == 5
+                else None
+            ),
         }
         for index, path in enumerate(paths)
     ]
@@ -5602,6 +5608,11 @@ def test_six_file_322_shape_preserves_witness_after_second_legal_commit(
     first_commit = proof_git.commit(desired, proof_git.message, (initial_parent,))
     proof_git.set_head(first_commit)
     first = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    if wrong_accepted_preimage:
+        assert first.disposition == "CONTRADICTORY", first
+        assert first.witness is None
+        assert proof_git.mutations == []
+        return
     assert first.disposition == "COMPLETE", first
     assert first.witness is not None and first.witness.revision == first_commit
 
