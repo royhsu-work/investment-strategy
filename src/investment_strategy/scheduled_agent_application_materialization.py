@@ -1886,8 +1886,7 @@ def _proof_comparison(
             None if (item := _as_mapping(raw)) is None else item.get("sha")
             for raw in paged_commits[-250:]
         ] != [
-            None if (item := _as_mapping(raw)) is None else item.get("sha")
-            for raw in raw_commits
+            None if (item := _as_mapping(raw)) is None else item.get("sha") for raw in raw_commits
         ]:
             raise _IncompleteGitHubObservation(
                 "materialization paginated graph contradicts original commit suffix"
