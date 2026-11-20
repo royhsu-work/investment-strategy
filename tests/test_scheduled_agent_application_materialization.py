@@ -5944,12 +5944,17 @@ def test_long_B_to_P_carrier_paginates_complete_canonical_witness(
     declared = proof_git.commit(
         {"docs/declared.md": "declared carrier base"}, "Declared carrier base", (common,)
     )
-    tree = proof_git.git("rev-parse", f"{declared}^{{tree}}")
-    parent = declared
-    for number in range(252):
+    parent = proof_git.commit(
+        {"docs/disjoint-evolution.md": "retained actual carrier content"},
+        "Disjoint carrier evolution",
+        (declared,),
+    )
+    tree = proof_git.git("rev-parse", f"{parent}^{{tree}}")
+    for number in range(251):
         parent = proof_git.git(
             "commit-tree", tree, "-p", parent, stdin=f"Unrelated carrier checkpoint {number}"
         )
+    unrelated_preimage = proof_git.entries(parent)["docs/disjoint-evolution.md"]
     proof_git.base = declared
     proof_git.main = proof_git.commit(
         {"README.md": "independent default evolution"}, "Default advance", (common,)
@@ -5974,7 +5979,9 @@ def test_long_B_to_P_carrier_paginates_complete_canonical_witness(
     page2 = cast(
         dict[str, object],
         proof_git.api(
-            proof_git.repository, _TOKEN, f"compare/{declared}...{proof_git.head}?per_page=100&page=2"
+            proof_git.repository,
+            _TOKEN,
+            f"compare/{declared}...{proof_git.head}?per_page=100&page=2",
         ),
     )
     assert len(cast(list[object], page2["commits"])) == 100
@@ -5987,6 +5994,7 @@ def test_long_B_to_P_carrier_paginates_complete_canonical_witness(
         assert first.witness is not None
         assert first.witness.revision == witness
         assert first.witness.revisions.mutation_preimage == parent
+        assert proof_git.entries(witness)["docs/disjoint-evolution.md"] == unrelated_preimage
         _apply_git(proof_git, accepted_intent=True)
         assert proof_git.mutations == []
     else:
@@ -6000,6 +6008,9 @@ def test_long_B_to_P_carrier_paginates_complete_canonical_witness(
         assert complete.disposition == "COMPLETE", complete
         assert complete.witness is not None
         assert complete.witness.revisions.mutation_preimage == parent
+        assert proof_git.entries(proof_git.head)["docs/disjoint-evolution.md"] == (
+            unrelated_preimage
+        )
         previous = list(proof_git.mutations)
         _apply_git(proof_git, accepted_intent=True)
         assert proof_git.mutations == previous
