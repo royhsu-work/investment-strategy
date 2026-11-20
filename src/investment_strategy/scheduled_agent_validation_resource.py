@@ -33,6 +33,8 @@ from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
     CarrierRequired,
     carrier_pr_identity,
+    create_exact_git_commit,
+    create_exact_git_tree,
     github_read_bytes_with_retry,
     github_write_bytes,
     make_carrier_plan,
@@ -2156,20 +2158,11 @@ def _construct_work_product(
         ]
     )
     try:
-        tree_response = _as_mapping(
-            cast(
-                object,
-                _github_json(
-                    repository,
-                    token,
-                    "git/trees",
-                    method="POST",
-                    payload={
-                        "base_tree": cast(str, base_tree_sha),
-                        "tree": tree_elements,
-                    },
-                ),
-            )
+        tree_sha = create_exact_git_tree(
+            lambda api_path, **kwargs: _github_json(repository, token, api_path, **kwargs),
+            base_tree_sha=cast(str, base_tree_sha),
+            elements=tree_elements,
+            label="work-product",
         )
     except HTTPError as exc:
         if exc.code in {404, 422}:
@@ -2177,10 +2170,6 @@ def _construct_work_product(
                 "work-product referenced blob is unavailable to application tree construction"
             ) from exc
         raise
-    observed_tree_sha = None if tree_response is None else tree_response.get("sha")
-    if not _valid_sha(observed_tree_sha):
-        raise RuntimeError("work-product tree creation returned no SHA")
-    tree_sha = cast(str, observed_tree_sha)
 
     observed_tree = _as_mapping(
         cast(
@@ -2279,25 +2268,13 @@ def _construct_work_product(
     if needs_default_reconciliation:
         commit_parents.append(authorization_revision)
 
-    commit_response = _as_mapping(
-        cast(
-            object,
-            _github_json(
-                repository,
-                token,
-                "git/commits",
-                method="POST",
-                payload={
-                    "message": commit_message,
-                    "tree": cast(str, tree_sha),
-                    "parents": commit_parents,
-                },
-            ),
-        )
+    revision = create_exact_git_commit(
+        lambda api_path, **kwargs: _github_json(repository, token, api_path, **kwargs),
+        message=commit_message,
+        tree_sha=tree_sha,
+        parents=commit_parents,
+        label="work-product",
     )
-    revision = None if commit_response is None else commit_response.get("sha")
-    if not _valid_sha(revision):
-        raise RuntimeError("work-product commit creation returned no SHA")
 
     if replacement_branch is not None and not replacement_ref_exists:
         if before_write is not None:
