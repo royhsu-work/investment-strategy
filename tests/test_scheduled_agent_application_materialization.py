@@ -3532,7 +3532,7 @@ def test_accepted_preimage_recovery_rejects_changed_carrier_path(
     assert proof_git.mutations == []
 
 
-def test_accepted_write_commit_recovers_exact_parent_preimage(
+def test_accepted_commit_with_invalid_preimage_cannot_prove_completion(
     proof_git: _ProofGitRepository,
 ) -> None:
     payload = proof_git.payload()
@@ -5493,14 +5493,14 @@ def test_concurrent_change_after_commit_rejects_direct_ref_creation(
     assert "git/refs" not in proof_git.mutations
 
 
-def test_bad_accepted_preimage_preserves_witness_across_legal_second_commit(
+def test_exact_accepted_preimage_preserves_witness_across_legal_second_commit(
     proof_git: _ProofGitRepository,
 ) -> None:
-    """A historical manifest error and a later legal commit are distinct identities."""
+    """Legal same-Change descendants retain the exact accepted preimage and witness."""
     payload = proof_git.payload()
     files = cast(list[dict[str, object]], payload["files"])
-    historical_bad_sha = "f" * 40
-    files[0]["expected_sha"] = historical_bad_sha
+    accepted_preimage = proof_git.entries(proof_git.base)[proof_git.path]["sha"]
+    assert files[0]["expected_sha"] == accepted_preimage
     first_parent = proof_git.base
     first_commit = proof_git.commit(
         {proof_git.path: "accepted content"},
@@ -5533,7 +5533,7 @@ def test_bad_accepted_preimage_preserves_witness_across_legal_second_commit(
     assert evolved.target is not None and evolved.target.revision == second_commit
     assert evolved.witness is not None and evolved.witness.revision == first_commit
     assert evolved.witness.revisions.mutation_preimage == first_parent
-    assert files[0]["expected_sha"] == historical_bad_sha
+    assert files[0]["expected_sha"] == accepted_preimage
     assert proof_git.mutations == []
 
 
