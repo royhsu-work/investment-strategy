@@ -5770,3 +5770,40 @@ def test_imported_reader_incomplete_github_observation_is_unknown(
     assert proof.target is None and proof.witness is None
     assert proof.reason
     assert proof_git.mutations == []
+
+
+def test_content_materialization_keeps_unrelated_divergent_parent_tree(
+    proof_git: _ProofGitRepository,
+) -> None:
+    """Content-only accepted paths must not integrate conflicting main paths."""
+    common = proof_git.base
+    parent = proof_git.commit(
+        {"README.md": "carrier-specific documentation"}, "Carrier work", (common,)
+    )
+    proof_git.set_head(parent)
+    proof_git.base = parent
+    proof_git.main = proof_git.commit(
+        {"README.md": "independent default documentation"}, "Default work", (common,)
+    )
+    proof_git.authorization = proof_git.main
+    unrelated_before = proof_git.entries(parent)["README.md"]
+    assert _prove_git(proof_git, accepted_intent=True).disposition == "INCOMPLETE"
+    proof_git.allow_writes = True
+    with pytest.raises(CarrierRequired) as raised:
+        _apply_git(proof_git, accepted_intent=True)
+    plan = raised.value.plan
+    assert plan.expected["ref_sha"] == parent
+    assert plan.requested["commit_parents"] == [parent]
+    assert plan.requested["force"] is False
+    commit = cast(str, plan.requested["sha"])
+    entries = proof_git.entries(commit)
+    assert entries["README.md"] == unrelated_before
+    assert entries[proof_git.path]["sha"] == proof_git.desired
+    proof_git.set_head(commit)
+    witness = _prove_git(proof_git, accepted_intent=True)
+    assert witness.disposition == "COMPLETE", witness
+    assert witness.witness is not None
+    assert witness.witness.revisions.mutation_preimage == parent
+    before = list(proof_git.mutations)
+    _apply_git(proof_git, accepted_intent=True)
+    assert proof_git.mutations == before
