@@ -115,12 +115,8 @@ def test_scoped_human_priority_preserves_activation_proof() -> None:
         )
     )
     assert classify_dispatch(after).formal_issue_ids == (435, 458)
-    assert activation_postwrite_accepted(
-        after, issue_number=458, expected_change="issue458-scope"
-    )
-    assert not activation_postwrite_accepted(
-        after, issue_number=435, expected_change="restore-t1"
-    )
+    assert activation_postwrite_accepted(after, issue_number=458, expected_change="issue458-scope")
+    assert not activation_postwrite_accepted(after, issue_number=435, expected_change="restore-t1")
 
 
 def test_scoped_human_priority_does_not_bypass_closed_debt() -> None:
