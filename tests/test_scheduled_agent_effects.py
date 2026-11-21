@@ -6314,3 +6314,67 @@ def test_f1_inflight_r1_post_cannot_be_forked_by_r2_with_empty_get(
     assert not thread.is_alive()
     assert not failures
     assert len(submitted) == 1, "R2 forked an in-flight R1 authoritative result"
+
+
+def test_f1_proven_never_submitted_post_recovers_with_single_provider_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-transport failure must not be conflated with ambiguous in-flight POST."""
+    source = WorkerRequest(138, "lead", "finalize-change")
+    body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Role: lead\n"
+        "Action: finalize-change\n"
+        "Result: ARCHIVE_READY\n"
+        f"Revision: {_REVISION}"
+    )
+    api_attempts = 0
+    provider_commits: list[str] = []
+
+    def provider(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        nonlocal api_attempts
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return []
+        if path == "issues/138/comments" and method == "POST":
+            api_attempts += 1
+            assert isinstance(payload, dict) and isinstance(payload.get("body"), str)
+            if api_attempts == 1:
+                # Injected before the provider accepts any HTTP request.
+                raise ConnectionRefusedError("pre-transport: definitely never submitted")
+            provider_commits.append(payload["body"])
+            return {"id": 991}
+        if path == "issues/comments/991":
+            return {
+                "id": 991,
+                "body": provider_commits[0],
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+            }
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(effects, "_github_json", provider)
+    monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy", "token", source,
+        authorized_change=_CHANGE, accepted_intent=True,
+    )
+    effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 138, "body": body}),
+    )
+    with pytest.raises(ConnectionRefusedError, match="definitely never submitted"):
+        adapter.apply(effect)
+    assert provider_commits == []
+    adapter.apply(effect)
+    assert len(provider_commits) == 1
+    assert adapter.observe_postcondition(effect)
