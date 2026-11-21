@@ -471,6 +471,13 @@ def _valid_revision(revision: object) -> bool:
     return isinstance(revision, str) and fullmatch(r"[0-9a-f]{40}", revision) is not None
 
 
+def scoped_human_priority_activation(
+    formal_issue_numbers: tuple[int, ...], issue_number: int
+) -> bool:
+    """Authorize the exact Human-directed #435/#458 bootstrap only."""
+    return issue_number == 458 and formal_issue_numbers == (435, 458)
+
+
 def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
     """Select one current Action from complete, qualified observations.
 
@@ -538,8 +545,25 @@ def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
         elif normalized_action is not None:
             preactivation.append((issue, normalized_action))
 
-    if len(formal) > 1:
+    formal_ids = tuple(sorted(issue.issue_number for issue, _ in formal))
+    if len(formal) > 1 and not scoped_human_priority_activation(formal_ids, 458):
         return _selection(SelectionDisposition.FAIL_CLOSED, "wip-more-than-one")
+
+    # Human-directed #458 priority while #435 remains unchanged.
+    # After #458 retires, normal finish-first selection resumes.
+    if 435 in formal_ids:
+        priority = next(
+            (pair for pair in (*formal, *preactivation) if pair[0].issue_number == 458),
+            None,
+        )
+        if priority is not None:
+            issue, action = priority
+            return _selection(
+                SelectionDisposition.AUTHORIZE,
+                "selected-human-priority-repair",
+                issue.issue_number,
+                action,
+            )
     if formal:
         issue, action = formal[0]
         return _selection(
