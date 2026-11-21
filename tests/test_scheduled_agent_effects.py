@@ -6064,7 +6064,11 @@ def test_f1_provider_committed_formal_post_with_lost_response_is_not_reposted(
     with pytest.raises(OSError, match="response lost"):
         adapter.apply(effect)
     # A subsequent wake must never issue another ambiguous non-idempotent POST.
-    adapter.apply(effect)
+    try:
+        adapter.apply(effect)
+    except (OSError, RuntimeError):
+        # A safe ambiguous outcome may stay pending without resubmission.
+        pass
     assert len(posts) == 1, "ambiguous Formal Result POST was repeated"
 
 
@@ -6148,3 +6152,165 @@ def test_late_r1_full_labels_patch_cannot_rewind_r2_route_or_unrelated_label(
     assert "action:review-implementation" in label_names
     assert "action:resolve-question" not in label_names
     assert "audit:preserve" in label_names
+
+
+def test_f1_qualified_r1_result_prevents_cross_revision_r2_publication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RED: a qualified R1 identity must remain authoritative across R2."""
+    from investment_strategy.scheduled_agent_formal_result import parse_formal_result
+
+    source = WorkerRequest(138, "lead", "finalize-change")
+    correlation = effects.formal_application_correlation(
+        source,
+        change=_CHANGE,
+        result_kind="archive-ready",
+        current_revision=_REVISION,
+        request_comment_id=7002127308,
+    )
+
+    def body(revision: str) -> str:
+        return (
+            "ACTION_RESULT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Role: lead\n"
+            "Action: finalize-change\n"
+            "Result: ARCHIVE_READY\n"
+            f"Revision: {revision}\n"
+            f"Default-Branch-Revision: {_REVISION}\n"
+            f"Application-Correlation: {correlation}\n"
+            "Repository-derived successor: Reviewer / review-archive\n"
+            "Evidence: accepted immutable intent"
+        )
+
+    original = {
+        "id": 991,
+        "body": body(_REVISION),
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    parsed = parse_formal_result(original, current_revision=_REVISION)
+    assert parsed is not None and parsed.valid
+    posts: list[object] = []
+
+    def provider(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return [original]
+        if path == "issues/138/comments" and method == "POST":
+            posts.append(payload)
+            return {"id": 992}
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(effects, "_github_json", provider)
+    monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
+    r2 = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="archive-ready",
+        request_comment_id=7002127308,
+        accepted_intent=True,
+    )
+    new_projection = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 138, "body": body("b" * 40)}),
+    )
+    try:
+        r2.apply(new_projection)
+    except RuntimeError:
+        pass
+    assert posts == [], "R2 published a second result despite a qualified R1"
+
+
+def test_f1_inflight_r1_post_cannot_be_forked_by_r2_with_empty_get(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RED: an entered but incomplete R1 POST excludes a competing R2 POST."""
+    from threading import Event, Thread
+
+    source = WorkerRequest(138, "lead", "finalize-change")
+    entered, release = Event(), Event()
+    submitted: list[str] = []
+    failures: list[BaseException] = []
+
+    def body(revision: str) -> str:
+        return (
+            "ACTION_RESULT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Role: lead\n"
+            "Action: finalize-change\n"
+            "Result: ARCHIVE_READY\n"
+            f"Revision: {revision}"
+        )
+
+    def provider(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return []
+        if path == "issues/138/comments" and method == "POST":
+            assert isinstance(payload, dict)
+            value = payload.get("body")
+            assert isinstance(value, str)
+            if f"Revision: {_REVISION}" in value:
+                entered.set()
+                assert release.wait(timeout=10), "R1 provider deadline"
+            submitted.append(value)
+            return {"id": 991 + len(submitted)}
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(effects, "_github_json", provider)
+    monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
+    r1 = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy", "token", source,
+        authorized_change=_CHANGE, accepted_intent=True,
+    )
+    r2 = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy", "token", source,
+        authorized_change=_CHANGE, accepted_intent=True,
+    )
+
+    def apply_r1() -> None:
+        try:
+            r1.apply(StagedEffect(
+                kind="issue-comment",
+                payload_json=json.dumps({"issue_number": 138, "body": body(_REVISION)}),
+            ))
+        except BaseException as exc:
+            failures.append(exc)
+
+    thread = Thread(target=apply_r1)
+    thread.start()
+    try:
+        assert entered.wait(timeout=10), "R1 never entered provider"
+        try:
+            r2.apply(StagedEffect(
+                kind="issue-comment",
+                payload_json=json.dumps({"issue_number": 138, "body": body("b" * 40)}),
+            ))
+        except RuntimeError:
+            pass
+    finally:
+        release.set()
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert not failures
+    assert len(submitted) == 1, "R2 forked an in-flight R1 authoritative result"
