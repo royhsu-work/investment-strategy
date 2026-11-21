@@ -8905,6 +8905,7 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
         timeline.sort(key=lambda item: (cast(str, item["created_at"]), cast(int, item["id"])))
     comment_posts = 0
     route_patches = 0
+    pending_formal_comments: list[dict[str, object]] = []
     posted_at = (
         "2026-10-29T09:21:48Z"
         if scenario == "production-history"
@@ -9099,12 +9100,14 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
                 "user": {"login": "github-actions[bot]"},
                 "performed_via_github_app": {"slug": "github-actions"},
             }
+            if scenario == "lost-response":
+                # GitHub commits the write, but the formal comment becomes visible later.
+                pending_formal_comments.append(comment)
+                raise OSError("GitHub saved formal comment; client response lost")
             comments.append(comment)
             timeline.append(
                 {"id": 6900000000, "event": "commented", "created_at": comment["created_at"]}
             )
-            if scenario == "lost-response":
-                raise OSError("GitHub saved formal comment; client response lost")
             return comment
         if method == "PATCH" and path == "issues/322":
             assert payload is not None
@@ -9231,6 +9234,11 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
         return
     assert comment_posts == 1
     assert route_patches == (0 if scenario == "lost-response" else 1)
+    for comment in pending_formal_comments:
+        comments.append(comment)
+        timeline.append(
+            {"id": comment["id"], "event": "commented", "created_at": comment["created_at"]}
+        )
     second = invoke()
     assert second.state == "COMPLETE", second
     assert comment_posts == 1  # fresh-read reconciliation, no duplicate formal write

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import inspect
 import json
@@ -6010,3 +6011,438 @@ def test_legacy_322_untrusted_forward_mapping_cannot_release_original_effects() 
         accepted_intent=True,
         forward_correction_satisfaction=correction_mapping,
     )
+
+
+def test_f1_provider_committed_formal_post_with_lost_response_is_not_reposted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RED: a delayed provider commit and empty GET cannot create two authorities."""
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "lead", "finalize-change")
+    body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Role: lead\n"
+        "Action: finalize-change\n"
+        "Result: ARCHIVE_READY\n"
+        f"Revision: {_REVISION}"
+    )
+    posts: list[str] = []
+
+    def provider(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        if (
+            path == "issues/138/comments?per_page=100&sort=created&direction=desc"
+            and method == "GET"
+        ):
+            # The first submitted POST has not yet appeared in GET results.
+            return []
+        if path == "issues/138/comments" and method == "POST":
+            assert isinstance(payload, dict)
+            post_body = payload.get("body")
+            assert isinstance(post_body, str)
+            posts.append(post_body)
+            if len(posts) == 1:
+                # The provider accepted the write; only its response was lost.
+                raise OSError("response lost after provider accepted POST")
+            return {"id": 990 + len(posts)}
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(effects, "_github_json", provider)
+    monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
+    adapter = GitHubEffectAdapter(
+        repository, "token", source, authorized_change=_CHANGE, accepted_intent=True
+    )
+    effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 138, "body": body}),
+    )
+    with pytest.raises(OSError, match="response lost"):
+        adapter.apply(effect)
+    # A safe ambiguous outcome may stay pending without resubmission.
+    with contextlib.suppress(OSError, RuntimeError):
+        adapter.apply(effect)
+    assert len(posts) == 1, "ambiguous Formal Result POST was repeated"
+
+
+def test_formal_post_with_lost_response_recognizes_visible_native_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "finalize-change")
+    body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Role: lead\n"
+        "Action: finalize-change\n"
+        "Result: ARCHIVE_READY\n"
+        f"Revision: {_REVISION}"
+    )
+    effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": source.issue_number, "body": body}),
+    )
+    committed: list[dict[str, object]] = []
+
+    def provider(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+    ) -> object:
+        if method == "GET" and path.startswith("issues/138/comments?"):
+            return list(committed)
+        if method == "GET" and path == "issues/comments/991":
+            return committed[0]
+        if method == "POST" and path == "issues/138/comments":
+            assert payload == {"body": body}
+            committed.append(
+                {
+                    "id": 991,
+                    "body": body,
+                    "user": {"login": "github-actions[bot]"},
+                    "performed_via_github_app": {"slug": "github-actions"},
+                }
+            )
+            raise OSError("response lost after commit")
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(effects, "_github_json", provider)
+    monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy", _TEST_TOKEN, source, authorized_change=_CHANGE
+    )
+
+    adapter.apply(effect)
+
+    assert len(committed) == 1
+    assert adapter.observe_postcondition(effect)
+
+
+def test_late_r1_full_labels_patch_cannot_rewind_r2_route_or_unrelated_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RED: R1 request enters provider; R2 commits; only then does R1 finish."""
+    from threading import Event, Thread
+
+    issue: dict[str, object] = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-03T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "action:implement-change"},
+            {"name": "priority"},
+        ],
+    }
+    entered, release = Event(), Event()
+    errors: list[BaseException] = []
+
+    def provider(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        if path == "issues/138" and method == "GET":
+            return json.loads(json.dumps(issue))
+        if path == "issues/138" and method == "PATCH":
+            assert isinstance(payload, dict)
+            labels = payload.get("labels")
+            assert isinstance(labels, list)
+            entered.set()
+            assert release.wait(timeout=10), "test provider deadline"
+            issue["labels"] = [{"name": name} for name in labels]
+            return json.loads(json.dumps(issue))
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(effects, "_github_json", provider)
+    monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(138, "executor", "implement-change"),
+        authorized_change=_CHANGE,
+    )
+    effect = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps({"issue_number": 138, "action": "resolve-question"}),
+        derived=True,
+    )
+
+    def apply_old_writer() -> None:
+        try:
+            adapter.apply(effect)
+        except BaseException as exc:
+            errors.append(exc)
+
+    old_writer = Thread(target=apply_old_writer)
+    old_writer.start()
+    try:
+        assert entered.wait(timeout=10), "R1 PATCH did not enter provider"
+        # Another version has already written the new route and unrelated label.
+        issue["labels"] = [
+            {"name": "action:review-implementation"},
+            {"name": "priority"},
+            {"name": "audit:preserve"},
+        ]
+    finally:
+        release.set()
+        old_writer.join(timeout=10)
+    assert not old_writer.is_alive(), "R1 PATCH did not finish"
+    assert not errors
+    labels = issue["labels"]
+    assert isinstance(labels, list)
+    label_names = {item["name"] for item in labels}
+    assert "action:review-implementation" in label_names
+    assert "action:resolve-question" not in label_names
+    assert "audit:preserve" in label_names
+
+
+def test_f1_qualified_r1_result_prevents_cross_revision_r2_publication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RED: a qualified R1 identity must remain authoritative across R2."""
+    from investment_strategy.scheduled_agent_formal_result import parse_formal_result
+
+    source = WorkerRequest(138, "lead", "finalize-change")
+    correlation = effects.formal_application_correlation(
+        source,
+        change=_CHANGE,
+        result_kind="archive-ready",
+        current_revision=_REVISION,
+        request_comment_id=7002127308,
+    )
+
+    def body(revision: str) -> str:
+        return (
+            "ACTION_RESULT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Role: lead\n"
+            "Action: finalize-change\n"
+            "Result: ARCHIVE_READY\n"
+            f"Revision: {revision}\n"
+            f"Default-Branch-Revision: {_REVISION}\n"
+            f"Application-Correlation: {correlation}\n"
+            "Repository-derived successor: Reviewer / review-archive\n"
+            "Evidence: accepted immutable intent"
+        )
+
+    original = {
+        "id": 991,
+        "body": body(_REVISION),
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    parsed = parse_formal_result(original, current_revision=_REVISION)
+    assert parsed is not None and parsed.valid
+    posts: list[object] = []
+
+    def provider(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return [original]
+        if path == "issues/138/comments" and method == "POST":
+            posts.append(payload)
+            return {"id": 992}
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(effects, "_github_json", provider)
+    monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
+    r2 = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="archive-ready",
+        request_comment_id=7002127308,
+        accepted_intent=True,
+    )
+    new_projection = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 138, "body": body("b" * 40)}),
+    )
+    with contextlib.suppress(RuntimeError):
+        r2.apply(new_projection)
+    assert posts == [], "R2 published a second result despite a qualified R1"
+
+
+def test_f1_inflight_r1_post_cannot_be_forked_by_r2_with_empty_get(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RED: an entered but incomplete R1 POST excludes a competing R2 POST."""
+    from threading import Event, Thread
+
+    source = WorkerRequest(138, "lead", "finalize-change")
+    entered, release = Event(), Event()
+    submitted: list[str] = []
+    failures: list[BaseException] = []
+
+    def body(revision: str) -> str:
+        return (
+            "ACTION_RESULT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Role: lead\n"
+            "Action: finalize-change\n"
+            "Result: ARCHIVE_READY\n"
+            f"Revision: {revision}"
+        )
+
+    def provider(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return []
+        if path == "issues/138/comments" and method == "POST":
+            assert isinstance(payload, dict)
+            value = payload.get("body")
+            assert isinstance(value, str)
+            if f"Revision: {_REVISION}" in value:
+                entered.set()
+                assert release.wait(timeout=10), "R1 provider deadline"
+            submitted.append(value)
+            return {"id": 991 + len(submitted)}
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(effects, "_github_json", provider)
+    monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
+    r1 = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        accepted_intent=True,
+    )
+    r2 = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        accepted_intent=True,
+    )
+
+    def apply_r1() -> None:
+        try:
+            r1.apply(
+                StagedEffect(
+                    kind="issue-comment",
+                    payload_json=json.dumps({"issue_number": 138, "body": body(_REVISION)}),
+                )
+            )
+        except BaseException as exc:
+            failures.append(exc)
+
+    thread = Thread(target=apply_r1)
+    thread.start()
+    try:
+        assert entered.wait(timeout=10), "R1 never entered provider"
+        with contextlib.suppress(RuntimeError):
+            r2.apply(
+                StagedEffect(
+                    kind="issue-comment",
+                    payload_json=json.dumps({"issue_number": 138, "body": body("b" * 40)}),
+                )
+            )
+    finally:
+        release.set()
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert not failures
+    assert len(submitted) == 1, "R2 forked an in-flight R1 authoritative result"
+
+
+def test_f1_proven_never_submitted_post_recovers_with_single_provider_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-transport failure must not be conflated with ambiguous in-flight POST."""
+    source = WorkerRequest(138, "lead", "finalize-change")
+    body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Role: lead\n"
+        "Action: finalize-change\n"
+        "Result: ARCHIVE_READY\n"
+        f"Revision: {_REVISION}"
+    )
+    api_attempts = 0
+    provider_commits: list[str] = []
+
+    def provider(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        nonlocal api_attempts
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return []
+        if path == "issues/138/comments" and method == "POST":
+            api_attempts += 1
+            assert isinstance(payload, dict) and isinstance(payload.get("body"), str)
+            if api_attempts == 1:
+                # Injected before the provider accepts any HTTP request.
+                raise ConnectionRefusedError("pre-transport: definitely never submitted")
+            provider_commits.append(payload["body"])
+            return {"id": 991}
+        if path == "issues/comments/991":
+            return {
+                "id": 991,
+                "body": provider_commits[0],
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+            }
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(effects, "_github_json", provider)
+    monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        accepted_intent=True,
+    )
+    effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 138, "body": body}),
+    )
+    with pytest.raises(ConnectionRefusedError, match="definitely never submitted"):
+        adapter.apply(effect)
+    assert provider_commits == []
+    adapter.apply(effect)
+    assert len(provider_commits) == 1
+    assert adapter.observe_postcondition(effect)

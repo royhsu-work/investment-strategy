@@ -3889,20 +3889,32 @@ class GitHubEffectAdapter:
         if effect.kind == "issue-comment":
             body = cast(str, payload["body"])
             marker = body.splitlines()[0].removeprefix("## ").strip() if body else ""
-            if marker in _FORMAL_RESULT_MARKERS and not self._formal_consequence_ready():
+            is_formal_result = marker in _FORMAL_RESULT_MARKERS
+            if is_formal_result and not self._formal_consequence_ready():
                 raise RuntimeError("formal result consequence is not successor-ready")
             body = self._application_bound_comment_body(body)
             existing = self._existing_issue_comment(body)
             if existing is not None:
                 self._comment_ids[effect] = existing
                 return
-            response = _github_json(
-                self.repository,
-                self.token,
-                f"issues/{self.source.issue_number}/comments",
-                method="POST",
-                payload={"body": body},
-            )
+            try:
+                response = _github_json(
+                    self.repository,
+                    self.token,
+                    f"issues/{self.source.issue_number}/comments",
+                    method="POST",
+                    payload={"body": body},
+                )
+            except OSError:
+                if not is_formal_result:
+                    raise
+                # A positive, provenance-qualified read can recover the comment ID.
+                # An empty read says nothing about whether the POST is still in flight.
+                observed_id = self._existing_issue_comment(body)
+                if observed_id is None:
+                    raise
+                self._comment_ids[effect] = observed_id
+                return
             if not isinstance(response, Mapping) or not isinstance(response.get("id"), int):
                 raise RuntimeError("GitHub comment mutation returned no comment id")
             self._comment_ids[effect] = cast(int, response["id"])

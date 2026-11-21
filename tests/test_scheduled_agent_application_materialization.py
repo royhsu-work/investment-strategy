@@ -3827,6 +3827,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
         },
     ]
     formal_comments: list[dict[str, object]] = []
+    pending_formal_comments: list[dict[str, object]] = []
     formal_comment_posts: list[str] = []
     lose_formal_post_response = {"once": True}
     successor_patches: list[list[str]] = []
@@ -3889,12 +3890,12 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
                 "user": {"login": "github-actions[bot]"},
                 "performed_via_github_app": {"slug": "github-actions"},
             }
-            formal_comments.append(comment)
-            # Native GitHub accepted the comment; only the client response is
-            # lost. This must not authorize the next wake to replay the POST.
+            # Keep the committed comment invisible until the failed attempt exits.
             if lose_formal_post_response["once"]:
                 lose_formal_post_response["once"] = False
+                pending_formal_comments.append(comment)
                 raise OSError("simulated lost response after formal POST")
+            formal_comments.append(comment)
             return comment
         if api_path == "issues/comments/90001":
             return formal_comments[0] if formal_comments else None
@@ -4680,6 +4681,8 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
                 ],
             )
             code = application_bridge.main()
+        formal_comments.extend(pending_formal_comments)
+        pending_formal_comments.clear()
         return code, entered
 
     # Formal POST succeeds at GitHub but its client response is lost.
