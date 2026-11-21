@@ -6010,3 +6010,141 @@ def test_legacy_322_untrusted_forward_mapping_cannot_release_original_effects() 
         accepted_intent=True,
         forward_correction_satisfaction=correction_mapping,
     )
+
+
+def test_f1_provider_committed_formal_post_with_lost_response_is_not_reposted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RED: a delayed provider commit and empty GET cannot create two authorities."""
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "lead", "finalize-change")
+    body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Role: lead\n"
+        "Action: finalize-change\n"
+        "Result: ARCHIVE_READY\n"
+        f"Revision: {_REVISION}"
+    )
+    posts: list[str] = []
+
+    def provider(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc" and method == "GET":
+            # The first submitted POST has not yet appeared in GET results.
+            return []
+        if path == "issues/138/comments" and method == "POST":
+            assert isinstance(payload, dict)
+            post_body = payload.get("body")
+            assert isinstance(post_body, str)
+            posts.append(post_body)
+            if len(posts) == 1:
+                # The provider accepted the write; only its response was lost.
+                raise OSError("response lost after provider accepted POST")
+            return {"id": 990 + len(posts)}
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(effects, "_github_json", provider)
+    monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
+    adapter = GitHubEffectAdapter(
+        repository, "token", source, authorized_change=_CHANGE, accepted_intent=True
+    )
+    effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 138, "body": body}),
+    )
+    with pytest.raises(OSError, match="response lost"):
+        adapter.apply(effect)
+    # A subsequent wake must never issue another ambiguous non-idempotent POST.
+    adapter.apply(effect)
+    assert len(posts) == 1, "ambiguous Formal Result POST was repeated"
+
+
+def test_late_r1_full_labels_patch_cannot_rewind_r2_route_or_unrelated_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RED: R1 request enters provider; R2 commits; only then does R1 finish."""
+    from threading import Event, Thread
+
+    issue: dict[str, object] = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-03T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "action:implement-change"},
+            {"name": "priority"},
+        ],
+    }
+    entered, release = Event(), Event()
+    errors: list[BaseException] = []
+
+    def provider(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        if path == "issues/138" and method == "GET":
+            return json.loads(json.dumps(issue))
+        if path == "issues/138" and method == "PATCH":
+            assert isinstance(payload, dict)
+            labels = payload.get("labels")
+            assert isinstance(labels, list)
+            entered.set()
+            assert release.wait(timeout=10), "test provider deadline"
+            issue["labels"] = [{"name": name} for name in labels]
+            return json.loads(json.dumps(issue))
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(effects, "_github_json", provider)
+    monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(138, "executor", "implement-change"),
+        authorized_change=_CHANGE,
+    )
+    effect = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps({"issue_number": 138, "action": "resolve-question"}),
+        derived=True,
+    )
+
+    def apply_old_writer() -> None:
+        try:
+            adapter.apply(effect)
+        except BaseException as exc:
+            errors.append(exc)
+
+    old_writer = Thread(target=apply_old_writer)
+    old_writer.start()
+    try:
+        assert entered.wait(timeout=10), "R1 PATCH did not enter provider"
+        # Another version has already written the new route and unrelated label.
+        issue["labels"] = [
+            {"name": "action:review-implementation"},
+            {"name": "priority"},
+            {"name": "audit:preserve"},
+        ]
+    finally:
+        release.set()
+        old_writer.join(timeout=10)
+    assert not old_writer.is_alive(), "R1 PATCH did not finish"
+    assert not errors
+    label_names = {item["name"] for item in issue["labels"]}
+    assert "action:review-implementation" in label_names
+    assert "action:resolve-question" not in label_names
+    assert "audit:preserve" in label_names
