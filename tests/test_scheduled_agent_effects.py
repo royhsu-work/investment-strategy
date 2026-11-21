@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import inspect
 import json
@@ -6038,7 +6039,10 @@ def test_f1_provider_committed_formal_post_with_lost_response_is_not_reposted(
         payload: object = None,
         **_kwargs: object,
     ) -> object:
-        if path == "issues/138/comments?per_page=100&sort=created&direction=desc" and method == "GET":
+        if (
+            path == "issues/138/comments?per_page=100&sort=created&direction=desc"
+            and method == "GET"
+        ):
             # The first submitted POST has not yet appeared in GET results.
             return []
         if path == "issues/138/comments" and method == "POST":
@@ -6063,13 +6067,66 @@ def test_f1_provider_committed_formal_post_with_lost_response_is_not_reposted(
     )
     with pytest.raises(OSError, match="response lost"):
         adapter.apply(effect)
-    # A subsequent wake must never issue another ambiguous non-idempotent POST.
-    try:
+    # A safe ambiguous outcome may stay pending without resubmission.
+    with contextlib.suppress(OSError, RuntimeError):
         adapter.apply(effect)
-    except (OSError, RuntimeError):
-        # A safe ambiguous outcome may stay pending without resubmission.
-        pass
     assert len(posts) == 1, "ambiguous Formal Result POST was repeated"
+
+
+def test_formal_post_with_lost_response_recognizes_visible_native_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "finalize-change")
+    body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Role: lead\n"
+        "Action: finalize-change\n"
+        "Result: ARCHIVE_READY\n"
+        f"Revision: {_REVISION}"
+    )
+    effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": source.issue_number, "body": body}),
+    )
+    committed: list[dict[str, object]] = []
+
+    def provider(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+    ) -> object:
+        if method == "GET" and path.startswith("issues/138/comments?"):
+            return list(committed)
+        if method == "GET" and path == "issues/comments/991":
+            return committed[0]
+        if method == "POST" and path == "issues/138/comments":
+            assert payload == {"body": body}
+            committed.append(
+                {
+                    "id": 991,
+                    "body": body,
+                    "user": {"login": "github-actions[bot]"},
+                    "performed_via_github_app": {"slug": "github-actions"},
+                }
+            )
+            raise OSError("response lost after commit")
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(effects, "_github_json", provider)
+    monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy", _TEST_TOKEN, source, authorized_change=_CHANGE
+    )
+
+    adapter.apply(effect)
+
+    assert len(committed) == 1
+    assert adapter.observe_postcondition(effect)
 
 
 def test_late_r1_full_labels_patch_cannot_rewind_r2_route_or_unrelated_label(
@@ -6148,7 +6205,9 @@ def test_late_r1_full_labels_patch_cannot_rewind_r2_route_or_unrelated_label(
         old_writer.join(timeout=10)
     assert not old_writer.is_alive(), "R1 PATCH did not finish"
     assert not errors
-    label_names = {item["name"] for item in issue["labels"]}
+    labels = issue["labels"]
+    assert isinstance(labels, list)
+    label_names = {item["name"] for item in labels}
     assert "action:review-implementation" in label_names
     assert "action:resolve-question" not in label_names
     assert "audit:preserve" in label_names
@@ -6226,10 +6285,8 @@ def test_f1_qualified_r1_result_prevents_cross_revision_r2_publication(
         kind="issue-comment",
         payload_json=json.dumps({"issue_number": 138, "body": body("b" * 40)}),
     )
-    try:
+    with contextlib.suppress(RuntimeError):
         r2.apply(new_projection)
-    except RuntimeError:
-        pass
     assert posts == [], "R2 published a second result despite a qualified R1"
 
 
@@ -6280,20 +6337,28 @@ def test_f1_inflight_r1_post_cannot_be_forked_by_r2_with_empty_get(
     monkeypatch.setattr(effects, "_github_json", provider)
     monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
     r1 = GitHubEffectAdapter(
-        "royhsu-work/investment-strategy", "token", source,
-        authorized_change=_CHANGE, accepted_intent=True,
+        "royhsu-work/investment-strategy",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        accepted_intent=True,
     )
     r2 = GitHubEffectAdapter(
-        "royhsu-work/investment-strategy", "token", source,
-        authorized_change=_CHANGE, accepted_intent=True,
+        "royhsu-work/investment-strategy",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        accepted_intent=True,
     )
 
     def apply_r1() -> None:
         try:
-            r1.apply(StagedEffect(
-                kind="issue-comment",
-                payload_json=json.dumps({"issue_number": 138, "body": body(_REVISION)}),
-            ))
+            r1.apply(
+                StagedEffect(
+                    kind="issue-comment",
+                    payload_json=json.dumps({"issue_number": 138, "body": body(_REVISION)}),
+                )
+            )
         except BaseException as exc:
             failures.append(exc)
 
@@ -6301,13 +6366,13 @@ def test_f1_inflight_r1_post_cannot_be_forked_by_r2_with_empty_get(
     thread.start()
     try:
         assert entered.wait(timeout=10), "R1 never entered provider"
-        try:
-            r2.apply(StagedEffect(
-                kind="issue-comment",
-                payload_json=json.dumps({"issue_number": 138, "body": body("b" * 40)}),
-            ))
-        except RuntimeError:
-            pass
+        with contextlib.suppress(RuntimeError):
+            r2.apply(
+                StagedEffect(
+                    kind="issue-comment",
+                    payload_json=json.dumps({"issue_number": 138, "body": body("b" * 40)}),
+                )
+            )
     finally:
         release.set()
         thread.join(timeout=10)
@@ -6365,8 +6430,11 @@ def test_f1_proven_never_submitted_post_recovers_with_single_provider_commit(
     monkeypatch.setattr(effects, "_github_json", provider)
     monkeypatch.setattr(GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True)
     adapter = GitHubEffectAdapter(
-        "royhsu-work/investment-strategy", "token", source,
-        authorized_change=_CHANGE, accepted_intent=True,
+        "royhsu-work/investment-strategy",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        accepted_intent=True,
     )
     effect = StagedEffect(
         kind="issue-comment",
