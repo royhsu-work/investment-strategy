@@ -115,6 +115,7 @@ from investment_strategy.scheduled_agent_wire import (
     APPLICATION_CONTINUATION_WIRE,
     EFFECT_REQUEST_WIRE,
     MACHINE_EFFECT_REQUEST_WIRE,
+    RUNTIME_REPAIR_REQUEST_WIRE,
 )
 from investment_strategy.scheduled_agent_worker import WorkerActionResult, parse_worker_result
 from investment_strategy.workflow_dispatch import (
@@ -6714,6 +6715,164 @@ def _qualified_accepted_original_effects(
         stage = "ZERO_ORIGINAL_IDENTITY"
         detail = "accepted zero-Effect source identity invalid"
     return TypedEvidenceError(category, stage, detail, record.request_comment_id)
+
+
+@dataclass(frozen=True)
+class ForwardCorrectionWitness:
+    """A distinct Git consequence, not proof that an accepted Effect ran."""
+
+    human_comment_id: int
+    repair_pr: int
+    repair_head: str
+    materialization: MaterializationProof
+
+
+def _qualified_forward_correction_witness(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    original_payload: Mapping[str, object],
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+) -> ForwardCorrectionWitness | None:
+    """Requalify a Human R9 source and its separate, exact Git witness.
+
+    A positive result is *read-only correction evidence*. The normal
+    Application still owns semantic adoption, Formal Result publication,
+    successor authorization, and every eventual write. A R9 request alone
+    grants none of those capabilities.
+    """
+
+    if (
+        record.disposition != "ACCEPTED"
+        or (record.issue_number, record.role, record.action)
+        != (source.issue_number, source.role, source.action)
+        or not isinstance(repository, str)
+        or "/" not in repository
+    ):
+        return None
+    original_request = find_materialization_payload(original_payload, source)
+    if original_request is None or original_request.pr_number is None:
+        return None
+
+    comments = _paged_github_list(
+        repository, token, f"issues/{source.issue_number}/comments?sort=created&direction=asc"
+    )
+    decisions = [
+        comment
+        for comment in comments
+        if is_github_actions_comment(comment)
+        and (parsed := parse_application_decision(comment.get("body"))) == record
+    ]
+    if len(decisions) != 1 or not isinstance(decisions[0].get("body"), str):
+        return None
+    decision_digest = hashlib.sha256(cast(str, decisions[0]["body"]).encode()).hexdigest()
+    decision_time = decisions[0].get("created_at")
+    owner = repository.split("/", 1)[0]
+    candidates: list[tuple[int, int, str]] = []
+    for comment in comments:
+        body = comment.get("body")
+        if not isinstance(body, str):
+            continue
+        fields = RUNTIME_REPAIR_REQUEST_WIRE.parse(body)
+        if fields is None:
+            continue
+        user = comment.get("user")
+        comment_id = comment.get("id")
+        if (
+            not isinstance(user, Mapping)
+            or user.get("login") != owner
+            or user.get("type") != "User"
+            or comment.get("performed_via_github_app") is not None
+            or type(comment_id) is not int
+            or comment_id <= 0
+            or not isinstance(decision_time, str)
+            or not isinstance(comment.get("created_at"), str)
+            or comment.get("created_at") <= decision_time
+            or comment.get("updated_at") != comment.get("created_at")
+            or fields.get("Issue") != str(source.issue_number)
+            or fields.get("Change") != record.change
+            or fields.get("Action") != source.action
+            or fields.get("Accepted-Request-Comment") != str(record.request_comment_id)
+            or fields.get("Accepted-Decision-SHA256") != decision_digest
+            or fields.get("Repair-PR") != str(original_request.pr_number)
+            or _SHA.fullmatch(fields.get("Repair-HEAD", "")) is None
+        ):
+            continue
+        candidates.append(
+            (comment_id, original_request.pr_number, fields["Repair-HEAD"])
+        )
+    if len(candidates) != 1:
+        # Multiple otherwise-qualified R9 sources are not an implicit
+        # priority or timestamp-based authority selection.
+        return None
+    human_id, pr_number, head_sha = candidates[0]
+    native = _as_mapping(_github_json(repository, token, f"issues/comments/{human_id}"))
+    if (
+        native is None
+        or native.get("id") != human_id
+        or native.get("body") != next(
+            (comment.get("body") for comment in comments if comment.get("id") == human_id),
+            None,
+        )
+        or native.get("performed_via_github_app") is not None
+    ):
+        return None
+
+    pr = _as_mapping(_github_json(repository, token, f"pulls/{pr_number}"))
+    head = None if pr is None else _as_mapping(pr.get("head"))
+    base = None if pr is None else _as_mapping(pr.get("base"))
+    head_repo = None if head is None else _as_mapping(head.get("repo"))
+    base_repo = None if base is None else _as_mapping(base.get("repo"))
+    if (
+        pr is None
+        or pr.get("number") != pr_number
+        or pr.get("state") != "open"
+        or pr.get("merged") is not False
+        or pr.get("draft") is True
+        or head is None
+        or head.get("sha") != head_sha
+        or head.get("ref") != original_request.branch
+        or head_repo is None
+        or head_repo.get("full_name") != repository
+        or base is None
+        or base.get("ref") != default_branch
+        or base_repo is None
+        or base_repo.get("full_name") != repository
+    ):
+        return None
+    commit = _as_mapping(_github_json(repository, token, f"git/commits/{head_sha}"))
+    message = None if commit is None else commit.get("message")
+    if (
+        commit is None
+        or not isinstance(message, str)
+        or not message.strip()
+        or message == original_request.message
+    ):
+        return None
+    # Reuse the canonical Git owner. Only the new commit message differs;
+    # immutable accepted preimages, desired blobs and carrier stay untouched.
+    corrected_payload = {**original_payload, "message": message}
+    correction = prove_materialization(
+        corrected_payload,
+        source,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+        default_branch=default_branch,
+        accepted_authorization_revision=record.authorization_revision,
+        allow_pending_continuation=True,
+        accepted_intent=True,
+    )
+    if (
+        correction.disposition != "COMPLETE"
+        or correction.witness is None
+        or correction.witness.revision != head_sha
+    ):
+        return None
+    return ForwardCorrectionWitness(human_id, pr_number, head_sha, correction)
 
 
 def _observe_accepted_post_effect_result(
