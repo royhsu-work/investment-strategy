@@ -5767,6 +5767,36 @@ def test_source_qualified_forward_correction_has_independent_git_witness(
         assert fact.forward_correction_source_comment_id == 711
         assert fact.forward_correction_observation == correction.materialization
         assert application_bridge.evaluate_recovery_evidence(fact).disposition == "SATISFIED"
+
+        # A later qualified Formal Result must still read back the current
+        # consequence without pretending the original Git write succeeded.
+        monkeypatch.setattr(effects, "_fresh_materialization_target", lambda *_a, **_kw: None)
+        correlation = effects.formal_application_correlation(
+            source,
+            change=_CHANGE,
+            result_kind=record.result_kind,
+            current_revision=proof_git.main,
+            request_comment_id=record.request_comment_id,
+        )
+        assert effects.consequence_postconditions_complete(
+            raw,
+            source=source,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            authorized_change=_CHANGE,
+            request_comment_id=record.request_comment_id,
+            accepted_intent=True,
+            formal_result_observed=True,
+            observed_application_correlation=correlation,
+            accepted_correction_observer=(
+                lambda effect: (
+                    (correction.human_comment_id, correction.materialization)
+                    if effect == original_effect
+                    else None
+                )
+            ),
+        )
     else:
         assert correction is None
     assert proof_git.mutations == []
