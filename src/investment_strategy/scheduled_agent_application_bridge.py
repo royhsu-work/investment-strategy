@@ -6446,9 +6446,11 @@ def _observe_accepted_effect_fact(
             and obligation == "ORIGINAL_EFFECT"
             and materialization.historical_witness is not None
         )
+        correction_observer = getattr(adapter, "observe_accepted_correction", None)
         correction = (
-            adapter.observe_accepted_correction(effect)
-            if obligation == "ORIGINAL_EFFECT"
+            correction_observer(effect)
+            if callable(correction_observer)
+            and obligation == "ORIGINAL_EFFECT"
             and materialization.disposition != "COMPLETE"
             and not historical_original
             else None
@@ -8977,7 +8979,11 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             **({"accepted_intent": True} if accepted_intent is not None else {}),
             **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
             uncertain_effect_index=uncertain_effect_index,
-            accepted_correction_observer=accepted_correction_observer,
+            **(
+                {"accepted_correction_observer": accepted_correction_observer}
+                if accepted_correction_observer is not None
+                else {}
+            ),
             **(
                 {"proven_empty_original_effects": True}
                 if original_effect_count == 0 and predecessor_disposition == "INDETERMINATE"
