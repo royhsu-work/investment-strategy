@@ -3342,7 +3342,9 @@ def _fresh_completion_postconditions(
         repository=repository,
         token=token,
     )
-    if not isinstance(original, EffectBatch):
+    # Multiple original Effects include separately qualified checkpoint/write
+    # obligations; a one-materialization correction cannot retire that set.
+    if not isinstance(original, EffectBatch) or len(original.effects) != 1:
         return False
     repository_info = read(repository, token, "")
     default_branch = (
