@@ -6924,15 +6924,21 @@ def _accepted_forward_correction_target(
         or record.change == "unset"
     ):
         return None
-    witness = _qualified_forward_correction_witness(
-        record=record,
-        source=source,
-        original_payload=original_payload,
-        repository=repository,
-        token=token,
-        current_revision=current_revision,
-        default_branch=default_branch,
-    )
+    try:
+        witness = _qualified_forward_correction_witness(
+            record=record,
+            source=source,
+            original_payload=original_payload,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+        )
+    except (OSError, RuntimeError, ValueError):
+        # A missing R9 observation never substitutes the original target.
+        # Only the positive corrected witness may change this validation
+        # target; the original materialization gate remains authoritative.
+        return None
     return None if witness is None else witness.materialization.target
 
 
