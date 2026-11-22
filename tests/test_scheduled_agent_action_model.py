@@ -228,6 +228,55 @@ def test_selection_fails_closed_for_ambiguous_or_unqualified_state(
     assert decision.role is None
 
 
+@pytest.mark.parametrize(
+    ("change", "action"),
+    [
+        ("unset", Action.EXPLORE_CHANGE),
+        ("unset", Action.PROPOSE_CHANGE),
+        ("issue458-scope", Action.REVIEW_OPENSPEC),
+    ],
+)
+def test_scoped_human_priority_precedes_435_without_rewriting_it(
+    change: str, action: Action
+) -> None:
+    selected = select_work(
+        AuthoritativeObservations(
+            issues=(
+                IssueObservation(137, "open", "unset", Action.EXPLORE_CHANGE, 1),
+                IssueObservation(435, "open", "restore-t1", Action.RESOLVE_QUESTION, 2),
+                IssueObservation(458, "open", change, action, 3),
+            )
+        )
+    )
+    assert selected.disposition is SelectionDisposition.AUTHORIZE
+    assert selected.issue_number == 458
+    assert selected.action is action
+    assert selected.reason == "selected-human-priority-repair"
+
+
+def test_scoped_human_priority_expires_and_unrelated_parallel_formal_fails() -> None:
+    exited = select_work(
+        AuthoritativeObservations(
+            issues=(
+                IssueObservation(435, "open", "restore-t1", Action.RESOLVE_QUESTION),
+                IssueObservation(458, "closed", "issue458-scope", None),
+            )
+        )
+    )
+    assert exited.issue_number == 435
+    unrelated = select_work(
+        AuthoritativeObservations(
+            issues=(
+                IssueObservation(435, "open", "restore-t1", Action.RESOLVE_QUESTION),
+                IssueObservation(460, "open", "unrelated", Action.REVIEW_OPENSPEC),
+                IssueObservation(458, "open", "unset", Action.EXPLORE_CHANGE),
+            )
+        )
+    )
+    assert unrelated.disposition is SelectionDisposition.FAIL_CLOSED
+    assert unrelated.reason == "wip-more-than-one"
+
+
 def test_select_work_returns_no_work_for_unrouted_issues() -> None:
     decision = select_work(
         AuthoritativeObservations(

@@ -18,6 +18,7 @@ from investment_strategy.scheduled_agent_action_model import (
     SelectionDecision,
     ShadowComparison,
     role_for,
+    scoped_human_priority_activation,
     select_work,
     shadow_compare_selection,
 )
@@ -291,7 +292,10 @@ def activation_postwrite_accepted(
     decision = classify_dispatch(preflight)
     if (
         decision.disposition != "AUTHORIZE"
-        or decision.formal_issue_ids != (issue_number,)
+        or (
+            decision.formal_issue_ids != (issue_number,)
+            and not scoped_human_priority_activation(decision.formal_issue_ids, issue_number)
+        )
         or decision.selected_issue_id != issue_number
         or decision.selected_routing != ("lead", "propose-change")
     ):

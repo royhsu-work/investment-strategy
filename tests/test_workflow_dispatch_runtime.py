@@ -98,6 +98,38 @@ def test_wip_and_incomplete_observations_fail_closed() -> None:
     assert classify_dispatch(incomplete).completeness == "INDETERMINATE"
 
 
+def test_scoped_human_priority_preserves_activation_proof() -> None:
+    before = _preflight(
+        (
+            _issue(435, "resolve-question", change="restore-t1", order=1),
+            _issue(458, "propose-change", change="unset", order=2),
+        )
+    )
+    assert classify_dispatch(before).selected_issue_id == 458
+    assert action_entry_authorized(before, 458, ("lead", "propose-change"))
+
+    after = _preflight(
+        (
+            _issue(435, "resolve-question", change="restore-t1", order=1),
+            _issue(458, "propose-change", change="issue458-scope", order=2),
+        )
+    )
+    assert classify_dispatch(after).formal_issue_ids == (435, 458)
+    assert activation_postwrite_accepted(after, issue_number=458, expected_change="issue458-scope")
+    assert not activation_postwrite_accepted(after, issue_number=435, expected_change="restore-t1")
+
+
+def test_scoped_human_priority_does_not_bypass_closed_debt() -> None:
+    before = _preflight(
+        (
+            _issue(435, "resolve-question", change="restore-t1"),
+            _issue(458, "explore-change", change="unset"),
+            _issue(411, "resolve-question", state="closed", routing_debt=True),
+        )
+    )
+    assert classify_dispatch(before).disposition == "FAIL_CLOSED"
+
+
 def test_closed_routing_debt_fails_closed_before_selection() -> None:
     preflight = _preflight((_issue(138, "implement-change", state="closed", routing_debt=True),))
 
