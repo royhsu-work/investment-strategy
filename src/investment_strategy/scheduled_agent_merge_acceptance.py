@@ -29,6 +29,7 @@ from investment_strategy.scheduled_agent_action_model import (
     ApplicationRejection,
     ApplicationRejectionKind,
 )
+from investment_strategy.scheduled_agent_application_materialization import MaterializationProof
 from investment_strategy.scheduled_agent_carrier import (
     github_paginated_mappings,
     github_read_bytes_with_retry,
@@ -772,6 +773,9 @@ def run_effect_application(
     uncertain_effect_index: int | None = None,
     proven_empty_original_effects: bool = False,
     original_322_recovery: bool = False,
+    accepted_correction_observer: (
+        Callable[[StagedEffect], tuple[int, MaterializationProof] | None] | None
+    ) = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Apply through shared effect guards plus an optional mutation-adjacent guard."""
 
@@ -796,6 +800,7 @@ def run_effect_application(
         pending_application_correlation=pending_application_correlation,
         authorization_revision=authorization_revision,
         accepted_intent=accepted_intent,
+        accepted_correction_observer=accepted_correction_observer,
     )
 
     def apply_with_fresh_guard(effect: StagedEffect) -> None:
