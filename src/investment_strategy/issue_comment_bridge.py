@@ -61,6 +61,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
 )
 from investment_strategy.scheduled_agent_application_carrier import qualify_implementation_carrier
 from investment_strategy.scheduled_agent_application_materialization import (
+    MaterializationProof,
     _proof_witness,
     find_materialization_payload,
 )
@@ -87,6 +88,7 @@ from investment_strategy.scheduled_agent_effects import (
     ApplicationDecisionRecord,
     ApplyResult,
     EffectBatch,
+    StagedEffect,
     consequence_postconditions_complete,
     merged_pr_readiness_complete,
     parse_application_decision,
