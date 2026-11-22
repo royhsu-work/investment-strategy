@@ -4532,6 +4532,9 @@ def consequence_postconditions_complete(
     accepted_intent: bool = False,
     observed_application_correlation: str | None = None,
     formal_result_observed: bool = False,
+    accepted_correction_observer: (
+        Callable[[StagedEffect], tuple[int, MaterializationProof] | None] | None
+    ) = None,
 ) -> bool:
     """Prove the affirmative consequence contract from fresh repository state.
 
@@ -4645,20 +4648,22 @@ def consequence_postconditions_complete(
                 expected_result_kind=batch.typed_result.result.kind.value,
                 request_comment_id=request_comment_id,
                 accepted_intent=accepted_intent,
+                accepted_correction_observer=accepted_correction_observer,
             )
             payload = _effect_payload(materializations[0])
-            if (
-                payload is None
-                or _fresh_materialization_target(
-                    payload,
-                    adapter=adapter,
-                    source=source,
-                    current_revision=current_revision,
-                    allow_pending_continuation=allow_pending_continuation,
-                    accepted_successor_routing=accepted_successor_routing,
-                )
-                is None
-            ):
+            if payload is None:
+                return False
+            original_target = _fresh_materialization_target(
+                payload,
+                adapter=adapter,
+                source=source,
+                current_revision=current_revision,
+                allow_pending_continuation=allow_pending_continuation,
+                accepted_successor_routing=accepted_successor_routing,
+            )
+            if original_target is None and adapter.observe_accepted_correction(
+                materializations[0]
+            ) is None:
                 return False
             # Materialization and the non-idempotent SLICE_CHECKPOINT are
             # distinct obligations of one immutable accepted result. The
