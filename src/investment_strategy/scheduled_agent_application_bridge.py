@@ -6771,6 +6771,30 @@ def _qualified_forward_correction_witness(
     decision_digest = hashlib.sha256(cast(str, decisions[0]["body"]).encode()).hexdigest()
     decision_time = decisions[0].get("created_at")
     owner = repository.split("/", 1)[0]
+    pr = _as_mapping(_github_json(repository, token, f"pulls/{original_request.pr_number}"))
+    head = None if pr is None else _as_mapping(pr.get("head"))
+    base = None if pr is None else _as_mapping(pr.get("base"))
+    head_repo = None if head is None else _as_mapping(head.get("repo"))
+    base_repo = None if base is None else _as_mapping(base.get("repo"))
+    current_head = None if head is None else head.get("sha")
+    if (
+        pr is None
+        or pr.get("number") != original_request.pr_number
+        or pr.get("state") != "open"
+        or pr.get("merged") is not False
+        or pr.get("draft") is True
+        or head is None
+        or not isinstance(current_head, str)
+        or _SHA.fullmatch(current_head) is None
+        or head.get("ref") != original_request.branch
+        or head_repo is None
+        or head_repo.get("full_name") != repository
+        or base is None
+        or base.get("ref") != default_branch
+        or base_repo is None
+        or base_repo.get("full_name") != repository
+    ):
+        return None
     candidates: list[tuple[int, int, str]] = []
     for comment in comments:
         body = comment.get("body")
@@ -6798,7 +6822,7 @@ def _qualified_forward_correction_witness(
             or fields.get("Accepted-Request-Comment") != str(record.request_comment_id)
             or fields.get("Accepted-Decision-SHA256") != decision_digest
             or fields.get("Repair-PR") != str(original_request.pr_number)
-            or _SHA.fullmatch(fields.get("Repair-HEAD", "")) is None
+            or fields.get("Repair-HEAD") != current_head
         ):
             continue
         candidates.append(
@@ -6810,6 +6834,7 @@ def _qualified_forward_correction_witness(
         return None
     human_id, pr_number, head_sha = candidates[0]
     native = _as_mapping(_github_json(repository, token, f"issues/comments/{human_id}"))
+    native_user = None if native is None else _as_mapping(native.get("user"))
     if (
         native is None
         or native.get("id") != human_id
@@ -6818,29 +6843,12 @@ def _qualified_forward_correction_witness(
             None,
         )
         or native.get("performed_via_github_app") is not None
-    ):
-        return None
-
-    pr = _as_mapping(_github_json(repository, token, f"pulls/{pr_number}"))
-    head = None if pr is None else _as_mapping(pr.get("head"))
-    base = None if pr is None else _as_mapping(pr.get("base"))
-    head_repo = None if head is None else _as_mapping(head.get("repo"))
-    base_repo = None if base is None else _as_mapping(base.get("repo"))
-    if (
-        pr is None
-        or pr.get("number") != pr_number
-        or pr.get("state") != "open"
-        or pr.get("merged") is not False
-        or pr.get("draft") is True
-        or head is None
-        or head.get("sha") != head_sha
-        or head.get("ref") != original_request.branch
-        or head_repo is None
-        or head_repo.get("full_name") != repository
-        or base is None
-        or base.get("ref") != default_branch
-        or base_repo is None
-        or base_repo.get("full_name") != repository
+        or native_user is None
+        or native_user.get("login") != owner
+        or native_user.get("type") != "User"
+        or native.get("created_at") != native.get("updated_at")
+        or head_sha != current_head
+        or pr_number != original_request.pr_number
     ):
         return None
     commit = _as_mapping(_github_json(repository, token, f"git/commits/{head_sha}"))
