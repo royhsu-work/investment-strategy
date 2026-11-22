@@ -3741,6 +3741,23 @@ class GitHubEffectAdapter:
         return "\n".join(lines) + suffix
 
     def _existing_issue_comment(self, body: str) -> int | None:
+        # A bound accepted correlation is the logical Formal Result identity.
+        # A trusted native result with the same correlation but different
+        # content is a conflict, not proof that a second POST is safe.
+        lines = body.splitlines()
+        marker = lines[0].removeprefix("## ").strip() if lines else ""
+        correlations = [
+            line.partition(":")[2].strip()
+            for line in lines
+            if line.startswith("Application-Correlation:")
+        ]
+        formal_correlation = (
+            correlations[0]
+            if marker in _FORMAL_RESULT_MARKERS
+            and len(correlations) == 1
+            and correlations[0]
+            else None
+        )
         # Offset pagination is not a snapshot.  Compare two exhaustive
         # enumerations before treating absence/uniqueness as durable evidence.
         # The application write job is serialized with sibling applications;
@@ -3775,6 +3792,22 @@ class GitHubEffectAdapter:
                         raise RuntimeError("issue-comment recovery listing body is invalid")
                     trusted = is_github_actions_comment(item)
                     observed.append((comment_id, comment_body, trusted))
+                    if formal_correlation is not None and trusted and comment_body != body:
+                        candidate_lines = comment_body.splitlines()
+                        candidate_marker = (
+                            candidate_lines[0].removeprefix("## ").strip()
+                            if candidate_lines
+                            else ""
+                        )
+                        if candidate_marker == marker and any(
+                            line.startswith("Application-Correlation:")
+                            and line.partition(":")[2].strip() == formal_correlation
+                            for line in candidate_lines
+                        ):
+                            raise RuntimeError(
+                                "accepted Formal Result correlation already has "
+                                "a distinct native result"
+                            )
                     if comment_body != body or not trusted:
                         continue
                     if matching_id is not None:
