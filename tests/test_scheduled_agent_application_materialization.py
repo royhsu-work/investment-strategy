@@ -3908,6 +3908,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     monkeypatch.setattr(materialization, "_github_json", native_read)
     monkeypatch.setattr(validation_resource, "_github_json", native_read)
     monkeypatch.setattr(effects, "_github_json", native_read)
+    monkeypatch.setattr(application_bridge, "_github_json", native_read)
     # The separate OpenSpec review gate is established upstream of this
     # accepted Effect. It is not reimplemented by the Git witness test.
     from investment_strategy import scheduled_agent_application_carrier as application_carrier
