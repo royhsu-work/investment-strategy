@@ -6903,6 +6903,31 @@ def _qualified_forward_correction_witness(
     return ForwardCorrectionWitness(human_id, pr_number, head_sha, correction)
 
 
+def _accepted_forward_correction_target(
+    *,
+    record: ApplicationDecisionRecord | None,
+    source: WorkerRequest,
+    original_payload: Mapping[str, object],
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+) -> ValidationResourceTarget | None:
+    """Reuse a separately proven target; validation itself remains mandatory."""
+    if record is None:
+        return None
+    witness = _qualified_forward_correction_witness(
+        record=record,
+        source=source,
+        original_payload=original_payload,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+        default_branch=default_branch,
+    )
+    return None if witness is None else witness.materialization.target
+
+
 def _accepted_correction_observer_for_batch(
     *,
     record: ApplicationDecisionRecord,
@@ -8677,14 +8702,24 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     if requires_validation and args.validation_passed:
         if materialization is None:
             raise RuntimeError("validation target is missing materialization")
-        target = observe_materialization_target(
-            materialization,
-            plan.source,
+        target = _accepted_forward_correction_target(
+            record=accepted_intent,
+            source=plan.source,
+            original_payload=materialization,
             repository=repository,
             token=token,
             current_revision=args.revision,
             default_branch=args.default_branch,
-            accepted_authorization_revision=request.authorization_revision,
+        )
+        if target is None:
+            target = observe_materialization_target(
+                materialization,
+                plan.source,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+                default_branch=args.default_branch,
+                accepted_authorization_revision=request.authorization_revision,
             allow_pending_continuation=pending_continuation,
             accepted_intent=accepted_intent is not None,
         )
@@ -9099,14 +9134,24 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     if result.applied and requires_validation and not args.validation_passed:
         if materialization is None:
             raise RuntimeError("validation gate has no materialization target")
-        target = observe_materialization_target(
-            materialization,
-            plan.source,
+        target = _accepted_forward_correction_target(
+            record=accepted_intent,
+            source=plan.source,
+            original_payload=materialization,
             repository=repository,
             token=token,
             current_revision=args.revision,
             default_branch=args.default_branch,
-            accepted_authorization_revision=request.authorization_revision,
+        )
+        if target is None:
+            target = observe_materialization_target(
+                materialization,
+                plan.source,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+                default_branch=args.default_branch,
+                accepted_authorization_revision=request.authorization_revision,
             allow_pending_continuation=pending_continuation,
             accepted_intent=accepted_intent is not None,
         )
