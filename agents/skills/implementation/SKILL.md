@@ -11,7 +11,21 @@ Reconstruct default-branch governance, the existing Issue/Change/PR, approved Op
 independent review-openspec PASS, exact branch/head, Human freshness, and task state. A missing or
 contradictory semantic input is a SPEC_BLOCKER routed through the executable model to Lead.
 
-For one bounded slice:
+## Respond to implementation review findings
+
+Before editing for a finding, independently check the reviewed revision, the approved requirement or
+invariant, the current delivery stage, and the evidence. Fix confirmed defects within the approved
+scope using the smallest sufficient change. Verify the expected behavior with the original
+counterexample or equivalent evidence. When the evidence is insufficient or contradicted, record the
+reason and available evidence for independent re-review. When the resolution requires a material
+semantic or scope change, return the existing SPEC_BLOCKER to Lead.
+
+Use the existing review evidence to record each disposition. Treat proposed fixes and advisory
+comments as inputs to engineering judgment. A finding does not grant authority to expand the
+approved scope, and Executor does not clear the review gate. Preserve required later-stage
+acceptance at its applicable gate.
+
+## Implement one bounded slice
 
 1. RED: add a focused behavioral test and confirm the failure is the intended gap.
 2. GREEN: implement the minimum approved behavior.

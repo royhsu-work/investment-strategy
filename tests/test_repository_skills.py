@@ -146,3 +146,63 @@ def test_openspec_review_exposes_compact_semantic_proof_loop() -> None:
     assert "exact candidate revision" in text
     assert "review-implementation" in text
     assert "OpenSpec review closes design/spec/task-level meaning" in text
+
+
+def test_review_findings_use_current_gate_and_evidence() -> None:
+    skill_path = Path("agents/skills/implementation-review/SKILL.md")
+    body = " ".join(skill_path.read_text(encoding="utf-8").split())
+    requirements = (
+        "violated approved requirement or invariant",
+        "evidence at the reviewed revision",
+        "delivery stage or gate it blocks",
+        "observable condition that would close it",
+        "approved stage against its own exit criteria",
+        "downstream acceptance forward to its applicable gate",
+    )
+    for requirement in requirements:
+        assert requirement in body
+
+
+def test_review_alternatives_preserve_original_closure() -> None:
+    skill_path = Path("agents/skills/implementation-review/SKILL.md")
+    body = " ".join(skill_path.read_text(encoding="utf-8").split())
+    requirements = (
+        "Distinguish the defect from any suggested implementation",
+        "alternative fixes and counterevidence",
+        "same closure condition",
+        "new acceptance conditions",
+        "independent re-review",
+    )
+    for requirement in requirements:
+        assert requirement in body
+
+
+def test_executor_independently_checks_review_findings() -> None:
+    skill_path = Path("agents/skills/implementation/SKILL.md")
+    body = " ".join(skill_path.read_text(encoding="utf-8").split())
+    requirements = (
+        "Before editing for a finding",
+        "independently check the reviewed revision",
+        "approved requirement or invariant",
+        "current delivery stage",
+        "smallest sufficient change",
+        "original counterexample or equivalent evidence",
+    )
+    for requirement in requirements:
+        assert requirement in body
+
+
+def test_executor_retains_reviewer_and_lead_boundaries() -> None:
+    skill_path = Path("agents/skills/implementation/SKILL.md")
+    body = " ".join(skill_path.read_text(encoding="utf-8").split())
+    requirements = (
+        "evidence is insufficient or contradicted",
+        "independent re-review",
+        "existing SPEC_BLOCKER to Lead",
+        "advisory comments as inputs to engineering judgment",
+        "A finding does not grant authority to expand",
+        "Executor does not clear the review gate",
+        "required later-stage acceptance at its applicable gate",
+    )
+    for requirement in requirements:
+        assert requirement in body
