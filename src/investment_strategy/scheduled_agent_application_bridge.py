@@ -6970,7 +6970,14 @@ def _accepted_correction_observer_for_batch(
             return None
         return witness.human_comment_id, witness.materialization
 
-    return source_qualified
+    # A distinct correction must already be source-qualified to install this
+    # observer. An ordinary accepted intent with no R9 remains on the
+    # unchanged Application signature and original postcondition contract.
+    try:
+        return source_qualified if source_qualified(original) is not None else None
+    except OSError:
+        # Incomplete reads cannot establish an independent correction.
+        return None
 
 
 def _observe_accepted_post_effect_result(
