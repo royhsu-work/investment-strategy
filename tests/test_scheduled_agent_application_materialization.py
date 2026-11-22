@@ -5590,6 +5590,149 @@ def test_separate_forward_correction_git_witness_does_not_launder_original_unkno
     assert proof_git.mutations == []
 
 
+@pytest.mark.parametrize(
+    "case",
+    ["authorized", "historical-head", "wrong-actor", "connector", "wrong-digest", "duplicate"],
+)
+def test_source_qualified_forward_correction_has_independent_git_witness(
+    proof_git: _ProofGitRepository, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """R9 qualifies a correction witness, not the original Effect or a new write."""
+    from investment_strategy.scheduled_agent_effects import (
+        ApplicationDecisionRecord,
+        parse_application_decision,
+    )
+
+    source = proof_git.source
+    payload = proof_git.payload()
+    corrected_message = "Forward correction on the existing Change"
+    head = proof_git.commit(
+        {proof_git.path: "accepted content"}, corrected_message, (proof_git.base,)
+    )
+    proof_git.set_head(head)
+    physical = {
+        "issue_number": source.issue_number,
+        "role": source.role,
+        "action": source.action,
+        "change": _CHANGE,
+        "result_kind": "ready-for-openspec-review",
+        "evidence_ref": "issuecomment-accepted",
+        "result_content": "accepted intent",
+        "requested_effects": [
+            {"kind": "github-mutation", "payload_json": json.dumps(payload)}
+        ],
+    }
+    raw = json.dumps(physical, sort_keys=True)
+    record = ApplicationDecisionRecord(
+        request_comment_id=7002,
+        request_body_sha256="a" * 64,
+        authorization_revision=proof_git.authorization,
+        issue_number=source.issue_number,
+        role=source.role,
+        action=source.action,
+        change=_CHANGE,
+        result_kind="ready-for-openspec-review",
+        disposition="ACCEPTED",
+        worker_result_sha256=hashlib.sha256(raw.encode()).hexdigest(),
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    decision_body = "\n".join(
+        [
+            "APPLICATION_DECISION",
+            "Request-Comment: 7002",
+            f"Request-Body-SHA256: {record.request_body_sha256}",
+            f"Authorization-Revision: {record.authorization_revision}",
+            f"Issue: {record.issue_number}",
+            f"Role: {record.role}",
+            f"Action: {record.action}",
+            f"Change: {record.change}",
+            f"Result-Kind: {record.result_kind}",
+            f"Disposition: {record.disposition}",
+            f"Worker-Result-SHA256: {record.worker_result_sha256}",
+            f"Application-Intent-B64: {base64.b64encode(raw.encode()).decode()}",
+            f"Reason: {record.reason}",
+        ]
+    )
+    assert parse_application_decision(decision_body) == record
+    digest = hashlib.sha256(decision_body.encode()).hexdigest()
+    owner = proof_git.repository.split("/", 1)[0]
+
+    def r9(comment_id: int, repair_head: str) -> dict[str, object]:
+        body = "\n".join(
+            [
+                "RUNTIME_REPAIR_REQUEST",
+                f"Issue: {source.issue_number}",
+                f"Change: {_CHANGE}",
+                f"Action: {source.action}",
+                "Accepted-Request-Comment: 7002",
+                f"Accepted-Decision-SHA256: {digest if case != 'wrong-digest' else 'f' * 64}",
+                "Repair-PR: 324",
+                f"Repair-HEAD: {repair_head}",
+            ]
+        )
+        return {
+            "id": comment_id,
+            "body": body,
+            "created_at": "2026-11-22T18:39:14Z",
+            "updated_at": "2026-11-22T18:39:14Z",
+            "user": {
+                "login": owner if case != "wrong-actor" else "foreign-user",
+                "type": "User",
+            },
+            "performed_via_github_app": (
+                {"slug": "chatgpt-codex-connector"} if case == "connector" else None
+            ),
+        }
+
+    comments = [
+        {
+            "id": 7001,
+            "body": decision_body,
+            "created_at": "2026-11-22T14:00:00Z",
+            "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
+        },
+        r9(710, proof_git.base),
+        r9(711, proof_git.base if case == "historical-head" else head),
+    ]
+    if case == "duplicate":
+        comments.append(r9(712, head))
+
+    monkeypatch.setattr(
+        application_bridge, "_paged_github_list", lambda *_a, **_kw: tuple(comments)
+    )
+
+    def native(_repository: str, _token: str, path: str, **kwargs: object) -> object:
+        if path.startswith("issues/comments/"):
+            comment_id = int(path.rsplit("/", 1)[1])
+            return next(item for item in comments if item["id"] == comment_id)
+        return proof_git.api(_repository, _token, path, **kwargs)
+
+    monkeypatch.setattr(application_bridge, "_github_json", native)
+    original = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert original.disposition != "COMPLETE"
+    correction = application_bridge._qualified_forward_correction_witness(
+        record=record,
+        source=source,
+        original_payload=payload,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+    )
+    if case == "authorized":
+        assert correction is not None
+        assert correction.human_comment_id == 711
+        assert correction.repair_head == head
+        assert correction.materialization.disposition == "COMPLETE"
+        assert correction.materialization.witness is not None
+        assert correction.materialization.witness.revision == head
+    else:
+        assert correction is None
+    assert proof_git.mutations == []
+
+
 def test_partial_manifest_blob_match_is_not_a_complete_materialization_witness(
     proof_git: _ProofGitRepository,
 ) -> None:
