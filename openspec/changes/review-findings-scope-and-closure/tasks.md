@@ -2,9 +2,9 @@
 
 ## 1. Reviewer blocking-Finding boundary
 
-- [ ] 1.1 RED: write focused Skill-contract/behavioral checks for the current implementation-review procedure, proving that an unsupported preferred fix or a later-stage gate cannot be promoted into a blocking Finding without an approved invariant, exact-head evidence, current gate/stage and observable closure condition. Cover PR #455 accepted preimage contradiction (immutable manifest and zero unauthorized mutation) and PR #453 intended RED-stage failure. Confirm RED failures are caused by missing procedural behavior, not tooling/setup.
-- [ ] 1.2 GREEN: minimally revise `agents/skills/implementation-review/SKILL.md` to require the four-part blocking Finding and to assess independent alternatives or counterevidence against the original closure condition while keeping recommendations advisory and unchanged independent Reviewer ownership.
-- [ ] 1.3 REFACTOR/VERIFY: remove unnecessary duplicated explanation; verify the original RED examples, the Skill declaration and unchanged current-stage/future-gate separation. Run focused tests, `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy src tests`.
+- [x] 1.1 RED: write focused Skill-contract/behavioral checks for the current implementation-review procedure, proving that an unsupported preferred fix or a later-stage gate cannot be promoted into a blocking Finding without an approved invariant, exact-head evidence, current gate/stage and observable closure condition. Cover PR #455 accepted preimage contradiction (immutable manifest and zero unauthorized mutation) and PR #453 intended RED-stage failure. Confirm RED failures are caused by missing procedural behavior, not tooling/setup.
+- [x] 1.2 GREEN: minimally revise `agents/skills/implementation-review/SKILL.md` to require the four-part blocking Finding and to assess independent alternatives or counterevidence against the original closure condition while keeping recommendations advisory and unchanged independent Reviewer ownership.
+- [x] 1.3 REFACTOR/VERIFY: remove unnecessary duplicated explanation; verify the original RED examples, the Skill declaration and unchanged current-stage/future-gate separation. Run focused tests, `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy src tests`.
 
 Trace: proposal Reviewer correction → `repository-governance` requirement and PR #455/#453 scenarios → design Decisions 1 and 3.
 

@@ -146,3 +146,32 @@ def test_openspec_review_exposes_compact_semantic_proof_loop() -> None:
     assert "exact candidate revision" in text
     assert "review-implementation" in text
     assert "OpenSpec review closes design/spec/task-level meaning" in text
+
+
+def test_review_findings_use_current_gate_and_evidence() -> None:
+    skill_path = Path("agents/skills/implementation-review/SKILL.md")
+    body = " ".join(skill_path.read_text(encoding="utf-8").split())
+    requirements = (
+        "violated approved requirement or invariant",
+        "evidence at the reviewed revision",
+        "delivery stage or gate it blocks",
+        "observable condition that would close it",
+        "approved stage against its own exit criteria",
+        "downstream acceptance forward to its applicable gate",
+    )
+    for requirement in requirements:
+        assert requirement in body
+
+
+def test_review_alternatives_preserve_original_closure() -> None:
+    skill_path = Path("agents/skills/implementation-review/SKILL.md")
+    body = " ".join(skill_path.read_text(encoding="utf-8").split())
+    requirements = (
+        "Distinguish the defect from any suggested implementation",
+        "alternative fixes and counterevidence",
+        "same closure condition",
+        "new acceptance conditions",
+        "independent re-review",
+    )
+    for requirement in requirements:
+        assert requirement in body

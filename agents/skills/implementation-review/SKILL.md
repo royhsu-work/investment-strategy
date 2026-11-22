@@ -19,6 +19,18 @@ head or default-branch revision is invalid.
 Check Skill maintenance traceability: every materially affected Skill has a declaration, and a
 differently classified or undeclared Skill change is a finding.
 
+## Substantiate blocking findings
+
+For each blocking finding, identify the violated approved requirement or invariant, the evidence at
+the reviewed revision, the delivery stage or gate it blocks, and the observable condition that
+would close it. Evaluate an approved stage against its own exit criteria and dependencies. Carry
+required downstream acceptance forward to its applicable gate.
+
+Distinguish the defect from any suggested implementation. Assess alternative fixes and
+counterevidence against the same closure condition in the independent re-review. Raise material
+semantic or scope questions through the existing governance path. Keep advisory improvements in
+the review evidence without making them new acceptance conditions.
+
 Return one structured PASS, FINDINGS, HUMAN_DECISION_REQUIRED, NO_GO, or BLOCKED result. PASS on the
 exact unchanged open head, or on the exact historical-head/current-default-revision tuple for a
 closed+merged carrier, derives merge-implementation-pr in the executable Action model. A merged-carrier
