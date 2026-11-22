@@ -1985,6 +1985,9 @@ class GitHubEffectAdapter:
         pending_application_correlation: str | None = None,
         authorization_revision: str | None = None,
         accepted_intent: bool = False,
+        accepted_correction_observer: (
+            Callable[[StagedEffect], tuple[int, MaterializationProof] | None] | None
+        ) = None,
     ) -> None:
         self.repository = repository
         self.token = token
@@ -1999,6 +2002,11 @@ class GitHubEffectAdapter:
         self.pending_application_correlation = pending_application_correlation
         self.authorization_revision = authorization_revision
         self.accepted_intent = accepted_intent
+        # The callback is supplied only by Application after source qualification.
+        # The historical original materialization witness is never rewritten.
+        self._accepted_correction_observer = (
+            accepted_correction_observer if accepted_intent else None
+        )
         self._last_rejection: ApplicationRejection | None = None
         self._comment_ids: dict[StagedEffect, int] = {}
         self._routing_targets: dict[StagedEffect, str] = {}
@@ -4176,6 +4184,32 @@ class GitHubEffectAdapter:
             return f"issues/comments/{comment_id}"
         return None
 
+    def observe_accepted_correction(
+        self, effect: StagedEffect
+    ) -> tuple[int, MaterializationProof] | None:
+        """Observe a separate current obligation witness, never original execution."""
+        if not self.accepted_intent or self._accepted_correction_observer is None:
+            return None
+        payload = _effect_payload(effect)
+        if (
+            effect.kind != GITHUB_MUTATION_KIND
+            or payload is None
+            or payload.get("operation") != "application-materialize"
+        ):
+            return None
+        qualified = self._accepted_correction_observer(effect)
+        if qualified is None:
+            return None
+        human_id, proof = qualified
+        if (
+            type(human_id) is not int
+            or human_id <= 0
+            or proof.disposition != "COMPLETE"
+            or proof.witness is None
+        ):
+            return None
+        return qualified
+
     def observe_postcondition(self, effect: StagedEffect) -> bool:
         if effect.kind == "issue-comment":
             return self.observe_issue_comment_source_ref(effect) is not None
@@ -4240,7 +4274,14 @@ class GitHubEffectAdapter:
 
         if effect.kind == GITHUB_MUTATION_KIND:
             payload = _effect_payload(effect)
-            return payload is not None and self._observe_github_mutation(effect, payload)
+            if payload is None:
+                return False
+            if self._observe_github_mutation(effect, payload):
+                return True
+            # The original write remains historically UNKNOWN. A distinct,
+            # freshly proven correction can satisfy only this logical
+            # obligation and suppress replay in an accepted continuation.
+            return self.observe_accepted_correction(effect) is not None
 
         return False
 
