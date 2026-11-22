@@ -5556,6 +5556,40 @@ def test_exact_accepted_preimage_preserves_witness_across_legal_second_commit(
     assert proof_git.mutations == []
 
 
+def test_separate_forward_correction_git_witness_does_not_launder_original_unknown(
+    proof_git: _ProofGitRepository,
+) -> None:
+    """Reuse the canonical Git witness owner for distinct authorized content.
+
+    This is *physical consequence evidence only*: a caller still needs
+    independently qualified Human authorization and semantic-review gates
+    before adopting the correction as satisfaction of an accepted obligation.
+    """
+    original_payload = proof_git.payload()
+    original_message = cast(str, original_payload["message"])
+    distinct_message = "docs: separate forward correction (Refs #435)"
+    assert distinct_message != original_message
+    corrected = proof_git.commit(
+        {proof_git.path: "accepted content"},
+        distinct_message,
+        (proof_git.base,),
+    )
+    proof_git.set_head(corrected)
+
+    # Current blobs alone cannot establish who executed the accepted Effect.
+    original = _prove_payload_git(proof_git, original_payload, accepted_intent=True)
+    assert original.disposition != "COMPLETE", original
+    assert original.witness is None
+
+    # The independent operation has its own exact parent/message/path witness.
+    correction_payload = {**original_payload, "message": distinct_message}
+    independent = _prove_payload_git(proof_git, correction_payload, accepted_intent=True)
+    assert independent.disposition == "COMPLETE", independent
+    assert independent.witness is not None
+    assert independent.witness.revision == corrected
+    assert proof_git.mutations == []
+
+
 def test_partial_manifest_blob_match_is_not_a_complete_materialization_witness(
     proof_git: _ProofGitRepository,
 ) -> None:
