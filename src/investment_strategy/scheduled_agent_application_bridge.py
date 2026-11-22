@@ -8902,6 +8902,32 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         )
         return 0
 
+    # Source-qualified corrections are invocation-local observations, never
+    # rewrites of immutable accepted Effect identity. The existing runner
+    # re-observes them before suppressing the original physical write.
+    accepted_correction_observer = None
+    if accepted_intent is not None and predecessor_disposition == "INDETERMINATE":
+        accepted_source = WorkerRequest(
+            accepted_intent.issue_number, accepted_intent.role, accepted_intent.action
+        )
+        accepted_originals = _qualified_accepted_original_effects(
+            record=accepted_intent,
+            source=accepted_source,
+            raw_worker_result=accepted_intent.raw_worker_result,
+            repository=repository,
+            token=token,
+        )
+        if isinstance(accepted_originals, EffectBatch):
+            accepted_correction_observer = _accepted_correction_observer_for_batch(
+                record=accepted_intent,
+                source=accepted_source,
+                batch=accepted_originals,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+                default_branch=args.default_branch,
+            )
+
     context.stage = "application-effect-and-postcondition"
     # A new raw comment cannot become an accepted intent from a source
     # that lost qualification while Phase A prepared its effects.
@@ -8951,6 +8977,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             **({"accepted_intent": True} if accepted_intent is not None else {}),
             **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
             uncertain_effect_index=uncertain_effect_index,
+            accepted_correction_observer=accepted_correction_observer,
             **(
                 {"proven_empty_original_effects": True}
                 if original_effect_count == 0 and predecessor_disposition == "INDETERMINATE"
