@@ -3295,62 +3295,72 @@ def _fresh_completion_postconditions(
     accepted_record: ApplicationDecisionRecord | None = None,
     read: GitHubReader = _github_json,
 ) -> bool:
-    """Reobserve current consequences after the formal result is qualified."""
+    """Reobserve the existing consequence first, before correction admission."""
 
-    correction_observer = None
-    if (
-        accepted_record is not None
-        and accepted_record.disposition == "ACCEPTED"
-        and "application-materialize" in accepted_record.raw_worker_result
-    ):
-        original = _qualified_accepted_original_effects(
-            record=accepted_record,
+    def qualified(
+        correction_observer: (
+            Callable[[StagedEffect], tuple[int, MaterializationProof] | None] | None
+        ) = None,
+    ) -> bool:
+        return consequence_postconditions_complete(
+            raw_worker_result,
             source=source,
-            raw_worker_result=accepted_record.raw_worker_result,
             repository=repository,
             token=token,
+            current_revision=current_revision,
+            accepted_authorization_revision=accepted_authorization_revision,
+            authorized_change=authorized_change,
+            request_comment_id=request_comment_id,
+            allow_pending_continuation=True,
+            allow_accepted_successor=True,
+            accepted_intent=True,
+            observed_application_correlation=observed_application_correlation,
+            formal_result_observed=True,
+            **(
+                {"accepted_correction_observer": correction_observer}
+                if correction_observer is not None
+                else {}
+            ),
         )
-        repository_info = read(repository, token, "")
-        default_branch = (
-            repository_info.get("default_branch")
-            if isinstance(repository_info, Mapping)
-            else None
-        )
-        if isinstance(original, EffectBatch) and isinstance(default_branch, str):
-            correction_observer = _accepted_correction_observer_for_batch(
-                record=accepted_record,
-                source=source,
-                batch=original,
-                repository=repository,
-                token=token,
-                current_revision=current_revision,
-                default_branch=default_branch,
-            )
 
-    return consequence_postconditions_complete(
-        raw_worker_result,
+    # A previously completed original result needs no R9 lookup, extra GET,
+    # or new callback; unchanged recovery paths retain their original owner.
+    if qualified():
+        return True
+    if (
+        accepted_record is None
+        or accepted_record.disposition != "ACCEPTED"
+        or "application-materialize" not in accepted_record.raw_worker_result
+    ):
+        return False
+    original = _qualified_accepted_original_effects(
+        record=accepted_record,
         source=source,
+        raw_worker_result=accepted_record.raw_worker_result,
+        repository=repository,
+        token=token,
+    )
+    if not isinstance(original, EffectBatch):
+        return False
+    repository_info = read(repository, token, "")
+    default_branch = (
+        repository_info.get("default_branch")
+        if isinstance(repository_info, Mapping)
+        else None
+    )
+    if not isinstance(default_branch, str) or not default_branch:
+        return False
+    correction_observer = _accepted_correction_observer_for_batch(
+        record=accepted_record,
+        source=source,
+        batch=original,
         repository=repository,
         token=token,
         current_revision=current_revision,
-        accepted_authorization_revision=accepted_authorization_revision,
-        authorized_change=authorized_change,
-        request_comment_id=request_comment_id,
-        # This read follows accepted-intent and formal-correlation qualification.
-        # The canonical materialization observer may therefore reconstruct an
-        # exact disjoint pending continuation from its original accepted base.
-        allow_pending_continuation=True,
-        # The formal result has already qualified the exact successor frontier.
-        # Let the postcondition observer bind that same immutable intent after
-        # the normal routing transition, without widening source authority.
-        allow_accepted_successor=True,
-        accepted_intent=True,
-        observed_application_correlation=observed_application_correlation,
-        # This helper is called only after the exact existing formal result
-        # and its source-bound correlation have qualified above.
-        formal_result_observed=True,
-        accepted_correction_observer=correction_observer,
+        default_branch=default_branch,
     )
+    return correction_observer is not None and qualified(correction_observer)
+
 
 
 def _formal_consequence(
