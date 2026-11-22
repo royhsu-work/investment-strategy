@@ -3871,6 +3871,10 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             ]
         if api_path == "issues/435/comments?per_page=100&sort=created&direction=desc":
             return list(reversed([prior_comment, *formal_comments]))
+        if api_path == "issues/435/comments?sort=created&direction=asc&per_page=100&page=1":
+            # Complete R9 source inventory: this historical fixture has no
+            # separately Human-authorized correction.
+            return [source_comment, decision_comment, prior_comment, *formal_comments]
         if api_path == "issues/435/timeline?per_page=100&page=1":
             return [
                 *prior_timeline,
