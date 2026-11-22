@@ -5728,6 +5728,41 @@ def test_source_qualified_forward_correction_has_independent_git_witness(
         assert correction.materialization.disposition == "COMPLETE"
         assert correction.materialization.witness is not None
         assert correction.materialization.witness.revision == head
+
+        # The Application DAG marks the *current obligation* satisfied by a
+        # new source-qualified witness, but original physical proof stays
+        # unresolved and the old Effect is never executed.
+        import investment_strategy.scheduled_agent_effects as effects
+        from investment_strategy.scheduled_agent_effects import GitHubEffectAdapter
+
+        original_effect = StagedEffect("github-mutation", json.dumps(payload))
+        adapter = GitHubEffectAdapter(
+            proof_git.repository,
+            _TOKEN,
+            source,
+            authorized_change=_CHANGE,
+            current_revision=proof_git.main,
+            authorization_revision=proof_git.authorization,
+            accepted_intent=True,
+            accepted_correction_observer=(
+                lambda effect: (
+                    (correction.human_comment_id, correction.materialization)
+                    if effect == original_effect
+                    else None
+                )
+            ),
+        )
+        monkeypatch.setattr(effects, "_github_json", proof_git.api)
+        monkeypatch.setattr(adapter, "_observe_github_mutation", lambda *_a, **_kw: False)
+        assert adapter.observe_postcondition(original_effect)
+        fact = application_bridge._observe_accepted_effect_fact(
+            original_effect, adapter, source=source
+        )
+        assert fact.materialization_observation is not None
+        assert fact.materialization_observation.disposition != "COMPLETE"
+        assert fact.forward_correction_source_comment_id == 711
+        assert fact.forward_correction_observation == correction.materialization
+        assert application_bridge.evaluate_recovery_evidence(fact).disposition == "SATISFIED"
     else:
         assert correction is None
     assert proof_git.mutations == []
