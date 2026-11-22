@@ -42,6 +42,8 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _application_owned_worker_result,
     _materialization_effects,
     _qualified_physical_original_accepted_effects,
+    _accepted_correction_observer_for_batch,
+    _qualified_accepted_original_effects,
     application_artifact_stage,
     application_continuation_correlation,
     classify_accepted_read_only_effects,
@@ -84,6 +86,7 @@ from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_effects import (
     ApplicationDecisionRecord,
     ApplyResult,
+    EffectBatch,
     consequence_postconditions_complete,
     merged_pr_readiness_complete,
     parse_application_decision,
@@ -3289,8 +3292,35 @@ def _fresh_completion_postconditions(
     authorized_change: str,
     request_comment_id: int,
     observed_application_correlation: str | None = None,
+    accepted_record: ApplicationDecisionRecord | None = None,
 ) -> bool:
     """Reobserve current consequences after the formal result is qualified."""
+
+    correction_observer = None
+    if accepted_record is not None and accepted_record.disposition == "ACCEPTED":
+        original = _qualified_accepted_original_effects(
+            record=accepted_record,
+            source=source,
+            raw_worker_result=accepted_record.raw_worker_result,
+            repository=repository,
+            token=token,
+        )
+        repository_info = _github_json(repository, token, "")
+        default_branch = (
+            repository_info.get("default_branch")
+            if isinstance(repository_info, Mapping)
+            else None
+        )
+        if isinstance(original, EffectBatch) and isinstance(default_branch, str):
+            correction_observer = _accepted_correction_observer_for_batch(
+                record=accepted_record,
+                source=source,
+                batch=original,
+                repository=repository,
+                token=token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+            )
 
     return consequence_postconditions_complete(
         raw_worker_result,
@@ -3314,6 +3344,7 @@ def _fresh_completion_postconditions(
         # This helper is called only after the exact existing formal result
         # and its source-bound correlation have qualified above.
         formal_result_observed=True,
+        accepted_correction_observer=correction_observer,
     )
 
 
@@ -3465,6 +3496,7 @@ def _formal_consequence(
             request_comment_id=record.request_comment_id,
             accepted_authorization_revision=record.authorization_revision,
             observed_application_correlation=canonical_event.application_correlation,
+            accepted_record=record,
         )
     ):
         return False
