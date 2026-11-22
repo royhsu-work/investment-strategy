@@ -175,3 +175,34 @@ def test_review_alternatives_preserve_original_closure() -> None:
     )
     for requirement in requirements:
         assert requirement in body
+
+
+def test_executor_independently_checks_review_findings() -> None:
+    skill_path = Path("agents/skills/implementation/SKILL.md")
+    body = " ".join(skill_path.read_text(encoding="utf-8").split())
+    requirements = (
+        "Before editing for a finding",
+        "independently check the reviewed revision",
+        "approved requirement or invariant",
+        "current delivery stage",
+        "smallest sufficient change",
+        "original counterexample or equivalent evidence",
+    )
+    for requirement in requirements:
+        assert requirement in body
+
+
+def test_executor_retains_reviewer_and_lead_boundaries() -> None:
+    skill_path = Path("agents/skills/implementation/SKILL.md")
+    body = " ".join(skill_path.read_text(encoding="utf-8").split())
+    requirements = (
+        "evidence is insufficient or contradicted",
+        "independent re-review",
+        "existing SPEC_BLOCKER to Lead",
+        "advisory comments as inputs to engineering judgment",
+        "A finding does not grant authority to expand",
+        "Executor does not clear the review gate",
+        "required later-stage acceptance at its applicable gate",
+    )
+    for requirement in requirements:
+        assert requirement in body
