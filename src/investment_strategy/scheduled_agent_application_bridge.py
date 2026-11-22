@@ -6222,6 +6222,9 @@ class RecoveryEvidenceNode:
     # Original native checkpoint fact; never a write or replay permission.
     write_call_entered: bool | None = None
     materialization_observation: MaterializationProof | None = None
+    # Separate positive outcome; original physical Git history is unchanged.
+    forward_correction_observation: MaterializationProof | None = None
+    forward_correction_source_comment_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -6443,13 +6446,28 @@ def _observe_accepted_effect_fact(
             and obligation == "ORIGINAL_EFFECT"
             and materialization.historical_witness is not None
         )
+        correction = (
+            adapter.observe_accepted_correction(effect)
+            if obligation == "ORIGINAL_EFFECT"
+            and materialization.disposition != "COMPLETE"
+            and not historical_original
+            else None
+        )
+        corrected = correction is not None
         return RecoveryEvidenceNode(
             obligation,
             effect,
-            final_postcondition=materialization.disposition == "COMPLETE" or historical_original,
-            source_conflict=materialization.disposition == "CONTRADICTORY"
-            and not historical_original,
+            final_postcondition=(
+                materialization.disposition == "COMPLETE" or historical_original or corrected
+            ),
+            source_conflict=(
+                materialization.disposition == "CONTRADICTORY"
+                and not historical_original
+                and not corrected
+            ),
             materialization_observation=observation,
+            forward_correction_observation=None if correction is None else correction[1],
+            forward_correction_source_comment_id=None if correction is None else correction[0],
         )
     return RecoveryEvidenceNode(
         _recovery_obligation(effect, source),
@@ -6883,6 +6901,51 @@ def _qualified_forward_correction_witness(
     return ForwardCorrectionWitness(human_id, pr_number, head_sha, correction)
 
 
+def _accepted_correction_observer_for_batch(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    batch: EffectBatch,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+) -> Callable[[StagedEffect], tuple[int, MaterializationProof] | None] | None:
+    """Only the exact original materialization may use a distinct correction."""
+
+    if len(batch.effects) != 1:
+        return None
+    original = batch.effects[0]
+    payload = _effect_payload(
+        {"kind": original.kind, "payload_json": original.payload_json}
+    )
+    if (
+        original.kind != GITHUB_MUTATION_KIND
+        or payload is None
+        or payload.get("operation") != "application-materialize"
+        or record.disposition != "ACCEPTED"
+    ):
+        return None
+
+    def source_qualified(effect: StagedEffect) -> tuple[int, MaterializationProof] | None:
+        if effect != original:
+            return None
+        witness = _qualified_forward_correction_witness(
+            record=record,
+            source=source,
+            original_payload=payload,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+        )
+        if witness is None:
+            return None
+        return witness.human_comment_id, witness.materialization
+
+    return source_qualified
+
+
 def _observe_accepted_post_effect_result(
     *,
     record: ApplicationDecisionRecord,
@@ -6944,6 +7007,15 @@ def _observe_accepted_post_effect_result(
             authorization_revision=record.authorization_revision,
             allow_pending_continuation=True,
             accepted_intent=True,
+            accepted_correction_observer=_accepted_correction_observer_for_batch(
+                record=record,
+                source=source,
+                batch=batch,
+                repository=repository,
+                token=token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+            ),
         )
         observed_originals = _observe_accepted_effect_prefix(batch.effects, adapter, source=source)
         if isinstance(observed_originals, RecoveryProofResult):
