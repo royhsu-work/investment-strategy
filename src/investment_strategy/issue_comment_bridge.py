@@ -3293,11 +3293,16 @@ def _fresh_completion_postconditions(
     request_comment_id: int,
     observed_application_correlation: str | None = None,
     accepted_record: ApplicationDecisionRecord | None = None,
+    read: GitHubReader = _github_json,
 ) -> bool:
     """Reobserve current consequences after the formal result is qualified."""
 
     correction_observer = None
-    if accepted_record is not None and accepted_record.disposition == "ACCEPTED":
+    if (
+        accepted_record is not None
+        and accepted_record.disposition == "ACCEPTED"
+        and '"application-materialize"' in accepted_record.raw_worker_result
+    ):
         original = _qualified_accepted_original_effects(
             record=accepted_record,
             source=source,
@@ -3305,7 +3310,7 @@ def _fresh_completion_postconditions(
             repository=repository,
             token=token,
         )
-        repository_info = _github_json(repository, token, "")
+        repository_info = read(repository, token, "")
         default_branch = (
             repository_info.get("default_branch")
             if isinstance(repository_info, Mapping)
@@ -3497,6 +3502,7 @@ def _formal_consequence(
             accepted_authorization_revision=record.authorization_revision,
             observed_application_correlation=canonical_event.application_correlation,
             accepted_record=record,
+            read=read,
         )
     ):
         return False
