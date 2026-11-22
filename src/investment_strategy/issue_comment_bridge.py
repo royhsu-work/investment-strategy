@@ -3301,7 +3301,7 @@ def _fresh_completion_postconditions(
     if (
         accepted_record is not None
         and accepted_record.disposition == "ACCEPTED"
-        and '"application-materialize"' in accepted_record.raw_worker_result
+        and "application-materialize" in accepted_record.raw_worker_result
     ):
         original = _qualified_accepted_original_effects(
             record=accepted_record,
