@@ -6914,7 +6914,15 @@ def _accepted_forward_correction_target(
     default_branch: str,
 ) -> ValidationResourceTarget | None:
     """Reuse a separately proven target; validation itself remains mandatory."""
-    if record is None:
+    # Only an already-accepted Lead correction to an existing Change can
+    # substitute a distinct OpenSpec target at this validation gate. First
+    # activation and implementation checkpoints retain their original owner.
+    if (
+        record is None
+        or record.disposition != "ACCEPTED"
+        or (source.role, source.action) != ("lead", "resolve-question")
+        or record.change == "unset"
+    ):
         return None
     witness = _qualified_forward_correction_witness(
         record=record,
