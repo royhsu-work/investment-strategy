@@ -2009,6 +2009,9 @@ class GitHubEffectAdapter:
         )
         self._last_rejection: ApplicationRejection | None = None
         self._comment_ids: dict[StagedEffect, int] = {}
+        # A submitted comment with no verified response is non-replayable.
+        # This is invocation-local I/O evidence, not a durable work cursor.
+        self._unknown_comment_posts: set[str] = set()
         self._routing_targets: dict[StagedEffect, str] = {}
         self._created_pr_numbers: dict[StagedEffect, int] = {}
         self._terminal_transitions: set[StagedEffect] = set()
@@ -3937,7 +3940,10 @@ class GitHubEffectAdapter:
             existing = self._existing_issue_comment(body)
             if existing is not None:
                 self._comment_ids[effect] = existing
+                self._unknown_comment_posts.discard(body)
                 return
+            if is_formal_result and body in self._unknown_comment_posts:
+                raise RuntimeError("formal comment POST outcome remains unknown; no replay")
             try:
                 response = _github_json(
                     self.repository,
@@ -3946,15 +3952,22 @@ class GitHubEffectAdapter:
                     method="POST",
                     payload={"body": body},
                 )
-            except OSError:
+            except OSError as exc:
                 if not is_formal_result:
                     raise
-                # A positive, provenance-qualified read can recover the comment ID.
-                # An empty read says nothing about whether the POST is still in flight.
+                if isinstance(exc, ConnectionRefusedError):
+                    # Transport refused the connection before request submission.
+                    # Unlike a lost response, this proves no provider write.
+                    raise
+                # The provider may have committed while GET remains empty.
+                # Retain this exact invocation's attempted boundary even when
+                # the subsequent native read cannot yet observe the result.
+                self._unknown_comment_posts.add(body)
                 observed_id = self._existing_issue_comment(body)
                 if observed_id is None:
                     raise
                 self._comment_ids[effect] = observed_id
+                self._unknown_comment_posts.discard(body)
                 return
             if not isinstance(response, Mapping) or not isinstance(response.get("id"), int):
                 raise RuntimeError("GitHub comment mutation returned no comment id")
