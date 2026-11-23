@@ -418,50 +418,6 @@ def _compare_is_ancestor(
     return status in {"ahead", "identical"} and behind_by == 0
 
 
-def _changed_paths(
-    repository: str,
-    token: str,
-    *,
-    ancestor: str,
-    descendant: str,
-    read: GitHubReader,
-) -> frozenset[str] | None:
-    comparison = _as_mapping(
-        cast(
-            object,
-            read(
-                repository,
-                token,
-                f"compare/{ancestor}...{descendant}",
-            ),
-        )
-    )
-    if comparison is None:
-        return None
-    if (
-        comparison.get("status") not in {"ahead", "identical"}
-        or comparison.get("behind_by") != 0
-        or comparison.get("too_large") is True
-    ):
-        return None
-    files = comparison.get("files")
-    if not isinstance(files, list) or len(files) >= 300:
-        return None
-    paths: set[str] = set()
-    for raw_file in files:
-        file = _as_mapping(raw_file)
-        filename = None if file is None else file.get("filename")
-        if not isinstance(filename, str) or not filename:
-            return None
-        paths.add(filename)
-        if file is not None and "previous_filename" in file:
-            previous = file["previous_filename"]
-            if not isinstance(previous, str) or not previous:
-                return None
-            paths.add(previous)
-    return frozenset(paths)
-
-
 def _divergence_evidence(
     repository: str,
     token: str,
@@ -471,14 +427,7 @@ def _divergence_evidence(
     default_revision: str,
     read: GitHubReader,
 ) -> DivergenceEvidence:
-    """Prove an open PR can integrate an advanced main without moving its HEAD.
-
-    GitHub's current mergeability is necessary but not sufficient: the exact
-    merge base and both complete changed-path sets must also be established.
-    Overlap, conflict, unknown mergeability, or truncated comparison evidence
-    never silently acquires the existing exact-head review's authority.
-    """
-
+    """Bind native mergeability to the observed pair before using it as evidence."""
     # A PR head already contained in main is an observed integration relation,
     # not an unknown GitHub mergeability calculation. The branch can be
     # reconciled by its owner without treating this as a current merge PASS.
@@ -486,6 +435,12 @@ def _divergence_evidence(
         repository, token, ancestor=head_sha, descendant=default_revision, read=read
     ):
         return "NEEDS_RECONCILIATION"
+    base = _as_mapping(pr.get("base"))
+    head = _as_mapping(pr.get("head"))
+    if base is None or head is None or head.get("sha") != head_sha:
+        return "INDETERMINATE"
+    if base.get("sha") != default_revision:
+        return "INDETERMINATE"
     if pr.get("mergeable") is False:
         return "NEEDS_RECONCILIATION"
     if pr.get("mergeable") is not True:
@@ -509,39 +464,7 @@ def _divergence_evidence(
         )
     ):
         return "INDETERMINATE"
-    main_paths = _changed_paths(
-        repository, token, ancestor=cast(str, ancestor), descendant=default_revision, read=read
-    )
-    carrier_paths = _changed_paths(
-        repository, token, ancestor=cast(str, ancestor), descendant=head_sha, read=read
-    )
-    if main_paths is None or carrier_paths is None or not carrier_paths:
-        return "INDETERMINATE"
-    return "SAFE" if main_paths.isdisjoint(carrier_paths) else "NEEDS_RECONCILIATION"
-
-
-def _disjoint_divergence_is_mergeable(
-    repository: str,
-    token: str,
-    *,
-    pr: Mapping[str, object],
-    head_sha: str,
-    default_revision: str,
-    read: GitHubReader,
-) -> bool:
-    """Compatibility predicate; application qualification retains unknown evidence."""
-
-    return (
-        _divergence_evidence(
-            repository,
-            token,
-            pr=pr,
-            head_sha=head_sha,
-            default_revision=default_revision,
-            read=read,
-        )
-        == "SAFE"
-    )
+    return "SAFE"
 
 
 def _pr_identity_is_coherent(
@@ -1449,12 +1372,13 @@ def qualify_change_carrier(
     current_revision: str,
     read: GitHubReader | None = None,
     implementation_retirement: bool = False,
+    for_feature_write: bool = False,
 ) -> ImplementationCarrierQualification:
     """Freshly qualify one exact canonical or deterministic same-Change carrier.
 
     `RECONCILIATION_REQUIRED` means identity is repository-approved but safe
     integration has not been proven. A diverged PR can remain `QUALIFIED` when
-    current mergeability and complete, disjoint Git changes prove integration
+    native mergeability for both exact tips and their shared ancestry prove integration
     without rewriting the reviewed HEAD. Otherwise only application-owned
     implementation reconciliation can advance the branch; merge consumers
     require `QUALIFIED` and their separate exact review/CI/Human gates.
@@ -1825,6 +1749,22 @@ def qualify_change_carrier(
             historical_pr_number=historical_pr_number,
         )
 
+    if for_feature_write and (source.role, source.action) == ("executor", "implement-change"):
+        return ImplementationCarrierQualification(
+            disposition="RECONCILIATION_REQUIRED",
+            reason="feature-carrier-identity-verified",
+            repository=repository,
+            issue_number=source.issue_number,
+            change=change,
+            action=source.action,
+            pr_number=pr_number,
+            branch=branch,
+            head_sha=head_sha,
+            default_branch=default_branch,
+            default_revision=default_revision,
+            historical_pr_number=historical_pr_number,
+        )
+
     default_is_ancestor = _compare_is_ancestor(
         repository,
         token,
@@ -1860,7 +1800,7 @@ def qualify_change_carrier(
         )
     if divergence_evidence == "SAFE":
         disposition = "QUALIFIED"
-        reason = "carrier-qualified-after-disjoint-mergeable-default-advance"
+        reason = "carrier-qualified-after-mergeable-default-advance"
     elif not base_is_current:
         if historical_pr_number is None:
             base = _as_mapping(pr.get("base"))
@@ -1934,6 +1874,7 @@ def qualify_implementation_carrier(
     pr_number: int,
     current_revision: str,
     read: GitHubReader | None = None,
+    for_feature_write: bool = False,
 ) -> ImplementationCarrierQualification:
     """Compatibility entry point restricted to implementation-owned Actions."""
 
@@ -1953,6 +1894,7 @@ def qualify_implementation_carrier(
         pr_number=pr_number,
         current_revision=current_revision,
         read=read,
+        for_feature_write=for_feature_write,
     )
 
 

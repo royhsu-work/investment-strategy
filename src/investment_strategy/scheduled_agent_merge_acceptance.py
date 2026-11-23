@@ -259,7 +259,14 @@ def _non_closing_linkage(body: object, issue_number: int) -> bool:
     return re.search(rf"(?im)^\s*Refs\s+#{issue_number}\b", body) is not None
 
 
-def _required_checks_pass(repository: str, token: str, head_sha: str) -> tuple[bool, bool]:
+def _required_checks_pass(
+    repository: str,
+    token: str,
+    head_sha: str,
+    *,
+    pr: Mapping[str, object],
+    default_revision: str | None,
+) -> tuple[bool, bool]:
     decoded = _github_json(repository, token, f"commits/{head_sha}/check-runs?per_page=100")
     if not isinstance(decoded, Mapping):
         return False, False
@@ -273,6 +280,18 @@ def _required_checks_pass(repository: str, token: str, head_sha: str) -> tuple[b
         return False, False
     if total_count == 0:
         return False, False
+    candidate = pr.get("merge_commit_sha")
+    base = pr.get("base")
+    if (
+        pr.get("mergeable") is not True
+        or not _valid_sha(candidate)
+        or not _valid_sha(default_revision)
+        or not isinstance(base, Mapping)
+        or base.get("sha") != default_revision
+    ):
+        return False, False
+    integration_check = f"integration {default_revision} {head_sha} {candidate}"
+    candidate_verified = False
     for raw in raw_runs:
         if not isinstance(raw, Mapping):
             return False, False
@@ -280,7 +299,16 @@ def _required_checks_pass(repository: str, token: str, head_sha: str) -> tuple[b
         conclusion = raw.get("conclusion")
         if status != "completed" or conclusion not in _ACCEPTED_CHECK_CONCLUSIONS:
             return False, True
-    return True, True
+        if raw.get("name") == integration_check:
+            app = raw.get("app")
+            if (
+                conclusion == "success"
+                and raw.get("head_sha") == head_sha
+                and isinstance(app, Mapping)
+                and app.get("slug") == "github-actions"
+            ):
+                candidate_verified = True
+    return candidate_verified, True
 
 
 def _human_input_fresh(
@@ -609,7 +637,9 @@ def acquire_merge_acceptance_snapshot(
         change=change,
     )
     try:
-        checks_pass, checks_complete = _required_checks_pass(repository, token, expected_head_sha)
+        checks_pass, checks_complete = _required_checks_pass(
+            repository, token, expected_head_sha, pr=pr, default_revision=current_revision
+        )
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
         checks_pass, checks_complete = False, False
     human_fresh, human_complete = _human_input_fresh(comments, pass_time)
@@ -639,7 +669,7 @@ def acquire_merge_acceptance_snapshot(
     complete = (
         identity_complete
         and review_complete
-        and checks_complete
+        and (checks_complete or historical_merged_carrier_allowed)
         and human_complete
         and native_complete
     )

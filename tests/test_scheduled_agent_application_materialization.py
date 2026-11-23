@@ -5434,12 +5434,12 @@ def test_workflow_object_carrier_preserves_disjoint_main_and_rejects_stale_preim
     assert proof_git.mutations == []
     assert plan.expected["ref_sha"] == carrier_head
     assert plan.expected["default_branch_sha"] == proof_git.main
-    assert plan.requested["commit_parents"] == [carrier_head, proof_git.main]
+    assert plan.requested["commit_parents"] == [carrier_head]
     entries = {
         entry["path"]: entry["sha"]
         for entry in cast(list[dict[str, object]], plan.requested["tree_elements"])
     }
-    assert entries["README.md"] == proof_git.entries(proof_git.main)["README.md"]["sha"]
+    assert "README.md" not in entries
     assert entries[proof_git.path] == proof_git.desired
     assert entries[workflow_path] == workflow_blob
 
@@ -5468,7 +5468,10 @@ def test_workflow_object_carrier_preserves_disjoint_main_and_rejects_stale_preim
     proof_git.set_head(commit["sha"])
     complete = _prove_git(proof_git)
     assert complete.disposition == "COMPLETE", complete
-    assert proof_git.entries(proof_git.head)["README.md"]["sha"] == entries["README.md"]
+    assert (
+        proof_git.entries(proof_git.head)["README.md"]
+        == proof_git.entries(carrier_head)["README.md"]
+    )
 
     # A subsequent accepted request must not reuse the old plan against a
     # changed task preimage, even though a disjoint default advance was legal.
@@ -6276,24 +6279,52 @@ def test_content_materialization_keeps_unrelated_divergent_parent_tree(
     assert proof_git.mutations == before
 
 
-def test_content_only_rejects_concurrent_requested_path_overlap(
-    proof_git: _ProofGitRepository,
+@pytest.mark.parametrize("default_line", [0, 8, 16])
+def test_content_only_preserves_feature_write_across_requested_path_overlap(
+    proof_git: _ProofGitRepository, default_line: int
 ) -> None:
-    """A divergent change to an accepted path is not unrelated Git integration."""
-    common = proof_git.base
-    parent = proof_git.commit({proof_git.path: "carrier preimage"}, "Change carrier", (common,))
+    import subprocess
+
+    lines = [f"line {index}\n" for index in range(17)]
+    common = proof_git.commit({proof_git.path: "".join(lines)}, "Common text", (proof_git.base,))
+    feature = lines.copy()
+    feature[8] = "feature change\n"
+    parent = proof_git.commit({"README.md": "feature documentation"}, "Feature work", (common,))
     proof_git.set_head(parent)
     proof_git.base = parent
-    proof_git.main = proof_git.commit(
-        {proof_git.path: "independent main edit"}, "Conflicting main", (common,)
-    )
+    proof_git.desired = proof_git.blob("".join(feature))
+    default = lines.copy()
+    default[default_line] = "default change\n"
+    proof_git.main = proof_git.commit({proof_git.path: "".join(default)}, "Default edit", (common,))
     proof_git.authorization = proof_git.main
-    proof = _prove_git(proof_git, accepted_intent=True)
-    assert proof.disposition == "CONTRADICTORY", proof
+    assert _prove_git(proof_git, accepted_intent=True).disposition == "INCOMPLETE"
     proof_git.allow_writes = True
-    with pytest.raises(RuntimeError):
+    with pytest.raises(CarrierRequired) as raised:
         _apply_git(proof_git, accepted_intent=True)
-    assert proof_git.mutations == []
+    assert raised.value.plan.requested["commit_parents"] == [parent]
+    proof_git.set_head(cast(str, raised.value.plan.requested["sha"]))
+    written = list(proof_git.mutations)
+    assert _prove_git(proof_git, accepted_intent=True).disposition == "COMPLETE"
+    _apply_git(proof_git, accepted_intent=True)
+    assert proof_git.mutations == written
+
+    result = subprocess.run(  # noqa: S603 - fixed local fixture command
+        ["git", "merge-tree", "--write-tree", proof_git.main, proof_git.head],  # noqa: S607
+        cwd=proof_git.directory,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if default_line == 8:
+        assert result.returncode == 1
+        assert proof_git.path in result.stdout
+    else:
+        assert result.returncode == 0, result.stderr
+        merged = default.copy()
+        merged[8] = feature[8]
+        assert proof_git.git("rev-parse", f"{result.stdout.strip()}:{proof_git.path}") == (
+            proof_git.blob("".join(merged))
+        )
 
 
 @pytest.mark.parametrize("carrier_overwrites_requested_path", [False, True])

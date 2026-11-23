@@ -516,13 +516,22 @@ def test_merge_effect_rechecks_acceptance_on_real_application_path(
             return {
                 "state": "open",
                 "head": {"sha": HEAD},
+                "base": {"sha": HEAD},
+                "mergeable": True,
+                "merge_commit_sha": CORRECTED_HEAD,
                 "body": "Refs #159",
             }
         if api_path == f"commits/{HEAD}/check-runs?per_page=100":
             return {
                 "total_count": 2,
                 "check_runs": [
-                    {"status": "completed", "conclusion": "success"},
+                    {
+                        "name": f"integration {HEAD} {HEAD} {CORRECTED_HEAD}",
+                        "head_sha": HEAD,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
                     {"status": "completed", "conclusion": "success"},
                 ],
             }
