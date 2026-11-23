@@ -6914,13 +6914,12 @@ def _accepted_forward_correction_target(
     default_branch: str,
 ) -> ValidationResourceTarget | None:
     """Reuse a separately proven target; validation itself remains mandatory."""
-    # Only an already-accepted Lead correction to an existing Change can
-    # substitute a distinct OpenSpec target at this validation gate. First
-    # activation and implementation checkpoints retain their original owner.
+    # The accepted effect and exact independent Git witness qualify this
+    # target, not a hard-coded Role/Action. First activation retains its
+    # separate authority because there is no existing Change carrier.
     if (
         record is None
         or record.disposition != "ACCEPTED"
-        or (source.role, source.action) != ("lead", "resolve-question")
         or record.change == "unset"
     ):
         return None
@@ -6954,19 +6953,23 @@ def _accepted_correction_observer_for_batch(
 ) -> Callable[[StagedEffect], tuple[int, MaterializationProof] | None] | None:
     """Only the exact original materialization may use a distinct correction."""
 
-    if len(batch.effects) != 1:
+    # A correction can satisfy exactly one qualified materialization in an
+    # accepted batch. Other effects keep their own postcondition obligations;
+    # neither partial completion nor duplicate materializations are waived.
+    materializations: list[tuple[StagedEffect, dict[str, object]]] = []
+    for effect in batch.effects:
+        payload = _effect_payload(
+            {"kind": effect.kind, "payload_json": effect.payload_json}
+        )
+        if (
+            effect.kind == GITHUB_MUTATION_KIND
+            and payload is not None
+            and payload.get("operation") == "application-materialize"
+        ):
+            materializations.append((effect, payload))
+    if len(materializations) != 1 or record.disposition != "ACCEPTED":
         return None
-    original = batch.effects[0]
-    payload = _effect_payload(
-        {"kind": original.kind, "payload_json": original.payload_json}
-    )
-    if (
-        original.kind != GITHUB_MUTATION_KIND
-        or payload is None
-        or payload.get("operation") != "application-materialize"
-        or record.disposition != "ACCEPTED"
-    ):
-        return None
+    original, payload = materializations[0]
 
     def source_qualified(effect: StagedEffect) -> tuple[int, MaterializationProof] | None:
         if effect != original:
