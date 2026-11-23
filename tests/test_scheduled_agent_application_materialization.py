@@ -5601,9 +5601,7 @@ def test_separate_forward_correction_git_witness_does_not_launder_original_unkno
         "connector",
         "wrong-digest",
         "duplicate",
-        "self-review",
-        "advisory-only",
-        "stale-review",
+        "edited-request",
         "wrong-preimage",
     ],
 )
@@ -5691,7 +5689,9 @@ def test_source_qualified_forward_correction_has_independent_git_witness(
             "author_association": "OWNER",
             "body": body,
             "created_at": "2026-11-22T18:39:14Z",
-            "updated_at": "2026-11-22T18:39:14Z",
+            "updated_at": (
+                "2026-11-22T18:40:00Z" if case == "edited-request" else "2026-11-22T18:39:14Z"
+            ),
             "user": {
                 "login": owner if case != "wrong-actor" else "foreign-user",
                 "type": "User",
@@ -5715,34 +5715,14 @@ def test_source_qualified_forward_correction_has_independent_git_witness(
     if case == "duplicate":
         comments.append(r9(712, head))
 
-    monkeypatch.setattr(
-        application_bridge,
-        "_paged_github_list",
-        lambda _repository, _token, path: (
-            tuple(comments)
-            if path.startswith("issues/")
-            else (
-                {
-                    "id": 1101,
-                    "user": {
-                        "login": owner if case == "self-review" else "independent-reviewer",
-                        "type": "User",
-                    },
-                    "state": "COMMENTED" if case == "advisory-only" else "APPROVED",
-                    "author_association": "MEMBER",
-                    "submitted_at": "2026-11-22T19:00:00Z",
-                    "commit_id": proof_git.base if case == "stale-review" else head,
-                },
-            )
-        ),
-    )
+    def paged(_repository: str, _token: str, path: str) -> tuple[dict[str, object], ...]:
+        assert path.startswith("issues/"), "semantic reviews belong to the later native Action"
+        return tuple(comments)
+
+    monkeypatch.setattr(application_bridge, "_paged_github_list", paged)
 
     def native(_repository: str, _token: str, path: str, **kwargs: object) -> object:
-        if path == "pulls/324":
-            pr = cast(dict[str, object], proof_git.api(_repository, _token, path, **kwargs))
-            return {**pr, "user": {"login": owner}}
-        if path == f"commits/{head}":
-            return {"sha": head, "author": {"login": owner}}
+        assert not path.endswith("/reviews")
         if path.startswith("issues/comments/"):
             comment_id = int(path.rsplit("/", 1)[1])
             return next(item for item in comments if item["id"] == comment_id)

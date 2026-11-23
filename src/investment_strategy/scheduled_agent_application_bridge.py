@@ -6878,54 +6878,8 @@ def _qualified_forward_correction_witness(
         or pr_number != original_request.pr_number
     ):
         return None
-    # This is an exact-HEAD GitHub approval for the correction carrier,
-    # separately from the normal review-openspec Action.
-    revision = _as_mapping(_github_json(repository, token, f"commits/{head_sha}"))
-    commit_author = None if revision is None else _as_mapping(revision.get("author"))
-    pr_author = _as_mapping(pr.get("user"))
-    if (
-        revision is None
-        or revision.get("sha") != head_sha
-        or commit_author is None
-        or pr_author is None
-        or not isinstance(commit_author.get("login"), str)
-        or not isinstance(pr_author.get("login"), str)
-    ):
-        return None
-    authors = {commit_author["login"], pr_author["login"]}
-    reviews = _paged_github_list(repository, token, f"pulls/{pr_number}/reviews")
-    decisive: dict[str, Mapping[str, object]] = {}
-    for review in reviews:
-        if review.get("state") not in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
-            continue
-        reviewer = _as_mapping(review.get("user"))
-        login = None if reviewer is None else reviewer.get("login")
-        submitted = review.get("submitted_at")
-        if (
-            not isinstance(login, str)
-            or not isinstance(submitted, str)
-            or not submitted
-            or not _strict_positive_int(review.get("id"))
-        ):
-            return None
-        previous = decisive.get(login)
-        if previous is not None and submitted == previous.get("submitted_at"):
-            return None
-        if previous is None or submitted > cast(str, previous["submitted_at"]):
-            decisive[login] = review
-    if any(review.get("state") == "CHANGES_REQUESTED" for review in decisive.values()):
-        return None
-    if not any(
-        login not in authors
-        and review.get("state") == "APPROVED"
-        and review.get("commit_id") == head_sha
-        and review.get("author_association") in {"OWNER", "MEMBER", "COLLABORATOR"}
-        and _as_mapping(review.get("user")) is not None
-        and cast(Mapping[str, object], review["user"]).get("type") == "User"
-        for login, review in decisive.items()
-    ):
-        return None
-
+    # Reconcile the materialization here. Independent OpenSpec review
+    # remains the native Action derived after the accepted result.
     commit = _as_mapping(_github_json(repository, token, f"git/commits/{head_sha}"))
     message = None if commit is None else commit.get("message")
     parents = None if commit is None else commit.get("parents")
