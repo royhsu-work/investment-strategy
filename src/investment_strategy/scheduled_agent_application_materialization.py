@@ -70,6 +70,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _valid_repo_path,
     _valid_sha,
     completed_task_bookkeeping_is_current,
+    native_merge_tree,
     resolve_validation_resource_target,
     work_product_path_allowed,
 )
@@ -1070,7 +1071,7 @@ def _verify_implementation_manifest_freshness(
     current_revision: str,
     carrier_head: str,
 ) -> None:
-    if request.base_sha not in {current_revision, carrier_head}:
+    if request.base_sha != carrier_head:
         comparison = _as_mapping(
             cast(
                 object,
@@ -2535,7 +2536,8 @@ def prove_materialization(
         if (
             not merged
             and any(
-                _content_sha_at(repository, token, path=file.path, revision=cast(str, revision))
+                file.expected_sha is not None
+                and _content_sha_at(repository, token, path=file.path, revision=cast(str, revision))
                 is None
                 for file in request.files
             )
@@ -2562,8 +2564,16 @@ def prove_materialization(
             if request.expected_change == "unset":
                 raise RuntimeError("materialization existing first carrier has no accepted witness")
             if not merged:
+                for file in request.files:
+                    if _content_sha_at(repository, token, path=file.path, revision=revision) != (
+                        file.expected_sha
+                    ):
+                        raise RuntimeError("materialization missing work preimage is stale")
                 if revision != request.base_sha:
-                    if request.base_sha != accepted_revision:
+                    relation, _, _ = _proof_comparison(
+                        repository, token, request.base_sha, revision
+                    )
+                    if relation.get("behind_by") == 0 or request.base_sha != accepted_revision:
                         # Qualify B -> actual P before relying on the preimage at P.
                         advanced_paths = _proof_ancestry(
                             repository, token, request.base_sha, revision
@@ -2592,13 +2602,6 @@ def prove_materialization(
                                 raise RuntimeError(
                                     "materialization missing work has conflicting histories"
                                 )
-                elif default_advance.intersection(file.path for file in request.files):
-                    raise RuntimeError("materialization missing work overlaps default advance")
-                for file in request.files:
-                    if _content_sha_at(repository, token, path=file.path, revision=revision) != (
-                        file.expected_sha
-                    ):
-                        raise RuntimeError("materialization missing work preimage is stale")
                 return MaterializationProof("INCOMPLETE", application_request=request)
             if missing_replacement:
                 advance = _proof_ancestry(repository, token, request.base_sha, current_revision)
@@ -2686,6 +2689,15 @@ def prove_materialization(
                 # its observed ancestry to the fresh default branch.
                 _proof_ancestry(repository, token, descendant, current_revision)
                 continue
+            if len(parents) == 2:
+                _proof_ancestry(repository, token, witness_revision, parents[0])
+                _proof_ancestry(repository, token, parents[1], current_revision)
+                tree = _as_mapping(commit.get("tree"))
+                if tree is None or tree.get("sha") != native_merge_tree(
+                    repository, token, parents[0], parents[1]
+                ):
+                    raise RuntimeError("materialization descendant changes the native merge tree")
+                continue
             if len(parents) != 1:
                 raise RuntimeError("materialization descendant merge is not application-built")
             delta = _proof_ancestry(repository, token, parents[0], descendant)
@@ -2720,7 +2732,6 @@ def prove_materialization(
             and request.expected_change != "unset"
             and witness_revision != request.base_sha
             and len(witness_parents) == 1
-            and request.base_sha != accepted_revision
         ):
             advanced_paths = _proof_ancestry(
                 repository, token, request.base_sha, witness_parents[0]

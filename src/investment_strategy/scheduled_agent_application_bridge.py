@@ -1666,6 +1666,7 @@ def _machine_result_revision(
         change=change,
         pr_number=parsed.pr_number,
         current_revision=current_revision,
+        for_feature_write=True,
     )
     if (
         not qualification.recognized
@@ -8639,6 +8640,20 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             current_revision=args.revision,
             request_comment_id=plan.request_comment_id,
         )
+        if committed_result is None:
+            issue = _as_mapping(
+                _github_json(repository, token, f"issues/{plan.source.issue_number}")
+            )
+            observation = None if issue is None else normalize_github_issue(issue)
+            if (
+                observation is None
+                or not observation.authoritative
+                or observation.change != effective_change
+                or observation.routing != (plan.source.role, plan.source.action)
+            ):
+                raise RuntimeError(
+                    "accepted implementation source routing lacks a qualified formal result"
+                )
         checkpoint_proof = prove_materialization(
             materialization,
             plan.source,

@@ -291,24 +291,68 @@ def _required_checks_pass(
     ):
         return False, False
     integration_check = f"integration {default_revision} {head_sha} {candidate}"
-    candidate_verified = False
+    # GitHub attaches PR jobs to H even when the checkout under test is M.
+    # The quality workflow run binds the suite ID, PR, event, path and H.
+    runs = _github_json(
+        repository,
+        token,
+        f"actions/workflows/quality.yml/runs?event=pull_request&head_sha={head_sha}&per_page=100",
+    )
+    if not isinstance(runs, Mapping) or not isinstance(runs.get("workflow_runs"), list):
+        return False, False
+    for run in runs["workflow_runs"]:
+        if not isinstance(run, Mapping):
+            return False, False
+        if (
+            run.get("event") == "pull_request"
+            and run.get("path") == ".github/workflows/quality.yml"
+            and run.get("head_sha") == head_sha
+            and isinstance(run.get("pull_requests"), list)
+            and any(
+                isinstance(link, Mapping) and link.get("number") == pr.get("number")
+                for link in run["pull_requests"]
+            )
+        ):
+            break
+    else:
+        return False, False
+    suite = run.get("check_suite_id")
+    if (
+        type(suite) is not int
+        or run.get("status") != "completed"
+        or run.get("conclusion") != "success"
+    ):
+        return False, True
+    required = {"quality", integration_check, "integration-spec / validate"}
     for raw in raw_runs:
         if not isinstance(raw, Mapping):
             return False, False
-        status = raw.get("status")
-        conclusion = raw.get("conclusion")
-        if status != "completed" or conclusion not in _ACCEPTED_CHECK_CONCLUSIONS:
+        name = raw.get("name")
+        app = raw.get("app")
+        check_suite = raw.get("check_suite")
+        owned = isinstance(app, Mapping) and app.get("slug") == "github-actions"
+        if (
+            owned
+            and isinstance(name, str)
+            and re.fullmatch(r"integration [0-9a-f]{40} [0-9a-f]{40} [0-9a-f]{40}", name)
+            and name != integration_check
+        ):
+            continue
+        if (
+            raw.get("status") != "completed"
+            or raw.get("conclusion") not in _ACCEPTED_CHECK_CONCLUSIONS
+        ):
             return False, True
-        if raw.get("name") == integration_check:
-            app = raw.get("app")
-            if (
-                conclusion == "success"
-                and raw.get("head_sha") == head_sha
-                and isinstance(app, Mapping)
-                and app.get("slug") == "github-actions"
-            ):
-                candidate_verified = True
-    return candidate_verified, True
+        if (
+            owned
+            and raw.get("head_sha") == head_sha
+            and isinstance(name, str)
+            and isinstance(check_suite, Mapping)
+            and check_suite.get("id") == suite
+            and raw.get("conclusion") == "success"
+        ):
+            required.discard(name)
+    return not required, True
 
 
 def _human_input_fresh(

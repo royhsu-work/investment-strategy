@@ -204,3 +204,41 @@ def bars(start: date, count: int, *, reverse: bool = False) -> list[dict[str, ob
     if reverse:
         records.reverse()
     return records
+
+
+def quality_evidence(
+    path: str, pr_number: int, base: str, head: str, candidate: str
+) -> dict[str, object]:
+    if path.startswith("actions/workflows/quality.yml/runs?"):
+        return {
+            "workflow_runs": [
+                {
+                    "path": ".github/workflows/quality.yml",
+                    "event": "pull_request",
+                    "check_suite_id": 12,
+                    "head_sha": head,
+                    "pull_requests": [{"number": pr_number}],
+                    "status": "completed",
+                    "conclusion": "success",
+                }
+            ]
+        }
+    assert path.startswith(f"commits/{head}/check-runs?")
+    return {
+        "total_count": 3,
+        "check_runs": [
+            {
+                "name": name,
+                "head_sha": head,
+                "status": "completed",
+                "conclusion": "success",
+                "app": {"slug": "github-actions"},
+                "check_suite": {"id": 12},
+            }
+            for name in (
+                "quality",
+                f"integration {base} {head} {candidate}",
+                "integration-spec / validate",
+            )
+        ],
+    }

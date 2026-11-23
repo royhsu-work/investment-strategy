@@ -1025,6 +1025,40 @@ def _run_candidate_command(
         return None
 
 
+def native_merge_tree(repository: str, token: str, feature: str, default: str) -> str:
+    """Recompute a clean integration from both immutable Git histories, without moving a ref."""
+    if not _valid_sha(feature) or not _valid_sha(default):
+        raise ValueError("integration parent identity is invalid")
+    with TemporaryDirectory(prefix="scheduled-agent-merge-") as temporary:
+        directory = Path(temporary)
+        environment = _candidate_subprocess_environment(token)
+        for command in (
+            ("git", "init", "--quiet", "--bare", "."),
+            (
+                "git",
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                f"https://github.com/{repository}.git",
+                feature,
+                default,
+            ),
+        ):
+            result = _run_candidate_command(command, cwd=directory, environment=environment)
+            if result is None or result.returncode:
+                raise IncompleteGitHubObservation("native merge history is unavailable")
+        result = _run_candidate_command(
+            ("git", "merge-tree", "--write-tree", feature, default),
+            cwd=directory,
+            environment={k: v for k, v in environment.items() if not k.startswith("GIT_CONFIG_")},
+        )
+        if result is not None and result.returncode == 1:
+            raise RuntimeError("native merge requires reviewed conflict resolution")
+        if result is None or result.returncode or not _valid_sha(result.stdout.strip()):
+            raise IncompleteGitHubObservation("native merge tree is unavailable")
+        return result.stdout.strip()
+
+
 def _report_candidate_verification_failure(
     stage: str,
     *,

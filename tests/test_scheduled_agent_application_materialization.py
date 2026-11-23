@@ -1838,6 +1838,8 @@ class _ProofGitRepository:
             return self.write(path, cast(dict[str, object], kwargs["payload"]))
         if path == "":
             return {"default_branch": "main"}
+        if path == "issues/322/comments?per_page=100&sort=created&direction=desc":
+            return []
         if path == "issues/322":
             return {
                 "number": 322,
@@ -2162,8 +2164,11 @@ def test_canonical_git_proof_preserves_conflicts(
     proof = _prove_git(proof_git)
     # Truncated comparison data proves neither missing work nor a conflict.
     expected = "UNKNOWN" if failure == "incomplete-compare" else "CONTRADICTORY"
-    assert proof.disposition == expected, proof
-    assert proof.reason
+    if failure == "overlap":
+        assert proof.disposition == "COMPLETE" and proof.witness is not None
+    else:
+        assert proof.disposition == expected, proof
+        assert proof.reason
     assert proof_git.mutations == []
 
 
@@ -2754,8 +2759,8 @@ def test_committed_executor_witness_is_not_reopened_by_later_default_overlap(
         )
 
     precommit = prove(committed=False)
-    assert precommit.disposition == "CONTRADICTORY", precommit
-    assert precommit.reason == "materialization required ancestry is broken"
+    assert precommit.disposition == "COMPLETE", precommit
+    assert precommit.witness is not None and precommit.witness.revision == accepted
     completed = prove(committed=True)
     assert completed.disposition == "COMPLETE", completed
     assert completed.witness is not None and completed.witness.revision == accepted
@@ -3073,7 +3078,7 @@ def test_native_application_bridge_uses_only_the_exact_committed_executor_result
         reason = (
             "committed implementation witness differs from formal result"
             if formal_state == "wrong-revision"
-            else "materialization required ancestry is broken"
+            else "accepted implementation source routing lacks a qualified formal result"
         )
         with pytest.raises(RuntimeError, match=reason):
             bridge.main()
@@ -3113,8 +3118,11 @@ def test_contradictory_proof_blocks_apply_without_repository_mutation(
     else:
         proof_git.failure = failure
     proof_git.allow_writes = True
-    with pytest.raises(RuntimeError):
-        _apply_git(proof_git)
+    if failure == "overlap":
+        assert _apply_git(proof_git).revision == accepted
+    else:
+        with pytest.raises(RuntimeError):
+            _apply_git(proof_git)
     assert proof_git.mutations == []
 
 
@@ -4430,15 +4438,12 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
                 allow_pending_continuation=True,
                 accepted_intent=True,
             )
-            assert composite.disposition == "CONTRADICTORY" and composite.target is None
+            assert composite.disposition == "COMPLETE" and composite.target is not None
         completed = native_completion()
         assert completed.state == "RESUMABLE", completed
         assert completed.reason == "application-completion-continuation-required"
         if predecessor_failure is not None:
-            assert (
-                composite.historical_witness is not None
-                and composite.historical_witness.revision == witness
-            )
+            assert composite.witness is not None and composite.witness.revision == witness
         assert isinstance(
             completed.recovery_artifact, application_bridge.ApplicationExceptionArtifact
         )
@@ -6281,7 +6286,7 @@ def test_content_materialization_keeps_unrelated_divergent_parent_tree(
 
 @pytest.mark.parametrize("default_line", [0, 8, 16])
 def test_content_only_preserves_feature_write_across_requested_path_overlap(
-    proof_git: _ProofGitRepository, default_line: int
+    proof_git: _ProofGitRepository, default_line: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import subprocess
 
@@ -6325,6 +6330,32 @@ def test_content_only_preserves_feature_write_across_requested_path_overlap(
         assert proof_git.git("rev-parse", f"{result.stdout.strip()}:{proof_git.path}") == (
             proof_git.blob("".join(merged))
         )
+
+        feature_head = proof_git.head
+        merged_revision = proof_git.git(
+            "commit-tree",
+            result.stdout.strip(),
+            "-p",
+            feature_head,
+            "-p",
+            proof_git.main,
+            stdin="Integrate current main",
+        )
+        run_command = validation_resource._run_candidate_command
+
+        def fixture_transport(
+            command: tuple[str, ...], *, cwd: Path, environment: Mapping[str, str]
+        ) -> subprocess.CompletedProcess[str] | None:
+            if command[:2] == ("git", "fetch"):
+                command = (*command[:4], str(proof_git.directory), *command[-2:])
+            return run_command(command, cwd=cwd, environment=environment)
+
+        monkeypatch.setattr(validation_resource, "_run_candidate_command", fixture_transport)
+        proof_git.set_head(merged_revision)
+        integrated = _prove_git(proof_git, accepted_intent=True)
+        assert integrated.disposition == "COMPLETE", integrated
+        assert integrated.witness is not None and integrated.witness.revision == feature_head
+        assert proof_git.mutations == written
 
 
 @pytest.mark.parametrize("carrier_overwrites_requested_path", [False, True])
