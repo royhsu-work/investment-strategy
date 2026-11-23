@@ -5741,6 +5741,40 @@ def test_source_qualified_forward_correction_has_independent_git_witness(
         from investment_strategy.scheduled_agent_effects import GitHubEffectAdapter
 
         original_effect = StagedEffect("github-mutation", json.dumps(payload))
+        # Staged delivery may contain additional accepted obligations. The
+        # correction witnesses only the materialization, never those siblings.
+        from investment_strategy.scheduled_agent_effects import EffectBatch
+
+        pending_effect = StagedEffect(
+            "issue-comment",
+            json.dumps({"issue_number": source.issue_number, "body": "pending"}),
+        )
+        mixed = EffectBatch(source, (pending_effect, original_effect))
+        mixed_observer = application_bridge._accepted_correction_observer_for_batch(
+            record=record,
+            source=source,
+            batch=mixed,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            default_branch="main",
+        )
+        assert mixed_observer is not None
+        assert mixed_observer(original_effect) == (
+            correction.human_comment_id,
+            correction.materialization,
+        )
+        assert mixed_observer(pending_effect) is None
+        assert application_bridge._accepted_correction_observer_for_batch(
+            record=record,
+            source=source,
+            batch=EffectBatch(source, (original_effect, original_effect)),
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            default_branch="main",
+        ) is None
+
         adapter = GitHubEffectAdapter(
             proof_git.repository,
             _TOKEN,
