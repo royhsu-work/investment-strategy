@@ -2013,6 +2013,8 @@ class GitHubEffectAdapter:
         # This is invocation-local I/O evidence, not a durable work cursor.
         self._unknown_comment_posts: set[str] = set()
         self._routing_targets: dict[StagedEffect, str] = {}
+        # Invocation-local proof that a routing write did not drop unrelated labels.
+        self._routing_preserved_labels: dict[StagedEffect, frozenset[str]] = {}
         self._created_pr_numbers: dict[StagedEffect, int] = {}
         self._terminal_transitions: set[StagedEffect] = set()
         self._idempotent_merges: set[StagedEffect] = set()
@@ -3993,6 +3995,9 @@ class GitHubEffectAdapter:
                 target_role = role_for(ModelAction(target_action)).value
             except ValueError as exc:
                 raise RuntimeError("routing transition target is invalid") from exc
+            self._routing_preserved_labels[effect] = frozenset(
+                name for name in labels if not name.startswith(_ROUTING_LABEL_PREFIXES)
+            )
             if observation.routing != (target_role, target_action):
                 _github_json(
                     self.repository,
@@ -4245,6 +4250,19 @@ class GitHubEffectAdapter:
                 target_action = cast(str, payload["action"])
             current = self._current_issue()
             observation = None if current is None else normalize_github_issue(current)
+            observed_labels = None if current is None else _issue_label_names(current)
+            expected_unrelated = self._routing_preserved_labels.get(effect)
+            unrelated_preserved = (
+                expected_unrelated is None
+                or (
+                    observed_labels is not None
+                    and expected_unrelated.issubset(
+                        name
+                        for name in observed_labels
+                        if not name.startswith(_ROUTING_LABEL_PREFIXES)
+                    )
+                )
+            )
             try:
                 target_role = (
                     None if target_action is None else role_for(ModelAction(target_action)).value
@@ -4260,6 +4278,7 @@ class GitHubEffectAdapter:
                 and observation.state == "open"
                 and not observation.routing_debt
                 and observation.routing == (target_role, target_action)
+                and unrelated_preserved
             )
 
         if effect.kind == "terminal-transition":
