@@ -6941,24 +6941,9 @@ def _qualified_forward_correction_witness(
         or parent.get("sha") != original_request.base_sha
     ):
         return None
-    # This bounded correction uses the exact same observed parent as the
-    # accepted proposal. Read that tree independently for the new proof.
-    from investment_strategy.scheduled_agent_validation_resource import _content_sha_at
-
-    corrected_payload = {
-        **original_payload,
-        "message": message,
-        "files": [
-            {
-                "path": file.path,
-                "blob_sha": file.blob_sha,
-                "expected_sha": _content_sha_at(
-                    repository, token, path=file.path, revision=original_request.base_sha
-                ),
-            }
-            for file in original_request.files
-        ],
-    }
+    # This correction only changes the commit identity on the same parent.
+    # The canonical proof compares the accepted preimages against that parent.
+    corrected_payload = {**original_payload, "message": message}
     correction = prove_materialization(
         corrected_payload,
         source,

@@ -5604,6 +5604,7 @@ def test_separate_forward_correction_git_witness_does_not_launder_original_unkno
         "self-review",
         "advisory-only",
         "stale-review",
+        "wrong-preimage",
     ],
 )
 def test_source_qualified_forward_correction_has_independent_git_witness(
@@ -5617,6 +5618,9 @@ def test_source_qualified_forward_correction_has_independent_git_witness(
 
     source = proof_git.source
     payload = proof_git.payload()
+    if case == "wrong-preimage":
+        files = cast(list[dict[str, object]], payload["files"])
+        files[0]["expected_sha"] = proof_git.blob("different accepted preimage")
     corrected_message = "Forward correction on the existing Change"
     head = proof_git.commit(
         {proof_git.path: "accepted content"}, corrected_message, (proof_git.base,)
