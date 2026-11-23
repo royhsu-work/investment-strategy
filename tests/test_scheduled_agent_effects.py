@@ -2674,6 +2674,72 @@ def test_routing_transition_replaces_all_routing_labels_atomically(
     assert adapter.observe_postcondition(effect)
 
 
+def test_routing_postcondition_does_not_accept_lost_unrelated_labels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The model-derived successor is insufficient if a full-label PATCH lost data."""
+    source = WorkerRequest(138, "executor", "implement-change")
+    issue: dict[str, object] = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-03T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "action:implement-change"},
+            {"name": "priority"},
+            {"name": "audit:preserve"},
+        ],
+    }
+
+    def provider(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        **_kwargs: object,
+    ) -> object:
+        if path == "issues/138" and method == "GET":
+            return json.loads(json.dumps(issue))
+        if path == "issues/138" and method == "PATCH":
+            assert payload is not None
+            assert "action:resolve-question" in payload["labels"]
+            # Simulate a writer's stale full-label replacement losing a label
+            # added independently after its snapshot.
+            issue["labels"] = [
+                {"name": "action:resolve-question"},
+                {"name": "priority"},
+            ]
+            return json.loads(json.dumps(issue))
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(
+        "investment_strategy.scheduled_agent_effects._github_json", provider
+    )
+    monkeypatch.setattr(
+        GitHubEffectAdapter, "_formal_consequence_ready", lambda self: True
+    )
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+    )
+    effect = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps({"issue_number": 138, "action": "resolve-question"}),
+        derived=True,
+    )
+
+    adapter.apply(effect)
+
+    assert "action:resolve-question" in {
+        item["name"] for item in issue["labels"]
+    }
+    assert not adapter.observe_postcondition(effect)
+
 def test_terminal_transition_closes_and_clears_routing_atomically(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
