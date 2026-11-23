@@ -4709,9 +4709,9 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
 
     first = new_application()
     if forward:
-        original_proof = first.observe_materialization_proof(payload)
-        assert original_proof.disposition != "COMPLETE", original_proof
-        assert original_proof.witness is None
+        physical_proof = first.observe_materialization_proof(payload)
+        assert physical_proof.disposition != "COMPLETE", physical_proof
+        assert physical_proof.witness is None
     else:
         assert first.observe_postcondition(original_effect)
     assert first.guard(formal_effect)
