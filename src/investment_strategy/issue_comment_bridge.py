@@ -38,9 +38,11 @@ from investment_strategy.scheduled_agent_application_bridge import (
     RecoveryEvidenceNode,
     RecoveryProofResult,
     TypedEvidenceError,
+    _accepted_correction_observer_for_batch,
     _accepted_recovery_boundary,
     _application_owned_worker_result,
     _materialization_effects,
+    _qualified_accepted_original_effects,
     _qualified_physical_original_accepted_effects,
     application_artifact_stage,
     application_continuation_correlation,
@@ -59,6 +61,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
 )
 from investment_strategy.scheduled_agent_application_carrier import qualify_implementation_carrier
 from investment_strategy.scheduled_agent_application_materialization import (
+    MaterializationProof,
     _proof_witness,
     find_materialization_payload,
 )
@@ -84,6 +87,8 @@ from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_effects import (
     ApplicationDecisionRecord,
     ApplyResult,
+    EffectBatch,
+    StagedEffect,
     consequence_postconditions_complete,
     merged_pr_readiness_complete,
     parse_application_decision,
@@ -3289,32 +3294,78 @@ def _fresh_completion_postconditions(
     authorized_change: str,
     request_comment_id: int,
     observed_application_correlation: str | None = None,
+    accepted_record: ApplicationDecisionRecord | None = None,
+    read: GitHubReader = _github_json,
 ) -> bool:
-    """Reobserve current consequences after the formal result is qualified."""
+    """Reobserve the existing consequence first, before correction admission."""
 
-    return consequence_postconditions_complete(
-        raw_worker_result,
+    def qualified(
+        correction_observer: (
+            Callable[[StagedEffect], tuple[int, MaterializationProof] | None] | None
+        ) = None,
+    ) -> bool:
+        return consequence_postconditions_complete(
+            raw_worker_result,
+            source=source,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            accepted_authorization_revision=accepted_authorization_revision,
+            authorized_change=authorized_change,
+            request_comment_id=request_comment_id,
+            allow_pending_continuation=True,
+            allow_accepted_successor=True,
+            accepted_intent=True,
+            observed_application_correlation=observed_application_correlation,
+            formal_result_observed=True,
+            **(
+                {"accepted_correction_observer": correction_observer}
+                if correction_observer is not None
+                else {}
+            ),
+        )
+
+    # A previously completed original result needs no R9 lookup, extra GET,
+    # or new callback; unchanged recovery paths retain their original owner.
+    if qualified():
+        return True
+    if (
+        accepted_record is None
+        or accepted_record.disposition != "ACCEPTED"
+        or "application-materialize" not in accepted_record.raw_worker_result
+    ):
+        return False
+    original = _qualified_accepted_original_effects(
+        record=accepted_record,
         source=source,
+        raw_worker_result=accepted_record.raw_worker_result,
+        repository=repository,
+        token=token,
+    )
+    # A correction qualifies only the materialization it witnesses. Each
+    # remaining accepted Effect must still pass its own postcondition via the
+    # shared consequence owner; partial completion is not batch completion.
+    if not isinstance(original, EffectBatch) or original.typed_result is None:
+        return False
+    repository_info = read(repository, token, "")
+    default_branch = (
+        repository_info.get("default_branch") if isinstance(repository_info, Mapping) else None
+    )
+    if not isinstance(default_branch, str) or not default_branch:
+        return False
+    successor = next_action(original.typed_result.action, original.typed_result.result)
+    successor_routing = None if successor is None else (role_for(successor).value, successor.value)
+    correction_observer = _accepted_correction_observer_for_batch(
+        record=accepted_record,
+        source=source,
+        batch=original,
         repository=repository,
         token=token,
         current_revision=current_revision,
-        accepted_authorization_revision=accepted_authorization_revision,
-        authorized_change=authorized_change,
-        request_comment_id=request_comment_id,
-        # This read follows accepted-intent and formal-correlation qualification.
-        # The canonical materialization observer may therefore reconstruct an
-        # exact disjoint pending continuation from its original accepted base.
-        allow_pending_continuation=True,
-        # The formal result has already qualified the exact successor frontier.
-        # Let the postcondition observer bind that same immutable intent after
-        # the normal routing transition, without widening source authority.
-        allow_accepted_successor=True,
-        accepted_intent=True,
-        observed_application_correlation=observed_application_correlation,
-        # This helper is called only after the exact existing formal result
-        # and its source-bound correlation have qualified above.
-        formal_result_observed=True,
+        default_branch=default_branch,
+        accepted_successor_routing=successor_routing,
     )
+    return correction_observer is not None and qualified(correction_observer)
 
 
 def _formal_consequence(
@@ -3465,6 +3516,8 @@ def _formal_consequence(
             request_comment_id=record.request_comment_id,
             accepted_authorization_revision=record.authorization_revision,
             observed_application_correlation=canonical_event.application_correlation,
+            accepted_record=record,
+            read=read,
         )
     ):
         return False
