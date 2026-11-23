@@ -2705,7 +2705,9 @@ def test_routing_postcondition_does_not_accept_lost_unrelated_labels(
             return json.loads(json.dumps(issue))
         if path == "issues/138" and method == "PATCH":
             assert payload is not None
-            assert "action:resolve-question" in payload["labels"]
+            labels = payload.get("labels")
+            assert isinstance(labels, list)
+            assert "action:resolve-question" in labels
             # Simulate a writer's stale full-label replacement losing a label
             # added independently after its snapshot.
             issue["labels"] = [
@@ -2735,10 +2737,11 @@ def test_routing_postcondition_does_not_accept_lost_unrelated_labels(
 
     adapter.apply(effect)
 
-    assert "action:resolve-question" in {
-        item["name"] for item in issue["labels"]
-    }
+    labels = issue["labels"]
+    assert isinstance(labels, list)
+    assert {"name": "action:resolve-question"} in labels
     assert not adapter.observe_postcondition(effect)
+
 
 def test_terminal_transition_closes_and_clears_routing_atomically(
     monkeypatch: pytest.MonkeyPatch,
