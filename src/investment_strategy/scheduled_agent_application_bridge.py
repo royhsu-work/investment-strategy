@@ -6956,7 +6956,7 @@ def _accepted_correction_observer_for_batch(
     # A correction can satisfy exactly one qualified materialization in an
     # accepted batch. Other effects keep their own postcondition obligations;
     # neither partial completion nor duplicate materializations are waived.
-    materializations: list[tuple[StagedEffect, dict[str, object]]] = []
+    materializations: list[tuple[StagedEffect, Mapping[str, object]]] = []
     for effect in batch.effects:
         payload = _effect_payload(
             {"kind": effect.kind, "payload_json": effect.payload_json}
