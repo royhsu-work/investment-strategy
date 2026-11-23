@@ -5089,7 +5089,9 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
         authorized_change: str | None = None,
         accepted_intent: bool = False,
         uncertain_effect_index: int | None = None,
+        accepted_correction_observer: object = None,
     ) -> tuple[EffectBatch, bridge.ApplyResult]:
+        assert accepted_correction_observer is None
         assert source == expected_source
         assert request_comment_id == 102
         assert allow_pending_continuation is False

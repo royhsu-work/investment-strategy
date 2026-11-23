@@ -115,6 +115,7 @@ from investment_strategy.scheduled_agent_wire import (
     APPLICATION_CONTINUATION_WIRE,
     EFFECT_REQUEST_WIRE,
     MACHINE_EFFECT_REQUEST_WIRE,
+    RUNTIME_REPAIR_REQUEST_WIRE,
 )
 from investment_strategy.scheduled_agent_worker import WorkerActionResult, parse_worker_result
 from investment_strategy.workflow_dispatch import (
@@ -6221,6 +6222,9 @@ class RecoveryEvidenceNode:
     # Original native checkpoint fact; never a write or replay permission.
     write_call_entered: bool | None = None
     materialization_observation: MaterializationProof | None = None
+    # Separate positive outcome; original physical Git history is unchanged.
+    forward_correction_observation: MaterializationProof | None = None
+    forward_correction_source_comment_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -6442,13 +6446,30 @@ def _observe_accepted_effect_fact(
             and obligation == "ORIGINAL_EFFECT"
             and materialization.historical_witness is not None
         )
+        correction_observer = getattr(adapter, "observe_accepted_correction", None)
+        correction = (
+            correction_observer(effect)
+            if callable(correction_observer)
+            and obligation == "ORIGINAL_EFFECT"
+            and materialization.disposition != "COMPLETE"
+            and not historical_original
+            else None
+        )
+        corrected = correction is not None
         return RecoveryEvidenceNode(
             obligation,
             effect,
-            final_postcondition=materialization.disposition == "COMPLETE" or historical_original,
-            source_conflict=materialization.disposition == "CONTRADICTORY"
-            and not historical_original,
+            final_postcondition=(
+                materialization.disposition == "COMPLETE" or historical_original or corrected
+            ),
+            source_conflict=(
+                materialization.disposition == "CONTRADICTORY"
+                and not historical_original
+                and not corrected
+            ),
             materialization_observation=observation,
+            forward_correction_observation=None if correction is None else correction[1],
+            forward_correction_source_comment_id=None if correction is None else correction[0],
         )
     return RecoveryEvidenceNode(
         _recovery_obligation(effect, source),
@@ -6716,6 +6737,341 @@ def _qualified_accepted_original_effects(
     return TypedEvidenceError(category, stage, detail, record.request_comment_id)
 
 
+@dataclass(frozen=True)
+class ForwardCorrectionWitness:
+    """A distinct Git consequence, not proof that an accepted Effect ran."""
+
+    human_comment_id: int
+    repair_pr: int
+    repair_head: str
+    materialization: MaterializationProof
+
+
+def _qualified_forward_correction_witness(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    original_payload: Mapping[str, object],
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+    accepted_successor_routing: tuple[str, str] | None = None,
+) -> ForwardCorrectionWitness | None:
+    """Requalify a Human R9 source and its separate, exact Git witness.
+
+    A positive result is *read-only correction evidence*. The normal
+    Application still owns semantic adoption, Formal Result publication,
+    successor authorization, and every eventual write. A R9 request alone
+    grants none of those capabilities.
+    """
+
+    if (
+        record.disposition != "ACCEPTED"
+        or (record.issue_number, record.role, record.action)
+        != (source.issue_number, source.role, source.action)
+        or not isinstance(repository, str)
+        or "/" not in repository
+    ):
+        return None
+    original_request = find_materialization_payload(original_payload, source)
+    if original_request is None or original_request.pr_number is None:
+        return None
+
+    comments = _paged_github_list(
+        repository, token, f"issues/{source.issue_number}/comments?sort=created&direction=asc"
+    )
+    decisions = [
+        (comment, decision)
+        for comment in comments
+        if is_github_actions_comment(comment)
+        and (decision := parse_application_decision(comment.get("body"))) is not None
+        and decision.request_comment_id == record.request_comment_id
+    ]
+    if len(decisions) != 1 or decisions[0][1] != record:
+        return None
+    decision_comment = decisions[0][0]
+    if not isinstance(decision_comment.get("body"), str):
+        return None
+    decision_digest = hashlib.sha256(cast(str, decision_comment["body"]).encode()).hexdigest()
+    decision_time = decision_comment.get("created_at")
+    owner = repository.split("/", 1)[0]
+    pr = _as_mapping(_github_json(repository, token, f"pulls/{original_request.pr_number}"))
+    head = None if pr is None else _as_mapping(pr.get("head"))
+    base = None if pr is None else _as_mapping(pr.get("base"))
+    head_repo = None if head is None else _as_mapping(head.get("repo"))
+    base_repo = None if base is None else _as_mapping(base.get("repo"))
+    current_head = None if head is None else head.get("sha")
+    if (
+        pr is None
+        or pr.get("number") != original_request.pr_number
+        or pr.get("state") != "open"
+        or pr.get("merged") is not False
+        or pr.get("draft") is True
+        or head is None
+        or not isinstance(current_head, str)
+        or _SHA.fullmatch(current_head) is None
+        or head.get("ref") != original_request.branch
+        or head_repo is None
+        or head_repo.get("full_name") != repository
+        or base is None
+        or base.get("ref") != default_branch
+        or base_repo is None
+        or base_repo.get("full_name") != repository
+    ):
+        return None
+    candidates: list[tuple[int, int, str]] = []
+    for comment in comments:
+        body = comment.get("body")
+        if not isinstance(body, str):
+            continue
+        fields = RUNTIME_REPAIR_REQUEST_WIRE.parse(body)
+        if fields is None:
+            continue
+        user = comment.get("user")
+        comment_id = comment.get("id")
+        if (
+            not isinstance(user, Mapping)
+            or user.get("login") != owner
+            or user.get("type") != "User"
+            or comment.get("performed_via_github_app") is not None
+            or type(comment_id) is not int
+            or comment_id <= 0
+            or not isinstance(decision_time, str)
+            or not isinstance(comment.get("created_at"), str)
+            or cast(str, comment["created_at"]) <= decision_time
+            or comment.get("updated_at") != comment.get("created_at")
+            or fields.get("Issue") != str(source.issue_number)
+            or fields.get("Change") != record.change
+            or fields.get("Action") != source.action
+            or fields.get("Accepted-Request-Comment") != str(record.request_comment_id)
+            or fields.get("Accepted-Decision-SHA256") != decision_digest
+            or fields.get("Repair-PR") != str(original_request.pr_number)
+            or fields.get("Repair-HEAD") != current_head
+        ):
+            continue
+        candidates.append((comment_id, original_request.pr_number, fields["Repair-HEAD"]))
+    if len(candidates) != 1:
+        # Multiple otherwise-qualified R9 sources are not an implicit
+        # priority or timestamp-based authority selection.
+        return None
+    human_id, pr_number, head_sha = candidates[0]
+    native = _as_mapping(_github_json(repository, token, f"issues/comments/{human_id}"))
+    native_user = None if native is None else _as_mapping(native.get("user"))
+    if (
+        native is None
+        or native.get("id") != human_id
+        or native.get("issue_url")
+        != f"https://api.github.com/repos/{repository}/issues/{source.issue_number}"
+        or native.get("author_association") != "OWNER"
+        or native.get("body")
+        != next(
+            (comment.get("body") for comment in comments if comment.get("id") == human_id),
+            None,
+        )
+        or native.get("performed_via_github_app") is not None
+        or native_user is None
+        or native_user.get("login") != owner
+        or native_user.get("type") != "User"
+        or native.get("created_at") != native.get("updated_at")
+        or head_sha != current_head
+        or pr_number != original_request.pr_number
+    ):
+        return None
+    # This is an exact-HEAD GitHub approval for the correction carrier,
+    # separately from the normal review-openspec Action.
+    revision = _as_mapping(_github_json(repository, token, f"commits/{head_sha}"))
+    commit_author = None if revision is None else _as_mapping(revision.get("author"))
+    pr_author = _as_mapping(pr.get("user"))
+    if (
+        revision is None
+        or revision.get("sha") != head_sha
+        or commit_author is None
+        or pr_author is None
+        or not isinstance(commit_author.get("login"), str)
+        or not isinstance(pr_author.get("login"), str)
+    ):
+        return None
+    authors = {commit_author["login"], pr_author["login"]}
+    reviews = _paged_github_list(repository, token, f"pulls/{pr_number}/reviews")
+    decisive: dict[str, Mapping[str, object]] = {}
+    for review in reviews:
+        if review.get("state") not in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
+            continue
+        reviewer = _as_mapping(review.get("user"))
+        login = None if reviewer is None else reviewer.get("login")
+        submitted = review.get("submitted_at")
+        if (
+            not isinstance(login, str)
+            or not isinstance(submitted, str)
+            or not submitted
+            or not _strict_positive_int(review.get("id"))
+        ):
+            return None
+        previous = decisive.get(login)
+        if previous is not None and submitted == previous.get("submitted_at"):
+            return None
+        if previous is None or submitted > cast(str, previous["submitted_at"]):
+            decisive[login] = review
+    if any(review.get("state") == "CHANGES_REQUESTED" for review in decisive.values()):
+        return None
+    if not any(
+        login not in authors
+        and review.get("state") == "APPROVED"
+        and review.get("commit_id") == head_sha
+        and review.get("author_association") in {"OWNER", "MEMBER", "COLLABORATOR"}
+        and _as_mapping(review.get("user")) is not None
+        and cast(Mapping[str, object], review["user"]).get("type") == "User"
+        for login, review in decisive.items()
+    ):
+        return None
+
+    commit = _as_mapping(_github_json(repository, token, f"git/commits/{head_sha}"))
+    message = None if commit is None else commit.get("message")
+    parents = None if commit is None else commit.get("parents")
+    if (
+        commit is None
+        or commit.get("sha") != head_sha
+        or not isinstance(message, str)
+        or not message.strip()
+        or message == original_request.message
+        or not isinstance(parents, list)
+        or len(parents) != 1
+        or not isinstance(parent := _as_mapping(parents[0]), Mapping)
+        or parent.get("sha") != original_request.base_sha
+    ):
+        return None
+    # This bounded correction uses the exact same observed parent as the
+    # accepted proposal. Read that tree independently for the new proof.
+    from investment_strategy.scheduled_agent_validation_resource import _content_sha_at
+
+    corrected_payload = {
+        **original_payload,
+        "message": message,
+        "files": [
+            {
+                "path": file.path,
+                "blob_sha": file.blob_sha,
+                "expected_sha": _content_sha_at(
+                    repository, token, path=file.path, revision=original_request.base_sha
+                ),
+            }
+            for file in original_request.files
+        ],
+    }
+    correction = prove_materialization(
+        corrected_payload,
+        source,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+        default_branch=default_branch,
+        accepted_authorization_revision=record.authorization_revision,
+        allow_pending_continuation=True,
+        accepted_successor_routing=accepted_successor_routing,
+        accepted_intent=True,
+    )
+    if (
+        correction.disposition != "COMPLETE"
+        or correction.witness is None
+        or correction.witness.revision != head_sha
+        or correction.target is None
+        or correction.target.revision != head_sha
+    ):
+        return None
+    return ForwardCorrectionWitness(human_id, pr_number, head_sha, correction)
+
+
+def _accepted_forward_correction_target(
+    *,
+    record: ApplicationDecisionRecord | None,
+    source: WorkerRequest,
+    original_payload: Mapping[str, object],
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+) -> ValidationResourceTarget | None:
+    """Reuse a separately proven target; validation itself remains mandatory."""
+    # The accepted effect and exact independent Git witness qualify this
+    # target, not a hard-coded Role/Action. First activation retains its
+    # separate authority because there is no existing Change carrier.
+    if record is None or record.disposition != "ACCEPTED" or record.change == "unset":
+        return None
+    try:
+        witness = _qualified_forward_correction_witness(
+            record=record,
+            source=source,
+            original_payload=original_payload,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+        )
+    except (OSError, RuntimeError, ValueError):
+        # A missing R9 observation never substitutes the original target.
+        # Only the positive corrected witness may change this validation
+        # target; the original materialization gate remains authoritative.
+        return None
+    return None if witness is None else witness.materialization.target
+
+
+def _accepted_correction_observer_for_batch(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    batch: EffectBatch,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+    accepted_successor_routing: tuple[str, str] | None = None,
+) -> Callable[[StagedEffect], tuple[int, MaterializationProof] | None] | None:
+    """Only the exact original materialization may use a distinct correction."""
+
+    # A correction can satisfy exactly one qualified materialization in an
+    # accepted batch. Other effects keep their own postcondition obligations;
+    # neither partial completion nor duplicate materializations are waived.
+    materializations: list[tuple[StagedEffect, Mapping[str, object]]] = []
+    for effect in batch.effects:
+        payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
+        if (
+            effect.kind == GITHUB_MUTATION_KIND
+            and payload is not None
+            and payload.get("operation") == "application-materialize"
+        ):
+            materializations.append((effect, payload))
+    if len(materializations) != 1 or record.disposition != "ACCEPTED":
+        return None
+    original, payload = materializations[0]
+
+    def source_qualified(effect: StagedEffect) -> tuple[int, MaterializationProof] | None:
+        if effect != original:
+            return None
+        witness = _qualified_forward_correction_witness(
+            record=record,
+            source=source,
+            original_payload=payload,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            accepted_successor_routing=accepted_successor_routing,
+        )
+        if witness is None:
+            return None
+        return witness.human_comment_id, witness.materialization
+
+    # A distinct correction must already be source-qualified to install this
+    # observer. An ordinary accepted intent with no R9 remains on the
+    # unchanged Application signature and original postcondition contract.
+    try:
+        return source_qualified if source_qualified(original) is not None else None
+    except OSError:
+        # Incomplete reads cannot establish an independent correction.
+        return None
+
+
 def _observe_accepted_post_effect_result(
     *,
     record: ApplicationDecisionRecord,
@@ -6777,6 +7133,15 @@ def _observe_accepted_post_effect_result(
             authorization_revision=record.authorization_revision,
             allow_pending_continuation=True,
             accepted_intent=True,
+            accepted_correction_observer=_accepted_correction_observer_for_batch(
+                record=record,
+                source=source,
+                batch=batch,
+                repository=repository,
+                token=token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+            ),
         )
         observed_originals = _observe_accepted_effect_prefix(batch.effects, adapter, source=source)
         if isinstance(observed_originals, RecoveryProofResult):
@@ -8436,17 +8801,27 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     if requires_validation and args.validation_passed:
         if materialization is None:
             raise RuntimeError("validation target is missing materialization")
-        target = observe_materialization_target(
-            materialization,
-            plan.source,
+        target = _accepted_forward_correction_target(
+            record=accepted_intent,
+            source=plan.source,
+            original_payload=materialization,
             repository=repository,
             token=token,
             current_revision=args.revision,
             default_branch=args.default_branch,
-            accepted_authorization_revision=request.authorization_revision,
-            allow_pending_continuation=pending_continuation,
-            accepted_intent=accepted_intent is not None,
         )
+        if target is None:
+            target = observe_materialization_target(
+                materialization,
+                plan.source,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+                default_branch=args.default_branch,
+                accepted_authorization_revision=request.authorization_revision,
+                allow_pending_continuation=pending_continuation,
+                accepted_intent=accepted_intent is not None,
+            )
         if args.validated_revision is None or target.revision != args.validated_revision:
             raise RuntimeError("EFFECT_REQUEST validation proof is stale")
     elif not requires_validation and args.validation_passed:
@@ -8663,6 +9038,32 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         )
         return 0
 
+    # Source-qualified corrections are invocation-local observations, never
+    # rewrites of immutable accepted Effect identity. The existing runner
+    # re-observes them before suppressing the original physical write.
+    accepted_correction_observer = None
+    if accepted_intent is not None and predecessor_disposition == "INDETERMINATE":
+        accepted_source = WorkerRequest(
+            accepted_intent.issue_number, accepted_intent.role, accepted_intent.action
+        )
+        accepted_originals = _qualified_accepted_original_effects(
+            record=accepted_intent,
+            source=accepted_source,
+            raw_worker_result=accepted_intent.raw_worker_result,
+            repository=repository,
+            token=token,
+        )
+        if isinstance(accepted_originals, EffectBatch):
+            accepted_correction_observer = _accepted_correction_observer_for_batch(
+                record=accepted_intent,
+                source=accepted_source,
+                batch=accepted_originals,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+                default_branch=args.default_branch,
+            )
+
     context.stage = "application-effect-and-postcondition"
     # A new raw comment cannot become an accepted intent from a source
     # that lost qualification while Phase A prepared its effects.
@@ -8712,6 +9113,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             **({"accepted_intent": True} if accepted_intent is not None else {}),
             **({"reconcile_only": True} if predecessor_disposition == "INDETERMINATE" else {}),
             uncertain_effect_index=uncertain_effect_index,
+            accepted_correction_observer=accepted_correction_observer,
             **(
                 {"proven_empty_original_effects": True}
                 if original_effect_count == 0 and predecessor_disposition == "INDETERMINATE"
@@ -8827,17 +9229,27 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     if result.applied and requires_validation and not args.validation_passed:
         if materialization is None:
             raise RuntimeError("validation gate has no materialization target")
-        target = observe_materialization_target(
-            materialization,
-            plan.source,
+        target = _accepted_forward_correction_target(
+            record=accepted_intent,
+            source=plan.source,
+            original_payload=materialization,
             repository=repository,
             token=token,
             current_revision=args.revision,
             default_branch=args.default_branch,
-            accepted_authorization_revision=request.authorization_revision,
-            allow_pending_continuation=pending_continuation,
-            accepted_intent=accepted_intent is not None,
         )
+        if target is None:
+            target = observe_materialization_target(
+                materialization,
+                plan.source,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+                default_branch=args.default_branch,
+                accepted_authorization_revision=request.authorization_revision,
+                allow_pending_continuation=pending_continuation,
+                accepted_intent=accepted_intent is not None,
+            )
     else:
         target = None
     _write_carrier_outputs(result)

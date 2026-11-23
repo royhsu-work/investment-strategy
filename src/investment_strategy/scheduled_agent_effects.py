@@ -1985,6 +1985,9 @@ class GitHubEffectAdapter:
         pending_application_correlation: str | None = None,
         authorization_revision: str | None = None,
         accepted_intent: bool = False,
+        accepted_correction_observer: (
+            Callable[[StagedEffect], tuple[int, MaterializationProof] | None] | None
+        ) = None,
     ) -> None:
         self.repository = repository
         self.token = token
@@ -1999,6 +2002,9 @@ class GitHubEffectAdapter:
         self.pending_application_correlation = pending_application_correlation
         self.authorization_revision = authorization_revision
         self.accepted_intent = accepted_intent
+        self._accepted_correction_observer = (
+            accepted_correction_observer if accepted_intent else None
+        )
         self._last_rejection: ApplicationRejection | None = None
         self._comment_ids: dict[StagedEffect, int] = {}
         self._routing_targets: dict[StagedEffect, str] = {}
@@ -4131,6 +4137,32 @@ class GitHubEffectAdapter:
             return f"issues/comments/{comment_id}"
         return None
 
+    def observe_accepted_correction(
+        self, effect: StagedEffect
+    ) -> tuple[int, MaterializationProof] | None:
+        """Observe a separate current obligation witness, never original execution."""
+        if not self.accepted_intent or self._accepted_correction_observer is None:
+            return None
+        payload = _effect_payload(effect)
+        if (
+            effect.kind != GITHUB_MUTATION_KIND
+            or payload is None
+            or payload.get("operation") != "application-materialize"
+        ):
+            return None
+        qualified = self._accepted_correction_observer(effect)
+        if qualified is None:
+            return None
+        human_id, proof = qualified
+        if (
+            type(human_id) is not int
+            or human_id <= 0
+            or proof.disposition != "COMPLETE"
+            or proof.witness is None
+        ):
+            return None
+        return qualified
+
     def observe_postcondition(self, effect: StagedEffect) -> bool:
         if effect.kind == "issue-comment":
             return self.observe_issue_comment_source_ref(effect) is not None
@@ -4195,7 +4227,14 @@ class GitHubEffectAdapter:
 
         if effect.kind == GITHUB_MUTATION_KIND:
             payload = _effect_payload(effect)
-            return payload is not None and self._observe_github_mutation(effect, payload)
+            if payload is None:
+                return False
+            if self._observe_github_mutation(effect, payload):
+                return True
+            # The original write remains historically UNKNOWN. A distinct,
+            # freshly proven correction can satisfy only this logical
+            # obligation and suppress replay in an accepted continuation.
+            return self.observe_accepted_correction(effect) is not None
 
         return False
 
@@ -4446,6 +4485,9 @@ def consequence_postconditions_complete(
     accepted_intent: bool = False,
     observed_application_correlation: str | None = None,
     formal_result_observed: bool = False,
+    accepted_correction_observer: (
+        Callable[[StagedEffect], tuple[int, MaterializationProof] | None] | None
+    ) = None,
 ) -> bool:
     """Prove the affirmative consequence contract from fresh repository state.
 
@@ -4559,19 +4601,22 @@ def consequence_postconditions_complete(
                 expected_result_kind=batch.typed_result.result.kind.value,
                 request_comment_id=request_comment_id,
                 accepted_intent=accepted_intent,
+                accepted_correction_observer=accepted_correction_observer,
             )
             payload = _effect_payload(materializations[0])
+            if payload is None:
+                return False
+            original_target = _fresh_materialization_target(
+                payload,
+                adapter=adapter,
+                source=source,
+                current_revision=current_revision,
+                allow_pending_continuation=allow_pending_continuation,
+                accepted_successor_routing=accepted_successor_routing,
+            )
             if (
-                payload is None
-                or _fresh_materialization_target(
-                    payload,
-                    adapter=adapter,
-                    source=source,
-                    current_revision=current_revision,
-                    allow_pending_continuation=allow_pending_continuation,
-                    accepted_successor_routing=accepted_successor_routing,
-                )
-                is None
+                original_target is None
+                and adapter.observe_accepted_correction(materializations[0]) is None
             ):
                 return False
             # Materialization and the non-idempotent SLICE_CHECKPOINT are

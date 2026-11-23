@@ -3870,6 +3870,10 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             ]
         if api_path == "issues/435/comments?per_page=100&sort=created&direction=desc":
             return list(reversed([prior_comment, *formal_comments]))
+        if api_path == "issues/435/comments?sort=created&direction=asc&per_page=100&page=1":
+            # Complete R9 source inventory: this historical fixture has no
+            # separately Human-authorized correction.
+            return [source_comment, decision_comment, prior_comment, *formal_comments]
         if api_path == "issues/435/timeline?per_page=100&page=1":
             return [
                 *prior_timeline,
@@ -3903,6 +3907,7 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
     monkeypatch.setattr(materialization, "_github_json", native_read)
     monkeypatch.setattr(validation_resource, "_github_json", native_read)
     monkeypatch.setattr(effects, "_github_json", native_read)
+    monkeypatch.setattr(application_bridge, "_github_json", native_read)
     # The separate OpenSpec review gate is established upstream of this
     # accepted Effect. It is not reimplemented by the Git witness test.
     from investment_strategy import scheduled_agent_application_carrier as application_carrier
@@ -5550,6 +5555,332 @@ def test_exact_accepted_preimage_preserves_witness_across_legal_second_commit(
     assert evolved.witness is not None and evolved.witness.revision == first_commit
     assert evolved.witness.revisions.mutation_preimage == first_parent
     assert files[0]["expected_sha"] == accepted_preimage
+    assert proof_git.mutations == []
+
+
+def test_separate_forward_correction_git_witness_does_not_launder_original_unknown(
+    proof_git: _ProofGitRepository,
+) -> None:
+    """Reuse the canonical Git witness owner for distinct authorized content.
+
+    This is *physical consequence evidence only*: a caller still needs
+    independently qualified Human authorization and semantic-review gates
+    before adopting the correction as satisfaction of an accepted obligation.
+    """
+    original_payload = proof_git.payload()
+    original_message = cast(str, original_payload["message"])
+    distinct_message = "docs: separate forward correction (Refs #435)"
+    assert distinct_message != original_message
+    corrected = proof_git.commit(
+        {proof_git.path: "accepted content"},
+        distinct_message,
+        (proof_git.base,),
+    )
+    proof_git.set_head(corrected)
+
+    # Current blobs alone cannot establish who executed the accepted Effect.
+    original = _prove_payload_git(proof_git, original_payload, accepted_intent=True)
+    assert original.disposition != "COMPLETE", original
+    assert original.witness is None
+
+    # The independent operation has its own exact parent/message/path witness.
+    correction_payload = {**original_payload, "message": distinct_message}
+    independent = _prove_payload_git(proof_git, correction_payload, accepted_intent=True)
+    assert independent.disposition == "COMPLETE", independent
+    assert independent.witness is not None
+    assert independent.witness.revision == corrected
+    assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "authorized",
+        "historical-head",
+        "wrong-actor",
+        "connector",
+        "wrong-digest",
+        "duplicate",
+        "self-review",
+        "advisory-only",
+        "stale-review",
+    ],
+)
+def test_source_qualified_forward_correction_has_independent_git_witness(
+    proof_git: _ProofGitRepository, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """R9 qualifies a correction witness, not the original Effect or a new write."""
+    from investment_strategy.scheduled_agent_effects import (
+        ApplicationDecisionRecord,
+        parse_application_decision,
+    )
+
+    source = proof_git.source
+    payload = proof_git.payload()
+    corrected_message = "Forward correction on the existing Change"
+    head = proof_git.commit(
+        {proof_git.path: "accepted content"}, corrected_message, (proof_git.base,)
+    )
+    proof_git.set_head(head)
+    physical = {
+        "issue_number": source.issue_number,
+        "role": source.role,
+        "action": source.action,
+        "change": _CHANGE,
+        "result_kind": "ready-for-openspec-review",
+        "evidence_ref": "issuecomment-accepted",
+        "result_content": "accepted intent",
+        "requested_effects": [{"kind": "github-mutation", "payload_json": json.dumps(payload)}],
+    }
+    raw = json.dumps(physical, sort_keys=True)
+    record = ApplicationDecisionRecord(
+        request_comment_id=7002,
+        request_body_sha256="a" * 64,
+        authorization_revision=proof_git.authorization,
+        issue_number=source.issue_number,
+        role=source.role,
+        action=source.action,
+        change=_CHANGE,
+        result_kind="ready-for-openspec-review",
+        disposition="ACCEPTED",
+        worker_result_sha256=hashlib.sha256(raw.encode()).hexdigest(),
+        raw_worker_result=raw,
+        reason="application accepted",
+    )
+    decision_body = "\n".join(
+        [
+            "APPLICATION_DECISION",
+            "Request-Comment: 7002",
+            f"Request-Body-SHA256: {record.request_body_sha256}",
+            f"Authorization-Revision: {record.authorization_revision}",
+            f"Issue: {record.issue_number}",
+            f"Role: {record.role}",
+            f"Action: {record.action}",
+            f"Change: {record.change}",
+            f"Result-Kind: {record.result_kind}",
+            f"Disposition: {record.disposition}",
+            f"Worker-Result-SHA256: {record.worker_result_sha256}",
+            f"Application-Intent-B64: {base64.b64encode(raw.encode()).decode()}",
+            f"Reason: {record.reason}",
+        ]
+    )
+    assert parse_application_decision(decision_body) == record
+    digest = hashlib.sha256(decision_body.encode()).hexdigest()
+    owner = proof_git.repository.split("/", 1)[0]
+
+    def r9(comment_id: int, repair_head: str) -> dict[str, object]:
+        body = "\n".join(
+            [
+                "RUNTIME_REPAIR_REQUEST",
+                f"Issue: {source.issue_number}",
+                f"Change: {_CHANGE}",
+                f"Action: {source.action}",
+                "Accepted-Request-Comment: 7002",
+                f"Accepted-Decision-SHA256: {digest if case != 'wrong-digest' else 'f' * 64}",
+                "Repair-PR: 324",
+                f"Repair-HEAD: {repair_head}",
+            ]
+        )
+        return {
+            "id": comment_id,
+            "issue_url": f"https://api.github.com/repos/{proof_git.repository}/issues/{source.issue_number}",
+            "author_association": "OWNER",
+            "body": body,
+            "created_at": "2026-11-22T18:39:14Z",
+            "updated_at": "2026-11-22T18:39:14Z",
+            "user": {
+                "login": owner if case != "wrong-actor" else "foreign-user",
+                "type": "User",
+            },
+            "performed_via_github_app": (
+                {"slug": "chatgpt-codex-connector"} if case == "connector" else None
+            ),
+        }
+
+    comments = [
+        {
+            "id": 7001,
+            "body": decision_body,
+            "created_at": "2026-11-22T14:00:00Z",
+            "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
+        },
+        r9(710, proof_git.base),
+        r9(711, proof_git.base if case == "historical-head" else head),
+    ]
+    if case == "duplicate":
+        comments.append(r9(712, head))
+
+    monkeypatch.setattr(
+        application_bridge,
+        "_paged_github_list",
+        lambda _repository, _token, path: (
+            tuple(comments)
+            if path.startswith("issues/")
+            else (
+                {
+                    "id": 1101,
+                    "user": {
+                        "login": owner if case == "self-review" else "independent-reviewer",
+                        "type": "User",
+                    },
+                    "state": "COMMENTED" if case == "advisory-only" else "APPROVED",
+                    "author_association": "MEMBER",
+                    "submitted_at": "2026-11-22T19:00:00Z",
+                    "commit_id": proof_git.base if case == "stale-review" else head,
+                },
+            )
+        ),
+    )
+
+    def native(_repository: str, _token: str, path: str, **kwargs: object) -> object:
+        if path == "pulls/324":
+            pr = cast(dict[str, object], proof_git.api(_repository, _token, path, **kwargs))
+            return {**pr, "user": {"login": owner}}
+        if path == f"commits/{head}":
+            return {"sha": head, "author": {"login": owner}}
+        if path.startswith("issues/comments/"):
+            comment_id = int(path.rsplit("/", 1)[1])
+            return next(item for item in comments if item["id"] == comment_id)
+        return proof_git.api(_repository, _token, path, **kwargs)
+
+    monkeypatch.setattr(application_bridge, "_github_json", native)
+    original = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert original.disposition != "COMPLETE"
+    correction = application_bridge._qualified_forward_correction_witness(
+        record=record,
+        source=source,
+        original_payload=payload,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+    )
+    if case == "authorized":
+        assert correction is not None
+        assert correction.human_comment_id == 711
+        assert correction.repair_head == head
+        assert correction.materialization.disposition == "COMPLETE"
+        assert correction.materialization.witness is not None
+        assert correction.materialization.witness.revision == head
+
+        # The Application DAG marks the *current obligation* satisfied by a
+        # new source-qualified witness, but original physical proof stays
+        # unresolved and the old Effect is never executed.
+        import investment_strategy.scheduled_agent_effects as effects
+        from investment_strategy.scheduled_agent_effects import GitHubEffectAdapter
+
+        original_effect = StagedEffect("github-mutation", json.dumps(payload))
+        # Staged delivery may contain additional accepted obligations. The
+        # correction witnesses only the materialization, never those siblings.
+        from investment_strategy.scheduled_agent_effects import EffectBatch
+
+        pending_effect = StagedEffect(
+            "issue-comment",
+            json.dumps({"issue_number": source.issue_number, "body": "pending"}),
+        )
+        mixed = EffectBatch(source, (pending_effect, original_effect))
+        mixed_observer = application_bridge._accepted_correction_observer_for_batch(
+            record=record,
+            source=source,
+            batch=mixed,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            default_branch="main",
+        )
+        assert mixed_observer is not None
+        assert mixed_observer(original_effect) == (
+            correction.human_comment_id,
+            correction.materialization,
+        )
+        assert mixed_observer(pending_effect) is None
+        assert (
+            application_bridge._accepted_correction_observer_for_batch(
+                record=record,
+                source=source,
+                batch=EffectBatch(source, (original_effect, original_effect)),
+                repository=proof_git.repository,
+                token=_TOKEN,
+                current_revision=proof_git.main,
+                default_branch="main",
+            )
+            is None
+        )
+
+        adapter = GitHubEffectAdapter(
+            proof_git.repository,
+            _TOKEN,
+            source,
+            authorized_change=_CHANGE,
+            current_revision=proof_git.main,
+            authorization_revision=proof_git.authorization,
+            accepted_intent=True,
+            accepted_correction_observer=(
+                lambda effect: (
+                    (correction.human_comment_id, correction.materialization)
+                    if effect == original_effect
+                    else None
+                )
+            ),
+        )
+        monkeypatch.setattr(effects, "_github_json", proof_git.api)
+        monkeypatch.setattr(adapter, "_observe_github_mutation", lambda *_a, **_kw: False)
+        assert adapter.observe_postcondition(original_effect)
+        fact = application_bridge._observe_accepted_effect_fact(
+            original_effect, adapter, source=source
+        )
+        assert fact.materialization_observation is not None
+        assert fact.materialization_observation.disposition != "COMPLETE"
+        assert fact.forward_correction_source_comment_id == 711
+        assert fact.forward_correction_observation == correction.materialization
+        assert application_bridge.evaluate_recovery_evidence(fact).disposition == "SATISFIED"
+
+        # A later qualified Formal Result must still read back the current
+        # consequence without pretending the original Git write succeeded.
+        monkeypatch.setattr(effects, "_fresh_materialization_target", lambda *_a, **_kw: None)
+        correlation = effects.formal_application_correlation(
+            source,
+            change=_CHANGE,
+            result_kind=record.result_kind,
+            current_revision=proof_git.main,
+            request_comment_id=record.request_comment_id,
+        )
+        assert effects.consequence_postconditions_complete(
+            raw,
+            source=source,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            authorized_change=_CHANGE,
+            request_comment_id=record.request_comment_id,
+            accepted_intent=True,
+            formal_result_observed=True,
+            observed_application_correlation=correlation,
+            accepted_correction_observer=(
+                lambda effect: (
+                    (correction.human_comment_id, correction.materialization)
+                    if effect == original_effect
+                    else None
+                )
+            ),
+        )
+        proof_git.routing = "review-openspec"
+        assert (
+            application_bridge._qualified_forward_correction_witness(
+                record=record,
+                source=source,
+                original_payload=payload,
+                repository=proof_git.repository,
+                token=_TOKEN,
+                current_revision=proof_git.main,
+                default_branch="main",
+                accepted_successor_routing=("reviewer", "review-openspec"),
+            )
+            == correction
+        )
+    else:
+        assert correction is None
     assert proof_git.mutations == []
 
 
