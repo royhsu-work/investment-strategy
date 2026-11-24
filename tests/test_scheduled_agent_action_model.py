@@ -195,12 +195,6 @@ def test_select_work_uses_deterministic_preactivation_order() -> None:
 @pytest.mark.parametrize(
     "observations",
     [
-        AuthoritativeObservations(
-            issues=(
-                IssueObservation(1, "open", "first", Action.IMPLEMENT_CHANGE),
-                IssueObservation(2, "open", "second", Action.IMPLEMENT_CHANGE),
-            )
-        ),
         AuthoritativeObservations(issues=(IssueObservation(1, "open", "active", None),)),
         AuthoritativeObservations(
             issues=(IssueObservation(1, "open", None, Action.REVIEW_OPENSPEC),)
@@ -228,53 +222,94 @@ def test_selection_fails_closed_for_ambiguous_or_unqualified_state(
     assert decision.role is None
 
 
+@pytest.mark.parametrize("pair", [(435, 468), (900, 850)])
 @pytest.mark.parametrize(
     ("change", "action"),
     [
         ("unset", Action.EXPLORE_CHANGE),
         ("unset", Action.PROPOSE_CHANGE),
-        ("issue458-scope", Action.REVIEW_OPENSPEC),
+        ("repair-scope", Action.REVIEW_OPENSPEC),
     ],
 )
-def test_scoped_human_priority_precedes_435_without_rewriting_it(
-    change: str, action: Action
+def test_dependency_suspends_formal_work_without_rewriting_it(
+    pair: tuple[int, int], change: str, action: Action
 ) -> None:
-    selected = select_work(
-        AuthoritativeObservations(
-            issues=(
-                IssueObservation(137, "open", "unset", Action.EXPLORE_CHANGE, 1),
-                IssueObservation(435, "open", "restore-t1", Action.RESOLVE_QUESTION, 2),
-                IssueObservation(458, "open", change, action, 3),
-            )
-        )
+    blocked, repair = pair
+    observed = AuthoritativeObservations(
+        issues=(
+            IssueObservation(137, "open", "unset", Action.EXPLORE_CHANGE, 1),
+            IssueObservation(blocked, "open", "restore-t1", Action.IMPLEMENT_CHANGE, 2),
+            IssueObservation(repair, "open", change, action, 3),
+        ),
+        dependencies=((blocked, (repair,)),),
     )
+    selected = select_work(observed)
     assert selected.disposition is SelectionDisposition.AUTHORIZE
-    assert selected.issue_number == 458
+    assert selected.issue_number == repair
     assert selected.action is action
-    assert selected.reason == "selected-human-priority-repair"
+    assert selected.reason == (
+        "selected-preactivation-action" if change == "unset" else "selected-formal-action"
+    )
+    without_policy = select_work(replace(observed, dependencies=()))
+    assert without_policy.issue_number == blocked
+    assert (
+        select_work(replace(observed, human_authorized=False)).reason == "human-authority-missing"
+    )
+    assert select_work(replace(observed, complete=False)).reason == "observations-unqualified"
+    assert (
+        select_work(replace(observed, dependencies=((repair, (repair,)),))).reason
+        == "dependency-cycle"
+    )
 
 
-def test_scoped_human_priority_expires_and_unrelated_parallel_formal_fails() -> None:
-    exited = select_work(
-        AuthoritativeObservations(
-            issues=(
-                IssueObservation(435, "open", "restore-t1", Action.RESOLVE_QUESTION),
-                IssueObservation(458, "closed", "issue458-scope", None),
-            )
-        )
+@pytest.mark.parametrize("pair", [(435, 468), (900, 850)])
+def test_closed_prerequisite_is_not_implicitly_complete(pair: tuple[int, int]) -> None:
+    blocked, repair = pair
+    observed = AuthoritativeObservations(
+        issues=(
+            IssueObservation(blocked, "open", "restore-t1", Action.IMPLEMENT_CHANGE),
+            IssueObservation(repair, "closed", "repair-scope", None),
+        ),
+        dependencies=((blocked, (repair,)),),
     )
-    assert exited.issue_number == 435
-    unrelated = select_work(
-        AuthoritativeObservations(
-            issues=(
-                IssueObservation(435, "open", "restore-t1", Action.RESOLVE_QUESTION),
-                IssueObservation(460, "open", "unrelated", Action.REVIEW_OPENSPEC),
-                IssueObservation(458, "open", "unset", Action.EXPLORE_CHANGE),
-            )
-        )
+    waiting = select_work(observed)
+    assert waiting.disposition is SelectionDisposition.NO_WORK
+    assert waiting.reason == "dependencies-unsatisfied"
+    # The acquisition layer removes an edge only after terminal qualification.
+    assert select_work(replace(observed, dependencies=())).issue_number == blocked
+
+
+def test_multiple_runnable_formal_workflows_select_one_in_stable_order() -> None:
+    observed = AuthoritativeObservations(
+        issues=(
+            IssueObservation(300, "open", "newer", Action.REVIEW_OPENSPEC, 2),
+            IssueObservation(200, "open", "older", Action.IMPLEMENT_CHANGE, 1),
+            IssueObservation(100, "open", "same-age", Action.IMPLEMENT_CHANGE, 1),
+        ),
     )
-    assert unrelated.disposition is SelectionDisposition.FAIL_CLOSED
-    assert unrelated.reason == "wip-more-than-one"
+    assert select_work(observed).issue_number == 100
+    suspended = replace(observed, dependencies=((100, (None,)), (200, (None,))))
+    assert select_work(suspended).issue_number == 300
+    reversed_observations = replace(suspended, issues=tuple(reversed(suspended.issues)))
+    assert select_work(reversed_observations) == select_work(suspended)
+
+
+def test_graph_external_and_issue_prerequisites_share_runnable_policy() -> None:
+    observed = AuthoritativeObservations(
+        issues=(
+            IssueObservation(10, "open", "original", Action.IMPLEMENT_CHANGE, 1),
+            IssueObservation(20, "open", "repair", Action.IMPLEMENT_CHANGE, 2),
+            IssueObservation(30, "open", "unset", Action.EXPLORE_CHANGE, 3),
+        ),
+        dependencies=((10, (20, None)), (20, (30,))),
+    )
+    assert select_work(observed).issue_number == 30
+    waiting = replace(observed, dependencies=((10, (20, None)), (20, (30,)), (30, (None,))))
+    assert select_work(waiting).reason == "dependencies-unsatisfied"
+    cyclic = replace(observed, dependencies=((10, (20,)), (20, (30,)), (30, (10,))))
+    assert select_work(cyclic).reason == "dependency-cycle"
+    invalid = replace(observed, dependencies=None)
+    assert select_work(invalid).reason == "dependency-observation-invalid"
 
 
 def test_select_work_returns_no_work_for_unrouted_issues() -> None:
@@ -377,8 +412,8 @@ def test_workflow_presentation_is_exactly_model_generated() -> None:
                     IssueObservation(2, "open", "second", Action.REVIEW_OPENSPEC),
                 )
             ),
-            SelectionDisposition.FAIL_CLOSED,
-            "wip-more-than-one",
+            SelectionDisposition.AUTHORIZE,
+            "selected-formal-action",
         ),
     ],
 )

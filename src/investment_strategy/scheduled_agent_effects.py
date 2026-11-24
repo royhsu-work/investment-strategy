@@ -95,6 +95,7 @@ from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
     ObservationProvenance,
     classify_dispatch,
+    pending_continuation_candidate,
 )
 
 _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
@@ -706,31 +707,12 @@ def _pending_continuation_is_eligible(
 ) -> bool:
     """Accept only the current source while formal evidence awaits its successor."""
 
-    decision = classify_dispatch(preflight)
-    enumeration = preflight.enumeration
-    matching = tuple(
-        issue for issue in preflight.issues if issue.issue_number == source.issue_number
-    )
+    candidate = pending_continuation_candidate(preflight)
     return (
-        decision.disposition == "FAIL_CLOSED"
-        and decision.reason == "observations-unqualified"
-        and all(number == source.issue_number for number in decision.formal_issue_ids)
-        and preflight.human_authorized is True
-        and not enumeration.incomplete_results
-        and enumeration.exhausted
-        and enumeration.source_total_count is not None
-        and enumeration.observed_count == enumeration.source_total_count
-        and len({issue.issue_number for issue in preflight.issues}) == len(preflight.issues)
-        and len(matching) == 1
-        and matching[0].current_state_provenance is ObservationProvenance.INDETERMINATE
-        and matching[0].state == "open"
-        and matching[0].change == expected_change
-        and matching[0].routing == _routing_identity(source)
-        and all(
-            issue.current_state_provenance is ObservationProvenance.QUALIFIED
-            for issue in preflight.issues
-            if issue.issue_number != source.issue_number
-        )
+        candidate is not None
+        and candidate.issue_number == source.issue_number
+        and candidate.change == expected_change
+        and candidate.routing == _routing_identity(source)
     )
 
 

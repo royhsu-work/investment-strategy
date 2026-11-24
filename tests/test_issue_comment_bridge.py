@@ -31,6 +31,10 @@ from investment_strategy.scheduled_agent_idle_admission import (
     qualify_idle_handoff,
     render_idle_admission_request,
 )
+from investment_strategy.scheduled_agent_runtime import (
+    GitHubIssueObservation,
+    acquire_dispatch_preflight,
+)
 from investment_strategy.workflow_dispatch import (
     DispatchDecision,
     ObservationProvenance,
@@ -4515,25 +4519,22 @@ def test_interrupted_merge_recovery_is_relayed_by_existing_dispatch_wake(
         accepted_decision_sha256=decision_digest,
         request_comment_id=654,
     )
-    preflight = SimpleNamespace(
-        human_authorized=True,
-        enumeration=SimpleNamespace(
-            incomplete_results=False,
-            exhausted=True,
-            source_total_count=1,
-            observed_count=1,
-        ),
-        issues=(
-            SimpleNamespace(
+    preflight = acquire_dispatch_preflight(
+        observations=(
+            GitHubIssueObservation(
                 issue_number=138,
                 state="open",
                 change="restore-no-work-idle-discovery",
-                routing=(source.role, source.action),
+                routing=("executor", "merge-implementation-pr"),
                 created_order=1,
+                authoritative=True,
+                current_state_provenance=ObservationProvenance.INDETERMINATE,
             ),
         ),
+        source_total_count=1,
+        incomplete_results=False,
+        exhausted=True,
     )
-    unqualified = replace(_decision("FAIL_CLOSED"), reason="observations-unqualified")
     observed: list[bridge.WorkerRequest] = []
 
     def completion(
@@ -4548,7 +4549,6 @@ def test_interrupted_merge_recovery_is_relayed_by_existing_dispatch_wake(
         )
 
     monkeypatch.setattr(bridge, "acquire_current_github_preflight", lambda *_args: preflight)
-    monkeypatch.setattr(bridge, "classify_dispatch", lambda _preflight: unqualified)
     monkeypatch.setattr(bridge, "qualify_application_completion", completion)
     monkeypatch.setattr(bridge, "_paged_list", lambda *_args, **_kwargs: (decision_comment,))
     monkeypatch.setattr(bridge, "apply_derived_human_wait", lambda decision, **_kw: decision)

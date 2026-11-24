@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import json
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from email.message import Message
 from io import BytesIO
 from types import SimpleNamespace
@@ -5057,7 +5058,7 @@ def test_mapped_owner_create_replacement_pr_requires_formal_retirement_and_fresh
     assert adapter.guard(effect) is (allowed and (role == "executor" or not out_of_capability))
 
 
-def test_pending_accepted_continuation_cannot_hide_competing_formal_work() -> None:
+def test_pending_accepted_continuation_cannot_bypass_selected_runnable_work() -> None:
     from investment_strategy.workflow_dispatch import ObservationProvenance, classify_dispatch
 
     source = WorkerRequest(138, "lead", "resolve-question")
@@ -5067,7 +5068,7 @@ def test_pending_accepted_continuation_cannot_hide_competing_formal_work() -> No
             change=_CHANGE,
             routing=("lead", "resolve-question"),
             state="open",
-            created_order=1,
+            created_order=3,
             authoritative=True,
             current_state_provenance=ObservationProvenance.INDETERMINATE,
         ),
@@ -5076,7 +5077,7 @@ def test_pending_accepted_continuation_cannot_hide_competing_formal_work() -> No
             change="another-active-change",
             routing=("executor", "implement-change"),
             state="open",
-            created_order=2,
+            created_order=1,
             authoritative=True,
             current_state_provenance=ObservationProvenance.QUALIFIED,
         ),
@@ -5090,6 +5091,30 @@ def test_pending_accepted_continuation_cannot_hide_competing_formal_work() -> No
     )
     assert classify_dispatch(preflight).reason == "observations-unqualified"
     assert not effects._pending_continuation_is_eligible(preflight, source, _CHANGE)
+    suspended_competitor = acquire_dispatch_preflight(
+        observations=observations,
+        source_total_count=2,
+        incomplete_results=False,
+        exhausted=True,
+        dependencies=((999, (None,)),),
+    )
+    assert effects._pending_continuation_is_eligible(suspended_competitor, source, _CHANGE)
+    incomplete_source = acquire_dispatch_preflight(
+        observations=(replace(observations[0], authoritative=False), observations[1]),
+        source_total_count=2,
+        incomplete_results=False,
+        exhausted=True,
+        dependencies=((999, (None,)),),
+    )
+    assert not effects._pending_continuation_is_eligible(incomplete_source, source, _CHANGE)
+    suspended_source = acquire_dispatch_preflight(
+        observations=observations,
+        source_total_count=2,
+        incomplete_results=False,
+        exhausted=True,
+        dependencies=((138, (999,)),),
+    )
+    assert not effects._pending_continuation_is_eligible(suspended_source, source, _CHANGE)
     batch = parse_effect_batch(
         _raw(role="lead", action="resolve-question", result_kind="blocked"), source
     )

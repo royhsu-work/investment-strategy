@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 import investment_strategy.scheduled_agent_runtime as runtime
-from investment_strategy.scheduled_agent_action_model import Action
+from investment_strategy.scheduled_agent_action_model import Action, WorkflowDependencies
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     acquire_dispatch_preflight,
@@ -32,6 +32,7 @@ def _preflight(
     incomplete_results: bool = False,
     exhausted: bool = True,
     human_authorized: bool = True,
+    dependencies: WorkflowDependencies | None = (),
 ) -> DispatchPreflight:
     return acquire_dispatch_preflight(
         observations=observations,
@@ -41,6 +42,7 @@ def _preflight(
         incomplete_results=incomplete_results,
         exhausted=exhausted,
         human_authorized=human_authorized,
+        dependencies=dependencies,
     )
 
 
@@ -84,9 +86,9 @@ def test_action_only_dispatch_selects_exactly_one_formal_work_item() -> None:
     assert action_entry_authorized(preflight, 138, ("executor", "implement-change"))
 
 
-def test_wip_and_incomplete_observations_fail_closed() -> None:
+def test_multiple_formal_workflows_and_incomplete_observations() -> None:
     two = _preflight((_issue(138, "implement-change"), _issue(139, "review-implementation")))
-    assert classify_dispatch(two).reason == "wip-more-than-one"
+    assert classify_dispatch(two).selected_issue_id == 138
 
     incomplete = _preflight(
         (_issue(138, "implement-change"),),
@@ -98,36 +100,498 @@ def test_wip_and_incomplete_observations_fail_closed() -> None:
     assert classify_dispatch(incomplete).completeness == "INDETERMINATE"
 
 
-def test_scoped_human_priority_preserves_activation_proof() -> None:
+@pytest.mark.parametrize("pair", [(435, 468), (900, 850)])
+def test_dependency_selection_preserves_activation_proof(pair: tuple[int, int]) -> None:
+    blocked, repair = pair
     before = _preflight(
         (
-            _issue(435, "resolve-question", change="restore-t1", order=1),
-            _issue(458, "propose-change", change="unset", order=2),
-        )
+            _issue(blocked, "implement-change", change="restore-t1", order=1),
+            _issue(repair, "propose-change", change="unset", order=2),
+        ),
+        dependencies=((blocked, (repair,)),),
     )
-    assert classify_dispatch(before).selected_issue_id == 458
-    assert action_entry_authorized(before, 458, ("lead", "propose-change"))
+    assert classify_dispatch(before).selected_issue_id == repair
+    assert action_entry_authorized(before, repair, ("lead", "propose-change"))
 
-    after = _preflight(
-        (
-            _issue(435, "resolve-question", change="restore-t1", order=1),
-            _issue(458, "propose-change", change="issue458-scope", order=2),
-        )
+    issues = (
+        _issue(blocked, "implement-change", change="restore-t1", order=1),
+        _issue(repair, "propose-change", change="repair-scope", order=2),
     )
-    assert classify_dispatch(after).formal_issue_ids == (435, 458)
-    assert activation_postwrite_accepted(after, issue_number=458, expected_change="issue458-scope")
-    assert not activation_postwrite_accepted(after, issue_number=435, expected_change="restore-t1")
+    after = _preflight(issues, dependencies=((blocked, (repair,)),))
+    assert classify_dispatch(after).formal_issue_ids == tuple(sorted(pair))
+    assert activation_postwrite_accepted(after, issue_number=repair, expected_change="repair-scope")
+    assert not activation_postwrite_accepted(
+        after, issue_number=blocked, expected_change="restore-t1"
+    )
+    assert not activation_postwrite_accepted(
+        _preflight(issues), issue_number=repair, expected_change="repair-scope"
+    )
 
 
-def test_scoped_human_priority_does_not_bypass_closed_debt() -> None:
+def test_dependency_selection_does_not_bypass_closed_debt() -> None:
     before = _preflight(
         (
-            _issue(435, "resolve-question", change="restore-t1"),
-            _issue(458, "explore-change", change="unset"),
+            _issue(435, "implement-change", change="restore-t1"),
+            _issue(468, "explore-change", change="unset"),
             _issue(411, "resolve-question", state="closed", routing_debt=True),
-        )
+        ),
+        dependencies=((435, (468,)),),
     )
     assert classify_dispatch(before).disposition == "FAIL_CLOSED"
+
+
+def _dependency_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+    pair: tuple[int, int],
+    *,
+    phase: str = "explore",
+    fault: str = "",
+) -> list[str]:
+    """Actual acquisition/qualification, with only GitHub GETs substituted."""
+    blocked, repair = pair
+    revision = "a" * 40
+    repo_url = "https://api.github.com/repos/owner/repo"
+    state = "closed" if phase in {"completed", "no-go", "bare-close"} else "open"
+    repair_change = "unset" if phase == "explore" else "repair-scope"
+    repair_labels = (
+        []
+        if state == "closed"
+        else [
+            {"name": "action:explore-change" if phase == "explore" else "action:implement-change"}
+        ]
+    )
+    blocked_issue = {
+        "number": blocked,
+        "id": blocked + 10000,
+        "repository_url": repo_url,
+        "state": "open",
+        "body": "Change: restore-t1\n",
+        "created_at": "2026-09-12T00:00:00Z",
+        "closed_at": None,
+        "labels": [{"name": "action:implement-change"}],
+    }
+    repair_issue = {
+        "number": repair,
+        "id": repair + 10000,
+        "repository_url": repo_url,
+        "state": state,
+        "body": f"Change: {repair_change}\n",
+        "created_at": "2026-09-12T00:00:00Z",
+        "closed_at": "2026-09-12T00:00:10Z" if state == "closed" else None,
+        "labels": repair_labels,
+    }
+
+    def formal_comment(
+        number: int, change: str, action: str, role: str, result: str, successor: str
+    ) -> dict[str, object]:
+        marker = "REVIEW_RESULT" if action.startswith("review-") else "ACTION_RESULT"
+        return {
+            "id": 10 if number == blocked else 20,
+            "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
+            "body": "\n".join(
+                (
+                    marker,
+                    f"Workflow: #{number}",
+                    f"Change: {change}",
+                    f"Action: {action}",
+                    f"Role: {role}",
+                    f"Result: {result.upper().replace('-', '_')}",
+                    "Revision: " + "b" * 40,
+                    "Default-Branch-Revision: " + revision,
+                    f"Application-Correlation: application:1:{number}:{change}:"
+                    f"{role}:{action}:{result}:{revision}",
+                    f"Repository-derived successor: {successor}",
+                )
+            ),
+        }
+
+    blocked_formal = formal_comment(
+        blocked,
+        "restore-t1",
+        "finalize-change",
+        "lead",
+        "more-implementation-required",
+        "Executor / implement-change",
+    )
+    declaration: dict[str, object] = {
+        "id": 12,
+        "body": f"Blocked by: #{repair}",
+        "user": {"login": "owner"},
+        "author_association": "OWNER",
+        "performed_via_github_app": {"id": 1144995, "slug": "chatgpt-codex-connector"},
+        "issue_url": f"{repo_url}/issues/{blocked}",
+        "created_at": "2026-09-12T00:00:03Z",
+        "updated_at": "2026-09-12T00:00:03Z",
+    }
+    if fault == "wrong-ref":
+        declaration["body"] = f"Blocked by: #{repair + 1}"
+    elif fault == "self":
+        declaration["body"] = f"Blocked by: #{blocked}"
+    elif fault == "malformed":
+        declaration["body"] = f"Blocked by: #{repair},, #999"
+    elif fault == "cross-issue":
+        declaration["issue_url"] = f"{repo_url}/issues/{repair}"
+    elif fault == "edited":
+        declaration["updated_at"] = "2026-09-12T00:00:04Z"
+    elif fault == "missing-provenance":
+        del declaration["performed_via_github_app"]
+    elif fault == "other-app":
+        declaration["performed_via_github_app"] = {"slug": "other-app"}
+    elif fault == "outsider":
+        declaration["user"] = {"login": "outsider"}
+        declaration["author_association"] = "NONE"
+    elif fault == "ordinary-prose":
+        declaration["body"] = f"This workflow is blocked by #{repair}"
+    elif fault == "direct-owner":
+        declaration["performed_via_github_app"] = None
+    earlier = {
+        **declaration,
+        "id": 9,
+        "body": f"Blocked by: #{repair + 1}",
+        "created_at": "2026-09-12T00:00:00Z",
+        "updated_at": "2026-09-12T00:00:00Z",
+    }
+    withdrawal = {
+        **declaration,
+        "id": 14,
+        "body": "Blocked by: none",
+        "created_at": "2026-09-12T00:00:04Z",
+        "updated_at": "2026-09-12T00:00:04Z",
+    }
+    blocked_timeline = (
+        {"id": 10, "event": "commented", "created_at": "2026-09-12T00:00:01Z"},
+        {
+            "id": 11,
+            "event": "labeled",
+            "created_at": "2026-09-12T00:00:02Z",
+            "label": {"name": "action:implement-change"},
+        },
+        {"id": 12, "event": "commented", "created_at": "2026-09-12T00:00:03Z"},
+    )
+    if phase == "formal":
+        repair_formal = formal_comment(
+            repair,
+            repair_change,
+            "review-openspec",
+            "reviewer",
+            "pass",
+            "Executor / implement-change",
+        )
+        repair_timeline = (
+            {"id": 20, "event": "commented", "created_at": "2026-09-12T00:00:05Z"},
+            {
+                "id": 21,
+                "event": "labeled",
+                "created_at": "2026-09-12T00:00:06Z",
+                "label": {"name": "action:implement-change"},
+            },
+        )
+    else:
+        repair_formal = formal_comment(
+            repair,
+            repair_change,
+            "finalize-archive" if phase == "completed" else "finalize-change",
+            "lead",
+            "lifecycle-complete" if phase == "completed" else "no-go",
+            "terminal",
+        )
+        repair_timeline = (
+            {"id": 20, "event": "commented", "created_at": "2026-09-12T00:00:05Z"},
+            {"id": 21, "event": "closed", "created_at": "2026-09-12T00:00:10Z"},
+        )
+    urls: list[str] = []
+
+    def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
+        del token
+        urls.append(url)
+        if "/issues?" in url:
+            return (blocked_issue, repair_issue)
+        if f"/issues/{blocked}/comments?" in url:
+            if fault == "no-declaration":
+                return (blocked_formal,)
+            if fault == "corrected":
+                return (earlier, blocked_formal, declaration)
+            if fault == "withdrawn":
+                return (declaration, withdrawal, blocked_formal)
+            if fault == "duplicate":
+                return (declaration, declaration, blocked_formal)
+            return (declaration, blocked_formal)
+        if f"/issues/{blocked}/timeline?" in url:
+            return blocked_timeline
+        if f"/issues/{repair}/comments?" in url:
+            if fault == "cycle":
+                return (
+                    {
+                        **declaration,
+                        "id": 22,
+                        "body": f"Blocked by: #{blocked}",
+                        "issue_url": f"{repo_url}/issues/{repair}",
+                    },
+                )
+            return () if phase in {"explore", "bare-close"} else (repair_formal,)
+        if f"/issues/{repair}/timeline?" in url:
+            return repair_timeline
+        raise AssertionError(url)
+
+    monkeypatch.setattr(runtime, "_github_get_list_page", fake_page)
+    monkeypatch.setattr(runtime, "_current_default_branch_revision", lambda *_args: revision)
+    return urls
+
+
+@pytest.mark.parametrize("pair", [(435, 468), (900, 850)])
+@pytest.mark.parametrize("phase", ["explore", "formal", "completed"])
+def test_comment_dependency_drives_fresh_selection_and_completion(
+    monkeypatch: pytest.MonkeyPatch, pair: tuple[int, int], phase: str
+) -> None:
+    blocked, repair = pair
+    urls = _dependency_fixture(monkeypatch, pair, phase=phase)
+    preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
+    decision = classify_dispatch(preflight)
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == (blocked if phase == "completed" else repair)
+    assert not any("pyproject.toml" in url for url in urls)
+    assert not any("/dependencies/" in url for url in urls)
+    assert sum(f"/issues/{blocked}/comments?" in url for url in urls) == 1
+
+
+@pytest.mark.parametrize("phase", ["no-go", "bare-close"])
+def test_dependency_closure_without_delivery_cannot_resume(
+    monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    _dependency_fixture(monkeypatch, (435, 468), phase=phase)
+    preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
+    decision = classify_dispatch(preflight)
+    assert decision.disposition == "NO_WORK"
+    assert decision.reason == "dependencies-unsatisfied"
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "wrong-ref",
+        "self",
+        "malformed",
+        "cross-issue",
+        "edited",
+        "missing-provenance",
+        "duplicate",
+        "cycle",
+    ],
+)
+def test_comment_dependency_rejects_incoherent_qualified_declarations(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    _dependency_fixture(monkeypatch, (435, 468), fault=fault)
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.disposition == "FAIL_CLOSED"
+    assert decision.selected_issue_id is None
+
+
+@pytest.mark.parametrize(
+    "fault", ["other-app", "outsider", "ordinary-prose", "no-declaration", "withdrawn"]
+)
+def test_comment_dependency_absent_or_untrusted_keeps_ordinary_selection(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    _dependency_fixture(monkeypatch, (435, 468), fault=fault)
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 435
+
+
+@pytest.mark.parametrize("fault", ["direct-owner", "corrected"])
+def test_comment_dependency_accepts_maintainer_correction_without_human_approval(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    _dependency_fixture(monkeypatch, (435, 468), fault=fault)
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 468
+
+
+def _graph_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+    graph: dict[int, tuple[int | None, ...]],
+    formal: set[int],
+    completed: set[int],
+    *,
+    failed: set[int] | None = None,
+    missing_formal_evidence: set[int] | None = None,
+) -> list[str]:
+    """Use the real paginated acquisition and formal qualifier for a whole graph."""
+    revision = "a" * 40
+    repo_url = "https://api.github.com/repos/owner/repo"
+    failed = failed or set()
+    missing_formal_evidence = missing_formal_evidence or set()
+    numbers = set(graph) | {
+        target for blockers in graph.values() for target in blockers if target is not None
+    }
+    issues: list[dict[str, object]] = []
+    comments: dict[int, tuple[dict[str, object], ...]] = {}
+    timelines: dict[int, tuple[dict[str, object], ...]] = {}
+    urls: list[str] = []
+    for number in sorted(numbers, reverse=True):
+        closed = number in completed | failed
+        change = f"change-{number}" if closed or number in formal else "unset"
+        action = "implement-change" if number in formal else "explore-change"
+        issues.append(
+            {
+                "number": number,
+                "state": "closed" if closed else "open",
+                "body": f"Change: {change}",
+                "created_at": "2026-09-12T00:00:00Z",
+                "closed_at": "2026-09-12T00:00:10Z" if closed else None,
+                "labels": [] if closed else [{"name": f"action:{action}"}],
+            }
+        )
+        entries: list[dict[str, object]] = []
+        blockers = graph.get(number, ())
+        if blockers and not closed:
+            targets = ", ".join("external" if item is None else f"#{item}" for item in blockers)
+            entries.append(
+                {
+                    "id": number * 10 + 2,
+                    "body": f"Blocked by: {targets}",
+                    "user": {"login": "owner"},
+                    "author_association": "OWNER",
+                    "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+                    "issue_url": f"{repo_url}/issues/{number}",
+                    "created_at": "2026-09-12T00:00:03Z",
+                    "updated_at": "2026-09-12T00:00:03Z",
+                }
+            )
+        formal_id = number * 10
+        if (closed or number in formal) and number not in missing_formal_evidence:
+            result = (
+                "LIFECYCLE_COMPLETE"
+                if number in completed
+                else "NO_GO"
+                if closed
+                else "MORE_IMPLEMENTATION_REQUIRED"
+            )
+            current_action = "finalize-archive" if number in completed else "finalize-change"
+            successor = "terminal" if closed else "Executor / implement-change"
+            entries.append(
+                {
+                    "id": formal_id,
+                    "body": "\n".join(
+                        (
+                            "ACTION_RESULT",
+                            f"Workflow: #{number}",
+                            f"Change: {change}",
+                            f"Action: {current_action}",
+                            "Role: lead",
+                            f"Result: {result}",
+                            "Revision: " + "b" * 40,
+                            "Default-Branch-Revision: " + revision,
+                            f"Application-Correlation: application:1:{number}:{change}:"
+                            f"lead:{current_action}:{result.lower().replace('_', '-')}:{revision}",
+                            f"Repository-derived successor: {successor}",
+                        )
+                    ),
+                    "user": {"login": "github-actions[bot]"},
+                    "performed_via_github_app": {"slug": "github-actions"},
+                }
+            )
+            event: dict[str, object] = {
+                "id": formal_id + 1,
+                "event": "closed" if closed else "labeled",
+                "created_at": "2026-09-12T00:00:10Z" if closed else "2026-09-12T00:00:02Z",
+            }
+            if not closed:
+                event["label"] = {"name": "action:implement-change"}
+            timelines[number] = (
+                {
+                    "id": formal_id,
+                    "event": "commented",
+                    "created_at": "2026-09-12T00:00:01Z",
+                },
+                event,
+            )
+        comments[number] = tuple(entries)
+
+    def read_page(url: str, token: str) -> tuple[dict[str, object], ...]:
+        del token
+        urls.append(url)
+        if "/issues?" in url:
+            return tuple(issues)
+        for number in numbers:
+            if f"/issues/{number}/comments?" in url:
+                return comments[number]
+            if f"/issues/{number}/timeline?" in url:
+                return timelines.get(number, ())
+        raise AssertionError(url)
+
+    monkeypatch.setattr(runtime, "_github_get_list_page", read_page)
+    monkeypatch.setattr(runtime, "_current_default_branch_revision", lambda *_args: revision)
+    return urls
+
+
+@pytest.mark.parametrize("offset", [0, 800])
+def test_diamond_dependency_graph_advances_and_resumes_without_rewind(
+    monkeypatch: pytest.MonkeyPatch, offset: int
+) -> None:
+    a, b, c, d = (offset + number for number in (10, 20, 30, 40))
+    graph: dict[int, tuple[int | None, ...]] = {a: (b, c), b: (d,), c: (d,), d: ()}
+    phases: tuple[tuple[set[int], int], ...] = (
+        (set(), d),
+        ({d}, b),
+        ({d, b}, c),
+        ({d, b, c}, a),
+    )
+    for completed, expected in phases:
+        urls = _graph_fixture(monkeypatch, graph, {a, b, c, d}, completed)
+        preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
+        decision = classify_dispatch(preflight)
+        assert decision.disposition == "AUTHORIZE"
+        assert decision.selected_issue_id == expected
+        assert decision.selected_routing == ("executor", "implement-change")
+        assert all(
+            not action_entry_authorized(preflight, number, ("executor", "implement-change"))
+            for number in (a, b, c, d)
+            if number != expected
+        )
+        assert sum(f"/issues/{d}/comments?" in url for url in urls) == (0 if expected == a else 1)
+
+
+def test_suspension_does_not_require_blocked_formal_frontier_or_stop_unrelated_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = {10: (20, None), 20: (), 30: ()}
+    urls = _graph_fixture(monkeypatch, graph, {10, 20, 30}, set(), missing_formal_evidence={10})
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.selected_issue_id == 20
+    assert all("/issues/10/timeline?" not in url for url in urls)
+    # Completing 20 is insufficient while the external condition remains.
+    _graph_fixture(monkeypatch, graph, {10, 20, 30}, {20}, missing_formal_evidence={10})
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.selected_issue_id == 30
+    # The fresh corrected declaration makes the original Action runnable again.
+    _graph_fixture(monkeypatch, {10: (20,), 20: (), 30: ()}, {10, 20, 30}, {20})
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.selected_issue_id == 10
+
+
+def test_failed_prerequisite_suspends_only_its_dependent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _graph_fixture(monkeypatch, {10: (20,), 20: (), 30: ()}, {10, 20}, set(), failed={20})
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.selected_issue_id == 30
+    _graph_fixture(monkeypatch, {10: (20,), 20: ()}, {10, 20}, set(), failed={20})
+    waiting = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert waiting.disposition == "NO_WORK"
+    assert waiting.reason == "dependencies-unsatisfied"
+
+
+def test_formal_priority_reaches_transitive_preactivation_prerequisite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _graph_fixture(monkeypatch, {10: (), 20: (30,), 30: (40,), 40: ()}, {20}, set())
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.selected_issue_id == 40
+    assert decision.selected_routing == ("lead", "explore-change")
 
 
 def test_closed_routing_debt_fails_closed_before_selection() -> None:

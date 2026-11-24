@@ -14,7 +14,7 @@ from typing import Any, cast
 from urllib.request import Request, urlopen
 
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
-from investment_strategy.scheduled_agent_action_model import role_for
+from investment_strategy.scheduled_agent_action_model import WorkflowDependencies, role_for
 from investment_strategy.scheduled_agent_carrier import (
     github_comment_has_app_provenance,
     github_read_bytes_with_retry,
@@ -24,6 +24,7 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
     qualify_current_formal_consequence,
 )
+from investment_strategy.scheduled_agent_formal_result import FormalLifecycleEvent
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
     EnumerationEvidence,
@@ -101,6 +102,7 @@ def acquire_dispatch_preflight(
     incomplete_results: bool,
     exhausted: bool,
     human_authorized: bool = True,
+    dependencies: WorkflowDependencies | None = (),
 ) -> DispatchPreflight:
     """Build one current-state preflight from fresh GitHub observations."""
 
@@ -128,15 +130,12 @@ def acquire_dispatch_preflight(
             exhausted=exhausted,
             observation_provenance=(
                 ObservationProvenance.QUALIFIED
-                if all(
-                    observation.authoritative
-                    and observation.current_state_provenance is ObservationProvenance.QUALIFIED
-                    for observation in observations
-                )
+                if all(observation.authoritative for observation in observations)
                 else ObservationProvenance.INDETERMINATE
             ),
         ),
         human_authorized=human_authorized,
+        dependencies=dependencies,
     )
 
 
@@ -465,9 +464,15 @@ def _qualify_current_observation(
     lifecycle_events: tuple[Mapping[str, object], ...],
     current_revision: str | None,
     authorization_ancestry: tuple[tuple[str, str], ...] = (),
+    *,
+    require_completed: bool = False,
 ) -> GitHubIssueObservation:
     if observation.change == "unset":
-        return observation
+        return (
+            replace(observation, current_state_provenance=ObservationProvenance.INDETERMINATE)
+            if require_completed
+            else observation
+        )
     qualification_input = build_qualification_input(
         issue_number=observation.issue_number,
         change=observation.change,
@@ -479,22 +484,39 @@ def _qualify_current_observation(
         authorization_ancestry=authorization_ancestry,
     )
     decision = qualify_current_formal_consequence(qualification_input)
-    return replace(
-        observation,
-        current_state_provenance=decision.provenance,
-    )
+    if require_completed and not (
+        decision.qualified
+        and isinstance(decision.event, FormalLifecycleEvent)
+        and decision.event.terminal
+        and decision.event.action == "finalize-archive"
+        and decision.event.result_kind == "lifecycle-complete"
+    ):
+        return replace(observation, current_state_provenance=ObservationProvenance.INDETERMINATE)
+    return replace(observation, current_state_provenance=decision.provenance)
 
 
 def _qualify_current_observations(
     repository: str,
     token: str,
     observations: tuple[GitHubIssueObservation, ...],
+    current_revision: str | None,
+    *,
+    required_completion: frozenset[int] = frozenset(),
+    suspended: frozenset[int] = frozenset(),
+    comments_by_issue: Mapping[int, tuple[Mapping[str, object], ...]],
 ) -> tuple[GitHubIssueObservation, ...]:
-    current_revision = _current_default_branch_revision(repository, token)
     qualified: list[GitHubIssueObservation] = []
     for observation in observations:
-        if observation.change == "unset":
+        require_completed = observation.issue_number in required_completion
+        if observation.issue_number in suspended:
             qualified.append(observation)
+            continue
+        if observation.change == "unset":
+            qualified.append(
+                replace(observation, current_state_provenance=ObservationProvenance.INDETERMINATE)
+                if require_completed
+                else observation
+            )
             continue
         # Closed Issues without a current routing label are inert historical
         # workflow records.  Their pre-activation terminal evidence may use
@@ -502,14 +524,12 @@ def _qualify_current_observations(
         # current consequence.  Keep the strict qualifier for open routes and
         # closed routing debt so active and premature-close cases still fail
         # closed.
-        if observation.state == "closed" and observation.routing is None:
+        if observation.state == "closed" and observation.routing is None and not require_completed:
             qualified.append(observation)
             continue
-        comments = _github_issue_comment_pages(
-            repository,
-            token,
-            observation.issue_number,
-        )
+        comments = comments_by_issue.get(observation.issue_number)
+        if comments is None:
+            comments = _github_issue_comment_pages(repository, token, observation.issue_number)
         lifecycle_events = _github_issue_timeline_pages(
             repository,
             token,
@@ -572,6 +592,7 @@ def _qualify_current_observations(
                 lifecycle_events,
                 current_revision,
                 tuple(authorization_ancestry),
+                require_completed=require_completed,
             )
             if current_revision is not None
             else replace(
@@ -582,22 +603,163 @@ def _qualify_current_observations(
     return tuple(qualified)
 
 
+def _declared_blockers(
+    repository: str, issue_number: int, comments: tuple[Mapping[str, object], ...]
+) -> tuple[int | None, ...]:
+    """The latest qualified declaration is the entire prerequisite set."""
+    owner = repository.split("/", 1)[0]
+    commands: list[tuple[datetime, int, Mapping[str, object]]] = []
+    seen: set[int] = set()
+    for raw in comments:
+        body = raw.get("body")
+        user = raw.get("user")
+        if (
+            not isinstance(body, str)
+            or not body.strip().startswith("Blocked by:")
+            or raw.get("author_association") != "OWNER"
+            or not isinstance(user, Mapping)
+            or user.get("login") != owner
+        ):
+            continue
+        if "performed_via_github_app" not in raw:
+            raise ValueError("maintenance declaration provenance unavailable")
+        if raw["performed_via_github_app"] is not None and not github_comment_has_app_provenance(
+            raw, actor=owner, app_slug="chatgpt-codex-connector"
+        ):
+            continue
+        comment_id = raw.get("id")
+        created = raw.get("created_at")
+        if (
+            not isinstance(comment_id, int)
+            or isinstance(comment_id, bool)
+            or comment_id <= 0
+            or comment_id in seen
+            or raw.get("issue_url")
+            != f"https://api.github.com/repos/{repository}/issues/{issue_number}"
+            or not isinstance(created, str)
+            or not _github_timestamp(created)
+        ):
+            raise ValueError("maintenance declaration identity invalid")
+        seen.add(comment_id)
+        commands.append((datetime.fromisoformat(created.replace("Z", "+00:00")), comment_id, raw))
+    if not commands:
+        return ()
+    _, _, current = max(commands, key=lambda item: (item[0], item[1]))
+    if current.get("created_at") != current.get("updated_at"):
+        raise ValueError("maintenance declaration was edited")
+    command = cast(str, current["body"]).strip()
+    if command == "Blocked by: none":
+        return ()
+    item_pattern = r"(?:#[1-9][0-9]*|external)"
+    if re.fullmatch(rf"Blocked by: {item_pattern}(?:, *{item_pattern})*", command) is None:
+        raise ValueError("maintenance declaration invalid")
+    blockers = tuple(sorted({int(number) for number in re.findall(r"#([0-9]+)", command)}))
+    if issue_number in blockers:
+        raise ValueError("maintenance dependency cannot block itself")
+    # None denotes a declared external prerequisite, never a fabricated Issue.
+    return (*blockers, None) if "external" in command else blockers
+
+
+def _read_dependencies(
+    repository: str,
+    token: str,
+    observations: tuple[GitHubIssueObservation, ...],
+    comments_by_issue: dict[int, tuple[Mapping[str, object], ...]],
+) -> WorkflowDependencies:
+    """Read the current graph once, from existing routed Issue comments."""
+    if any(item.routing_debt for item in observations):
+        return ()
+    by_number = {item.issue_number: item for item in observations}
+    dependencies: list[tuple[int, tuple[int | None, ...]]] = []
+    for item in observations:
+        if item.state != "open" or item.routing is None:
+            continue
+        comments = _github_issue_comment_pages(repository, token, item.issue_number)
+        comments_by_issue[item.issue_number] = comments
+        blockers = _declared_blockers(repository, item.issue_number, comments)
+        for number in blockers:
+            if number is None:
+                continue
+            target = by_number.get(number)
+            if (
+                target is None
+                or not target.authoritative
+                or (target.state == "open" and target.routing is None)
+            ):
+                raise ValueError("maintenance dependency target unavailable")
+        if blockers:
+            dependencies.append((item.issue_number, blockers))
+    return tuple(dependencies)
+
+
 def acquire_current_github_preflight(
     repository: str,
     token: str,
     *,
     repository_root: object | None = None,
 ) -> DispatchPreflight:
-    """Fresh-read the complete current coordination-Issue surface, including closed debt."""
+    """Reconstruct dependencies and current executable workflow eligibility."""
 
     del repository_root
     observations = _normalized_observations(_github_issue_pages(repository, token))
-    observations = _qualify_current_observations(repository, token, observations)
+    current_revision = _current_default_branch_revision(repository, token)
+    comments_by_issue: dict[int, tuple[Mapping[str, object], ...]] = {}
+    try:
+        dependencies = _read_dependencies(repository, token, observations, comments_by_issue)
+    except ValueError:
+        return acquire_dispatch_preflight(
+            observations=observations,
+            source_total_count=len(observations),
+            incomplete_results=False,
+            exhausted=True,
+            dependencies=None,
+        )
+    if dependencies and current_revision is None:
+        return acquire_dispatch_preflight(
+            observations=observations,
+            source_total_count=len(observations),
+            incomplete_results=False,
+            exhausted=True,
+            dependencies=None,
+        )
+
+    targets = {number for _, blockers in dependencies for number in blockers if number is not None}
+    closed_targets = tuple(
+        item for item in observations if item.state == "closed" and item.issue_number in targets
+    )
+    completed = {
+        item.issue_number
+        for item in _qualify_current_observations(
+            repository,
+            token,
+            closed_targets,
+            current_revision,
+            required_completion=frozenset(item.issue_number for item in closed_targets),
+            comments_by_issue=comments_by_issue,
+        )
+        if item.current_state_provenance is ObservationProvenance.QUALIFIED
+    }
+    outstanding = tuple(
+        (number, remaining)
+        for number, blockers in dependencies
+        if (remaining := tuple(blocker for blocker in blockers if blocker not in completed))
+    )
+    # Suspended work is not eligible for mutation. Retain its current
+    # structural identity and defer formal frontier qualification until resume.
+    observations = _qualify_current_observations(
+        repository,
+        token,
+        observations,
+        current_revision,
+        suspended=frozenset(number for number, _ in outstanding),
+        comments_by_issue=comments_by_issue,
+    )
     return acquire_dispatch_preflight(
         observations=observations,
         source_total_count=len(observations),
         incomplete_results=False,
         exhausted=True,
+        dependencies=outstanding,
     )
 
 

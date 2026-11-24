@@ -7,7 +7,7 @@ separate modules.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Literal
 
@@ -17,8 +17,8 @@ from investment_strategy.scheduled_agent_action_model import (
     IssueObservation,
     SelectionDecision,
     ShadowComparison,
+    WorkflowDependencies,
     role_for,
-    scoped_human_priority_activation,
     select_work,
     shadow_compare_selection,
 )
@@ -68,7 +68,7 @@ class RepositoryIssueSnapshot:
 
 @dataclass(frozen=True)
 class EnumerationEvidence:
-    """Completeness and provenance for one Issue enumeration."""
+    """Structural completeness and provenance, independent of formal frontier proof."""
 
     observed_count: int
     source_total_count: int | None
@@ -94,6 +94,7 @@ class DispatchPreflight:
     issues: tuple[RepositoryIssueSnapshot, ...]
     enumeration: EnumerationEvidence
     human_authorized: bool = True
+    dependencies: WorkflowDependencies | None = ()
 
 
 @dataclass(frozen=True)
@@ -153,6 +154,7 @@ def _model_observations(preflight: DispatchPreflight) -> AuthoritativeObservatio
         complete=preflight.enumeration.complete,
         provenance=provenance,
         human_authorized=preflight.human_authorized,
+        dependencies=preflight.dependencies,
     )
 
 
@@ -239,6 +241,48 @@ def classify_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
     )
 
 
+def pending_continuation_candidate(
+    preflight: DispatchPreflight,
+) -> RepositoryIssueSnapshot | None:
+    """Identify an exact recovery candidate, never authorize a new Action.
+
+    Only the one indeterminate open source can be hypothetically qualified for
+    selection. The actual accepted-intent and continuation gates remain required.
+    """
+    decision = classify_dispatch(preflight)
+    enumeration = preflight.enumeration
+    if (
+        decision.disposition != "FAIL_CLOSED"
+        or decision.reason != "observations-unqualified"
+        or preflight.human_authorized is not True
+        or preflight.dependencies is None
+        or not enumeration.complete
+    ):
+        return None
+    pending = tuple(
+        issue
+        for issue in preflight.issues
+        if issue.current_state_provenance is not ObservationProvenance.QUALIFIED
+    )
+    if len(pending) != 1:
+        return None
+    source = pending[0]
+    if source.state != "open" or source.routing is None or source.routing_debt:
+        return None
+    hypothetical = replace(
+        preflight,
+        issues=tuple(
+            replace(issue, current_state_provenance=ObservationProvenance.QUALIFIED)
+            if issue is source
+            else issue
+            for issue in preflight.issues
+        ),
+    )
+    if action_entry_authorized(hypothetical, source.issue_number, source.routing):
+        return source
+    return None
+
+
 def action_model_shadow(preflight: DispatchPreflight) -> ShadowComparison:
     """Compare the production decision with the same pure executable model."""
 
@@ -292,10 +336,7 @@ def activation_postwrite_accepted(
     decision = classify_dispatch(preflight)
     if (
         decision.disposition != "AUTHORIZE"
-        or (
-            decision.formal_issue_ids != (issue_number,)
-            and not scoped_human_priority_activation(decision.formal_issue_ids, issue_number)
-        )
+        or issue_number not in decision.formal_issue_ids
         or decision.selected_issue_id != issue_number
         or decision.selected_routing != ("lead", "propose-change")
     ):
