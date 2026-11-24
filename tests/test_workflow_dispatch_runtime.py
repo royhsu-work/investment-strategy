@@ -101,29 +101,29 @@ def test_wip_and_incomplete_observations_fail_closed() -> None:
 def test_scoped_human_priority_preserves_activation_proof() -> None:
     before = _preflight(
         (
-            _issue(435, "resolve-question", change="restore-t1", order=1),
-            _issue(458, "propose-change", change="unset", order=2),
+            _issue(435, "implement-change", change="restore-t1", order=1),
+            _issue(468, "propose-change", change="unset", order=2),
         )
     )
-    assert classify_dispatch(before).selected_issue_id == 458
-    assert action_entry_authorized(before, 458, ("lead", "propose-change"))
+    assert classify_dispatch(before).selected_issue_id == 468
+    assert action_entry_authorized(before, 468, ("lead", "propose-change"))
 
     after = _preflight(
         (
-            _issue(435, "resolve-question", change="restore-t1", order=1),
-            _issue(458, "propose-change", change="issue458-scope", order=2),
+            _issue(435, "implement-change", change="restore-t1", order=1),
+            _issue(468, "propose-change", change="issue468-scope", order=2),
         )
     )
-    assert classify_dispatch(after).formal_issue_ids == (435, 458)
-    assert activation_postwrite_accepted(after, issue_number=458, expected_change="issue458-scope")
+    assert classify_dispatch(after).formal_issue_ids == (435, 468)
+    assert activation_postwrite_accepted(after, issue_number=468, expected_change="issue468-scope")
     assert not activation_postwrite_accepted(after, issue_number=435, expected_change="restore-t1")
 
 
 def test_scoped_human_priority_does_not_bypass_closed_debt() -> None:
     before = _preflight(
         (
-            _issue(435, "resolve-question", change="restore-t1"),
-            _issue(458, "explore-change", change="unset"),
+            _issue(435, "implement-change", change="restore-t1"),
+            _issue(468, "explore-change", change="unset"),
             _issue(411, "resolve-question", state="closed", routing_debt=True),
         )
     )

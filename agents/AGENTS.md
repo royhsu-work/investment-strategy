@@ -47,16 +47,16 @@ Selection is complete and provenance-qualified before work is authorized. Formal
 priority over pre-activation work. More than one formal candidate is a WIP=1 violation and fails
 closed. finish-first ordering is deterministic. Closed Issues are not reopened by a normal dispatch.
 
-### Bounded Human-directed #458 recovery priority
+### Bounded Human-directed #468 recovery priority
 
-Human expressly directed #458 to complete before stalled #435. The executable
-model MAY select #458 even while exactly #435 remains the other open formal
+Human expressly directed #468 to complete before stalled #435. The executable
+model MAY select #468 even while exactly #435 remains the other open formal
 Change. This temporary two-Issue exception is not a general priority queue,
 a new Action, or a waiver of PROPOSAL_READY or other semantic gates. Only
 one Action runs per wake. A third open formal Issue, closed-routing debt,
 incomplete evidence, or invalid provenance remains fail closed. #435's
 identity, routing, accepted effects, and recovery obligations are preserved.
-After #458 retires, normal selection resumes #435 without rewinding it.
+After #468 retires, normal selection resumes #435 without rewinding it.
 
 ## Fresh dispatch and one-wake boundary
 
