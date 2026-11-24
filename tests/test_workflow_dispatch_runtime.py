@@ -533,8 +533,8 @@ def test_diamond_dependency_graph_advances_and_resumes_without_rewind(
     monkeypatch: pytest.MonkeyPatch, offset: int
 ) -> None:
     a, b, c, d = (offset + number for number in (10, 20, 30, 40))
-    graph = {a: (b, c), b: (d,), c: (d,), d: ()}
-    phases = (
+    graph: dict[int, tuple[int | None, ...]] = {a: (b, c), b: (d,), c: (d,), d: ()}
+    phases: tuple[tuple[set[int], int], ...] = (
         (set(), d),
         ({d}, b),
         ({d, b}, c),
