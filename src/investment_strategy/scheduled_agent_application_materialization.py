@@ -70,6 +70,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _valid_repo_path,
     _valid_sha,
     completed_task_bookkeeping_is_current,
+    native_merge_tree,
     resolve_validation_resource_target,
     work_product_path_allowed,
 )
@@ -957,6 +958,7 @@ def _qualified_implementation_decision(
         change=request.expected_change,
         pr_number=request.pr_number,
         current_revision=current_revision,
+        for_feature_write=True,
     )
     if (
         decision.disposition not in {"QUALIFIED", "RECONCILIATION_REQUIRED", "HISTORICAL_MERGED"}
@@ -1069,7 +1071,7 @@ def _verify_implementation_manifest_freshness(
     current_revision: str,
     carrier_head: str,
 ) -> None:
-    if request.base_sha not in {current_revision, carrier_head}:
+    if request.base_sha != carrier_head:
         comparison = _as_mapping(
             cast(
                 object,
@@ -1375,33 +1377,18 @@ def _materialize_implementation_target(
         current_revision=current_revision,
         carrier_head=current_head,
     )
-    if decision.disposition == "RECONCILIATION_REQUIRED" and current_head != current_revision:
-        base_tree_sha, tree_elements = _reconciliation_overlay(
-            request,
-            repository=repository,
-            token=token,
-            current_revision=current_revision,
-            carrier_head=current_head,
+    base_tree_sha, entries = _revision_tree_snapshot(repository, token, current_head)
+    tree_elements: list[dict[str, object]] = []
+    for file in request.files:
+        existing = entries.get(file.path)
+        mode = "100644" if existing is None else existing.get("mode")
+        if mode not in {"100644", "100755"}:
+            raise RuntimeError("implementation manifest target is not a regular file")
+        tree_elements.append(
+            {"path": file.path, "mode": mode, "type": "blob", "sha": file.blob_sha}
         )
-        parents = [current_head, current_revision]
-        message = request.message
-    else:
-        base_tree_sha, _carrier_entries = _revision_tree_snapshot(
-            repository,
-            token,
-            current_head,
-        )
-        tree_elements = [
-            {
-                "path": file.path,
-                "mode": "100644",
-                "type": "blob",
-                "sha": file.blob_sha,
-            }
-            for file in request.files
-        ]
-        parents = [current_head]
-        message = request.message
+    parents = [current_head]
+    message = request.message
 
     tree_sha = base_tree_sha
     if any(file.path.startswith(".github/workflows/") for file in request.files):
@@ -2052,21 +2039,6 @@ def _divergent_path_evidence(
     return default_paths, carrier_paths
 
 
-def _requested_path_default_overlap(
-    request: MaterializationRequest,
-    *,
-    repository: str,
-    token: str,
-    current_revision: str,
-    carrier_revision: str,
-) -> bool:
-    """Check the accepted path set, not whole-branch integration conflicts."""
-    default_paths, _carrier_paths = _divergent_path_evidence(
-        repository, token, current_revision=current_revision, carrier_revision=carrier_revision
-    )
-    return bool(default_paths.intersection(file.path for file in request.files))
-
-
 def _proof_commit(
     repository: str, token: str, revision: str
 ) -> tuple[Mapping[str, object], tuple[str, ...]]:
@@ -2310,12 +2282,13 @@ def prove_materialization(
             source_current = _current_authorized_request(repository, token) == source
         if not source_current:
             raise RuntimeError("materialization source dispatch is stale")
+        carrier_decision = None
         if (
             source.role == "executor"
             and source.action == _IMPLEMENTATION_ACTION
             and request.pr_number is not None
         ):
-            _qualified_implementation_decision(
+            carrier_decision = _qualified_implementation_decision(
                 request,
                 source,
                 repository=repository,
@@ -2448,6 +2421,7 @@ def prove_materialization(
                 default_branch=default_branch,
                 expected_branch=branch,
                 allow_historical_merged_carrier=True,
+                carrier_decision=carrier_decision,
                 allow_reconciliation=True,
             )
         pr_head = _as_mapping(pr.get("head"))
@@ -2562,7 +2536,8 @@ def prove_materialization(
         if (
             not merged
             and any(
-                _content_sha_at(repository, token, path=file.path, revision=cast(str, revision))
+                file.expected_sha is not None
+                and _content_sha_at(repository, token, path=file.path, revision=cast(str, revision))
                 is None
                 for file in request.files
             )
@@ -2589,8 +2564,16 @@ def prove_materialization(
             if request.expected_change == "unset":
                 raise RuntimeError("materialization existing first carrier has no accepted witness")
             if not merged:
+                for file in request.files:
+                    if _content_sha_at(repository, token, path=file.path, revision=revision) != (
+                        file.expected_sha
+                    ):
+                        raise RuntimeError("materialization missing work preimage is stale")
                 if revision != request.base_sha:
-                    if request.base_sha != accepted_revision:
+                    relation, _, _ = _proof_comparison(
+                        repository, token, request.base_sha, revision
+                    )
+                    if relation.get("behind_by") == 0 or request.base_sha != accepted_revision:
                         # Qualify B -> actual P before relying on the preimage at P.
                         advanced_paths = _proof_ancestry(
                             repository, token, request.base_sha, revision
@@ -2619,21 +2602,6 @@ def prove_materialization(
                                 raise RuntimeError(
                                     "materialization missing work has conflicting histories"
                                 )
-                elif default_advance.intersection(file.path for file in request.files):
-                    raise RuntimeError("materialization missing work overlaps default advance")
-                if request.base_sha != accepted_revision and _requested_path_default_overlap(
-                    request,
-                    repository=repository,
-                    token=token,
-                    current_revision=current_revision,
-                    carrier_revision=revision,
-                ):
-                    raise RuntimeError("materialization missing work overlaps default branch")
-                for file in request.files:
-                    if _content_sha_at(repository, token, path=file.path, revision=revision) != (
-                        file.expected_sha
-                    ):
-                        raise RuntimeError("materialization missing work preimage is stale")
                 return MaterializationProof("INCOMPLETE", application_request=request)
             if missing_replacement:
                 advance = _proof_ancestry(repository, token, request.base_sha, current_revision)
@@ -2721,6 +2689,15 @@ def prove_materialization(
                 # its observed ancestry to the fresh default branch.
                 _proof_ancestry(repository, token, descendant, current_revision)
                 continue
+            if len(parents) == 2:
+                _proof_ancestry(repository, token, witness_revision, parents[0])
+                _proof_ancestry(repository, token, parents[1], current_revision)
+                tree = _as_mapping(commit.get("tree"))
+                if tree is None or tree.get("sha") != native_merge_tree(
+                    repository, token, parents[0], parents[1]
+                ):
+                    raise RuntimeError("materialization descendant changes the native merge tree")
+                continue
             if len(parents) != 1:
                 raise RuntimeError("materialization descendant merge is not application-built")
             delta = _proof_ancestry(repository, token, parents[0], descendant)
@@ -2755,7 +2732,6 @@ def prove_materialization(
             and request.expected_change != "unset"
             and witness_revision != request.base_sha
             and len(witness_parents) == 1
-            and request.base_sha != accepted_revision
         ):
             advanced_paths = _proof_ancestry(
                 repository, token, request.base_sha, witness_parents[0]
@@ -2763,24 +2739,11 @@ def prove_materialization(
             content_only_witness = not advanced_paths.intersection(
                 file.path for file in request.files
             )
-        # Requested-path default changes remain a canonical non-conflict gate.
-        # Only divergences entirely outside the accepted Manifest are deferred
-        # to the independent native Git integration boundary.
         try:
             if (
-                content_only_witness
-                and not committed_formal_result
-                and _requested_path_default_overlap(
-                    request,
-                    repository=repository,
-                    token=token,
-                    current_revision=current_revision,
-                    carrier_revision=revision,
-                )
-            ):
-                raise RuntimeError("materialization carrier overlaps requested default paths")
-            if not committed_formal_result and default_advance.intersection(
-                file.path for file in request.files
+                not committed_formal_result
+                and not content_only_witness
+                and default_advance.intersection(file.path for file in request.files)
             ):
                 _proof_ancestry(repository, token, witness_revision, current_revision)
             if not committed_formal_result and not content_only_witness:

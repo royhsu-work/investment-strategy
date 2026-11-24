@@ -1397,79 +1397,12 @@ def test_confirmed_git_conflict_is_not_confused_with_plain_divergence(
 
 
 @pytest.mark.parametrize(
-    ("head_paths", "main_paths", "mergeable", "expected"),
-    [
-        (["src/work.py"], ["docs/readme.md"], True, True),
-        (["src/work.py"], ["src/work.py"], True, False),
-        (["src/work.py"], ["docs/readme.md"], False, False),
-        (["src/work.py"], ["docs/readme.md"], None, False),
-    ],
-)
-def test_diverged_mergeability_requires_complete_disjoint_git_proof(
-    head_paths: list[str], main_paths: list[str], mergeable: bool | None, expected: bool
-) -> None:
-    """Same-file changes are not *assumed* to conflict; they require reconciliation."""
-
-    base = "a" * 40
-    responses: dict[str, object] = {
-        f"compare/{HEAD}...{MAIN}": {"status": "diverged", "merge_base_commit": {"sha": base}},
-        f"compare/{base}...{HEAD}": {
-            "status": "ahead",
-            "behind_by": 0,
-            "files": [{"filename": path} for path in head_paths],
-        },
-        f"compare/{base}...{MAIN}": {
-            "status": "ahead",
-            "behind_by": 0,
-            "files": [{"filename": path} for path in main_paths],
-        },
-    }
-
-    def read(_repo: str, _token: str, path: str) -> object | None:
-        return responses.get(path)
-
-    assert (
-        carrier._disjoint_divergence_is_mergeable(
-            REPOSITORY,
-            TEST_VALUE,
-            pr={"mergeable": mergeable},
-            head_sha=HEAD,
-            default_revision=MAIN,
-            read=read,
-        )
-        is expected
-    )
-
-
-def test_divergence_does_not_treat_truncated_or_unavailable_evidence_as_safe() -> None:
-    base = "a" * 40
-
-    def read(_repo: str, _token: str, path: str) -> object | None:
-        if path == f"compare/{HEAD}...{MAIN}":
-            return {"status": "diverged", "merge_base_commit": {"sha": base}}
-        if path == f"compare/{base}...{MAIN}":
-            return {"status": "ahead", "behind_by": 0, "files": [{"filename": "a"}] * 300}
-        if path == f"compare/{base}...{HEAD}":
-            return {"status": "ahead", "behind_by": 0, "files": [{"filename": "b"}]}
-        return None
-
-    assert not carrier._disjoint_divergence_is_mergeable(
-        REPOSITORY,
-        TEST_VALUE,
-        pr={"mergeable": True},
-        head_sha=HEAD,
-        default_revision=MAIN,
-        read=read,
-    )
-
-
-@pytest.mark.parametrize(
     ("mergeable", "drop_compare", "expected"),
     [
         (None, None, "INDETERMINATE"),
         (True, "merge-base", "INDETERMINATE"),
-        (True, "main-paths", "INDETERMINATE"),
-        (True, None, "RECONCILIATION_REQUIRED"),
+        (True, "main-paths", "QUALIFIED"),
+        (True, None, "QUALIFIED"),
         (False, None, "RECONCILIATION_REQUIRED"),
     ],
 )
@@ -1574,7 +1507,7 @@ def test_qualified_carrier_survives_disjoint_mergeable_main_advance(
     )
     assert decision.qualified
     assert decision.head_sha == HEAD
-    assert decision.reason == "carrier-qualified-after-disjoint-mergeable-default-advance"
+    assert decision.reason == "carrier-qualified-after-mergeable-default-advance"
 
 
 @pytest.mark.parametrize(

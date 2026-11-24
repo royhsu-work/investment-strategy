@@ -259,7 +259,14 @@ def _non_closing_linkage(body: object, issue_number: int) -> bool:
     return re.search(rf"(?im)^\s*Refs\s+#{issue_number}\b", body) is not None
 
 
-def _required_checks_pass(repository: str, token: str, head_sha: str) -> tuple[bool, bool]:
+def _required_checks_pass(
+    repository: str,
+    token: str,
+    head_sha: str,
+    *,
+    pr: Mapping[str, object],
+    default_revision: str | None,
+) -> tuple[bool, bool]:
     decoded = _github_json(repository, token, f"commits/{head_sha}/check-runs?per_page=100")
     if not isinstance(decoded, Mapping):
         return False, False
@@ -273,14 +280,79 @@ def _required_checks_pass(repository: str, token: str, head_sha: str) -> tuple[b
         return False, False
     if total_count == 0:
         return False, False
+    candidate = pr.get("merge_commit_sha")
+    base = pr.get("base")
+    if (
+        pr.get("mergeable") is not True
+        or not _valid_sha(candidate)
+        or not _valid_sha(default_revision)
+        or not isinstance(base, Mapping)
+        or base.get("sha") != default_revision
+    ):
+        return False, False
+    integration_check = f"integration {default_revision} {head_sha} {candidate}"
+    # GitHub attaches PR jobs to H even when the checkout under test is M.
+    # The quality workflow run binds the suite ID, PR, event, path and H.
+    runs = _github_json(
+        repository,
+        token,
+        f"actions/workflows/quality.yml/runs?event=pull_request&head_sha={head_sha}&per_page=100",
+    )
+    if not isinstance(runs, Mapping) or not isinstance(runs.get("workflow_runs"), list):
+        return False, False
+    for run in runs["workflow_runs"]:
+        if not isinstance(run, Mapping):
+            return False, False
+        if (
+            run.get("event") == "pull_request"
+            and run.get("path") == ".github/workflows/quality.yml"
+            and run.get("head_sha") == head_sha
+            and isinstance(run.get("pull_requests"), list)
+            and any(
+                isinstance(link, Mapping) and link.get("number") == pr.get("number")
+                for link in run["pull_requests"]
+            )
+        ):
+            break
+    else:
+        return False, False
+    suite = run.get("check_suite_id")
+    if (
+        type(suite) is not int
+        or run.get("status") != "completed"
+        or run.get("conclusion") != "success"
+    ):
+        return False, True
+    required = {"quality", integration_check, "integration-spec / validate"}
     for raw in raw_runs:
         if not isinstance(raw, Mapping):
             return False, False
-        status = raw.get("status")
-        conclusion = raw.get("conclusion")
-        if status != "completed" or conclusion not in _ACCEPTED_CHECK_CONCLUSIONS:
+        name = raw.get("name")
+        app = raw.get("app")
+        check_suite = raw.get("check_suite")
+        owned = isinstance(app, Mapping) and app.get("slug") == "github-actions"
+        if (
+            owned
+            and isinstance(name, str)
+            and re.fullmatch(r"integration [0-9a-f]{40} [0-9a-f]{40} [0-9a-f]{40}", name)
+            and name != integration_check
+        ):
+            continue
+        if (
+            raw.get("status") != "completed"
+            or raw.get("conclusion") not in _ACCEPTED_CHECK_CONCLUSIONS
+        ):
             return False, True
-    return True, True
+        if (
+            owned
+            and raw.get("head_sha") == head_sha
+            and isinstance(name, str)
+            and isinstance(check_suite, Mapping)
+            and check_suite.get("id") == suite
+            and raw.get("conclusion") == "success"
+        ):
+            required.discard(name)
+    return not required, True
 
 
 def _human_input_fresh(
@@ -609,7 +681,9 @@ def acquire_merge_acceptance_snapshot(
         change=change,
     )
     try:
-        checks_pass, checks_complete = _required_checks_pass(repository, token, expected_head_sha)
+        checks_pass, checks_complete = _required_checks_pass(
+            repository, token, expected_head_sha, pr=pr, default_revision=current_revision
+        )
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
         checks_pass, checks_complete = False, False
     human_fresh, human_complete = _human_input_fresh(comments, pass_time)
@@ -639,7 +713,7 @@ def acquire_merge_acceptance_snapshot(
     complete = (
         identity_complete
         and review_complete
-        and checks_complete
+        and (checks_complete or historical_merged_carrier_allowed)
         and human_complete
         and native_complete
     )

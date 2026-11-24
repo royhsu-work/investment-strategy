@@ -24,6 +24,11 @@ on:
       - "src/investment_strategy/workflow_dispatch.py"
       - "tests/test_scheduled_agent_*.py"
       - "tests/test_issue_comment_bridge.py"
+  workflow_call:
+    inputs:
+      target_revision:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       target_repository:

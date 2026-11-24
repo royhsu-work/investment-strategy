@@ -35,6 +35,7 @@ from investment_strategy.scheduled_agent_action_model import (
 )
 from investment_strategy.scheduled_agent_carrier import CarrierPlan
 from investment_strategy.workflow_dispatch import classify_dispatch
+from tests.helpers import quality_evidence
 
 REPO = "royhsu-work/investment-strategy"
 CHANGE = "qualify-active-formal-consequences"
@@ -85,7 +86,8 @@ class GitHubSequence:
             "state": "closed" if historical or self.merged else "open",
             "merged": historical or self.merged,
             "merged_at": "2026-09-15T00:00:00Z" if historical or self.merged else None,
-            "merge_commit_sha": "c" * 40 if historical else NEW if self.merged else None,
+            "merge_commit_sha": "c" * 40 if historical else NEW if self.merged else "a" * 40,
+            "mergeable": True,
             "title": "Implement qualification",
             "body": "Refs #229",
             "draft": False,
@@ -243,11 +245,8 @@ class GitHubSequence:
             return [{"filename": "src/investment_strategy/scheduled_agent_formal_qualification.py"}]
         if route == "pulls/236/commits":
             return [{"commit": {"message": "Implement qualification"}}]
-        if route.endswith("/check-runs"):
-            return {
-                "total_count": 1,
-                "check_runs": [{"status": "completed", "conclusion": "success"}],
-            }
+        if route.endswith("/check-runs") or route == "actions/workflows/quality.yml/runs":
+            return quality_evidence(path, 236, MAIN, HEAD, "a" * 40)
         if route.startswith("commits/"):
             return {"parents": [{"sha": MAIN}]}
         if route.startswith("git/ref/heads/"):

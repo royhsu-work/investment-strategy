@@ -19,6 +19,7 @@ import investment_strategy.scheduled_agent_validation_resource as resources
 from investment_strategy.native_closing_preflight import MergeStrategy
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 from investment_strategy.workflow_dispatch import classify_dispatch
+from tests.helpers import quality_evidence
 from tests.test_scheduled_agent_application_carrier import (
     CHANGE,
     CONTINUATION_MERGE,
@@ -106,6 +107,9 @@ def _review_snapshot(
     head = "2ea915da35926bbcc155ebca30ae1305d7a2bc5a"
     main = "4422c8b8661cdc8af3ce699d4dbffdd61b86d7b4"
     pr = {
+        "base": {"sha": main},
+        "mergeable": True,
+        "merge_commit_sha": "e" * 40,
         "number": 236,
         "state": "open",
         "title": "Continuation",
@@ -134,11 +138,8 @@ def _review_snapshot(
             return comments[(page - 1) * 100 : page * 100]
         if path.startswith("pulls/236/commits?"):
             return [{"commit": {"message": "Implement approved continuation"}}]
-        if path.startswith(f"commits/{head}/check-runs?"):
-            return {
-                "total_count": 1,
-                "check_runs": [{"status": "completed", "conclusion": "success"}],
-            }
+        if "/check-runs?" in path or path.startswith("actions/workflows/quality.yml/runs?"):
+            return quality_evidence(path, 236, main, head, "e" * 40)
         raise AssertionError(path)
 
     monkeypatch.setattr(acceptance, "_github_json", read)

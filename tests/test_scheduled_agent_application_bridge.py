@@ -7735,6 +7735,19 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
         )(),
     )
     monkeypatch.setattr(bridge, "_accepted_checkpoint_already_durable", lambda *_a, **_k: False)
+
+    def read_issue(repository: str, _token: str, path: str) -> dict[str, object]:
+        assert (repository, path) == (_REPOSITORY, "issues/138")
+        return {
+            "number": 138,
+            "state": "open",
+            "created_at": "2026-01-01T00:00:00Z",
+            "closed_at": None,
+            "body": f"Change: {_CHANGE}",
+            "labels": [{"name": "action:implement-change"}],
+        }
+
+    monkeypatch.setattr(bridge, "_github_json", read_issue)
     # This scenario is explicitly precommit; no authoritative formal result exists.
     monkeypatch.setattr(bridge, "_qualified_committed_implementation_result", lambda **_kw: None)
     calls: list[dict[str, object]] = []

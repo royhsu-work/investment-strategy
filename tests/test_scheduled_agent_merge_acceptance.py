@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import cast
 
 import pytest
 
@@ -26,6 +27,7 @@ from investment_strategy.workflow_dispatch import (
     ObservationProvenance,
     RepositoryIssueSnapshot,
 )
+from tests.helpers import quality_evidence
 
 HEAD = "367ec125f919546443e2f006bec2a1ae1a78d4ce"
 STALE_HEAD = "0000000000000000000000000000000000000000"
@@ -514,18 +516,16 @@ def test_merge_effect_rechecks_acceptance_on_real_application_path(
             return {"number": 159, "body": "Change: prevent-native-closing-bypass"}
         if api_path == "pulls/167":
             return {
+                "number": 167,
                 "state": "open",
                 "head": {"sha": HEAD},
+                "base": {"sha": HEAD},
+                "mergeable": True,
+                "merge_commit_sha": CORRECTED_HEAD,
                 "body": "Refs #159",
             }
-        if api_path == f"commits/{HEAD}/check-runs?per_page=100":
-            return {
-                "total_count": 2,
-                "check_runs": [
-                    {"status": "completed", "conclusion": "success"},
-                    {"status": "completed", "conclusion": "success"},
-                ],
-            }
+        if "/check-runs?" in api_path or api_path.startswith("actions/workflows/quality.yml/runs?"):
+            return quality_evidence(api_path, 167, HEAD, HEAD, CORRECTED_HEAD)
         raise AssertionError(f"unexpected GitHub read: {api_path}")
 
     def fake_native_closing_result(
@@ -841,3 +841,52 @@ def test_guarded_application_binds_checkpoint_to_verified_materialization_revisi
     )
     assert result.reason == "captured"
     assert observed == ([revision] if accepted_intent else [None])
+
+
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ("old-candidate-failed", True),
+        ("missing-feature", False),
+        ("different-workflow", False),
+        ("new-base", False),
+        ("wrong-pr", False),
+    ],
+)
+def test_current_integration_gate_requires_both_jobs_from_the_same_quality_run(
+    monkeypatch: pytest.MonkeyPatch, change: str, expected: bool
+) -> None:
+    base = "a" * 40
+    candidate = "b" * 40
+    pr = {"number": 167, "mergeable": True, "merge_commit_sha": candidate, "base": {"sha": base}}
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        evidence = quality_evidence(
+            path, 168 if change == "wrong-pr" else 167, base, HEAD, candidate
+        )
+        if "check_runs" in evidence:
+            checks = cast(list[dict[str, object]], evidence["check_runs"])
+            if change == "missing-feature":
+                checks[:] = [check for check in checks if check["name"] != "quality"]
+            if change == "different-workflow":
+                checks[0]["check_suite"] = {"id": 13}
+            if change == "old-candidate-failed":
+                checks.append(
+                    {
+                        **checks[1],
+                        "name": f"integration {base} {HEAD} {'c' * 40}",
+                        "conclusion": "failure",
+                    }
+                )
+            evidence["total_count"] = len(checks)
+        return evidence
+
+    monkeypatch.setattr(merge_acceptance, "_github_json", read)
+    passed, _ = merge_acceptance._required_checks_pass(
+        "owner/repo",
+        "test",
+        HEAD,
+        pr=pr,
+        default_revision="d" * 40 if change == "new-base" else base,
+    )
+    assert passed is expected
