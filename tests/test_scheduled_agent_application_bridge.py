@@ -7977,3 +7977,104 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
     )
     assert proof.disposition == expected
     assert zero_reads == [record.request_comment_id]
+
+
+@pytest.mark.parametrize(
+    ("action", "result_kind"),
+    [
+        ("review-openspec", "pass"),
+        ("review-openspec", "findings"),
+        ("review-implementation", "pass"),
+        ("review-implementation", "findings"),
+        ("review-archive", "pass"),
+    ],
+)
+@pytest.mark.parametrize("evidence", ["matches", "moved-head", "missing", "wrong-repository"])
+def test_revision_bound_review_projection_never_relabels_reviewed_commit(
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    result_kind: str,
+    evidence: str,
+) -> None:
+    """The semantic review and governance revisions have distinct identities."""
+    source = WorkerRequest(138, "reviewer", action)
+    target = "b" * 40
+    reviewed = "c" * 40 if evidence == "moved-head" else target
+    repo = "other/repo" if evidence == "wrong-repository" else _REPOSITORY
+    evidence_ref = None if evidence == "missing" else f"https://github.com/{repo}/commit/{reviewed}"
+    monkeypatch.setattr(bridge, "_machine_carrier_head", lambda **_kwargs: target)
+    monkeypatch.setattr(bridge, "_fresh_branch_head", lambda *_args: target)
+    raw = json.dumps(
+        {
+            "_semantic_intent_version": 2,
+            "result_kind": result_kind,
+            "evidence_ref": evidence_ref,
+            "result_content": "independent semantic evidence",
+            "requested_effects": [],
+        }
+    )
+
+    def project() -> str:
+        return bridge._fresh_application_worker_result(
+            raw,
+            source=source,
+            change=_CHANGE,
+            repository=_REPOSITORY,
+            token=_REVISION,
+            current_revision=_REVISION,
+            default_branch="main",
+            request_comment_id=777,
+        )
+
+    if evidence != "matches":
+        with pytest.raises(RuntimeError, match="review target"):
+            project()
+        return
+    result = bridge.parse_worker_result(project(), source, authorized_change=_CHANGE)
+    formal = bridge._formal_result_body(result, source=source)
+    assert formal is not None
+    assert bridge._field(formal, "Revision") == target
+    assert bridge._field(formal, "Default-Branch-Revision") == _REVISION
+
+
+def test_openspec_review_reuses_change_carrier_qualification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = "b" * 40
+    source = WorkerRequest(138, "reviewer", "review-openspec")
+    monkeypatch.setattr(
+        bridge,
+        "_paged_github_list",
+        lambda *_args: [{"number": 401}, {"number": 402}],
+    )
+    calls: list[int] = []
+
+    def qualify(**kwargs: object) -> SimpleNamespace:
+        number = cast(int, kwargs["pr_number"])
+        calls.append(number)
+        return SimpleNamespace(
+            disposition="QUALIFIED" if number == 401 else "INDETERMINATE",
+            qualified=number == 401,
+            recognized=number == 401,
+            default_branch="main",
+            head_sha=target if number == 401 else "c" * 40,
+        )
+
+    monkeypatch.setattr(bridge, "qualify_change_carrier", qualify, raising=False)
+    monkeypatch.setattr(
+        bridge,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: pytest.fail("OpenSpec review must use the shared Change carrier"),
+    )
+    assert (
+        bridge._machine_carrier_head(
+            repository=_REPOSITORY,
+            token=_REVISION,
+            source=source,
+            change=_CHANGE,
+            default_branch="main",
+            current_revision=_REVISION,
+        )
+        == target
+    )
+    assert calls == [401, 402]
