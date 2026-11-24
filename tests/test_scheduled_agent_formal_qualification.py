@@ -1437,7 +1437,8 @@ def test_application_owned_lowercase_successor_is_reconciled() -> None:
         if successor is action
     ],
 )
-@pytest.mark.parametrize("occurrences", [1, 2, 3])
+# Single occurrences are covered by the source/projection matrix below.
+@pytest.mark.parametrize("occurrences", [2, 3])
 @pytest.mark.parametrize("mode", ["current", "pending"])
 @pytest.mark.parametrize("admitted", [True, False])
 def test_preactivation_recurrence_uses_admission_and_distinct_occurrences(
@@ -1561,9 +1562,7 @@ def test_preactivation_consequence_qualifies_source_and_projection(
                 },
             ]
         )
-    events.append(
-        {"id": 100, "event": "commented", "created_at": "2026-09-12T00:00:03Z"}
-    )
+    events.append({"id": 100, "event": "commented", "created_at": "2026-09-12T00:00:03Z"})
     if projected and successor != action:
         events.append(
             {
@@ -1583,9 +1582,7 @@ def test_preactivation_consequence_qualifies_source_and_projection(
                 }
             )
         else:
-            events.append(
-                {"id": 102, "event": "closed", "created_at": "2026-09-12T00:00:05Z"}
-            )
+            events.append({"id": 102, "event": "closed", "created_at": "2026-09-12T00:00:05Z"})
     qualification = build_qualification_input(
         issue_number=229,
         change="unset",
@@ -1604,3 +1601,11 @@ def test_preactivation_consequence_qualifies_source_and_projection(
         lifecycle_events=events,
     )
     assert qualify_current_formal_consequence(qualification).qualified is (admission == "valid")
+    if not projected and admission == "valid":
+        wrong_request = replace(
+            qualification,
+            expected_application_correlation=(
+                f"application:9999:229:unset:lead:{action}:{result}:{_REVISION}"
+            ),
+        )
+        assert not qualify_current_formal_consequence(wrong_request).qualified

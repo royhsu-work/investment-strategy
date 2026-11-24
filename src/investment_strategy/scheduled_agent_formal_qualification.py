@@ -753,9 +753,7 @@ def _current_routing_admission_event(
 ) -> IssueLifecycleEvent | None:
     """Derive the first occurrence's source without persisting another state."""
 
-    return _routing_admission_event(
-        qualification.lifecycle_events, qualification.current_routing
-    )
+    return _routing_admission_event(qualification.lifecycle_events, qualification.current_routing)
 
 
 def _initial_source_admission(
@@ -826,8 +824,7 @@ def _initial_source_admission(
     if not decisions and sum(item.event in routing_events for item in prefix) != 1:
         return None
     if any(
-        item.event in routing_events
-        and boundary < _lifecycle_order_key(item) < result_order
+        item.event in routing_events and boundary < _lifecycle_order_key(item) < result_order
         for item in lifecycle
     ):
         return None
@@ -1392,6 +1389,10 @@ def derive_current_frontier(qualification: QualificationInput) -> CurrentFrontie
     occurrence_anchor = (
         None if decision.event is not None else _current_routing_admission_event(qualification)
     )
+    # A structurally eligible route is not proof of a current occurrence.
+    # Without either source witness the consumer cannot prove absence of work.
+    if decision.event is None and occurrence_anchor is None:
+        return None
     return CurrentFrontier(
         issue_number=qualification.issue_number,
         change=qualification.change,
