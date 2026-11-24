@@ -4999,8 +4999,7 @@ def qualify_application_completion(
                 len(observed) != 1
                 or not observed[0][1]
                 or (
-                    observed[0][0].issue_number == source.issue_number
-                    and local != [observed[0][0]]
+                    observed[0][0].issue_number == source.issue_number and local != [observed[0][0]]
                 )
             ):
                 invalid_request_ids.add(comment_id)

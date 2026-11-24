@@ -1817,9 +1817,8 @@ def test_native_minimal_history_needs_exact_machine_source_binding(decision_kind
     decision["body"] = str(decision["body"]).replace(
         hashlib.sha256(body.encode()).hexdigest(), hashlib.sha256(native_body.encode()).hexdigest()
     )
-    decision["issue_url"] = (
-        "https://api.github.com/repos/owner/repo/issues/"
-        + ("140" if decision_kind == "foreign-copy" else "139")
+    decision["issue_url"] = "https://api.github.com/repos/owner/repo/issues/" + (
+        "140" if decision_kind == "foreign-copy" else "139"
     )
     recent = [request, decision]
     if decision_kind == "duplicate":
