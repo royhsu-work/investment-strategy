@@ -650,8 +650,8 @@ def _declared_blockers(
     command = cast(str, current["body"]).strip()
     if command == "Blocked by: none":
         return ()
-    dependency_pattern = r"(?:#[1-9][0-9]*|external)"
-    if re.fullmatch(rf"Blocked by: {dependency_pattern}(?:, *{dependency_pattern})*", command) is None:
+    item_pattern = r"(?:#[1-9][0-9]*|external)"
+    if re.fullmatch(rf"Blocked by: {item_pattern}(?:, *{item_pattern})*", command) is None:
         raise ValueError("maintenance declaration invalid")
     blockers = tuple(sorted({int(number) for number in re.findall(r"#([0-9]+)", command)}))
     if issue_number in blockers:
