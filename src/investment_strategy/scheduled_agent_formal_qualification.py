@@ -21,6 +21,7 @@ from investment_strategy.scheduled_agent_action_model import (
     next_action,
     role_for,
 )
+from investment_strategy.scheduled_agent_carrier import github_original_request_matches
 from investment_strategy.scheduled_agent_formal_result import (
     _CORRELATION,
     _WORKFLOW,
@@ -485,6 +486,8 @@ def build_qualification_input(
     lifecycle_events: Iterable[Mapping[str, object]] = (),
     authorization_ancestry: tuple[tuple[str, str], ...] = (),
     allow_successor_frontier: bool = False,
+    original_request: Mapping[str, object] | None = None,
+    repository: str | None = None,
 ) -> QualificationInput:
     """Reconstruct one complete current/pending qualification input."""
 
@@ -568,7 +571,15 @@ def build_qualification_input(
         allow_successor_frontier=allow_successor_frontier,
         one_time_human_handoff=human_handoffs == 1,
         initial_source_admission=(
-            _initial_source_admission(tuple(events), lifecycle_tuple, comment_snapshot)
+            _initial_source_admission(
+                tuple(events),
+                lifecycle_tuple,
+                comment_snapshot,
+                original_request=original_request,
+                repository=repository,
+                authorization_ancestry=authorization_ancestry,
+                current_revision=current_revision,
+            )
             if change == "unset" and events
             else None
         ),
@@ -760,6 +771,11 @@ def _initial_source_admission(
     events: tuple[FormalLifecycleEvent, ...],
     lifecycle: tuple[IssueLifecycleEvent, ...],
     comments: tuple[Mapping[str, object], ...],
+    *,
+    original_request: Mapping[str, object] | None,
+    repository: str | None,
+    authorization_ancestry: tuple[tuple[str, str], ...],
+    current_revision: str | None,
 ) -> IssueLifecycleEvent | None:
     """Bind the first consequence to its admitted source, not its successor.
 
@@ -777,6 +793,7 @@ def _initial_source_admission(
     if result_order is None or correlation is None:
         return None
     decisions: list[tuple[str, int]] = []
+    accepted = None
     for comment in comments:
         body = comment.get("body")
         if (
@@ -803,6 +820,16 @@ def _initial_source_admission(
             first.result_kind,
         ):
             return None
+        application_revision = correlation.group(7)
+        if current_revision is None or any(
+            before != after and (before, after) not in authorization_ancestry
+            for before, after in (
+                (record.authorization_revision, application_revision),
+                (application_revision, current_revision),
+            )
+        ):
+            return None
+        accepted = record
         matches = tuple(
             item
             for item in lifecycle
@@ -821,14 +848,57 @@ def _initial_source_admission(
     if admission is None:
         return None
     routing_events = {"closed", "labeled", "reopened", "unlabeled"}
-    if not decisions and sum(item.event in routing_events for item in prefix) != 1:
-        return None
+    if sum(item.event in routing_events for item in prefix) != 1:
+        # With re-admission, ACCEPTED alone cannot tell whether the original
+        # ingress belonged to a superseded occurrence. Cross-Issue timestamps
+        # must establish causality; unrelated event/comment IDs cannot break
+        # a same-second tie. The unique initial admission retains its legacy
+        # evidence boundary (including immutable intent after an ingress edit).
+        if (
+            accepted is None
+            or original_request is None
+            or repository is None
+            or not github_original_request_matches(original_request, accepted, repository)
+        ):
+            return None
+        created = original_request.get("created_at")
+        if (
+            not isinstance(created, str)
+            or admission.created_at is None
+            or not admission.created_at < created < boundary[0]
+        ):
+            return None
     if any(
         item.event in routing_events and boundary < _lifecycle_order_key(item) < result_order
         for item in lifecycle
     ):
         return None
     return admission
+
+
+def bind_initial_source_admission(
+    qualification: QualificationInput,
+    comments: tuple[Mapping[str, object], ...],
+    *,
+    original_request: Mapping[str, object] | None,
+    repository: str,
+) -> QualificationInput:
+    """Re-evaluate the same pure predicate with newly observed source evidence."""
+
+    if qualification.change != "unset" or not qualification.events:
+        return qualification
+    return replace(
+        qualification,
+        initial_source_admission=_initial_source_admission(
+            qualification.events,
+            qualification.lifecycle_events,
+            comments,
+            original_request=original_request,
+            repository=repository,
+            authorization_ancestry=qualification.authorization_ancestry,
+            current_revision=qualification.current_revision,
+        ),
+    )
 
 
 def _qualify_preactivation_consequence(

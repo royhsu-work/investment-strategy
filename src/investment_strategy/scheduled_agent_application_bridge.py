@@ -54,6 +54,7 @@ from investment_strategy.scheduled_agent_carrier import (
     GitHubWriteObservation,
     carrier_plan_document,
     github_comment_has_app_provenance,
+    github_original_request_matches,
     github_complete_run_jobs,
     github_paginated_mappings,
     github_read_bytes_with_retry,
@@ -1244,10 +1245,8 @@ def _read_accepted_original_request(
     body = None if comment is None else comment.get("body")
     if (
         comment is None
-        or comment.get("id") != record.request_comment_id
         or not isinstance(body, str)
-        or not _trusted_connector_comment(comment, repository.split("/", 1)[0])
-        or hashlib.sha256(body.encode()).hexdigest() != record.request_body_sha256
+        or not github_original_request_matches(comment, record, repository)
     ):
         return None
     if body.startswith("WORKER_RESULT\n"):

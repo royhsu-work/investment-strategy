@@ -1741,7 +1741,7 @@ def test_readmission_requires_exact_accepted_source_boundary(
         "id": 900,
         "body": original_body + (" edited" if evidence == "edited-ingress" else ""),
         "created_at": (
-            "2026-09-12T00:00:01Z" if evidence == "old-ingress" else "2026-09-12T00:00:03Z"
+            "2026-09-12T00:00:01Z" if evidence == "old-ingress" else "2026-09-12T00:00:04Z"
         ),
         "issue_url": "https://api.github.com/repos/owner/repo/issues/200",
         "user": {"login": "owner"},
@@ -1801,20 +1801,18 @@ def test_readmission_requires_exact_accepted_source_boundary(
             "created_at": "2026-09-12T00:00:03Z",
             "label": {"name": "action:explore-change"},
         },
-        {"id": 100, "event": "commented", "created_at": "2026-09-12T00:00:05Z"},
+        {"id": 100, "event": "commented", "created_at": "2026-09-12T00:00:07Z"},
     ]
     comments = [formal]
-    if evidence != "missing-ingress":
-        comments.append(original)
     if evidence != "missing":
         comments.append(accepted)
-        second = {"before-admission": 1, "after-result": 6}.get(evidence, 4)
+        second = {"before-admission": 1, "after-result": 8}.get(evidence, 5)
         events.append(
             {"id": 50, "event": "commented", "created_at": f"2026-09-12T00:00:{second:02d}Z"}
         )
     if evidence == "duplicate":
         comments.append({**accepted, "id": 51})
-        events.append({"id": 51, "event": "commented", "created_at": "2026-09-12T00:00:04Z"})
+        events.append({"id": 51, "event": "commented", "created_at": "2026-09-12T00:00:05Z"})
     qualification = build_qualification_input(
         issue_number=229,
         change="unset",
@@ -1824,5 +1822,7 @@ def test_readmission_requires_exact_accepted_source_boundary(
         current_revision=_REVISION,
         lifecycle_events=events,
         authorization_ancestry=((older, _REVISION),) if evidence == "advanced-revision" else (),
+        original_request=None if evidence == "missing-ingress" else original,
+        repository="owner/repo",
     )
     assert qualify_current_formal_consequence(qualification).qualified is qualified

@@ -1829,11 +1829,15 @@ def test_native_minimal_history_needs_exact_machine_source_binding(decision_kind
         decision["body"] = str(decision["body"]).replace(
             hashlib.sha256(native_body.encode()).hexdigest(), "f" * 64
         )
-    local = []
+    local: list[dict[str, object]] = []
     if decision_kind == "local-conflict":
-        local = [{**decision, "id": 702, "body": str(decision["body"]).replace(
-            "Issue: 139", "Issue: 138"
-        )}]
+        local = [
+            {
+                **decision,
+                "id": 702,
+                "body": str(decision["body"]).replace("Issue: 139", "Issue: 138"),
+            }
+        ]
     recent = [request, decision]
     if decision_kind == "duplicate":
         recent.append({**decision, "id": 701})
@@ -1860,6 +1864,8 @@ def test_native_minimal_history_needs_exact_machine_source_binding(decision_kind
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
     assert completion.state == ("NONE" if decision_kind in {"accepted", "rejected"} else "INVALID")
+    if decision_kind == "local-conflict":
+        assert completion.reason == "application-completion-preaccept-evidence-unknown"
 
 
 def _completion_matrix_reader(
