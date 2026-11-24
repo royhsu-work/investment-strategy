@@ -1423,12 +1423,8 @@ def openspec_review_revision_applies(
             return True
         if semantic_paths != {task_path}:
             return False
-        reviewed = _content_text_at(
-            repository, token, path=task_path, revision=reviewed_revision
-        )
-        current = _content_text_at(
-            repository, token, path=task_path, revision=head_revision
-        )
+        reviewed = _content_text_at(repository, token, path=task_path, revision=reviewed_revision)
+        current = _content_text_at(repository, token, path=task_path, revision=head_revision)
         return _task_marker_update_is_monotonic(reviewed, current)
     except (HTTPError, OSError, RuntimeError, ValueError):
         return False
