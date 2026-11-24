@@ -1738,13 +1738,27 @@ def test_current_frontier_reuses_formal_ancestry_after_main_advances() -> None:
     assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
 
 
-@pytest.mark.parametrize("wire", ["legacy", "native", "native-minimal", "native-foreign-claim"])
+@pytest.mark.parametrize(
+    ("wire", "created_at"),
+    [
+        ("legacy", "2026-09-18T01:00:00Z"),
+        ("native", "2026-09-18T01:00:00Z"),
+        ("native-minimal", "2026-09-18T01:00:00Z"),
+        ("native-foreign-claim", "2026-09-18T01:00:00Z"),
+        ("legacy", "2026-09-18T00:00:00Z"),
+        ("native", "2026-09-18T00:00:00Z"),
+        ("legacy", "2026-09-17T23:59:59Z"),
+        ("native", "2026-09-17T23:59:59Z"),
+    ],
+)
 @pytest.mark.parametrize("run_visible", [True, False])
-def test_preaccept_application_cannot_be_redispatched(wire: str, run_visible: bool) -> None:
+def test_preaccept_application_cannot_be_redispatched(
+    wire: str, created_at: str, run_visible: bool
+) -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     request = _effect_request_comment(
         comment_id=654,
-        created_at="2026-09-18T01:00:00Z",
+        created_at=created_at,
         authorization_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
     )
 
@@ -1790,7 +1804,9 @@ def test_preaccept_application_cannot_be_redispatched(wire: str, run_visible: bo
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
 
-    if run_visible and wire in {"legacy", "native"}:
+    if created_at == "2026-09-17T23:59:59Z":
+        assert completion.state == "NONE"
+    elif run_visible and wire in {"legacy", "native"}:
         assert completion.state == "RESUMABLE"
         assert completion.reason == "application-completion-preaccept-in-progress"
     else:
@@ -1799,15 +1815,25 @@ def test_preaccept_application_cannot_be_redispatched(wire: str, run_visible: bo
 
 
 @pytest.mark.parametrize(
-    "decision_kind",
-    ["accepted", "rejected", "foreign-copy", "duplicate", "wrong-digest", "local-conflict"],
+    ("decision_kind", "created_at"),
+    [
+        ("accepted", "2026-09-18T01:00:00Z"),
+        ("rejected", "2026-09-18T01:00:00Z"),
+        ("foreign-copy", "2026-09-18T01:00:00Z"),
+        ("duplicate", "2026-09-18T01:00:00Z"),
+        ("wrong-digest", "2026-09-18T01:00:00Z"),
+        ("local-conflict", "2026-09-18T01:00:00Z"),
+        ("wrong-digest", "2026-09-18T00:00:00Z"),
+    ],
 )
-def test_native_minimal_history_needs_exact_machine_source_binding(decision_kind: str) -> None:
+def test_native_minimal_history_needs_exact_machine_source_binding(
+    decision_kind: str, created_at: str
+) -> None:
     """A source-less raw comment is not a second owner after its durable decision."""
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     request = _effect_request_comment(
         comment_id=654,
-        created_at="2026-09-18T01:00:00Z",
+        created_at=created_at,
         issue_number=139,
     )
     decision = _application_decision_comment(
