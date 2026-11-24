@@ -1278,7 +1278,10 @@ def _qualify_lifecycle_projection(
     if qualification.mode == "current":
         for index in range(len(suffix)):
             if not _formal_interval_is_bound(
-                suffix, index, qualification.lifecycle_events, initial_source_bound=initial_source_bound
+                suffix,
+                index,
+                qualification.lifecycle_events,
+                initial_source_bound=initial_source_bound,
             ) and not (
                 index + 1 < len(suffix)
                 and _one_time_322_handoff_interval(qualification, suffix[index], suffix[index + 1])

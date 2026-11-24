@@ -187,7 +187,8 @@ def parse_application_decision(body: object) -> ApplicationDecisionRecord | None
         or not values["Change"]
         or not values["Result-Kind"]
         or not re.fullmatch(r"[0-9a-f]{64}", values["Worker-Result-SHA256"])
-        or hashlib.sha256(raw_worker_result.encode("utf-8")).hexdigest() != values["Worker-Result-SHA256"]
+        or hashlib.sha256(raw_worker_result.encode("utf-8")).hexdigest()
+        != values["Worker-Result-SHA256"]
     ):
         return None
     return ApplicationDecisionRecord(

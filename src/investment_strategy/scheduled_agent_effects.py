@@ -93,11 +93,15 @@ from investment_strategy.scheduled_agent_wire import (
 )
 from investment_strategy.scheduled_agent_wire import (
     APPLICATION_DECISION_MARKER,
-    ApplicationDecisionRecord as ApplicationDecisionRecord,
-    parse_application_decision as parse_application_decision,
 )
 from investment_strategy.scheduled_agent_wire import (
     APPLICATION_DECISION_WIRE as _APPLICATION_DECISION_WIRE,
+)
+from investment_strategy.scheduled_agent_wire import (
+    ApplicationDecisionRecord as ApplicationDecisionRecord,
+)
+from investment_strategy.scheduled_agent_wire import (
+    parse_application_decision as parse_application_decision,
 )
 from investment_strategy.scheduled_agent_worker import parse_worker_result
 from investment_strategy.workflow_dispatch import (

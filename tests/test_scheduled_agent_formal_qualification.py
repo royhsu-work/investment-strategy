@@ -1425,6 +1425,7 @@ def test_application_owned_lowercase_successor_is_reconciled() -> None:
     assert event.valid
     assert event.successor == ("lead", "propose-change")
 
+
 # Exercise real qualification with model-derived preactivation self-transitions,
 # not merely the transition table or a repeated semantic payload.
 @pytest.mark.parametrize(
@@ -1501,6 +1502,7 @@ def test_preactivation_recurrence_uses_admission_and_distinct_occurrences(
             ),
         )
         assert not qualify_current_formal_consequence(wrong_request).qualified
+
 
 @pytest.mark.parametrize(
     ("action", "result", "successor"),
