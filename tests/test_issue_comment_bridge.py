@@ -1738,7 +1738,7 @@ def test_current_frontier_reuses_formal_ancestry_after_main_advances() -> None:
     assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
 
 
-@pytest.mark.parametrize("wire", ["legacy", "native", "native-minimal"])
+@pytest.mark.parametrize("wire", ["legacy", "native", "native-minimal", "native-foreign-claim"])
 @pytest.mark.parametrize("run_visible", [True, False])
 def test_preaccept_application_cannot_be_redispatched(wire: str, run_visible: bool) -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
@@ -1753,6 +1753,8 @@ def test_preaccept_application_cannot_be_redispatched(wire: str, run_visible: bo
         if wire == "native-minimal":
             for field in ("issue_number", "role", "action", "change"):
                 del raw[field]
+        if wire == "native-foreign-claim":
+            raw["issue_number"] = 139
         request["body"] = "WORKER_RESULT\n" + json.dumps(raw)
 
     def fake_read(_repository: str, _token: str, path: str) -> object:
@@ -1788,7 +1790,7 @@ def test_preaccept_application_cannot_be_redispatched(wire: str, run_visible: bo
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
 
-    if run_visible and wire != "native-minimal":
+    if run_visible and wire in {"legacy", "native"}:
         assert completion.state == "RESUMABLE"
         assert completion.reason == "application-completion-preaccept-in-progress"
     else:
@@ -1796,7 +1798,10 @@ def test_preaccept_application_cannot_be_redispatched(wire: str, run_visible: bo
     assert completion.job_id is None
 
 
-@pytest.mark.parametrize("decision_kind", ["accepted", "rejected", "foreign-copy", "duplicate"])
+@pytest.mark.parametrize(
+    "decision_kind",
+    ["accepted", "rejected", "foreign-copy", "duplicate", "wrong-digest", "local-conflict"],
+)
 def test_native_minimal_history_needs_exact_machine_source_binding(decision_kind: str) -> None:
     """A source-less raw comment is not a second owner after its durable decision."""
     source = bridge.WorkerRequest(138, "lead", "explore-change")
@@ -1820,6 +1825,15 @@ def test_native_minimal_history_needs_exact_machine_source_binding(decision_kind
     decision["issue_url"] = "https://api.github.com/repos/owner/repo/issues/" + (
         "140" if decision_kind == "foreign-copy" else "139"
     )
+    if decision_kind == "wrong-digest":
+        decision["body"] = str(decision["body"]).replace(
+            hashlib.sha256(native_body.encode()).hexdigest(), "f" * 64
+        )
+    local = []
+    if decision_kind == "local-conflict":
+        local = [{**decision, "id": 702, "body": str(decision["body"]).replace(
+            "Issue: 139", "Issue: 138"
+        )}]
     recent = [request, decision]
     if decision_kind == "duplicate":
         recent.append({**decision, "id": 701})
@@ -1828,7 +1842,7 @@ def test_native_minimal_history_needs_exact_machine_source_binding(decision_kind
         if path.startswith("issues/comments?"):
             return recent
         if path.startswith("issues/138/comments?"):
-            return []
+            return local
         if path == "issues/138":
             return _current_source_issue()
         if path.startswith("issues/138/timeline?"):

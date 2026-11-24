@@ -1713,6 +1713,11 @@ def test_preactivation_alternating_recurrence_uses_causal_transitions(
         ("before-admission", False),
         ("after-result", False),
         ("duplicate", False),
+        ("old-ingress", False),
+        ("missing-ingress", False),
+        ("edited-ingress", False),
+        ("wrong-revision", False),
+        ("advanced-revision", True),
     ],
 )
 def test_readmission_requires_exact_accepted_source_boundary(
@@ -1731,6 +1736,18 @@ def test_readmission_requires_exact_accepted_source_boundary(
             "requested_effects": [],
         }
     )
+    original_body = "WORKER_RESULT\n" + raw
+    original: dict[str, object] = {
+        "id": 900,
+        "body": original_body + (" edited" if evidence == "edited-ingress" else ""),
+        "created_at": (
+            "2026-09-12T00:00:01Z" if evidence == "old-ingress" else "2026-09-12T00:00:03Z"
+        ),
+        "issue_url": "https://api.github.com/repos/owner/repo/issues/200",
+        "user": {"login": "owner"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+    older = "e" * 40
     accepted: dict[str, object] = {
         "id": 50,
         "user": {"login": "github-actions[bot]"},
@@ -1740,8 +1757,10 @@ def test_readmission_requires_exact_accepted_source_boundary(
         "body": APPLICATION_DECISION_WIRE.render(
             {
                 "Request-Comment": "999" if evidence == "wrong-request" else "900",
-                "Request-Body-SHA256": "f" * 64,
-                "Authorization-Revision": _REVISION,
+                "Request-Body-SHA256": hashlib.sha256(original_body.encode()).hexdigest(),
+                "Authorization-Revision": (
+                    older if evidence in {"wrong-revision", "advanced-revision"} else _REVISION
+                ),
                 "Issue": "229",
                 "Role": "lead",
                 "Action": "explore-change",
@@ -1785,6 +1804,8 @@ def test_readmission_requires_exact_accepted_source_boundary(
         {"id": 100, "event": "commented", "created_at": "2026-09-12T00:00:05Z"},
     ]
     comments = [formal]
+    if evidence != "missing-ingress":
+        comments.append(original)
     if evidence != "missing":
         comments.append(accepted)
         second = {"before-admission": 1, "after-result": 6}.get(evidence, 4)
@@ -1802,5 +1823,6 @@ def test_readmission_requires_exact_accepted_source_boundary(
         comments=comments,
         current_revision=_REVISION,
         lifecycle_events=events,
+        authorization_ancestry=((older, _REVISION),) if evidence == "advanced-revision" else (),
     )
     assert qualify_current_formal_consequence(qualification).qualified is qualified
