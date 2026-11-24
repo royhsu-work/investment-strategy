@@ -4550,12 +4550,12 @@ def _belongs_to_current_frontier(
     *,
     occurrence_created_at: str | None = None,
 ) -> bool:
-    """Bind one ingress to the derived current occurrence.
+    """Retain evidence not proven historical relative to the current frontier.
 
     Formal routes use the latest qualified consequence comment as their causal
     boundary.  A first pre-activation route has no such consequence, so it
-    uses the active Issue-timeline routing admission.  Missing admission or
-    ambiguous timing never widens the occurrence to repository history.
+    uses the active Issue-timeline routing admission.  This is a candidate
+    filter, not proof of current-occurrence authority.
     """
 
     boundary = _frontier_comment_id(frontier)
@@ -4566,9 +4566,10 @@ def _belongs_to_current_frontier(
     anchor_time = frontier.occurrence_anchor.created_at
     if anchor_time is None:
         return False
-    # A missing ingress timestamp is an incomplete current-source observation;
-    # retain it for fail-closed classification rather than treating it as old.
-    return occurrence_created_at is None or occurrence_created_at > anchor_time
+    # Cross-Issue timestamps have second precision. Only strictly earlier
+    # evidence is historical here. Retain ties and missing timestamps for
+    # the existing ingress/decision classifier, without inferring causality.
+    return occurrence_created_at is None or occurrence_created_at >= anchor_time
 
 
 def _accepted_intent_owns_frontier(
