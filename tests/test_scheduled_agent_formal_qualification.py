@@ -1715,7 +1715,9 @@ def test_preactivation_alternating_recurrence_uses_causal_transitions(
         ("duplicate", False),
     ],
 )
-def test_readmission_requires_exact_accepted_source_boundary(evidence: str, qualified: bool) -> None:
+def test_readmission_requires_exact_accepted_source_boundary(
+    evidence: str, qualified: bool
+) -> None:
     """A later equal label cannot retroactively bind an earlier occurrence."""
     raw = json.dumps(
         {

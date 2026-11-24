@@ -2667,8 +2667,8 @@ def test_truncated_legacy_encoded_source_is_filtered_before_frontier_read() -> N
     assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
 
 
-@pytest.mark.parametrize("admission", ["missing", "wrong", "ambiguous"])
-def test_preactivation_missing_qualified_frontier_never_proves_no_application(
+@pytest.mark.parametrize("admission", ["valid", "missing", "wrong", "ambiguous"])
+def test_preactivation_empty_ingress_requires_qualified_frontier(
     admission: str,
 ) -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
@@ -2677,7 +2677,7 @@ def test_preactivation_missing_qualified_frontier_never_proves_no_application(
         timeline = []
     elif admission == "wrong":
         timeline[0]["label"] = {"name": "action:propose-change"}
-    else:
+    elif admission == "ambiguous":
         timeline.append(
             {
                 "id": 43,
@@ -2706,9 +2706,12 @@ def test_preactivation_missing_qualified_frontier_never_proves_no_application(
         read=fake_read,
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
-    assert completion == bridge.ApplicationCompletion(
-        "INVALID", "application-completion-current-frontier-invalid"
+    expected = (
+        bridge.ApplicationCompletion("NONE", "application-completion-none")
+        if admission == "valid"
+        else bridge.ApplicationCompletion("INVALID", "application-completion-current-frontier-invalid")
     )
+    assert completion == expected
 
 
 def test_preactivation_ingress_before_routing_admission_is_historical() -> None:

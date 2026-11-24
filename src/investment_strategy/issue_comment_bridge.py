@@ -5033,18 +5033,8 @@ def qualify_application_completion(
         elif comment_id not in invalid_request_ids:
             candidates[comment_id] = candidate
 
-    if (
-        not relevant_decisions
-        and not candidates
-        and not invalid_request_ids
-        and not unbound_request_ids
-        and not any(
-            parse_formal_result(comment, current_revision=current_revision) is not None
-            for comment in issue_comments
-        )
-    ):
-        return ApplicationCompletion("NONE", "application-completion-none")
-
+    # Absence of ingress is meaningful only relative to a qualified current
+    # occurrence. All candidates, including the empty set, share that proof.
     issue = read(repository, token, f"issues/{source.issue_number}")
     if not isinstance(issue, Mapping):
         return ApplicationCompletion(
