@@ -4619,6 +4619,8 @@ def test_435_accepted_original_git_witness_reobserves_without_replay(
             issue = native_read(proof_git.repository, token, "issues/435")
             assert isinstance(issue, Mapping)
             return (issue,)
+        if path == "issues/435/dependencies/blocked_by?per_page=100&page=1":
+            return ()
         if path == "issues/435/comments?per_page=100&sort=created&direction=desc":
             return tuple(reversed([prior_comment, *formal_comments]))
         if path == "issues/435/timeline?per_page=100&page=1":

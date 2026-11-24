@@ -218,6 +218,8 @@ class GitHubSequence:
             if number in self.requests:
                 return self.requests[number]
             return next(c for c in self.comments if c["id"] == int(route.rsplit("/", 1)[1]))
+        if route == "issues/229/dependencies/blocked_by":
+            return []
         if route == "pulls/236":
             return self.pr()
         if route == "pulls/232":

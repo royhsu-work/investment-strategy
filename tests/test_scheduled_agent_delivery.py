@@ -343,6 +343,8 @@ def test_fresh_dispatch_survives_default_advance_with_bound_lifecycle(
     }
 
     def read_list(url: str, _token: str) -> tuple[dict[str, object], ...]:
+        if "/dependencies/blocked_by?" in url:
+            return ()
         if "/comments?" in url:
             return (comment,)
         if "/timeline?" in url:

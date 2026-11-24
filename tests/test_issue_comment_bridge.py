@@ -9139,6 +9139,8 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
         path = url.split(f"/{repository}/", 1)[1]
         if path == "issues?state=all&per_page=100&page=1":
             return (dict(issue),)
+        if path == "issues/322/dependencies/blocked_by?per_page=100&page=1":
+            return ()
         if path == "issues/322/comments?per_page=100&sort=created&direction=desc":
             return tuple(reversed(comments))
         if path == "issues/322/timeline?per_page=100&page=1":
