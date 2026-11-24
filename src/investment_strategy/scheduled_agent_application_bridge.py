@@ -88,6 +88,7 @@ from investment_strategy.scheduled_agent_effects import (
     _source_branch,
     archive_branch_matches_current_source,
     archive_branch_source_status,
+    archive_pr_identity_matches,
     consequence_postconditions_complete,
     derived_transition_effect,
     formal_application_correlation,
@@ -111,7 +112,10 @@ from investment_strategy.scheduled_agent_runtime import (
     is_github_actions_comment,
     normalize_github_issue,
 )
-from investment_strategy.scheduled_agent_validation_resource import ValidationResourceTarget
+from investment_strategy.scheduled_agent_validation_resource import (
+    ValidationResourceTarget,
+    openspec_review_revision_applies,
+)
 from investment_strategy.scheduled_agent_wire import (
     APPLICATION_CONTINUATION_WIRE,
     EFFECT_REQUEST_WIRE,
@@ -1621,8 +1625,22 @@ def _machine_result_revision(
             branch_revision = (
                 None if branch is None else _fresh_branch_head(repository, token, branch)
             )
-            if branch_revision is None and source.role == "reviewer":
-                raise RuntimeError("review target archive carrier is unavailable")
+            if source.role == "reviewer":
+                if branch is None or branch_revision is None:
+                    raise RuntimeError("review target archive carrier is unavailable")
+                candidates = _fresh_pull_requests(
+                    repository, token, branch=branch, default_branch=default_branch
+                )
+                if len(candidates) != 1 or not archive_pr_identity_matches(
+                    candidates[0],
+                    repository=repository,
+                    issue_number=source.issue_number,
+                    change=change,
+                    branch=branch,
+                    branch_sha=branch_revision,
+                    default_branch=default_branch,
+                ):
+                    raise RuntimeError("review target archive PR identity is unqualified")
             # Archive creation can precede the existence of its branch. This
             # provisional value is not a reviewed work-product revision.
             target_revision = branch_revision or current_revision
@@ -1650,15 +1668,26 @@ def _machine_result_revision(
                 ),
             )
         # The typed evidence reference is an immutable observation, never
-        # target authority. The independently qualified carrier must agree.
-        # In particular a later head must not inherit an earlier review.
-        if source.role == "reviewer" and (
-            _SHA.fullmatch(target_revision) is None
-            or worker.typed_result.result.evidence_ref
-            != f"https://github.com/{repository}/commit/{target_revision}"
+        # target authority. Semantic review has a different invalidation
+        # boundary from exact-current-head implementation/archive review.
+        if source.role != "reviewer":
+            return target_revision
+        prefix = f"https://github.com/{repository}/commit/"
+        evidence = worker.typed_result.result.evidence_ref or ""
+        reviewed = evidence.removeprefix(prefix)
+        if not evidence.startswith(prefix) or _SHA.fullmatch(reviewed) is None:
+            raise RuntimeError("review target evidence is invalid")
+        if reviewed == target_revision:
+            return reviewed
+        if source.action == "review-openspec" and openspec_review_revision_applies(
+            repository,
+            token,
+            change=change,
+            reviewed_revision=reviewed,
+            head_revision=target_revision,
         ):
-            raise RuntimeError("review target evidence differs from the qualified carrier revision")
-        return target_revision
+            return reviewed
+        raise RuntimeError("review target evidence differs from the qualified carrier revision")
     parsed = find_materialization_payload(materializations[0], source)
     if parsed is None or parsed.change != change:
         raise RuntimeError("application materialization carrier identity is incomplete")
@@ -2232,9 +2261,9 @@ def _fresh_pull_requests(
             raise RuntimeError("fresh application pull-request enumeration is malformed")
         number = item.get("number")
         if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
-            continue
+            raise RuntimeError("fresh application pull-request identity is malformed")
         detail = _github_json(repository, token, f"pulls/{number}")
-        if not isinstance(detail, Mapping):
+        if not isinstance(detail, Mapping) or detail.get("number") != number:
             raise RuntimeError("fresh application pull-request observation is unavailable")
         candidates.append(detail)
     if len(candidates) > 1:
@@ -2497,37 +2526,15 @@ def _fresh_archive_state(
     if not candidates:
         return "missing-pr", branch, branch_sha
     pull_request = candidates[0]
-    head = pull_request.get("head")
-    base = pull_request.get("base")
-    head_repo = head.get("repo") if isinstance(head, Mapping) else None
-    base_repo = base.get("repo") if isinstance(base, Mapping) else None
-    ready = (
-        pull_request.get("state") == "open"
-        and pull_request.get("merged") is not True
-        and pull_request.get("draft") is False
-        and isinstance(head, Mapping)
-        and isinstance(base, Mapping)
-        and head.get("ref") == branch
-        and head.get("sha") == branch_sha
-        and base.get("ref") == default_branch
-        and isinstance(base.get("sha"), str)
-        and _SHA.fullmatch(cast(str, base.get("sha"))) is not None
-        and isinstance(head_repo, Mapping)
-        and head_repo.get("full_name") == repository
+    ready = pull_request.get("draft") is False and archive_pr_identity_matches(
+        pull_request,
+        repository=repository,
+        issue_number=issue_number,
+        change=change,
+        branch=branch,
+        branch_sha=branch_sha,
+        default_branch=default_branch,
     )
-    if ready:
-        ready = (
-            isinstance(base, Mapping)
-            and isinstance(base_repo, Mapping)
-            and base_repo.get("full_name") == repository
-            and pull_request.get("title") == f"Archive OpenSpec change {change}"
-            and isinstance(pull_request.get("body"), str)
-            and re.search(
-                rf"(?mi)^\s*Refs\s+#{issue_number}\s*$",
-                cast(str, pull_request["body"]),
-            )
-            is not None
-        )
     return ("ready" if ready else "conflict"), branch, branch_sha
 
 

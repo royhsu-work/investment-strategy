@@ -8006,7 +8006,28 @@ def test_revision_bound_review_projection_never_relabels_reviewed_commit(
     repo = "other/repo" if evidence == "wrong-repository" else _REPOSITORY
     evidence_ref = None if evidence == "missing" else f"https://github.com/{repo}/commit/{reviewed}"
     monkeypatch.setattr(bridge, "_machine_carrier_head", lambda **_kwargs: target)
+    monkeypatch.setattr(bridge, "openspec_review_revision_applies", lambda *_a, **_k: False)
     monkeypatch.setattr(bridge, "_fresh_branch_head", lambda *_args: target)
+    monkeypatch.setattr(
+        bridge,
+        "_fresh_pull_requests",
+        lambda *_a, **_k: (
+            {
+                "number": 401,
+                "state": "open",
+                "merged": False,
+                "draft": False,
+                "title": f"Archive OpenSpec change {_CHANGE}",
+                "body": "Refs #138",
+                "head": {
+                    "ref": bridge._archive_branch(_CHANGE),
+                    "sha": target,
+                    "repo": {"full_name": _REPOSITORY},
+                },
+                "base": {"ref": "main", "sha": _REVISION, "repo": {"full_name": _REPOSITORY}},
+            },
+        ),
+    )
     raw = json.dumps(
         {
             **({"_semantic_intent_version": 2} if semantic_intent else {}),
@@ -8138,7 +8159,9 @@ def test_fresh_review_ingress_cannot_supply_legacy_formal_projection() -> None:
         )
 
 
-@pytest.mark.parametrize("case", ["bookkeeping", "code-only", "material", "diverged", "incomplete"])
+@pytest.mark.parametrize(
+    "case", ["bookkeeping", "code-only", "material", "diverged", "incomplete", "spec-change"]
+)
 def test_semantic_review_preserves_actual_revision_across_nonsemantic_descendants(
     monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
@@ -8156,17 +8179,30 @@ def test_semantic_review_preserves_actual_revision_across_nonsemantic_descendant
                 "base_commit": {"sha": reviewed},
                 "ahead_by": 1,
                 "behind_by": 1 if case == "diverged" else 0,
-                "files": None if case == "incomplete" else [
-                    {
-                        "filename": "src/example.py" if case == "code-only" else task_path,
-                        "status": "modified",
-                    }
-                ],
+                "files": (
+                    None
+                    if case == "incomplete"
+                    else [
+                        {
+                            "filename": (
+                                "src/example.py"
+                                if case == "code-only"
+                                else f"openspec/changes/{_CHANGE}/proposal.md"
+                                if case == "spec-change"
+                                else task_path
+                            ),
+                            "status": "modified",
+                        }
+                    ]
+                ),
             }
         if path.startswith(f"contents/{task_path}?ref="):
             revision = path.rsplit("=", 1)[1]
-            content = "- [ ] 1.1 Preserve intent\n" if revision == reviewed else (
-                "- [x] 1.1 Changed intent\n" if case == "material"
+            content = (
+                "- [ ] 1.1 Preserve intent\n"
+                if revision == reviewed
+                else "- [x] 1.1 Changed intent\n"
+                if case == "material"
                 else "- [x] 1.1 Preserve intent\n"
             )
             return {"content": base64.b64encode(content.encode()).decode(), "encoding": "base64"}
@@ -8206,7 +8242,10 @@ def test_semantic_review_preserves_actual_revision_across_nonsemantic_descendant
     assert bridge._field(formal, "Default-Branch-Revision") == _REVISION
 
 
-@pytest.mark.parametrize("case", ["valid", "missing-pr", "wrong-repository", "wrong-issue", "wrong-head"])
+@pytest.mark.parametrize(
+    "case",
+    ["valid", "missing-pr", "wrong-repository", "wrong-issue", "wrong-head", "wrong-base"],
+)
 def test_archive_findings_require_exact_carrier_identity(
     monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
@@ -8231,9 +8270,15 @@ def test_archive_findings_require_exact_carrier_identity(
                 "head": {
                     "ref": branch,
                     "sha": "c" * 40 if case == "wrong-head" else head,
-                    "repo": {"full_name": "other/repo" if case == "wrong-repository" else _REPOSITORY},
+                    "repo": {
+                        "full_name": "other/repo" if case == "wrong-repository" else _REPOSITORY
+                    },
                 },
-                "base": {"ref": "main", "sha": _REVISION, "repo": {"full_name": _REPOSITORY}},
+                "base": {
+                    "ref": "other" if case == "wrong-base" else "main",
+                    "sha": _REVISION,
+                    "repo": {"full_name": _REPOSITORY},
+                },
             }
         raise AssertionError(path)
 
