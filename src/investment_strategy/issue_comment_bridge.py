@@ -119,6 +119,7 @@ from investment_strategy.workflow_dispatch import (
     DispatchDecision,
     DispatchPreflight,
     classify_dispatch,
+    pending_continuation_candidate,
 )
 
 REQUEST_MARKER = "DISPATCH_REQUEST"
@@ -1817,34 +1818,11 @@ def _completion_source(
     ):
         role, action = decision.selected_routing
         return WorkerRequest(decision.selected_issue_id, role, action)
-    if (
-        decision.disposition != "FAIL_CLOSED"
-        or decision.reason != "observations-unqualified"
-        or preflight.human_authorized is not True
-        or preflight.enumeration.incomplete_results
-        or not preflight.enumeration.exhausted
-        or preflight.enumeration.source_total_count is None
-        or preflight.enumeration.observed_count != preflight.enumeration.source_total_count
-    ):
+    candidate = pending_continuation_candidate(preflight)
+    if candidate is None or candidate.routing is None:
         return None
-
-    routed = tuple(
-        issue for issue in preflight.issues if issue.state == "open" and issue.routing is not None
-    )
-    formal = tuple(issue for issue in routed if issue.change not in {"", "unset"})
-    if len(formal) > 1:
-        return None
-    if formal:
-        issue = formal[0]
-    elif routed:
-        issue = min(routed, key=lambda item: (item.created_order, item.issue_number))
-    else:
-        return None
-    routing = issue.routing
-    if routing is None:
-        return None
-    role, action = routing
-    return WorkerRequest(issue.issue_number, role, action)
+    role, action = candidate.routing
+    return WorkerRequest(candidate.issue_number, role, action)
 
 
 def _formal_result_records(

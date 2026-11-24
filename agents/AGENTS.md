@@ -43,47 +43,53 @@ Human decisions, exact revisions, transport records, and carrier runs are eviden
 second routing dimension. Historical role labels may be observed as migration input, but they are not
 created as normal target state.
 
-Selection is complete and provenance-qualified before work is authorized. Formal Change work has
-priority over pre-activation work. More than one formal candidate is a WIP=1 violation and fails
-closed. finish-first ordering is deterministic. Closed Issues are not reopened by a normal dispatch.
+Selection is complete and provenance-qualified before work is authorized. WIP=1 bounds
+the execution selection, not the number of unfinished formal Changes. An open formal
+workflow can be runnable or suspended without changing Issue lifecycle, immutable Change,
+routing, accepted effects, or recovery obligations. Suspended work consumes no execution
+slot. Closed Issues are not reopened by normal dispatch.
 
-### Bounded maintenance dependency
+### Dependency-driven execution eligibility
 
-Lead or the repository maintainer may declare one already admitted repair as a
-necessary prerequisite of a blocked formal workflow, within existing approved
-scope and based on verified blocking evidence. Use a standalone Issue comment
-on the blocked Issue: `Blocked by: #<repair-issue-number>`. This is an
-operational coordination declaration, not a reserved Human decision or a
-semantic Action result. No additional Human approval or native GitHub
-relationship is required. The existing Connector may actuate this declaration
-on behalf of the authorized maintainer/Lead; it does not confer authority for
-unrelated work, new commitments, review, merge, or routing changes.
+Lead or the repository maintainer may declare already admitted necessary prerequisites,
+within approved scope and based on verified blocking evidence, on any open routed
+coordination Issue. Use a standalone Issue comment: `Blocked by: #<issue-number>, #<issue-number>`
+(one or more same-repository targets; a single target uses the same grammar).
+An independently observed external condition that cannot be represented by an admitted
+Issue may be declared as `external` in that same prerequisite list. This is operational
+coordination, not a reserved Human decision, semantic Action result or new work admission.
+The existing Connector may actuate it on behalf of the authorized maintainer/Lead.
 
-The current declaration is the latest qualifying standalone command on that
-Issue, ordered by GitHub creation time and comment ID. Only repository-owner
-authorship with OWNER association and explicit direct or approved
-chatgpt-codex-connector provenance qualifies. Other authors/apps and ordinary
-prose are not commands. A correction is a new qualifying command, not an edit;
-`Blocked by: none` withdraws the relation when the dependency no longer applies.
-Do not delete or edit declarations; the maintainer/Lead owns their factual
-disposition and must not withdraw a still-required prerequisite.
+The latest qualifying standalone command on that Issue is the complete prerequisite
+set, ordered by GitHub creation time and comment ID. Only repository-owner authorship
+with OWNER association and explicit direct or approved chatgpt-codex-connector provenance
+qualifies. Other authors/apps and ordinary prose are not commands. Correction appends
+a new command; `Blocked by: none` withdraws the complete set when no prerequisite remains.
+Do not edit/delete a declaration or remove an unsatisfied requirement merely to gain
+execution eligibility. The maintainer/Lead must fresh-observe the actual external
+condition before removing an external declaration. No automatic inference from a generic
+BLOCKED result, transport failure, or missing evidence substitutes for that observation.
 
-The existing selector MAY select only the repair while the blocked Issue
-remains open and formal, with no other formal workflow except the repair.
-The repair must not itself have a pending dependency. Missing targets,
-self/cyclic or competing declarations, invalid command evidence, incomplete
-reads, third formal Issues, and closed-routing debt do not authorize an
-exception. All existing semantic gates and one Action per wake still apply.
-A closed repair satisfies a retained dependency only through qualified formal
-`finalize-archive` / `lifecycle-complete` evidence; closure alone is not delivery.
-After completion ordinary selection resumes the blocked workflow without
-rewinding its Change, routing, effects or obligations. A failed repair may be
-corrected by a new qualified declaration without a new Human decision.
-Dispatch and Application use the same fresh acquisition and selector.
-No new queue, Action, persisted progress state or alternate dispatcher is
-introduced. Independent Runtime Maintenance remains available when the
-dispatcher itself cannot select its repair, subject to existing independent
-review and release gates.
+Dispatch and Application reconstruct the same current directed acyclic Issue-dependency
+graph. A referenced Issue satisfies its prerequisite only on independently qualified
+formal `finalize-archive` / `lifecycle-complete` and closed/no-routing evidence; mere closure
+or a failed repair remains unsatisfied. Dependencies may be shared, multiple, or nested.
+Unknown targets, malformed qualified commands, cycles, incomplete enumeration and
+unqualified selection evidence fail closed; a valid unsatisfied dependency suspends
+only the affected workflow. Qualify formal frontier evidence for runnable work before
+selection; suspended structural identity is still required, and full action/effect evidence
+is requalified on resume. Unrelated terminal history requires no detailed completion read.
+
+From the runnable set choose exactly one Action by existing formal-first policy, then
+runnable pre-activation prerequisites of formal work, then ordinary runnable pre-activation
+work. In each group use GitHub creation order, then Issue number. No arbitrary priority
+score, fixed incident identities, pair exception, extra lifecycle state, new Action or
+second dispatcher. When all routed work is suspended return non-idle NO_WORK
+(`dependencies-unsatisfied`); idle admission still requires exact `no-routed-work`.
+Reconstruct after each wake; qualified completion automatically releases the Issue
+dependency without a comment mutation. External resumption uses a fresh qualified
+correction when its actual condition clears. Independent maintenance remains available
+when the dispatcher itself is defective, with existing independent review and release gates.
 
 ## Fresh dispatch and one-wake boundary
 
@@ -103,7 +109,7 @@ The successor is only eligible for a later fresh wake, even when its derived Rol
 A worker cannot select an Issue, Role, Action, target, successor, retry, or success. The application
 derives those facts from current state and the executable model.
 
-The normal path has no second workflow graph, generic orchestration kernel, hidden progress state,
+The normal path has no second lifecycle graph, generic orchestration kernel, hidden progress state,
 lock/lease/retry counter, timer, or mailbox authority. A failed or incomplete Action returns its
 bounded legal result and is reconstructed from current state on the next wake.
 
@@ -257,8 +263,8 @@ interaction-layer mutation, but writer identity neither grants autonomous author
 explicit Human source authority. Agent-authored advisory text or a ticket alone cannot self-authorize
 additional work.
 
-Ordinary queue eligibility remains a projection of current routing and existing formal-first,
-WIP=1, finish-first, and deterministic predicates. Connector activity and Issue prose alone do not
+Ordinary queue eligibility remains a projection of current routing, qualified dependencies and
+existing formal-first, WIP=1 execution selection, finish-first, and deterministic predicates. Connector activity and Issue prose alone do not
 satisfy a later Human-reserved decision; those decisions remain provenance-bound. A proposal-ready
 authority envelope may select Lead / propose-change without a second generic Human proceed step when the
 same Issue and current Action remain coherent. A new product/project direction, material scope, risk

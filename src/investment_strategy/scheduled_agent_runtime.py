@@ -14,7 +14,7 @@ from typing import Any, cast
 from urllib.request import Request, urlopen
 
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
-from investment_strategy.scheduled_agent_action_model import role_for
+from investment_strategy.scheduled_agent_action_model import WorkflowDependencies, role_for
 from investment_strategy.scheduled_agent_carrier import (
     github_comment_has_app_provenance,
     github_read_bytes_with_retry,
@@ -102,7 +102,7 @@ def acquire_dispatch_preflight(
     incomplete_results: bool,
     exhausted: bool,
     human_authorized: bool = True,
-    maintenance_priority: tuple[int, int] | None = None,
+    dependencies: WorkflowDependencies | None = (),
 ) -> DispatchPreflight:
     """Build one current-state preflight from fresh GitHub observations."""
 
@@ -139,7 +139,7 @@ def acquire_dispatch_preflight(
             ),
         ),
         human_authorized=human_authorized,
-        maintenance_priority=maintenance_priority,
+        dependencies=dependencies,
     )
 
 
@@ -505,12 +505,16 @@ def _qualify_current_observations(
     observations: tuple[GitHubIssueObservation, ...],
     current_revision: str | None,
     *,
-    required_completion: int | None = None,
+    required_completion: frozenset[int] = frozenset(),
+    suspended: frozenset[int] = frozenset(),
     comments_by_issue: Mapping[int, tuple[Mapping[str, object], ...]],
 ) -> tuple[GitHubIssueObservation, ...]:
     qualified: list[GitHubIssueObservation] = []
     for observation in observations:
-        require_completed = observation.issue_number == required_completion
+        require_completed = observation.issue_number in required_completion
+        if observation.issue_number in suspended:
+            qualified.append(observation)
+            continue
         if observation.change == "unset":
             qualified.append(
                 replace(observation, current_state_provenance=ObservationProvenance.INDETERMINATE)
@@ -603,10 +607,10 @@ def _qualify_current_observations(
     return tuple(qualified)
 
 
-def _declared_blocker(
+def _declared_blockers(
     repository: str, issue_number: int, comments: tuple[Mapping[str, object], ...]
-) -> int | None:
-    """One current operational declaration from the existing Issue comment surface."""
+) -> tuple[int | None, ...]:
+    """The latest qualified declaration is the entire prerequisite set."""
     owner = repository.split("/", 1)[0]
     commands: list[tuple[datetime, int, Mapping[str, object]]] = []
     seen: set[int] = set()
@@ -643,67 +647,53 @@ def _declared_blocker(
         seen.add(comment_id)
         commands.append((datetime.fromisoformat(created.replace("Z", "+00:00")), comment_id, raw))
     if not commands:
-        return None
+        return ()
     _, _, current = max(commands, key=lambda item: (item[0], item[1]))
     if current.get("created_at") != current.get("updated_at"):
         raise ValueError("maintenance declaration was edited")
     command = cast(str, current["body"]).strip()
     if command == "Blocked by: none":
-        return None
-    match = re.fullmatch(r"Blocked by: #([1-9][0-9]*)", command)
-    if match is None:
+        return ()
+    token = r"(?:#[1-9][0-9]*|external)"
+    if re.fullmatch(rf"Blocked by: {token}(?:, *{token})*", command) is None:
         raise ValueError("maintenance declaration invalid")
-    repair = int(match.group(1))
-    if repair == issue_number:
+    blockers = tuple(sorted({int(number) for number in re.findall(r"#([0-9]+)", command)}))
+    if issue_number in blockers:
         raise ValueError("maintenance dependency cannot block itself")
-    return repair
+    # None denotes a declared external prerequisite, never a fabricated Issue.
+    return (*blockers, None) if "external" in command else blockers
 
 
-def _read_maintenance_priority(
+def _read_dependencies(
     repository: str,
     token: str,
     observations: tuple[GitHubIssueObservation, ...],
     comments_by_issue: dict[int, tuple[Mapping[str, object], ...]],
-) -> tuple[int, int] | None:
-    """Qualify the bounded dependency without a second authority or transport."""
-    formal = tuple(
-        item
-        for item in observations
-        if item.state == "open" and item.change != "unset" and item.routing is not None
-    )
-    if any(item.routing_debt for item in observations) or len(formal) > 2:
-        return None
+) -> WorkflowDependencies:
+    """Read the current graph once, from existing routed Issue comments."""
+    if any(item.routing_debt for item in observations):
+        return ()
     by_number = {item.issue_number: item for item in observations}
-
-    def blocker(issue_number: int) -> int | None:
-        comments = comments_by_issue.get(issue_number)
-        if comments is None:
-            comments = _github_issue_comment_pages(repository, token, issue_number)
-            comments_by_issue[issue_number] = comments
-        return _declared_blocker(repository, issue_number, comments)
-
-    pairs: list[tuple[int, int]] = []
-    for blocked in formal:
-        number = blocker(blocked.issue_number)
-        if number is None:
+    dependencies: list[tuple[int, tuple[int | None, ...]]] = []
+    for item in observations:
+        if item.state != "open" or item.routing is None:
             continue
-        repair = by_number.get(number)
-        if (
-            repair is None
-            or not repair.authoritative
-            or (repair.state == "open" and repair.routing is None)
-        ):
-            raise ValueError("maintenance dependency target unavailable")
-        pairs.append((blocked.issue_number, number))
-    if len(pairs) > 1:
-        raise ValueError("maintenance dependency must be unique")
-    if not pairs:
-        return None
-    pair = pairs[0]
-    repair = by_number[pair[1]]
-    if repair.state == "open" and repair not in formal and blocker(repair.issue_number) is not None:
-        raise ValueError("maintenance repair has another dependency")
-    return pair
+        comments = _github_issue_comment_pages(repository, token, item.issue_number)
+        comments_by_issue[item.issue_number] = comments
+        blockers = _declared_blockers(repository, item.issue_number, comments)
+        for number in blockers:
+            if number is None:
+                continue
+            target = by_number.get(number)
+            if (
+                target is None
+                or not target.authoritative
+                or (target.state == "open" and target.routing is None)
+            ):
+                raise ValueError("maintenance dependency target unavailable")
+        if blockers:
+            dependencies.append((item.issue_number, blockers))
+    return tuple(dependencies)
 
 
 def acquire_current_github_preflight(
@@ -712,49 +702,60 @@ def acquire_current_github_preflight(
     *,
     repository_root: object | None = None,
 ) -> DispatchPreflight:
-    """Fresh-read the complete current coordination-Issue surface, including closed debt."""
+    """Reconstruct dependencies and current executable workflow eligibility."""
 
     del repository_root
     observations = _normalized_observations(_github_issue_pages(repository, token))
     current_revision = _current_default_branch_revision(repository, token)
     comments_by_issue: dict[int, tuple[Mapping[str, object], ...]] = {}
     try:
-        maintenance_priority = _read_maintenance_priority(
-            repository, token, observations, comments_by_issue
-        )
+        dependencies = _read_dependencies(repository, token, observations, comments_by_issue)
     except ValueError:
         return acquire_dispatch_preflight(
-            observations=tuple(
-                replace(item, current_state_provenance=ObservationProvenance.INDETERMINATE)
-                for item in observations
-            ),
+            observations=observations,
             source_total_count=len(observations),
             incomplete_results=False,
             exhausted=True,
+            dependencies=None,
         )
-    required_completion = None
-    if maintenance_priority is not None:
-        if current_revision is None:
-            return acquire_dispatch_preflight(
-                observations=tuple(
-                    replace(item, current_state_provenance=ObservationProvenance.INDETERMINATE)
-                    for item in observations
-                ),
-                source_total_count=len(observations),
-                incomplete_results=False,
-                exhausted=True,
-            )
-        repair_number = maintenance_priority[1]
-        repair = next(item for item in observations if item.issue_number == repair_number)
-        if repair.state == "closed":
-            required_completion = repair.issue_number
-            maintenance_priority = None
+    if dependencies and current_revision is None:
+        return acquire_dispatch_preflight(
+            observations=observations,
+            source_total_count=len(observations),
+            incomplete_results=False,
+            exhausted=True,
+            dependencies=None,
+        )
+
+    targets = {number for _, blockers in dependencies for number in blockers if number is not None}
+    closed_targets = tuple(
+        item for item in observations if item.state == "closed" and item.issue_number in targets
+    )
+    completed = {
+        item.issue_number
+        for item in _qualify_current_observations(
+            repository,
+            token,
+            closed_targets,
+            current_revision,
+            required_completion=frozenset(item.issue_number for item in closed_targets),
+            comments_by_issue=comments_by_issue,
+        )
+        if item.current_state_provenance is ObservationProvenance.QUALIFIED
+    }
+    outstanding = tuple(
+        (number, remaining)
+        for number, blockers in dependencies
+        if (remaining := tuple(blocker for blocker in blockers if blocker not in completed))
+    )
+    # Suspended work is not eligible for mutation. Retain its current
+    # structural identity and defer formal frontier qualification until resume.
     observations = _qualify_current_observations(
         repository,
         token,
         observations,
         current_revision,
-        required_completion=required_completion,
+        suspended=frozenset(number for number, _ in outstanding),
         comments_by_issue=comments_by_issue,
     )
     return acquire_dispatch_preflight(
@@ -762,7 +763,7 @@ def acquire_current_github_preflight(
         source_total_count=len(observations),
         incomplete_results=False,
         exhausted=True,
-        maintenance_priority=maintenance_priority,
+        dependencies=outstanding,
     )
 
 

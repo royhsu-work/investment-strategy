@@ -1194,7 +1194,11 @@ This requirement MUST NOT create a generic retry engine, failure-state machine, 
 
 ### Requirement: Persisted Change identity defines the single active workflow boundary
 
-An open coordination Issue with a valid routing tuple and a persisted non-`unset` `Change:` identity SHALL be an active workflow. The repository MUST allow at most one such active workflow at a time, except one qualified maintenance dependency designation: the designated blocked and repair Issues alone may coexist as formal work while only the repair is selected, then ordinary selection resumes after the repair retires. The designation SHALL be reconstructed from the latest qualified standalone comment `Blocked by: #<repair-issue-number>` on the blocked formal Issue. Lead or the repository maintainer MAY declare or correct an already admitted necessary repair within approved scope, based on actual blocking evidence, without another Human-reserved decision or native Issue dependency. The declaration MUST have repository-owner authorship and OWNER association with explicit direct or approved chatgpt-codex-connector provenance; arbitrary commenters, other apps and ordinary prose MUST NOT grant selection authority. GitHub creation time and comment ID determine the current qualifying command; correction MUST append a new command, not edit or delete one. `Blocked by: none` withdraws a no-longer-required dependency under the same authority. An edited or malformed current qualified command MUST NOT authorize work. At most one current dependency may be active; missing targets, self/cyclic or competing dependencies, incomplete evidence and unqualified current routes MUST NOT authorize an exception. The repair MUST NOT have another pending dependency while selected. Selection and Application reauthorization SHALL consume the same executable policy and qualified current observations. While a relationship remains, ordinary resumption requires the repair's independently qualified terminal formal `finalize-archive` / `lifecycle-complete` consequence, not closure alone. A failed repair MAY be corrected by a new qualified declaration without a new Human decision. This is runtime evidence, not another workflow state.
+An open coordination Issue with a valid routing tuple and persisted non-`unset` `Change:` SHALL be a formal workflow. The title is retained as the canonical requirement identity; formal workflow cardinality no longer defines execution capacity. WIP=1 SHALL bound selection to one runnable Action per wake, not the number of open formal workflows. A qualified unsatisfied prerequisite MUST suspend the affected workflow without changing its Issue state, immutable Change, current Action, accepted effects, or recovery obligations.
+
+Lead or the repository maintainer MAY declare or correct already admitted necessary prerequisites within approved scope based on actual blocking evidence. The latest qualified standalone comment `Blocked by: #<issue-number>, #<issue-number>` (one or more targets) on an open routed Issue SHALL define its complete prerequisite set; an independently observed external prerequisite not represented by an admitted Issue MAY be denoted by `external` in the same list. No additional Human-reserved decision, native Issue dependency, new work admission or routing mutation is implied. Qualification MUST require repository-owner authorship, OWNER association and explicit direct or approved chatgpt-codex-connector provenance; arbitrary commenters, other apps and ordinary prose MUST NOT grant selection authority. GitHub creation time and comment ID determine the current qualifying command. Correction MUST append a new command, not edit or delete one; `Blocked by: none` withdraws a set only when no prerequisite remains applicable. External resumption MUST use a fresh qualified correction based on the actual cleared condition, not a generic retry or automatic interpretation of a BLOCKED result.
+
+Selection and Application reauthorization SHALL consume the same executable dependency graph and current observations. Multiple prerequisites, shared prerequisites and nested prerequisites SHALL be represented by the same graph, without fixed incident identities or pair exceptions. A referenced Issue satisfies a prerequisite only with qualified terminal formal `finalize-archive` / `lifecycle-complete` evidence and closed/no-routing retirement, not bare closure or NO_GO. All unsatisfied prerequisites exclude their source from runnable selection; a completed prerequisite releases only its own edge. Cycles, unknown or unrouted targets, malformed/edited current qualified commands, incomplete enumeration and provenance-invalid selection evidence MUST NOT authorize work. A valid but unsatisfied prerequisite is not an invalid repository. Suspended work SHALL NOT consume an execution slot, require full action-local formal qualification before another eligible workflow runs, or be rewound; structural current identity remains mandatory and formal frontier qualification resumes before that work is selected.
 
 Normal formal lifecycle work SHALL remain open through final Archive merge and `Lead / finalize-archive`. It remains active while open with a valid routing tuple and non-`unset` Change identity until terminal conditions are satisfied, `LIFECYCLE_COMPLETE` is durably persisted, and repository-owned terminal retirement completes the `closed + no workflow routing` postcondition.
 
@@ -1202,7 +1206,7 @@ A closed coordination Issue retaining any repository-governed workflow routing l
 
 Open coherently routed `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` coordination Issues SHALL be queued pre-activation work based on current structural routing. Neither form counts as an active workflow before Propose persists an immutable Change identity. Dispatcher selection MUST NOT distinguish an unset Propose by origin, Human admission, comment provenance, or reconstructed semantic readiness.
 
-Lead MUST NOT activate a queued proposal while another open active workflow exists or current closed-routing debt is unresolved, except that the designated repair may activate while the designated blocked Issue is the only other open formal Issue and no closed-routing debt exists. Every original same-Issue Explore-result, Application, review, and merge precondition still applies. If no open active workflow exists and current closed-routing debt is empty, deterministic pre-activation selection SHALL be evaluated across the single combined set of coherently routed open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` candidates using earliest GitHub `created_at`, then lower Issue number. Only that combined-queue winner may proceed in the ordinary case. Under the qualified maintenance dependency exception, the designated repair is the independently qualified selected pre-activation candidate instead of the FIFO winner. A `propose-change` runner MUST re-check that its Issue still matches the current executable selection immediately before persisting a non-`unset` Change identity.
+Lead MUST NOT activate a queued proposal unless fresh executable selection authorizes that exact current runnable Propose and current closed-routing debt is resolved. Every original same-Issue Explore-result, Application, review and merge precondition still applies. The existence of other suspended or queued formal Changes is not an activation veto. Deterministic selection SHALL prefer runnable formal workflows, then runnable pre-activation prerequisites (including transitive prerequisites) of formal workflows, then the ordinary runnable combined Explore/Propose queue. Each group uses earliest GitHub `created_at`, then lower Issue number. A `propose-change` runner MUST re-check that its Issue still matches current executable selection immediately before persisting a non-`unset` Change identity, and independently verify the post-write selection/identity.
 
 A proposal-ready Explore remains pre-activation until repository-owned application legally routes that same Issue to `Lead / propose-change`. The transition SHALL NOT require a generic Human proceed confirmation when the proposal-ready direction remains inside the bounded researched/canonical evidence and introduces no Human-reserved decision. After routing, the same Issue retains its original queue position. Propose SHALL reconstruct the exact durable same-Issue `PROPOSAL_READY` semantic baseline and independently validate its material source/evidence and feasibility basis before activation. An absent/invalid/incomplete but researchable basis routes the same Issue back to Explore without changing queue identity; it does not change dispatcher eligibility or authorize later work. If formalization would introduce a new Human-reserved product/project direction, material externally observable behavior or scope trade-off, explicit risk acceptance, or materially different security/privacy/cost/operational commitment, Lead MUST use the existing `HUMAN_DECISION_REQUIRED` boundary instead of treating routing or Explore execution as Human authority.
 
@@ -1211,8 +1215,8 @@ A proposal-ready Explore remains pre-activation until repository-owned applicati
 - GIVEN Change A is an active workflow
 - AND Issue B is an open routed `Lead / explore-change` or `Lead / propose-change` Issue with `Change: unset`
 - WHEN workflow-dynamic dispatch reconstructs work
-- THEN Change A remains the only active workflow, unless the qualified maintenance dependency exception applies
-- AND Issue B is not activated or globally arbitrated against Change A unless it is the designated repair with the designated blocked Issue as the other formal Issue and all existing Action/Result gates pass
+- THEN if A is runnable, A is selected before pre-activation B
+- AND if A is suspended, it consumes no selection slot and B may be selected according to the runnable policy and existing Action/Result gates
 
 #### Scenario: Closed terminal handoff still blocks new activation
 
@@ -2767,18 +2771,42 @@ For the current Ruff `S603` suppressed subprocess helpers introduced by the Ruff
 
 A Scheduled-Agent work item SHALL derive whether its next legal action is currently executable from the durable preconditions and evidence owned by that action without introducing a parallel lifecycle state for ordinary waits or blockers.
 
-A formal active workflow that cannot currently proceed because required Human authority, exact CI/gate evidence, environment capability, dependency/conflict resolution, or other action-owned precondition is absent MUST remain the same formal active workflow and MUST continue to consume the repository's single formal WIP slot.
-
-The repository MUST NOT introduce a universal `blocked` result, waiting-state taxonomy, or capacity-release rule merely to represent those conditions. Existing action-specific result, wait, exception, escalation, and routing evidence remains authoritative for why the next legal action cannot complete.
+A formal workflow with a qualified unsatisfied Issue prerequisite or declared external prerequisite SHALL remain the same formal workflow, but SHALL be suspended and consume no execution slot. Other runnable work MAY progress under the existing admission, independent review, merge and mutation boundaries. WIP is not a count of unfinished Changes. A generic BLOCKED result or a transient/unknown observation alone is not proof of a persistent prerequisite; existing action-specific result, wait, exception, escalation and recovery evidence remains authoritative and MUST NOT be bypassed. An external declaration is operational and reversible by a qualified Lead/maintainer after fresh evidence that the actual condition clears; no universal external-condition evaluator, new lifecycle label, or Human approval per dependency is introduced.
 
 #### Scenario: Active workflow waits for an exact external gate
 
-- GIVEN one formal active workflow is routed to its legal action
-- AND the action requires exact external gate evidence that is not yet terminal
-- WHEN the scheduler evaluates other queued work
-- THEN the active workflow remains formal WIP
-- AND no queued work activates merely because the active workflow is waiting
+- GIVEN one formal workflow has a qualified external prerequisite declaration based on an observed nonterminal exact gate
+- WHEN the scheduler evaluates other queued runnable work
+- THEN the suspended workflow retains its formal identity and Action but consumes no execution slot
+- AND another qualified runnable workflow may advance without bypassing its own gates
+- AND the suspended workflow resumes only after a fresh qualified correction based on actual cleared gate evidence and current action reauthorization
 - AND the wait does not create a new lifecycle state
+
+#### Scenario: Multiple and shared prerequisites release independently
+
+- GIVEN formal A depends on B and C, and B and C depend on D
+- AND each is coherently routed and D has no outstanding prerequisite
+- WHEN dispatch reconstructs current prerequisites
+- THEN D is runnable while A, B and C are suspended
+- AND after D's qualified completion, B and C are runnable and one is selected deterministically
+- AND after B and C both qualify as completed, A resumes its original Action
+- AND no completed work is replayed or historical Change identity rewritten
+
+#### Scenario: All routed workflows are suspended
+
+- GIVEN every routed workflow is suspended by a valid outstanding prerequisite
+- WHEN complete current dispatch reconstructs eligibility
+- THEN dispatch returns NO_WORK with reason `dependencies-unsatisfied`
+- AND this result is not the idle-discovery `no-routed-work` envelope
+- AND a later fresh dispatch recomputes readiness from current evidence
+- AND closure without qualified successful completion does not satisfy an Issue prerequisite
+
+#### Scenario: Cyclic declarations are invalid, not completed prerequisites
+
+- GIVEN current qualified Issue declarations form a cycle
+- WHEN dispatch reconstructs dependencies
+- THEN no Action is authorized from that invalid graph
+- AND a qualified corrected declaration may restore selection on a later fresh wake without a Human-reserved decision
 
 #### Scenario: Human authority is genuinely required
 
@@ -2792,12 +2820,12 @@ The repository MUST NOT introduce a universal `blocked` result, waiting-state ta
 
 Workflow-dynamic Scheduled dispatch SHALL use repository-owned executable classification before loading any mapped Role or Skill. Steady-state production selection SHALL operate on two complete provenance-qualified current sets:
 
-1. current open Issues needed for formal WIP and pre-activation selection; and
+1. current open Issues needed for runnable formal and pre-activation selection, including qualified prerequisite declarations; and
 2. current closed Issues carrying any repository-governed workflow `agent:*` or `action:*` routing-label residue and therefore representing current closed-routing debt.
 
-The normal classifier SHALL consume only facts required to select current work: Issue number/state, persisted `Change:` identity, current routing labels/tuple, GitHub `created_at` ordering for pre-activation candidates, and enumeration/provenance completeness. Any additional admission fact required for a queued candidate MUST come from its existing canonical executable admission predicate rather than model interpretation of prose.
+The normal classifier SHALL consume only facts required to select current work: Issue number/state, persisted `Change:` identity, current routing labels/tuple, qualified current prerequisite declarations and completion evidence of referenced prerequisites, GitHub `created_at` ordering, and enumeration/provenance completeness. Any additional admission fact required for a queued candidate MUST come from its existing canonical executable admission predicate rather than model interpretation of prose.
 
-Completed closed workflow history, PR heads, CI state, OpenSpec artifacts, review evidence, lifecycle-specific PR evidence, and effect-specific mutation guards MUST NOT be prerequisites for global Issue selection. Completed terminal history whose routing debt is retired SHALL NOT be re-enumerated or re-adjudicated merely to authorize unrelated current work. Action/effect-specific evidence SHALL be reconstructed only after an exact Issue/Role/Action or exact current closed-routing candidate is selected by the boundary that owns those facts.
+Except for closed Issues referenced as current prerequisites, completed closed workflow history, PR heads, CI state, OpenSpec artifacts, review evidence, lifecycle-specific PR evidence, and effect-specific mutation guards MUST NOT be prerequisites for global Issue selection. Completed terminal history whose routing debt is retired SHALL NOT be re-enumerated or re-adjudicated merely to authorize unrelated current work. Action/effect-specific evidence SHALL be reconstructed only after an exact Issue/Role/Action or exact current closed-routing candidate is selected by the boundary that owns those facts.
 
 Dispatch read-reduction SHALL stop at that selection boundary. After `AUTHORIZE` selects an exact mapped Action, this Change MUST preserve that Action's existing default-branch evidence-reconstruction and evidence-consumption contract. It MUST NOT filter, truncate, replace, summarize away, impose a latest-comment shortcut on, or otherwise narrow action-required Issue comments, review findings, prior `ACTION_RESULT`/`HANDOFF`, Human-decision evidence, PR/review state, CI evidence, OpenSpec artifacts, or other durable inputs. If the governing Action currently requires complete Issue-comment reconstruction, that completeness requirement remains unchanged by this Change.
 
@@ -2813,21 +2841,21 @@ From the complete current open-Issue and closed-routing-debt reconstruction, the
 
 | Current state | Required result |
 | --- | --- |
-| exactly `1` open formal workflow and `0` closed-routing debt candidates, with no qualified maintenance priority | AUTHORIZE only that formal workflow using its current valid routing tuple |
-| exactly the designated blocked Issue open as formal and the designated repair open as coherently routed pre-activation, with no closed-routing debt under qualified maintenance dependency | AUTHORIZE only the current repair Explore/Propose Action; leave the blocked Issue unchanged |
-| exactly the designated blocked and repair Issues open as formal workflows, with no closed-routing debt under qualified maintenance dependency | AUTHORIZE only the repair's currently valid Action and preserve the blocked Issue unchanged |
-| `>1` other open formal workflows | `FAIL_CLOSED` before any mapped action executes |
-| open formal cardinality indeterminate | `FAIL_CLOSED` before any mapped action executes |
-| exactly `1` open formal workflow plus debt containing a deterministically proven terminal/retired candidate and no ambiguous debt | select at most one such terminal/retired candidate for `Lead / resolve-question` cleanup before ordinary formal execution resumes |
-| exactly `1` open formal workflow plus any unfinished or indeterminate debt candidate | `FAIL_CLOSED`; the closed Issue MUST NOT be reopened into a second formal workflow |
-| `0` open formal workflows and `0` closed-routing debt candidates | select the deterministic combined pre-activation winner, or return `NO_WORK` when none exists |
+| complete coherent dependency graph and no closed-routing debt, one or more runnable formal workflows | AUTHORIZE one runnable formal workflow, earliest creation order then Issue number |
+| no runnable formal workflow, runnable pre-activation prerequisites of formal work, no closed-routing debt | AUTHORIZE one such prerequisite by the same stable ordering |
+| no runnable formal workflow or runnable pre-activation prerequisite of formal work, other runnable pre-activation work, no closed-routing debt | AUTHORIZE one ordinary runnable queue winner |
+| valid outstanding prerequisites suspend all routed work, no closed-routing debt | NO_WORK / dependencies-unsatisfied; do not admit idle work |
+| invalid graph or incomplete current enumeration/provenance | FAIL_CLOSED before mapped action execution |
+| one or more open formal workflows plus debt containing a deterministically proven terminal/retired candidate and no ambiguous debt | select at most one such terminal/retired candidate for `Lead / resolve-question` cleanup before ordinary formal execution resumes |
+| one or more open formal workflows plus any unfinished or indeterminate debt candidate | `FAIL_CLOSED`; the closed Issue MUST NOT be reopened into a second formal workflow |
+| no routed work and `0` closed-routing debt candidates | return `NO_WORK` / no-routed-work |
 | `0` open formal workflows and exactly `1` closed-routing candidate | perform detailed exceptional classification; proven terminal/retired debt routes candidate-local cleanup, one qualifying unfinished candidate routes bounded recovery, indeterminate evidence fails closed |
 | `0` open formal workflows and `>1` closed-routing candidates | select at most one deterministically proven terminal/retired candidate for cleanup only when all evidence required for that choice is complete/non-contradictory; otherwise `FAIL_CLOSED` |
 | closed-routing enumeration/provenance indeterminate | `FAIL_CLOSED` |
 
 Production closed-routing acquisition SHALL use complete paginated current GitHub observations constrained by `state=closed` and the complete finite repository-governed workflow routing-label vocabulary: every governed `agent:<role>` label and every governed `action:<action>` label. It SHALL union and deduplicate Issue identities, fresh-observe the candidate's current state/labels, and treat any remaining workflow routing label as debt even when the other half of the tuple is absent. Because repository-owned terminal retirement removes all workflow routing residue from completed history, this acquisition SHALL scale with current routing debt rather than accumulated completed workflow history. It MUST NOT perform a repository-wide closed-history projection as a normal authorization prerequisite.
 
-Detailed exceptional classification SHALL obtain terminal/recovery evidence only for current closed-routing debt candidates required to determine a safe current disposition. A selected candidate is the only historical/closed Issue the resulting `Lead / resolve-question` invocation may mutate. Repository-owned application MUST fresh-reauthorize that exact source action, exact candidate, exact machine disposition, current Issue state, and effect-specific preconditions before each close/reopen/label-removal effect; changed or stale candidate state rejects the mutation and requires fresh classification.
+Detailed exceptional debt classification SHALL obtain terminal/recovery evidence only for current closed-routing debt candidates required to determine a safe current disposition. Independently, dependency qualification MAY read terminal evidence only for explicitly referenced closed prerequisites. A selected candidate is the only historical/closed Issue the resulting `Lead / resolve-question` invocation may mutate. Repository-owned application MUST fresh-reauthorize that exact source action, exact candidate, exact machine disposition, current Issue state, and effect-specific preconditions before each close/reopen/label-removal effect; changed or stale candidate state rejects the mutation and requires fresh classification.
 
 A candidate that proves terminal/retired is not ordinary workflow work. `Lead / resolve-question` MAY request only the narrow missing routing-retirement effects needed to establish `closed + no workflow routing`, and MUST NOT reopen or rewrite its immutable historical meaning. A qualifying unfinished candidate MAY be reopened only under the existing premature-close predicates and only when it is the sole remaining closed-routing debt with formal cardinality zero. The recovery invocation MUST NOT execute the preserved stale normal lifecycle action.
 
@@ -2835,15 +2863,15 @@ Canonical terminal completion evidence used by detailed debt classification SHAL
 
 Historical routing in Issue bodies/comments, prior model output, conversation history, cached observations, or already-retired terminal history MUST NOT override the current authoritative open-Issue and closed-routing-debt sets.
 
-The combined pre-activation queue SHALL continue to contain every otherwise eligible open `Lead / explore-change + Change: unset` entry and every legally admitted open `Lead / propose-change + Change: unset` entry, ordered by earliest GitHub `created_at`, then lower Issue number. The model MUST NOT introduce another role/action priority or urgency score. Qualified maintenance dependency while the designated blocked Issue is active is the sole bounded exception and ends at qualified successful terminal retirement of the repair.
+The combined pre-activation queue SHALL continue to contain every otherwise eligible open `Lead / explore-change + Change: unset` and every legally admitted open `Lead / propose-change + Change: unset` entry. Only runnable entries participate in selection, ordered by formal-first, runnable pre-activation prerequisites of formal work, then ordinary pre-activation candidates, with earliest creation time and lower Issue number as the stable tie-break. The model MUST NOT introduce an incident-specific exception or urgency score.
 
-A selected ordinary open action SHALL consume a fresh executable dispatch decision as an action-entry identity precondition rather than starting from a candidate-local assumption. Before a formal lifecycle/review/implementation action proceeds, current executable selection MUST still prove that its coordination Issue is the sole open formal workflow (or the designated repair under the qualified maintenance dependency exception), its routing equals the selected Issue/Role/Action, and no closed-routing debt requires cleanup/recovery first. Before substantive `explore-change` or pre-activation `propose-change` work proceeds, executable selection MUST still prove open formal cardinality zero (or select the designated repair under the qualified maintenance dependency exception), no closed-routing debt blocks intake, and the selected Issue remains the deterministic combined pre-activation winner or the qualified maintenance repair candidate while the designated blocked Issue is active. `propose-change` SHALL additionally preserve the immediate pre-write and fresh post-write activation checks. Stale, contradictory, incomplete, provenance-invalid, or execution-unavailable evidence MUST fail closed rather than being filled from model memory or prose.
+A selected ordinary open Action SHALL consume fresh executable selection as its action-entry identity precondition. For formal and pre-activation Actions the same selector MUST identify the exact runnable Issue/Role/Action; closed-routing debt MUST NOT be bypassed. Propose SHALL preserve immediate pre-write and fresh post-write activation checks. Accepted-intent continuation MAY identify the exact indeterminate source solely for bounded recovery using the same dependency-aware selector, after independently qualifying the actual accepted intent and continuation gates; this is not authorization for a new Action. Stale, contradictory, incomplete, provenance-invalid or execution-unavailable selection evidence MUST fail closed rather than being filled from memory or prose.
 
-When repository durable state contains more than one open formal workflow, Scheduled roles SHALL remain fail closed, except for the qualified maintenance dependency exception while the designated repair progresses to terminal retirement. Outside that qualified maintenance dependency exception, they MUST NOT select a winner by age, role/action priority, Issue number, model judgment, presumed legitimacy, automatic Change clearing, or routing rewrite. Human/maintainer administrative repair MAY correct that illegal durable state outside normal Scheduled-Agent lifecycle execution. A later wake MUST reconstruct current repository state and obtain a new executable decision before normal work resumes.
+Multiple open formal workflows do not by themselves violate WIP. The execution boundary still selects at most one Action per wake. No model-chosen winner, forced close, Change clearing or route rewrite is authorized. Each later wake and consequential Application boundary reconstructs current selection and preserves existing mutation safety. Suspended work is never selected solely because it is old or formal.
 
 A closed nonterminal Issue MAY be recovered automatically only for the demonstrated premature-close class when detailed exceptional classification proves all existing predicates required for that recovery: persisted non-`unset` Change, one otherwise legal nonterminal routing identity, unfinished lifecycle evidence, no valid terminal completion, no qualifying Human termination/non-resumption decision, no competing open formal workflow, and no second closed-routing debt candidate. Lead MAY reopen only that same Issue under `Lead / resolve-question`, preserve the immutable Change and pre-close routing identity, then fresh-reconstruct normal dispatch after reopening. The recovery invocation MUST NOT execute the preserved normal action.
 
-This separation MUST NOT create a generic fault state machine, hidden recovery registry, new lifecycle status, bulk migration action, activation flag, lock, lease, heartbeat, retry counter, durable claim, cursor/watermark, cache-based authorization, or second workflow DAG. Deterministic normal-selection, closed-routing-debt, terminal-replay, candidate cleanup, and exceptional-recovery mechanics SHALL be implemented and tested in production executable surfaces rather than duplicated as a second natural-language classifier for the model.
+This separation MUST NOT create a generic fault state machine, hidden recovery registry, new lifecycle status, bulk migration action, activation flag, lock, lease, heartbeat, retry counter, durable claim, cursor/watermark, cache-based authorization, or second lifecycle DAG. The invocation-local prerequisite graph is selection input, not a separate workflow lifecycle. Deterministic normal-selection, closed-routing-debt, terminal-replay, candidate cleanup, and exceptional-recovery mechanics SHALL be implemented and tested in production executable surfaces rather than duplicated as a second natural-language classifier for the model.
 
 #### Scenario: One active workflow is missed by a partial search
 
@@ -2965,23 +2993,23 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 - AND the affected debt boundary fails closed
 - AND the model does not choose which terminal journal to trust
 
-#### Scenario: Pre-activation Explore revalidates zero formal WIP before substantive research
+#### Scenario: Pre-activation Explore revalidates runnable selection before substantive research
 
 - GIVEN normal classification identifies an open `Lead / explore-change + Change: unset` Issue as the deterministic combined-queue winner
 - AND current closed-routing-debt enumeration was complete and empty
-- AND before substantive Explore begins another durable formal workflow or closed-routing debt candidate appears, or completeness can no longer be established
+- AND before substantive Explore begins another runnable formal workflow or closed-routing debt candidate appears, or completeness can no longer be established
 - WHEN `explore-change` consumes its fresh action-entry identity precondition
 - THEN it does not continue from the earlier candidate-local selection
 - AND it fails closed and reconstructs current executable dispatch
 
-#### Scenario: Two active workflows fail closed before a mapped action executes
+#### Scenario: Two runnable formal workflows select exactly one Action
 
-- GIVEN complete current open-Issue state contains two valid-routing Issues with persisted non-`unset` Change identities
-- WHEN any Scheduled Task wakes in `workflow-dynamic` mode
-- THEN open formal cardinality is greater than one
-- AND production dispatch returns `FAIL_CLOSED`
-- AND no normal mapped action is selected or executed
-- AND the Scheduled role does not choose a winner or rewrite either workflow to manufacture cardinality one
+- GIVEN complete current open-Issue state contains two valid-routing runnable Issues with persisted non-`unset` Change identities
+- WHEN a Scheduled Task wakes in `workflow-dynamic` mode
+- THEN production dispatch selects exactly one current Action using earliest creation order then Issue number
+- AND the other workflow is preserved unchanged
+- AND if one becomes suspended, it is excluded regardless of its age
+- AND a later fresh dispatch recomputes eligibility without manufacturing cardinality one
 
 #### Scenario: Indeterminate enumeration cannot authorize work
 
@@ -2999,10 +3027,10 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 - AND after `AUTHORIZE`, Reviewer reconstructs every one of those required inputs under the unchanged mapped-action contract
 - AND dispatch optimization does not filter, truncate, latest-only select, summarize away, or substitute for that older required comment or any other action-required durable evidence
 
-#### Scenario: Human or maintainer repairs a multiple-active repository state
+#### Scenario: Maintainer corrects an invalid dependency observation
 
-- GIVEN Scheduled dispatch previously returned `FAIL_CLOSED` because multiple open formal workflows existed
-- AND Human or maintainer later performs an administrative durable-state repair outside normal Scheduled-Agent lifecycle execution
+- GIVEN Scheduled dispatch previously returned `FAIL_CLOSED` because qualified prerequisite evidence was invalid
+- AND an authorized maintainer or Lead appends a corrected declaration after fresh evidence
 - WHEN a later Scheduled Task wakes
 - THEN it reconstructs current repository state from authoritative GitHub observations
 - AND executes production dispatch again

@@ -78,7 +78,8 @@ dispatch behavior. The Asia/Taipei daily shard is transport/audit only and is no
 Implementation review PASS and archive review PASS select review-implementation and the explicit merge-implementation-pr and
 merge-archive-pr Actions. Exact-R validation, content-addressed ingress, WIP=1, finish-first,
 Human authority, independent review, exact-head merge safety, and mutation-carrier separation remain
-required. Detailed semantics belong to the default-branch governance, role, Skill, OpenSpec, and
+required. WIP limits execution, not the number of open formal Changes; suspended work keeps its
+identity and progress until its prerequisites are satisfied. Detailed semantics belong to the default-branch governance, role, Skill, OpenSpec, and
 workflow projection files; README does not redefine them.
 
 ## OpenSpec lifecycle

@@ -27,10 +27,12 @@ The worker cannot choose a target, Role, Action, successor, retry, or success. R
 derives routing from the executable model and rejects stale, replayed, ambiguous, contradictory, or
 incomplete input. Exact revision, content-addressed ingress, WIP=1, finish-first, Human authority,
 independent review, exact-head merge, and carrier separation remain mandatory.
-One qualified operational dependency declaration on a blocked formal Issue
-may select its repair before that workflow without changing one-Action-per-wake
-or result/effect authority. No incident identity or reserved Human approval is
-required.
+Qualified current dependencies suspend only the affected work, preserving its identity
+and Action; WIP=1 is execution selection, not formal Issue count. The executable model
+selects one runnable formal Action, its runnable pre-activation prerequisite, or the
+ordinary runnable queue winner, using stable creation order. Dependencies may be
+multiple, shared, nested or external; ordinary coordination requires no reserved Human
+approval. Existing result/effect authority and independent review are unchanged.
 
 ## Transport
 

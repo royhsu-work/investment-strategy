@@ -7,6 +7,7 @@ I/O, select a carrier, execute a worker, or persist a successor.
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from graphlib import CycleError, TopologicalSorter
 from re import fullmatch
 from types import MappingProxyType
 
@@ -182,6 +183,9 @@ class IssueObservation:
     routing_debt: bool = False
 
 
+WorkflowDependencies = tuple[tuple[int, tuple[int | None, ...]], ...]
+
+
 @dataclass(frozen=True, slots=True)
 class AuthoritativeObservations:
     """Complete, provenance-qualified observations consumed by select_work."""
@@ -190,7 +194,7 @@ class AuthoritativeObservations:
     complete: bool = True
     provenance: ObservationProvenance | str = ObservationProvenance.QUALIFIED
     human_authorized: bool = True
-    maintenance_priority: tuple[int, int] | None = None
+    dependencies: WorkflowDependencies | None = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -475,9 +479,9 @@ def _valid_revision(revision: object) -> bool:
 def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
     """Select one current Action from complete, qualified observations.
 
-    Formal Change work has priority over pre-activation work. More than one
-    formal active candidate is a WIP violation and fails closed. Preactivation
-    candidates use a stable creation/order tie-break.
+    Outstanding dependencies suspend work without consuming an execution slot.
+    Select one runnable Action, preferring formal work, then its prerequisites,
+    then the ordinary pre-activation queue; each group has a stable tie-break.
     """
 
     if (
@@ -489,17 +493,8 @@ def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
     if not isinstance(observations.human_authorized, bool) or not observations.human_authorized:
         return _selection(SelectionDisposition.FAIL_CLOSED, "human-authority-missing")
 
-    policy = observations.maintenance_priority
-    if policy is not None and (
-        not isinstance(policy, tuple)
-        or len(policy) != 2
-        or any(
-            not isinstance(number, int) or isinstance(number, bool) or number <= 0
-            for number in policy
-        )
-        or policy[0] == policy[1]
-    ):
-        return _selection(SelectionDisposition.FAIL_CLOSED, "maintenance-priority-invalid")
+    if not isinstance(observations.dependencies, tuple):
+        return _selection(SelectionDisposition.FAIL_CLOSED, "dependency-observation-invalid")
 
     seen_issue_numbers: set[int] = set()
     formal: list[tuple[IssueObservation, Action]] = []
@@ -551,48 +546,69 @@ def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
         elif normalized_action is not None:
             preactivation.append((issue, normalized_action))
 
-    formal_ids = tuple(sorted(issue.issue_number for issue, _ in formal))
-    if policy is not None:
-        blocked_issue, repair_issue = policy
-        if formal_ids in ((blocked_issue,), tuple(sorted(policy))):
-            priority = next(
-                (
-                    pair
-                    for pair in (*formal, *preactivation)
-                    if pair[0].issue_number == repair_issue
-                ),
-                None,
+    routed = {issue.issue_number for issue, _ in (*formal, *preactivation)}
+    closed = {
+        issue.issue_number for issue in observations.issues if issue.state == IssueState.CLOSED
+    }
+    graph: dict[int, tuple[int, ...]] = dict.fromkeys(routed, ())
+    declared: set[int] = set()
+    externally_suspended: set[int] = set()
+    known_targets = routed | closed
+    for edge in observations.dependencies:
+        if not isinstance(edge, tuple) or len(edge) != 2:
+            return _selection(SelectionDisposition.FAIL_CLOSED, "dependency-observation-invalid")
+        number, blockers = edge
+        if (
+            type(number) is not int
+            or number not in routed
+            or number in declared
+            or not isinstance(blockers, tuple)
+            or any(
+                item is not None and (type(item) is not int or item not in known_targets)
+                for item in blockers
             )
-            if priority is not None:
-                issue, action = priority
-                return _selection(
-                    SelectionDisposition.AUTHORIZE,
-                    "selected-maintenance-repair",
-                    issue.issue_number,
-                    action,
-                )
-    if len(formal) > 1:
-        return _selection(SelectionDisposition.FAIL_CLOSED, "wip-more-than-one")
-    if formal:
-        issue, action = formal[0]
-        return _selection(
-            SelectionDisposition.AUTHORIZE,
-            "selected-formal-action",
-            issue.issue_number,
-            action,
-        )
-    if preactivation:
-        issue, action = min(
-            preactivation,
-            key=lambda candidate: (candidate[0].created_order, candidate[0].issue_number),
-        )
-        return _selection(
-            SelectionDisposition.AUTHORIZE,
+            or len(set(blockers)) != len(blockers)
+        ):
+            return _selection(SelectionDisposition.FAIL_CLOSED, "dependency-observation-invalid")
+        declared.add(number)
+        graph[number] = tuple(item for item in blockers if item is not None)
+        if None in blockers:
+            externally_suspended.add(number)
+
+    sorter = TopologicalSorter(graph)
+    try:
+        sorter.prepare()
+    except CycleError:
+        return _selection(SelectionDisposition.FAIL_CLOSED, "dependency-cycle")
+    ready = (set(sorter.get_ready()) & routed) - externally_suspended
+
+    # A queued prerequisite inherits the existing formal-first policy of the
+    # formal work it unblocks. No incident identity, urgency or new queue.
+    prerequisites: set[int] = set()
+    pending = [target for issue, _ in formal for target in graph[issue.issue_number]]
+    while pending:
+        target = pending.pop()
+        if target not in prerequisites:
+            prerequisites.add(target)
+            pending.extend(graph.get(target, ()))
+
+    for candidates, reason in (
+        (formal, "selected-formal-action"),
+        (
+            [pair for pair in preactivation if pair[0].issue_number in prerequisites],
             "selected-preactivation-action",
-            issue.issue_number,
-            action,
-        )
-    return _selection(SelectionDisposition.NO_WORK, "no-routed-work")
+        ),
+        (preactivation, "selected-preactivation-action"),
+    ):
+        runnable = [pair for pair in candidates if pair[0].issue_number in ready]
+        if runnable:
+            issue, action = min(
+                runnable, key=lambda pair: (pair[0].created_order, pair[0].issue_number)
+            )
+            return _selection(SelectionDisposition.AUTHORIZE, reason, issue.issue_number, action)
+    return _selection(
+        SelectionDisposition.NO_WORK, "dependencies-unsatisfied" if routed else "no-routed-work"
+    )
 
 
 _DECISION_FIELDS = ("disposition", "issue_number", "action", "role")
