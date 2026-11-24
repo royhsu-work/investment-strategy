@@ -1796,7 +1796,6 @@ def test_preaccept_application_cannot_be_redispatched(wire: str, run_visible: bo
     assert completion.job_id is None
 
 
-
 @pytest.mark.parametrize("decision_kind", ["accepted", "rejected", "foreign-copy", "duplicate"])
 def test_native_minimal_history_needs_exact_machine_source_binding(decision_kind: str) -> None:
     """A source-less raw comment is not a second owner after its durable decision."""
@@ -1847,9 +1846,7 @@ def test_native_minimal_history_needs_exact_machine_source_binding(decision_kind
         read=fake_read,
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
-    assert completion.state == (
-        "NONE" if decision_kind in {"accepted", "rejected"} else "INVALID"
-    )
+    assert completion.state == ("NONE" if decision_kind in {"accepted", "rejected"} else "INVALID")
 
 
 def _completion_matrix_reader(

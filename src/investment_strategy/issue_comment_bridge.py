@@ -41,6 +41,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _accepted_correction_observer_for_batch,
     _accepted_recovery_boundary,
     _application_owned_worker_result,
+    _claimed_source,
     _materialization_effects,
     _qualified_accepted_original_effects,
     _qualified_physical_original_accepted_effects,
@@ -4952,30 +4953,78 @@ def qualify_application_completion(
     invalid_request_ids: set[int] = set()
     ingress_created_at: dict[int, str | None] = {}
     unbound_request_ids: set[int] = set()
+    # The raw wire deliberately permits omission of the source identity.
+    # A machine decision on its actual Issue can identify such a transport as
+    # historical/foreign, but only the complete local decision read owns
+    # current-source acceptance. Do not recreate an authorization envelope.
+    observed_decisions: dict[int, list[tuple[ApplicationDecisionRecord, bool]]] = {}
+    for comment in recent:
+        if not is_github_actions_comment(comment):
+            continue
+        record = parse_application_decision(comment.get("body"))
+        if record is not None:
+            observed_decisions.setdefault(record.request_comment_id, []).append(
+                (
+                    record,
+                    _positive_int(comment.get("id")) is not None
+                    and comment.get("issue_url")
+                    == github_repository_api_url(repository, f"issues/{record.issue_number}"),
+                )
+            )
     for comment in (*recent, *issue_comments):
         if not _trusted_connector_comment(comment, owner):
             continue
         body = comment.get("body")
-        if not isinstance(body, str) or body.splitlines()[:1] != ["EFFECT_REQUEST"]:
+        if not isinstance(body, str):
             continue
-
-        # Transport history is repository-wide, but application completion is
-        # exact-source-local.  Legacy envelopes use their carried source; the
-        # post-protocol semantic envelope uses one opaque dispatch correlation.
-        # A semantic envelope with neither is unresolved evidence and therefore
-        # fails closed instead of being guessed into the current Action.
-        source_hint = _effect_request_source_hint(body)
-        legacy_source_hint = _legacy_raw_source_hint(body)
-        encoded_source_identity = _legacy_encoded_source_identity(body)
+        marker = body.splitlines()[:1]
+        if marker not in (["EFFECT_REQUEST"], ["WORKER_RESULT"]):
+            continue
         comment_id = _positive_int(comment.get("id"))
         if comment_id is None:
             invalid_request_ids.add(-1)
             continue
         ingress_created_at[comment_id] = _comment_time(comment)
-        try:
-            request = parse_application_request(body)
-        except ValueError:
+
+        # Normalize physical ingress into the same source filter and reducer.
+        # Native raw claims are hints only; the persisted decision (if any)
+        # owns source authority. An unbound live transport cannot prove NONE.
+        if marker == ["WORKER_RESULT"]:
             request = None
+            legacy_source_hint = None
+            encoded_source_identity = None
+            observed = observed_decisions.get(comment_id, [])
+            local = [record for record in decisions if record.request_comment_id == comment_id]
+            if observed and (
+                len(observed) != 1
+                or not observed[0][1]
+                or (
+                    observed[0][0].issue_number == source.issue_number
+                    and local != [observed[0][0]]
+                )
+            ):
+                invalid_request_ids.add(comment_id)
+                continue
+            if len(local) > 1:
+                invalid_request_ids.add(comment_id)
+                continue
+            record = local[0] if local else observed[0][0] if observed else None
+            try:
+                source_hint = (
+                    WorkerRequest(record.issue_number, record.role, record.action)
+                    if record is not None
+                    else _claimed_source(body.partition("\n")[2])
+                )
+            except ValueError:
+                source_hint = None
+        else:
+            source_hint = _effect_request_source_hint(body)
+            legacy_source_hint = _legacy_raw_source_hint(body)
+            encoded_source_identity = _legacy_encoded_source_identity(body)
+            try:
+                request = parse_application_request(body)
+            except ValueError:
+                request = None
         source_bound = False
         if source_hint is not None:
             if source_hint != source:
