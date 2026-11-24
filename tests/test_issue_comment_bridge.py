@@ -2335,6 +2335,33 @@ def test_terminal_preactcept_candidates_do_not_compete_by_raw_cardinality(
     assert completion.state != "AMBIGUOUS"
 
 
+@pytest.mark.parametrize("wire", ["legacy", "native"])
+def test_same_second_preaccept_releases_on_exact_terminal_evidence(wire: str) -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T00:00:00Z",
+        authorization_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+    )
+    if wire == "native":
+        raw = base64.b64decode(str(request["body"]).splitlines()[-1].split(": ", 1)[1])
+        request["body"] = "WORKER_RESULT\n" + raw.decode("utf-8")
+
+    for live_ids, expected in [({654}, "RESUMABLE"), (set(), "REJECTED")]:
+        completion = bridge.qualify_application_completion(
+            "owner/repo",
+            "token",
+            source=source,
+            current_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+            read=_completion_matrix_reader([request], live_ids=live_ids),
+            now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+        )
+        assert completion.state == expected
+        assert completion.request_comment_id == 654
+        if not live_ids:
+            assert completion.reason == "application-completion-terminal-no-accept"
+
+
 def test_terminal_preactcept_candidate_survives_archived_authorization_revision() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     request = _effect_request_comment(
