@@ -47,36 +47,43 @@ Selection is complete and provenance-qualified before work is authorized. Formal
 priority over pre-activation work. More than one formal candidate is a WIP=1 violation and fails
 closed. finish-first ordering is deterministic. Closed Issues are not reopened by a normal dispatch.
 
-### Bounded Human-directed maintenance dependency
+### Bounded maintenance dependency
 
-A single Human-authorized repair may precede its blocked formal workflow.
-The designation is derived afresh from the same-repository GitHub Issue
-`blocked_by` relation, not repository files, Issue prose, worker input or a
-priority queue. The blocked Issue must have the existing reserved Human
-approval capability and provenance-bound decision for the exact reference
-`issue:<blocked>:maintenance-dependency:<repair>`. The relation alone does
-not grant Human authority. A different pair requires its own Human decision,
-not a code, configuration, specification or deployment change.
+Lead or the repository maintainer may declare one already admitted repair as a
+necessary prerequisite of a blocked formal workflow, within existing approved
+scope and based on verified blocking evidence. Use a standalone Issue comment
+on the blocked Issue: `Blocked by: #<repair-issue-number>`. This is an
+operational coordination declaration, not a reserved Human decision or a
+semantic Action result. No additional Human approval or native GitHub
+relationship is required. The existing Connector may actuate this declaration
+on behalf of the authorized maintainer/Lead; it does not confer authority for
+unrelated work, new commitments, review, merge, or routing changes.
+
+The current declaration is the latest qualifying standalone command on that
+Issue, ordered by GitHub creation time and comment ID. Only repository-owner
+authorship with OWNER association and explicit direct or approved
+chatgpt-codex-connector provenance qualifies. Other authors/apps and ordinary
+prose are not commands. A correction is a new qualifying command, not an edit;
+`Blocked by: none` withdraws the relation when the dependency no longer applies.
+Do not delete or edit declarations; the maintainer/Lead owns their factual
+disposition and must not withdraw a still-required prerequisite.
 
 The existing selector MAY select only the repair while the blocked Issue
-remains open and formal, with no other formal workflow and no further
-unresolved dependency of the repair. A third formal Issue, multiple or cyclic
-dependencies, missing/contradictory identity, unqualified Human authority,
-closed-routing debt or incomplete reads MUST NOT authorize an exception.
-PROPOSAL_READY, all semantic gates and one Action per wake still apply.
-The blocked Issue's identity, routing, accepted effects and recovery
-obligations remain unchanged. Closure alone does not establish delivery:
-while the relation remains, only qualified formal `finalize-archive` /
-`lifecycle-complete` evidence permits ordinary selection to resume. An
-unsuccessful closure requires a separately authorized correction, not replay.
-Human may retire the resolved designation by removing the relation and its
-approval; an unresolved authorized designation must not silently disappear.
-Dispatch and Application consume the same fresh acquisition and selector.
-No new Action, workflow state, queue, or permission for workers to create
-dependencies or Human approval is introduced. An independent Human-directed
-maintenance release remains the out-of-band repair path when the dispatcher
-itself cannot lawfully select its repair; it does not fabricate normal Actions
-or bypass independent review and release gates.
+remains open and formal, with no other formal workflow except the repair.
+The repair must not itself have a pending dependency. Missing targets,
+self/cyclic or competing declarations, invalid command evidence, incomplete
+reads, third formal Issues, and closed-routing debt do not authorize an
+exception. All existing semantic gates and one Action per wake still apply.
+A closed repair satisfies a retained dependency only through qualified formal
+`finalize-archive` / `lifecycle-complete` evidence; closure alone is not delivery.
+After completion ordinary selection resumes the blocked workflow without
+rewinding its Change, routing, effects or obligations. A failed repair may be
+corrected by a new qualified declaration without a new Human decision.
+Dispatch and Application use the same fresh acquisition and selector.
+No new queue, Action, persisted progress state or alternate dispatcher is
+introduced. Independent Runtime Maintenance remains available when the
+dispatcher itself cannot select its repair, subject to existing independent
+review and release gates.
 
 ## Fresh dispatch and one-wake boundary
 

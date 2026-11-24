@@ -14,7 +14,6 @@ DECISION_REF_PREFIX = "Human-Decision-For: "
 class HumanDecisionBoundary(StrEnum):
     ADVISORY_ADMISSION = "advisory-admission"
     ESCALATION_RESPONSE = "escalation-response"
-    MAINTENANCE_DEPENDENCY = "maintenance-dependency"
 
 
 class HumanInputDispositionKind(StrEnum):
@@ -81,7 +80,6 @@ def decision_ref_for_boundary(
     *,
     issue_number: int | None = None,
     escalation_comment_id: int | None = None,
-    repair_issue_number: int | None = None,
 ) -> str:
     try:
         boundary = HumanDecisionBoundary(boundary)
@@ -92,12 +90,6 @@ def decision_ref_for_boundary(
         return advisory_admission_ref(_required_id(issue_number, "issue_number"))
     if boundary is HumanDecisionBoundary.ESCALATION_RESPONSE:
         return escalation_response_ref(_required_id(escalation_comment_id, "escalation_comment_id"))
-    if boundary is HumanDecisionBoundary.MAINTENANCE_DEPENDENCY:
-        blocked = _required_id(issue_number, "issue_number")
-        repair = _required_id(repair_issue_number, "repair_issue_number")
-        if blocked == repair:
-            raise ValueError("maintenance dependency must connect distinct Issues")
-        return f"issue:{blocked}:maintenance-dependency:{repair}"
     raise AssertionError("all HumanDecisionBoundary members must be mapped")
 
 

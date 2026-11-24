@@ -253,7 +253,7 @@ def test_scoped_human_priority_precedes_blocked_without_rewriting_it(
     assert selected.disposition is SelectionDisposition.AUTHORIZE
     assert selected.issue_number == repair
     assert selected.action is action
-    assert selected.reason == "selected-human-priority-repair"
+    assert selected.reason == "selected-maintenance-repair"
     without_policy = select_work(replace(observed, maintenance_priority=None))
     if change == "unset":
         assert without_policy.issue_number == blocked

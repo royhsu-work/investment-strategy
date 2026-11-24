@@ -27,9 +27,10 @@ The worker cannot choose a target, Role, Action, successor, retry, or success. R
 derives routing from the executable model and rejects stale, replayed, ambiguous, contradictory, or
 incomplete input. Exact revision, content-addressed ingress, WIP=1, finish-first, Human authority,
 independent review, exact-head merge, and carrier separation remain mandatory.
-One qualified Human-authorized native Issue dependency may select its repair
-before the blocked formal workflow, without changing one-Action-per-wake or
-result/effect authority. No incident identity is embedded in the policy.
+One qualified operational dependency declaration on a blocked formal Issue
+may select its repair before that workflow without changing one-Action-per-wake
+or result/effect authority. No incident identity or reserved Human approval is
+required.
 
 ## Transport
 

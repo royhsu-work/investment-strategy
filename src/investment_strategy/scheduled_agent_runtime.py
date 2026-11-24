@@ -13,15 +13,6 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.request import Request, urlopen
 
-from investment_strategy.human_authority import (
-    APPROVAL_LABEL,
-    HumanDecisionBoundary,
-    decision_comment_from_raw,
-    decision_ref_for_boundary,
-    is_human_decision_approved,
-    label_event_from_raw,
-    parse_decision_ref,
-)
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import role_for
 from investment_strategy.scheduled_agent_carrier import (
@@ -70,7 +61,6 @@ class GitHubIssueObservation:
     authoritative: bool
     current_state_provenance: ObservationProvenance = ObservationProvenance.QUALIFIED
     routing_debt: bool = False
-    human_approval_present: bool = False
 
 
 @dataclass(frozen=True)
@@ -308,7 +298,6 @@ def normalize_github_issue(
         authoritative=authoritative,
         current_state_provenance=ObservationProvenance.QUALIFIED,
         routing_debt=routing_debt,
-        human_approval_present=APPROVAL_LABEL in labels,
     )
 
 
@@ -517,6 +506,7 @@ def _qualify_current_observations(
     current_revision: str | None,
     *,
     required_completion: int | None = None,
+    comments_by_issue: Mapping[int, tuple[Mapping[str, object], ...]],
 ) -> tuple[GitHubIssueObservation, ...]:
     qualified: list[GitHubIssueObservation] = []
     for observation in observations:
@@ -537,11 +527,9 @@ def _qualify_current_observations(
         if observation.state == "closed" and observation.routing is None and not require_completed:
             qualified.append(observation)
             continue
-        comments = _github_issue_comment_pages(
-            repository,
-            token,
-            observation.issue_number,
-        )
+        comments = comments_by_issue.get(observation.issue_number)
+        if comments is None:
+            comments = _github_issue_comment_pages(repository, token, observation.issue_number)
         lifecycle_events = _github_issue_timeline_pages(
             repository,
             token,
@@ -615,82 +603,69 @@ def _qualify_current_observations(
     return tuple(qualified)
 
 
-def _read_blocked_by(
-    repository: str, token: str, issue_number: int
-) -> tuple[Mapping[str, object], ...]:
-    """Read GitHub's native relationship; use the existing paginated GET boundary."""
-    entries: list[Mapping[str, object]] = []
-    page = 1
-    while True:
-        batch = _github_get_list_page(
-            f"https://api.github.com/repos/{repository}/issues/{issue_number}"
-            f"/dependencies/blocked_by?per_page=100&page={page}",
-            token,
-        )
-        entries.extend(batch)
-        if len(batch) < 100:
-            return tuple(entries)
-        page += 1
-
-
-def _maintenance_approval(
-    repository: str,
-    token: str,
-    blocked: GitHubIssueObservation,
-    repair_issue: int | None,
-) -> bool:
-    """Consume the existing exact-ref Human decision predicate; never grant approval."""
-    if not blocked.human_approval_present:
-        return False
-    comments = tuple(
-        decision_comment_from_raw(raw)
-        for raw in _github_issue_comment_pages(repository, token, blocked.issue_number)
-        if isinstance(raw.get("body"), str)
-        and parse_decision_ref(cast(str, raw["body"])) is not None
-    )
-    events = tuple(
-        label_event_from_raw(raw)
-        for raw in _github_issue_timeline_pages(repository, token, blocked.issue_number)
-        if raw.get("event") == "labeled"
-        and isinstance(raw.get("label"), Mapping)
-        and cast(Mapping[str, object], raw["label"]).get("name") == APPROVAL_LABEL
-    )
-    if repair_issue is None:
-        # A current approved maintenance decision without its native relation is
-        # contradictory, not permission to silently resume the blocked workflow.
-        prefix = f"issue:{blocked.issue_number}:maintenance-dependency:"
-        refs = tuple(
-            ref
-            for comment in comments
-            if (ref := parse_decision_ref(comment.body)) is not None and ref.startswith(prefix)
-        )
-        return any(
-            is_human_decision_approved(
-                expected_ref=ref,
-                approval_label_present=True,
-                comments=comments,
-                label_events=events,
-            )
-            for ref in refs
-        )
-    return is_human_decision_approved(
-        expected_ref=decision_ref_for_boundary(
-            HumanDecisionBoundary.MAINTENANCE_DEPENDENCY,
-            issue_number=blocked.issue_number,
-            repair_issue_number=repair_issue,
-        ),
-        approval_label_present=True,
-        comments=comments,
-        label_events=events,
-    )
+def _declared_blocker(
+    repository: str, issue_number: int, comments: tuple[Mapping[str, object], ...]
+) -> int | None:
+    """One current operational declaration from the existing Issue comment surface."""
+    owner = repository.split("/", 1)[0]
+    commands: list[tuple[datetime, int, Mapping[str, object]]] = []
+    seen: set[int] = set()
+    for raw in comments:
+        body = raw.get("body")
+        user = raw.get("user")
+        if (
+            not isinstance(body, str)
+            or not body.strip().startswith("Blocked by:")
+            or raw.get("author_association") != "OWNER"
+            or not isinstance(user, Mapping)
+            or user.get("login") != owner
+        ):
+            continue
+        if "performed_via_github_app" not in raw:
+            raise ValueError("maintenance declaration provenance unavailable")
+        if raw["performed_via_github_app"] is not None and not github_comment_has_app_provenance(
+            raw, actor=owner, app_slug="chatgpt-codex-connector"
+        ):
+            continue
+        comment_id = raw.get("id")
+        created = raw.get("created_at")
+        if (
+            not isinstance(comment_id, int)
+            or isinstance(comment_id, bool)
+            or comment_id <= 0
+            or comment_id in seen
+            or raw.get("issue_url")
+            != f"https://api.github.com/repos/{repository}/issues/{issue_number}"
+            or not isinstance(created, str)
+            or not _github_timestamp(created)
+        ):
+            raise ValueError("maintenance declaration identity invalid")
+        seen.add(comment_id)
+        commands.append((datetime.fromisoformat(created.replace("Z", "+00:00")), comment_id, raw))
+    if not commands:
+        return None
+    _, _, current = max(commands, key=lambda item: (item[0], item[1]))
+    if current.get("created_at") != current.get("updated_at"):
+        raise ValueError("maintenance declaration was edited")
+    command = cast(str, current["body"]).strip()
+    if command == "Blocked by: none":
+        return None
+    match = re.fullmatch(r"Blocked by: #([1-9][0-9]*)", command)
+    if match is None:
+        raise ValueError("maintenance declaration invalid")
+    repair = int(match.group(1))
+    if repair == issue_number:
+        raise ValueError("maintenance dependency cannot block itself")
+    return repair
 
 
 def _read_maintenance_priority(
     repository: str,
     token: str,
     observations: tuple[GitHubIssueObservation, ...],
+    comments_by_issue: dict[int, tuple[Mapping[str, object], ...]],
 ) -> tuple[int, int] | None:
-    """Reconstruct a bounded authorized dependency, never a configuration override."""
+    """Qualify the bounded dependency without a second authority or transport."""
     formal = tuple(
         item
         for item in observations
@@ -699,40 +674,26 @@ def _read_maintenance_priority(
     if any(item.routing_debt for item in observations) or len(formal) > 2:
         return None
     by_number = {item.issue_number: item for item in observations}
+
+    def blocker(issue_number: int) -> int | None:
+        comments = comments_by_issue.get(issue_number)
+        if comments is None:
+            comments = _github_issue_comment_pages(repository, token, issue_number)
+            comments_by_issue[issue_number] = comments
+        return _declared_blocker(repository, issue_number, comments)
+
     pairs: list[tuple[int, int]] = []
     for blocked in formal:
-        entries = _read_blocked_by(repository, token, blocked.issue_number)
-        if not entries:
-            if _maintenance_approval(repository, token, blocked, None):
-                raise ValueError("approved maintenance dependency missing")
+        number = blocker(blocked.issue_number)
+        if number is None:
             continue
-        if len(entries) != 1:
-            raise ValueError("maintenance dependency must be unique")
-        entry = entries[0]
-        number = entry.get("number")
-        identity = entry.get("id")
-        if (
-            not isinstance(number, int)
-            or isinstance(number, bool)
-            or number <= 0
-            or number == blocked.issue_number
-            or not isinstance(identity, int)
-            or isinstance(identity, bool)
-            or identity <= 0
-            or entry.get("repository_url") != f"https://api.github.com/repos/{repository}"
-            or "pull_request" in entry
-        ):
-            raise ValueError("maintenance dependency identity invalid")
         repair = by_number.get(number)
         if (
             repair is None
             or not repair.authoritative
-            or repair.state != entry.get("state")
             or (repair.state == "open" and repair.routing is None)
         ):
-            raise ValueError("maintenance dependency observation contradictory")
-        if not _maintenance_approval(repository, token, blocked, number):
-            raise ValueError("maintenance dependency Human authority missing")
+            raise ValueError("maintenance dependency target unavailable")
         pairs.append((blocked.issue_number, number))
     if len(pairs) > 1:
         raise ValueError("maintenance dependency must be unique")
@@ -740,11 +701,7 @@ def _read_maintenance_priority(
         return None
     pair = pairs[0]
     repair = by_number[pair[1]]
-    if (
-        repair.state == "open"
-        and repair not in formal
-        and _read_blocked_by(repository, token, repair.issue_number)
-    ):
+    if repair.state == "open" and repair not in formal and blocker(repair.issue_number) is not None:
         raise ValueError("maintenance repair has another dependency")
     return pair
 
@@ -760,25 +717,32 @@ def acquire_current_github_preflight(
     del repository_root
     observations = _normalized_observations(_github_issue_pages(repository, token))
     current_revision = _current_default_branch_revision(repository, token)
+    comments_by_issue: dict[int, tuple[Mapping[str, object], ...]] = {}
     try:
-        maintenance_priority = _read_maintenance_priority(repository, token, observations)
+        maintenance_priority = _read_maintenance_priority(
+            repository, token, observations, comments_by_issue
+        )
     except ValueError:
         return acquire_dispatch_preflight(
-            observations=observations,
+            observations=tuple(
+                replace(item, current_state_provenance=ObservationProvenance.INDETERMINATE)
+                for item in observations
+            ),
             source_total_count=len(observations),
             incomplete_results=False,
             exhausted=True,
-            human_authorized=False,
         )
     required_completion = None
     if maintenance_priority is not None:
         if current_revision is None:
             return acquire_dispatch_preflight(
-                observations=observations,
+                observations=tuple(
+                    replace(item, current_state_provenance=ObservationProvenance.INDETERMINATE)
+                    for item in observations
+                ),
                 source_total_count=len(observations),
                 incomplete_results=False,
                 exhausted=True,
-                human_authorized=False,
             )
         repair_number = maintenance_priority[1]
         repair = next(item for item in observations if item.issue_number == repair_number)
@@ -786,7 +750,12 @@ def acquire_current_github_preflight(
             required_completion = repair.issue_number
             maintenance_priority = None
     observations = _qualify_current_observations(
-        repository, token, observations, current_revision, required_completion=required_completion
+        repository,
+        token,
+        observations,
+        current_revision,
+        required_completion=required_completion,
+        comments_by_issue=comments_by_issue,
     )
     return acquire_dispatch_preflight(
         observations=observations,

@@ -168,8 +168,7 @@ def _dependency_fixture(
         "body": "Change: restore-t1\n",
         "created_at": "2026-09-12T00:00:00Z",
         "closed_at": None,
-        "labels": [{"name": "action:implement-change"}]
-        + ([] if fault == "missing-label" else [{"name": "human:approved"}]),
+        "labels": [{"name": "action:implement-change"}],
     }
     repair_issue = {
         "number": repair,
@@ -215,16 +214,50 @@ def _dependency_fixture(
         "more-implementation-required",
         "Executor / implement-change",
     )
-    human_comment = {
+    declaration: dict[str, object] = {
         "id": 12,
-        "body": (
-            f"Human-Decision-For: issue:{blocked}:maintenance-dependency:"
-            f"{repair if fault != 'wrong-ref' else repair + 1}"
-        ),
-        "user": {"login": "royhsu-work"},
-        "performed_via_github_app": None if fault != "app-comment" else {"slug": "agent"},
+        "body": f"Blocked by: #{repair}",
+        "user": {"login": "owner"},
+        "author_association": "OWNER",
+        "performed_via_github_app": {"id": 1144995, "slug": "chatgpt-codex-connector"},
+        "issue_url": f"{repo_url}/issues/{blocked}",
         "created_at": "2026-09-12T00:00:03Z",
         "updated_at": "2026-09-12T00:00:03Z",
+    }
+    if fault == "wrong-ref":
+        declaration["body"] = f"Blocked by: #{repair + 1}"
+    elif fault == "self":
+        declaration["body"] = f"Blocked by: #{blocked}"
+    elif fault == "malformed":
+        declaration["body"] = f"Blocked by: #{repair}, #999"
+    elif fault == "cross-issue":
+        declaration["issue_url"] = f"{repo_url}/issues/{repair}"
+    elif fault == "edited":
+        declaration["updated_at"] = "2026-09-12T00:00:04Z"
+    elif fault == "missing-provenance":
+        del declaration["performed_via_github_app"]
+    elif fault == "other-app":
+        declaration["performed_via_github_app"] = {"slug": "other-app"}
+    elif fault == "outsider":
+        declaration["user"] = {"login": "outsider"}
+        declaration["author_association"] = "NONE"
+    elif fault == "ordinary-prose":
+        declaration["body"] = f"This workflow is blocked by #{repair}"
+    elif fault == "direct-owner":
+        declaration["performed_via_github_app"] = None
+    earlier = {
+        **declaration,
+        "id": 9,
+        "body": f"Blocked by: #{repair + 1}",
+        "created_at": "2026-09-12T00:00:00Z",
+        "updated_at": "2026-09-12T00:00:00Z",
+    }
+    withdrawal = {
+        **declaration,
+        "id": 14,
+        "body": "Blocked by: none",
+        "created_at": "2026-09-12T00:00:04Z",
+        "updated_at": "2026-09-12T00:00:04Z",
     }
     blocked_timeline = (
         {"id": 10, "event": "commented", "created_at": "2026-09-12T00:00:01Z"},
@@ -235,14 +268,6 @@ def _dependency_fixture(
             "label": {"name": "action:implement-change"},
         },
         {"id": 12, "event": "commented", "created_at": "2026-09-12T00:00:03Z"},
-        {
-            "id": 13,
-            "event": "labeled",
-            "created_at": "2026-09-12T00:00:04Z",
-            "label": {"name": "human:approved"},
-            "actor": {"login": "royhsu-work"},
-            "performed_via_github_app": None if fault != "app-event" else {"slug": "agent"},
-        },
     )
     if phase == "formal":
         repair_formal = formal_comment(
@@ -282,24 +307,29 @@ def _dependency_fixture(
         urls.append(url)
         if "/issues?" in url:
             return (blocked_issue, repair_issue)
-        if "/dependencies/blocked_by?" in url:
-            if f"/issues/{blocked}/" in url:
-                if fault == "missing-edge":
-                    return ()
-                if fault == "multiple":
-                    return (repair_issue, repair_issue)
-                if fault == "cross-repo":
-                    return ({**repair_issue, "repository_url": repo_url + "-other"},)
-                if fault == "wrong-state":
-                    return ({**repair_issue, "state": "closed"},)
-                return (repair_issue,)
-            return (blocked_issue,) if fault == "cycle" else ()
         if f"/issues/{blocked}/comments?" in url:
-            return (human_comment, blocked_formal)
+            if fault == "no-declaration":
+                return (blocked_formal,)
+            if fault == "corrected":
+                return (earlier, blocked_formal, declaration)
+            if fault == "withdrawn":
+                return (declaration, withdrawal, blocked_formal)
+            if fault == "duplicate":
+                return (declaration, declaration, blocked_formal)
+            return (declaration, blocked_formal)
         if f"/issues/{blocked}/timeline?" in url:
             return blocked_timeline
         if f"/issues/{repair}/comments?" in url:
-            return () if phase == "bare-close" else (repair_formal,)
+            if fault == "cycle":
+                return (
+                    {
+                        **declaration,
+                        "id": 22,
+                        "body": f"Blocked by: #{blocked}",
+                        "issue_url": f"{repo_url}/issues/{repair}",
+                    },
+                )
+            return () if phase in {"explore", "bare-close"} else (repair_formal,)
         if f"/issues/{repair}/timeline?" in url:
             return repair_timeline
         raise AssertionError(url)
@@ -311,7 +341,7 @@ def _dependency_fixture(
 
 @pytest.mark.parametrize("pair", [(435, 468), (900, 850)])
 @pytest.mark.parametrize("phase", ["explore", "formal", "completed"])
-def test_native_dependency_drives_fresh_selection_and_completion(
+def test_comment_dependency_drives_fresh_selection_and_completion(
     monkeypatch: pytest.MonkeyPatch, pair: tuple[int, int], phase: str
 ) -> None:
     blocked, repair = pair
@@ -321,7 +351,8 @@ def test_native_dependency_drives_fresh_selection_and_completion(
     assert decision.disposition == "AUTHORIZE"
     assert decision.selected_issue_id == (blocked if phase == "completed" else repair)
     assert not any("pyproject.toml" in url for url in urls)
-    assert any(f"/issues/{blocked}/dependencies/blocked_by?" in url for url in urls)
+    assert not any("/dependencies/" in url for url in urls)
+    assert sum(f"/issues/{blocked}/comments?" in url for url in urls) == 1
 
 
 @pytest.mark.parametrize("phase", ["no-go", "bare-close"])
@@ -336,24 +367,45 @@ def test_dependency_closure_without_delivery_cannot_resume(
 @pytest.mark.parametrize(
     "fault",
     [
-        "missing-label",
         "wrong-ref",
-        "app-comment",
-        "app-event",
-        "missing-edge",
-        "multiple",
-        "cross-repo",
-        "wrong-state",
+        "self",
+        "malformed",
+        "cross-issue",
+        "edited",
+        "missing-provenance",
+        "duplicate",
         "cycle",
     ],
 )
-def test_native_dependency_requires_exact_human_authority_and_coherent_relation(
+def test_comment_dependency_rejects_incoherent_qualified_declarations(
     monkeypatch: pytest.MonkeyPatch, fault: str
 ) -> None:
     _dependency_fixture(monkeypatch, (435, 468), fault=fault)
     decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
     assert decision.disposition == "FAIL_CLOSED"
     assert decision.selected_issue_id is None
+
+
+@pytest.mark.parametrize(
+    "fault", ["other-app", "outsider", "ordinary-prose", "no-declaration", "withdrawn"]
+)
+def test_comment_dependency_absent_or_untrusted_keeps_ordinary_selection(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    _dependency_fixture(monkeypatch, (435, 468), fault=fault)
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 435
+
+
+@pytest.mark.parametrize("fault", ["direct-owner", "corrected"])
+def test_comment_dependency_accepts_maintainer_correction_without_human_approval(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    _dependency_fixture(monkeypatch, (435, 468), fault=fault)
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 468
 
 
 def test_closed_routing_debt_fails_closed_before_selection() -> None:
@@ -470,8 +522,6 @@ def test_production_preflight_qualifies_from_issue_timeline(
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
         del token
         requested_urls.append(url)
-        if "/dependencies/blocked_by?" in url:
-            return ()
         if "/issues?" in url:
             return (issue,)
         if "/comments?" in url:
@@ -487,10 +537,6 @@ def test_production_preflight_qualifies_from_issue_timeline(
 
     assert requested_urls == [
         "https://api.github.com/repos/owner/repo/issues?state=all&per_page=100&page=1",
-        (
-            "https://api.github.com/repos/owner/repo/issues/229"
-            "/dependencies/blocked_by?per_page=100&page=1"
-        ),
         (
             "https://api.github.com/repos/owner/repo/issues/229/comments?per_page=100"
             "&sort=created&direction=desc"
@@ -555,8 +601,6 @@ def test_production_preflight_qualifies_recovery_after_default_branch_advances(
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
         del token
         requested_urls.append(url)
-        if "/dependencies/blocked_by?" in url:
-            return ()
         if "/issues?" in url:
             return (issue,)
         if "/comments?" in url:
@@ -653,8 +697,6 @@ def test_production_preflight_ignores_closed_inert_history(
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
         del token
         requested_urls.append(url)
-        if "/dependencies/blocked_by?" in url:
-            return ()
         if "/issues?" in url:
             return (historical, active)
         if "/issues/229/comments?" in url:
@@ -740,8 +782,6 @@ def test_production_preflight_ignores_closed_inert_history_with_null_body(
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
         del token
         requested_urls.append(url)
-        if "/dependencies/blocked_by?" in url:
-            return ()
         if "/issues?" in url:
             return (historical, active)
         if "/issues/229/comments?" in url:

@@ -567,7 +567,7 @@ def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
                 issue, action = priority
                 return _selection(
                     SelectionDisposition.AUTHORIZE,
-                    "selected-human-priority-repair",
+                    "selected-maintenance-repair",
                     issue.issue_number,
                     action,
                 )
