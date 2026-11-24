@@ -37,6 +37,7 @@ from investment_strategy.scheduled_agent_application_carrier import (
     _historical_carriers,
     canonical_implementation_branch,
     current_reviewed_implementation_head,
+    qualify_change_carrier,
     qualify_implementation_carrier,
     qualify_supersession_branch,
 )
@@ -551,6 +552,10 @@ def canonicalize_raw_worker_result(
     if set(parsed) - allowed_fields:
         raise ValueError("WORKER_RESULT contains unknown JSON fields")
     raw = raw[:-1] if raw.endswith("\n") else raw
+    if source.role == "reviewer":
+        worker = parse_worker_result(raw, source, authorized_change=authorized_change)
+        if _formal_result_body(worker, source=source) is not None:
+            raise ValueError("WORKER_RESULT must not supply an application-owned review projection")
     request = ApplicationRequest(
         authorization_revision=current_revision,
         raw_worker_result=raw,
@@ -1613,12 +1618,15 @@ def _machine_result_revision(
             return current_revision
         if spec.evidence_target is EvidenceTarget.ARCHIVE_PR_HEAD:
             branch = _archive_branch(change)
-            return (
-                current_revision
-                if branch is None
-                else (_fresh_branch_head(repository, token, branch) or current_revision)
+            branch_revision = (
+                None if branch is None else _fresh_branch_head(repository, token, branch)
             )
-        if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
+            if branch_revision is None and source.role == "reviewer":
+                raise RuntimeError("review target archive carrier is unavailable")
+            # Archive creation can precede the existence of its branch. This
+            # provisional value is not a reviewed work-product revision.
+            target_revision = branch_revision or current_revision
+        elif spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
             merged_revision = _fresh_merged_carrier_revision(
                 repository=repository,
                 token=token,
@@ -1628,18 +1636,29 @@ def _machine_result_revision(
                 default_branch=default_branch,
             )
             return merged_revision or current_revision
-        return _machine_carrier_head(
-            repository=repository,
-            token=token,
-            source=source,
-            change=change,
-            default_branch=default_branch,
-            current_revision=current_revision,
-            allow_reconciliation_findings=(
-                source.action == "review-implementation"
-                and worker.typed_result.result.kind.value == "findings"
-            ),
-        )
+        else:
+            target_revision = _machine_carrier_head(
+                repository=repository,
+                token=token,
+                source=source,
+                change=change,
+                default_branch=default_branch,
+                current_revision=current_revision,
+                allow_reconciliation_findings=(
+                    source.action == "review-implementation"
+                    and worker.typed_result.result.kind.value == "findings"
+                ),
+            )
+        # The typed evidence reference is an immutable observation, never
+        # target authority. The independently qualified carrier must agree.
+        # In particular a later head must not inherit an earlier review.
+        if source.role == "reviewer" and (
+            _SHA.fullmatch(target_revision) is None
+            or worker.typed_result.result.evidence_ref
+            != f"https://github.com/{repository}/commit/{target_revision}"
+        ):
+            raise RuntimeError("review target evidence differs from the qualified carrier revision")
+        return target_revision
     parsed = find_materialization_payload(materializations[0], source)
     if parsed is None or parsed.change != change:
         raise RuntimeError("application materialization carrier identity is incomplete")
@@ -1695,7 +1714,7 @@ def _machine_carrier_head(
     """
 
     if canonical_implementation_branch(change) is None:
-        return current_revision
+        raise RuntimeError("application work-product carrier identity is incomplete")
     review_predecessor = (
         _review_predecessor_carrier(repository, token, source, change, current_revision)
         if source.action == "review-implementation"
@@ -1744,7 +1763,7 @@ def _machine_carrier_head(
         number = _positive_int(summary.get("number"))
         if number is None:
             continue
-        qualification = qualify_implementation_carrier(
+        qualification = qualify_change_carrier(
             repository=repository,
             token=token,
             source=source,

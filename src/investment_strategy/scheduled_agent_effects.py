@@ -2194,7 +2194,7 @@ class GitHubEffectAdapter:
             # carrier predicate below is proven.  Keep this bounded reader
             # compatibility while migration envelopes drain.
             return True
-        if spec.evidence_target is EvidenceTarget.ARCHIVE_PR_HEAD:
+        if spec.completion_predicate == "archive-pr-successor-ready":
             return archive_pr_readiness_complete(
                 repository=self.repository,
                 token=self.token,
@@ -4526,7 +4526,7 @@ def consequence_postconditions_complete(
                 or not _valid_sha(correlation_fields[7])
             ):
                 return False
-        if spec.evidence_target is EvidenceTarget.ARCHIVE_PR_HEAD:
+        if spec.completion_predicate == "archive-pr-successor-ready":
             return archive_pr_readiness_complete(
                 repository=repository,
                 token=token,

@@ -1646,7 +1646,7 @@ def test_review_findings_can_return_to_executor_without_qualifying_stale_head_fo
             "action": source.action,
             "change": change,
             "result_kind": result_kind,
-            "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/398",
+            "evidence_ref": f"https://github.com/{_REPOSITORY}/commit/{head}",
             "result_content": "independent exact-head review",
             "requested_effects": [],
         }
@@ -7987,14 +7987,17 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
         ("review-implementation", "pass"),
         ("review-implementation", "findings"),
         ("review-archive", "pass"),
+        ("review-archive", "findings"),
     ],
 )
+@pytest.mark.parametrize("semantic_intent", [False, True])
 @pytest.mark.parametrize("evidence", ["matches", "moved-head", "missing", "wrong-repository"])
 def test_revision_bound_review_projection_never_relabels_reviewed_commit(
     monkeypatch: pytest.MonkeyPatch,
     action: str,
     result_kind: str,
     evidence: str,
+    semantic_intent: bool,
 ) -> None:
     """The semantic review and governance revisions have distinct identities."""
     source = WorkerRequest(138, "reviewer", action)
@@ -8006,7 +8009,7 @@ def test_revision_bound_review_projection_never_relabels_reviewed_commit(
     monkeypatch.setattr(bridge, "_fresh_branch_head", lambda *_args: target)
     raw = json.dumps(
         {
-            "_semantic_intent_version": 2,
+            **({"_semantic_intent_version": 2} if semantic_intent else {}),
             "result_kind": result_kind,
             "evidence_ref": evidence_ref,
             "result_content": "independent semantic evidence",
@@ -8078,3 +8081,58 @@ def test_openspec_review_reuses_change_carrier_qualification(
         == target
     )
     assert calls == [401, 402]
+
+
+def test_archive_review_cannot_substitute_main_when_carrier_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "reviewer", "review-archive")
+    monkeypatch.setattr(bridge, "_fresh_branch_head", lambda *_args: None)
+    raw = json.dumps(
+        {
+            "result_kind": "pass",
+            "evidence_ref": f"https://github.com/{_REPOSITORY}/commit/{_REVISION}",
+            "result_content": "archive review",
+            "requested_effects": [],
+        }
+    )
+    with pytest.raises(RuntimeError, match="review target"):
+        bridge._machine_result_revision(
+            raw,
+            source,
+            change=_CHANGE,
+            repository=_REPOSITORY,
+            token=_REVISION,
+            current_revision=_REVISION,
+            default_branch="main",
+        )
+
+
+def test_fresh_review_ingress_cannot_supply_legacy_formal_projection() -> None:
+    source = WorkerRequest(138, "reviewer", "review-openspec")
+    raw = json.dumps(
+        {
+            "result_kind": "pass",
+            "evidence_ref": f"https://github.com/{_REPOSITORY}/commit/{_REVISION}",
+            "result_content": "independent semantic review",
+            "requested_effects": [
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps(
+                        {
+                            "issue_number": 138,
+                            "body": f"REVIEW_RESULT\nRevision: {_REVISION}",
+                        }
+                    ),
+                }
+            ],
+        }
+    )
+    with pytest.raises(ValueError, match="application-owned review projection"):
+        bridge.canonicalize_raw_worker_result(
+            body="WORKER_RESULT\n" + raw,
+            source=source,
+            authorized_change=_CHANGE,
+            repository=_REPOSITORY,
+            current_revision=_REVISION,
+        )

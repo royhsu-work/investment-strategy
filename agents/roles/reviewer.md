@@ -28,7 +28,10 @@ For review-archive, verify archive semantics, non-closing linkage, terminal prep
 cleanup obligations, and deterministic archive safety.
 
 Return one structured PASS, FINDINGS, HUMAN_DECISION_REQUIRED, NO_GO, or BLOCKED result with exact
-evidence. PASS is an independent gate, not permission to invent scope or select a target. The
+evidence. For a PASS or FINDINGS, use the existing typed `evidence_ref` for the actual reviewed
+commit URL (`https://github.com/<owner>/<repo>/commit/<full-sha>`); other evidence belongs in
+`result_content`. Application independently qualifies the carrier and rejects a mismatched
+reviewed revision. PASS is an independent gate, not permission to invent scope or select a target. The
 executable Action model derives the next Action; Reviewer does not mutate routing or execute a
 successor.
 

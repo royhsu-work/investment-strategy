@@ -72,29 +72,98 @@ class ConsequenceSpec:
     successor_required: bool
 
 
-_EVIDENCE_TARGET_OVERRIDES: Final[dict[tuple[Action, ResultKind], EvidenceTarget]] = {
-    (
-        Action.PROPOSE_CHANGE,
-        ResultKind.READY_FOR_OPENSPEC_REVIEW,
-    ): EvidenceTarget.MATERIALIZED_REVISION,
-    (
-        Action.RESOLVE_QUESTION,
-        ResultKind.READY_FOR_OPENSPEC_REVIEW,
-    ): EvidenceTarget.MATERIALIZED_REVISION,
-    (Action.FINALIZE_CHANGE, ResultKind.ARCHIVE_READY): EvidenceTarget.ARCHIVE_PR_HEAD,
-    (Action.REVIEW_ARCHIVE, ResultKind.PASS): EvidenceTarget.ARCHIVE_PR_HEAD,
-    (Action.MERGE_ARCHIVE_PR, ResultKind.MERGED): EvidenceTarget.MERGED_PR_HEAD,
-    (Action.MERGE_IMPLEMENTATION_PR, ResultKind.MERGED): EvidenceTarget.MERGED_PR_HEAD,
-    (Action.FINALIZE_ARCHIVE, ResultKind.LIFECYCLE_COMPLETE): EvidenceTarget.MERGED_PR_HEAD,
-    (Action.IMPLEMENT_CHANGE, ResultKind.READY): EvidenceTarget.IMPLEMENTATION_PR_HEAD,
-    (
-        Action.IMPLEMENT_CHANGE,
-        ResultKind.MORE_IMPLEMENTATION_REQUIRED,
-    ): EvidenceTarget.IMPLEMENTATION_PR_HEAD,
-    (Action.REVIEW_IMPLEMENTATION, ResultKind.PASS): EvidenceTarget.IMPLEMENTATION_PR_HEAD,
-    (Action.REVIEW_IMPLEMENTATION, ResultKind.FINDINGS): EvidenceTarget.IMPLEMENTATION_PR_HEAD,
+# Every legal transition declares its evidence subject. Coordination outcomes
+# use the governance revision; work-product outcomes use their own carrier.
+# The Change PR is also the OpenSpec carrier before implementation starts.
+_EVIDENCE_TARGET_GROUPS: Final[dict[Action, dict[EvidenceTarget, tuple[ResultKind, ...]]]] = {
+    Action.EXPLORE_CHANGE: {
+        EvidenceTarget.DEFAULT_BRANCH: (
+            ResultKind.PROPOSAL_READY,
+            ResultKind.RESEARCH_REQUIRED,
+            ResultKind.HUMAN_DECISION_REQUIRED,
+            ResultKind.NO_CHANGE_REQUIRED,
+            ResultKind.NO_GO,
+            ResultKind.BLOCKED,
+        ),
+    },
+    Action.PROPOSE_CHANGE: {
+        EvidenceTarget.DEFAULT_BRANCH: (
+            ResultKind.RESEARCH_REQUIRED,
+            ResultKind.HUMAN_DECISION_REQUIRED,
+            ResultKind.NO_GO,
+            ResultKind.BLOCKED,
+        ),
+        EvidenceTarget.MATERIALIZED_REVISION: (ResultKind.READY_FOR_OPENSPEC_REVIEW,),
+    },
+    Action.RESOLVE_QUESTION: {
+        EvidenceTarget.DEFAULT_BRANCH: (
+            ResultKind.LIFECYCLE_READY,
+            ResultKind.READY,
+            ResultKind.RESEARCH_REQUIRED,
+            ResultKind.HUMAN_DECISION_REQUIRED,
+            ResultKind.NO_GO,
+            ResultKind.BLOCKED,
+        ),
+        EvidenceTarget.MATERIALIZED_REVISION: (ResultKind.READY_FOR_OPENSPEC_REVIEW,),
+    },
+    Action.FINALIZE_CHANGE: {
+        EvidenceTarget.DEFAULT_BRANCH: (
+            ResultKind.SPEC_BLOCKER,
+            ResultKind.MORE_IMPLEMENTATION_REQUIRED,
+            ResultKind.HUMAN_DECISION_REQUIRED,
+            ResultKind.NO_GO,
+            ResultKind.BLOCKED,
+        ),
+        EvidenceTarget.ARCHIVE_PR_HEAD: (ResultKind.ARCHIVE_READY,),
+    },
+    Action.FINALIZE_ARCHIVE: {
+        EvidenceTarget.DEFAULT_BRANCH: (ResultKind.HUMAN_DECISION_REQUIRED, ResultKind.BLOCKED),
+        EvidenceTarget.MERGED_PR_HEAD: (ResultKind.LIFECYCLE_COMPLETE,),
+    },
+    Action.REVIEW_OPENSPEC: {
+        EvidenceTarget.DEFAULT_BRANCH: (
+            ResultKind.HUMAN_DECISION_REQUIRED,
+            ResultKind.NO_GO,
+            ResultKind.BLOCKED,
+        ),
+        EvidenceTarget.IMPLEMENTATION_PR_HEAD: (ResultKind.PASS, ResultKind.FINDINGS),
+    },
+    Action.REVIEW_IMPLEMENTATION: {
+        EvidenceTarget.DEFAULT_BRANCH: (
+            ResultKind.SPEC_BLOCKER,
+            ResultKind.HUMAN_DECISION_REQUIRED,
+            ResultKind.BLOCKED,
+        ),
+        EvidenceTarget.IMPLEMENTATION_PR_HEAD: (ResultKind.PASS, ResultKind.FINDINGS),
+    },
+    Action.REVIEW_ARCHIVE: {
+        EvidenceTarget.DEFAULT_BRANCH: (
+            ResultKind.HUMAN_DECISION_REQUIRED,
+            ResultKind.NO_GO,
+            ResultKind.BLOCKED,
+        ),
+        EvidenceTarget.ARCHIVE_PR_HEAD: (ResultKind.PASS, ResultKind.FINDINGS),
+    },
+    Action.IMPLEMENT_CHANGE: {
+        EvidenceTarget.DEFAULT_BRANCH: (
+            ResultKind.SPEC_BLOCKER,
+            ResultKind.HUMAN_DECISION_REQUIRED,
+            ResultKind.BLOCKED,
+        ),
+        EvidenceTarget.IMPLEMENTATION_PR_HEAD: (
+            ResultKind.READY,
+            ResultKind.MORE_IMPLEMENTATION_REQUIRED,
+        ),
+    },
+    Action.MERGE_IMPLEMENTATION_PR: {
+        EvidenceTarget.DEFAULT_BRANCH: (ResultKind.LIFECYCLE_VIOLATION, ResultKind.BLOCKED),
+        EvidenceTarget.MERGED_PR_HEAD: (ResultKind.MERGED,),
+    },
+    Action.MERGE_ARCHIVE_PR: {
+        EvidenceTarget.DEFAULT_BRANCH: (ResultKind.LIFECYCLE_VIOLATION, ResultKind.BLOCKED),
+        EvidenceTarget.MERGED_PR_HEAD: (ResultKind.MERGED,),
+    },
 }
-
 
 _MISSING_EFFECT_OVERRIDES: Final[dict[tuple[Action, ResultKind], str]] = {
     (
@@ -106,12 +175,17 @@ _MISSING_EFFECT_OVERRIDES: Final[dict[tuple[Action, ResultKind], str]] = {
 
 
 def _build_evidence_targets() -> dict[tuple[Action, ResultKind], EvidenceTarget]:
-    targets = {
-        (action, result): EvidenceTarget.DEFAULT_BRANCH
-        for action, results in TRANSITIONS.items()
-        for result in results
-    }
-    targets.update(_EVIDENCE_TARGET_OVERRIDES)
+    targets: dict[tuple[Action, ResultKind], EvidenceTarget] = {}
+    for action, groups in _EVIDENCE_TARGET_GROUPS.items():
+        for target, results in groups.items():
+            for result in results:
+                key = (action, result)
+                if key in targets:
+                    raise AssertionError(f"duplicate evidence target: {key}")
+                targets[key] = target
+    legal = {(action, result) for action, results in TRANSITIONS.items() for result in results}
+    if targets.keys() != legal:
+        raise AssertionError("evidence targets must cover exactly the legal transitions")
     return targets
 
 
@@ -165,6 +239,7 @@ def _build_consequence_specs() -> Mapping[tuple[Action, ResultKind], Consequence
                 completion_predicate=(
                     "archive-pr-successor-ready"
                     if target is EvidenceTarget.ARCHIVE_PR_HEAD
+                    and result in {ResultKind.ARCHIVE_READY, ResultKind.PASS}
                     else "materialized-revision-and-successor-ready"
                     if target is EvidenceTarget.MATERIALIZED_REVISION
                     else "formal-result-and-successor-ready"
