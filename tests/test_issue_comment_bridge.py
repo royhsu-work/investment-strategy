@@ -1738,13 +1738,22 @@ def test_current_frontier_reuses_formal_ancestry_after_main_advances() -> None:
     assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
 
 
-def test_preaccept_live_application_run_is_not_redispatched() -> None:
+@pytest.mark.parametrize("wire", ["legacy", "native", "native-minimal"])
+@pytest.mark.parametrize("run_visible", [True, False])
+def test_preaccept_application_cannot_be_redispatched(wire: str, run_visible: bool) -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     request = _effect_request_comment(
         comment_id=654,
         created_at="2026-09-18T01:00:00Z",
         authorization_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
     )
+
+    if wire != "legacy":
+        raw = json.loads(base64.b64decode(str(request["body"]).splitlines()[-1].split(": ", 1)[1]))
+        if wire == "native-minimal":
+            for field in ("issue_number", "role", "action", "change"):
+                del raw[field]
+        request["body"] = "WORKER_RESULT\n" + json.dumps(raw)
 
     def fake_read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("issues/comments?"):
@@ -1756,6 +1765,8 @@ def test_preaccept_live_application_run_is_not_redispatched() -> None:
         if path.startswith("issues/138/timeline?"):
             return _preactivation_admission()
         if path.startswith("actions/workflows/"):
+            if not run_visible:
+                return {"workflow_runs": []}
             return {
                 "workflow_runs": [
                     {
@@ -1777,9 +1788,68 @@ def test_preaccept_live_application_run_is_not_redispatched() -> None:
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "RESUMABLE"
-    assert completion.reason == "application-completion-preaccept-in-progress"
+    if run_visible and wire != "native-minimal":
+        assert completion.state == "RESUMABLE"
+        assert completion.reason == "application-completion-preaccept-in-progress"
+    else:
+        assert completion.state == "INVALID"
     assert completion.job_id is None
+
+
+
+@pytest.mark.parametrize("decision_kind", ["accepted", "rejected", "foreign-copy", "duplicate"])
+def test_native_minimal_history_needs_exact_machine_source_binding(decision_kind: str) -> None:
+    """A source-less raw comment is not a second owner after its durable decision."""
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+        issue_number=139,
+    )
+    decision = _application_decision_comment(
+        request, disposition="REJECTED" if decision_kind == "rejected" else "ACCEPTED"
+    )
+    body = str(request["body"])
+    raw = json.loads(base64.b64decode(body.splitlines()[-1].split(": ", 1)[1]))
+    for field in ("issue_number", "role", "action", "change"):
+        del raw[field]
+    native_body = "WORKER_RESULT\n" + json.dumps(raw)
+    request["body"] = native_body
+    decision["body"] = str(decision["body"]).replace(
+        hashlib.sha256(body.encode()).hexdigest(), hashlib.sha256(native_body.encode()).hexdigest()
+    )
+    decision["issue_url"] = (
+        "https://api.github.com/repos/owner/repo/issues/"
+        + ("140" if decision_kind == "foreign-copy" else "139")
+    )
+    recent = [request, decision]
+    if decision_kind == "duplicate":
+        recent.append({**decision, "id": 701})
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return recent
+        if path.startswith("issues/138/comments?"):
+            return []
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return _preactivation_admission()
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": []}
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+    assert completion.state == (
+        "NONE" if decision_kind in {"accepted", "rejected"} else "INVALID"
+    )
 
 
 def _completion_matrix_reader(
