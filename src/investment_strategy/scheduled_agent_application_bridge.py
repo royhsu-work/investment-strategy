@@ -55,6 +55,7 @@ from investment_strategy.scheduled_agent_carrier import (
     carrier_plan_document,
     github_comment_has_app_provenance,
     github_complete_run_jobs,
+    github_original_request_matches,
     github_paginated_mappings,
     github_read_bytes_with_retry,
     github_repository_api_url,
@@ -1207,16 +1208,70 @@ def _application_decision_comment_for_request(
     return None if not matches else matches[0]
 
 
-def _worker_semantic_projection(raw_worker_result: str) -> str:
-    try:
-        decoded = json.loads(raw_worker_result)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("accepted worker result is not valid JSON") from exc
-    if not isinstance(decoded, dict):
-        raise RuntimeError("accepted worker result is not an object")
-    decoded.pop("requested_effects", None)
-    decoded.pop("_semantic_intent_version", None)
-    return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
+def _worker_semantic_projection(
+    raw_worker_result: str, source: WorkerRequest, *, change: str
+) -> tuple[BoundedActionResult, str]:
+    """Use the canonical typed parser, not optional wire-field presence, as identity."""
+
+    worker = parse_worker_result(raw_worker_result, source, authorized_change=change)
+    return worker.typed_result, worker.result_content
+
+
+def _read_accepted_original_request(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    read: Callable[[str, str, str], object] | None = None,
+    require_dispatch_correlation: bool = False,
+) -> ApplicationRequest | None:
+    """Normalize an exact immutable original under its ACCEPTED authority.
+
+    Native WORKER_RESULT and historical EFFECT_REQUEST are ingress formats,
+    not distinct semantic owners. Reconstruct only after exact body digest,
+    actor and accepted identity checks; never use a current dispatch to
+    manufacture historical authority.
+    """
+
+    if record.disposition != "ACCEPTED" or (record.issue_number, record.role, record.action) != (
+        source.issue_number,
+        source.role,
+        source.action,
+    ):
+        return None
+    reader = _github_json if read is None else read
+    comment = _as_mapping(reader(repository, token, f"issues/comments/{record.request_comment_id}"))
+    body = None if comment is None else comment.get("body")
+    if (
+        comment is None
+        or not isinstance(body, str)
+        or not github_original_request_matches(comment, record, repository)
+    ):
+        return None
+    if body.startswith("WORKER_RESULT\n"):
+        # The generated internal envelope is not an independently persisted
+        # dispatch-correlation witness for the stricter terminal-carrier proof.
+        if require_dispatch_correlation:
+            return None
+        return canonicalize_raw_worker_result(
+            body=body,
+            source=source,
+            authorized_change=record.change,
+            repository=repository,
+            current_revision=record.authorization_revision,
+        )
+    original = parse_application_request(body)
+    if original is None or original.authorization_revision != record.authorization_revision:
+        return None
+    if original.dispatch_correlation is None:
+        if require_dispatch_correlation or _claimed_source(original.raw_worker_result) != source:
+            return None
+    elif original.dispatch_correlation != dispatch_correlation_for(
+        repository, source, original.authorization_revision
+    ):
+        return None
+    return original
 
 
 def _accepted_worker_result_for_continuation(
@@ -1246,43 +1301,25 @@ def _accepted_worker_result_for_continuation(
     ):
         return accepted_intent.raw_worker_result
 
-    comment = _as_mapping(_github_json(repository, token, f"issues/comments/{request_comment_id}"))
-    owner = repository.split("/", 1)[0]
-    body = None if comment is None else comment.get("body")
-    if (
-        comment is None
-        or comment.get("id") != request_comment_id
-        or not isinstance(body, str)
-        or not _trusted_connector_comment(comment, owner)
-        or hashlib.sha256(body.encode("utf-8")).hexdigest() != accepted_intent.request_body_sha256
-    ):
+    if request_comment_id != accepted_intent.request_comment_id:
+        raise RuntimeError("accepted first activation request identity changed")
+    original = _read_accepted_original_request(
+        record=accepted_intent, source=source, repository=repository, token=token
+    )
+    if original is None:
         raise RuntimeError("accepted first activation mechanical request is unavailable")
-
-    original = parse_application_request(body)
-    if (
-        original is None
-        or original.authorization_revision != accepted_intent.authorization_revision
-    ):
-        raise RuntimeError("accepted first activation mechanical request identity is invalid")
-    if original.dispatch_correlation is not None and original.dispatch_correlation != (
-        dispatch_correlation_for(repository, source, original.authorization_revision)
-    ):
-        raise RuntimeError("accepted first activation dispatch correlation is invalid")
-    if _claimed_source(original.raw_worker_result) != source:
-        raise RuntimeError("accepted first activation worker source changed")
     try:
-        original_worker = parse_worker_result(
-            original.raw_worker_result,
-            source,
-            authorized_change="unset",
+        original_semantic = _worker_semantic_projection(
+            original.raw_worker_result, source, change=accepted_intent.change
+        )
+        accepted_semantic = _worker_semantic_projection(
+            accepted_intent.raw_worker_result, source, change=accepted_intent.change
         )
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError("accepted first activation worker result is invalid") from exc
     if (
-        original_worker.change != "unset"
-        or original_worker.typed_result.result.kind.value != _FIRST_ACTIVATION_RESULT
-        or _worker_semantic_projection(original.raw_worker_result)
-        != _worker_semantic_projection(accepted_intent.raw_worker_result)
+        original_semantic[0].result.kind.value != _FIRST_ACTIVATION_RESULT
+        or original_semantic != accepted_semantic
     ):
         raise RuntimeError("accepted first activation semantic intent does not match")
     materializations = _materialization_effects(
@@ -1322,37 +1359,15 @@ def _qualified_physical_original_accepted_effects(
     original is never evidence of zero writes or authority to replay.
     """
 
-    if record.disposition != "ACCEPTED" or (record.issue_number, record.role, record.action) != (
-        source.issue_number,
-        source.role,
-        source.action,
-    ):
-        return None
-    reader = _github_json if read is None else read
-    comment = _as_mapping(reader(repository, token, f"issues/comments/{record.request_comment_id}"))
-    body = None if comment is None else comment.get("body")
-    if (
-        comment is None
-        or comment.get("id") != record.request_comment_id
-        or not isinstance(body, str)
-        or not _trusted_connector_comment(comment, repository.split("/", 1)[0])
-        or hashlib.sha256(body.encode()).hexdigest() != record.request_body_sha256
-    ):
-        return None
-    original = parse_application_request(body)
-    if (
-        original is None
-        or original.authorization_revision != record.authorization_revision
-        or (
-            (original.dispatch_correlation is not None or require_dispatch_correlation)
-            and original.dispatch_correlation
-            != dispatch_correlation_for(repository, source, original.authorization_revision)
-        )
-        or _claimed_source(original.raw_worker_result) != source
-    ):
-        return None
-    decoded = json.loads(original.raw_worker_result)
-    if not isinstance(decoded, dict) or not isinstance(decoded.get("requested_effects"), list):
+    original = _read_accepted_original_request(
+        record=record,
+        source=source,
+        repository=repository,
+        token=token,
+        read=read,
+        require_dispatch_correlation=require_dispatch_correlation,
+    )
+    if original is None:
         return None
     physical = parse_effect_batch(
         original.raw_worker_result, source, authorized_change=record.change
@@ -1363,8 +1378,8 @@ def _qualified_physical_original_accepted_effects(
         or accepted.typed_result is None
         or physical.typed_result.result.kind.value != record.result_kind
         or accepted.typed_result.result.kind.value != record.result_kind
-        or _worker_semantic_projection(original.raw_worker_result)
-        != _worker_semantic_projection(record.raw_worker_result)
+        or _worker_semantic_projection(original.raw_worker_result, source, change=record.change)
+        != _worker_semantic_projection(record.raw_worker_result, source, change=record.change)
     ):
         return None
     return physical

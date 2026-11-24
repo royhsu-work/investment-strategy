@@ -43,6 +43,7 @@ rules:
     - Start every feature slice with RED tests and run them before production implementation.
     - Verify RED failures are caused by the missing or incorrect target behavior, not syntax, import, fixture, setup, or unrelated failures.
     - Implement the minimum GREEN behavior for the slice, then refactor if needed.
+    - Refactor production and test code together within the approved slice. Retire or consolidate superseded tests when their still-applicable requirements, safety invariants, supported historical compatibility, and demonstrated failure modes are preserved by verified equivalent or stronger replacement coverage, or authoritative evidence establishes that the protected behavior is no longer required. Do not retain obsolete implementation solely to satisfy obsolete test assumptions, or delete, skip, weaken, or redefine tests merely to obtain GREEN. Preserve unique regression protection; record the rationale, affected contract and replacement or retirement evidence in existing delivery evidence for independent review. No new test registry or approval gate is required.
     - Complete each slice only after slice tests, the full regression suite, type checks, and lint checks are green.
     - Use Markdown checkboxes and keep RED, GREEN, and REFACTOR work grouped at feature-slice granularity.
     - Include behavioral tests that verify public Decision and analytical Backtest artifacts contain the exact required disclaimer text.

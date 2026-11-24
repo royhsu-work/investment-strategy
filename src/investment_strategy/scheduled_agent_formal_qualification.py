@@ -21,6 +21,7 @@ from investment_strategy.scheduled_agent_action_model import (
     next_action,
     role_for,
 )
+from investment_strategy.scheduled_agent_carrier import github_original_request_matches
 from investment_strategy.scheduled_agent_formal_result import (
     _CORRELATION,
     _WORKFLOW,
@@ -34,6 +35,7 @@ from investment_strategy.scheduled_agent_formal_result import (
     _valid_sha,
     parse_formal_result,
 )
+from investment_strategy.scheduled_agent_wire import parse_application_decision
 from investment_strategy.workflow_dispatch import ObservationProvenance
 
 _LIFECYCLE_EVENTS = frozenset({"commented", "closed", "labeled", "reopened", "unlabeled"})
@@ -101,6 +103,7 @@ class QualificationInput:
     authorization_ancestry: tuple[tuple[str, str], ...] = ()
     allow_successor_frontier: bool = False
     one_time_human_handoff: bool = False
+    initial_source_admission: IssueLifecycleEvent | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -483,6 +486,8 @@ def build_qualification_input(
     lifecycle_events: Iterable[Mapping[str, object]] = (),
     authorization_ancestry: tuple[tuple[str, str], ...] = (),
     allow_successor_frontier: bool = False,
+    original_request: Mapping[str, object] | None = None,
+    repository: str | None = None,
 ) -> QualificationInput:
     """Reconstruct one complete current/pending qualification input."""
 
@@ -565,6 +570,19 @@ def build_qualification_input(
         authorization_ancestry=authorization_ancestry,
         allow_successor_frontier=allow_successor_frontier,
         one_time_human_handoff=human_handoffs == 1,
+        initial_source_admission=(
+            _initial_source_admission(
+                tuple(events),
+                lifecycle_tuple,
+                comment_snapshot,
+                original_request=original_request,
+                repository=repository,
+                authorization_ancestry=authorization_ancestry,
+                current_revision=current_revision,
+            )
+            if change == "unset" and events
+            else None
+        ),
     )
 
 
@@ -708,65 +726,221 @@ def _lifecycle_integrity(events: tuple[IssueLifecycleEvent, ...]) -> bool:
     )
 
 
+def _routing_admission_event(
+    lifecycle_events: tuple[IssueLifecycleEvent, ...],
+    routing: tuple[str, str] | None,
+) -> IssueLifecycleEvent | None:
+    """Derive the active, unique route admission at an evidence boundary."""
+
+    if routing is None or not _lifecycle_integrity(lifecycle_events):
+        return None
+    active: dict[str, IssueLifecycleEvent] = {}
+    opened = True
+    for event in lifecycle_events:
+        if event.event == "labeled":
+            if event.label is None or event.label in active:
+                return None
+            active[event.label] = event
+        elif event.event == "unlabeled":
+            if event.label is None or event.label not in active:
+                return None
+            del active[event.label]
+        elif event.event == "closed":
+            if not opened:
+                return None
+            opened = False
+        elif event.event == "reopened":
+            if opened:
+                return None
+            opened = True
+    expected = f"{_ACTION_LABEL_PREFIX}{routing[1]}"
+    if not opened or set(active) != {expected}:
+        return None
+    return active[expected]
+
+
 def _current_routing_admission_event(
     qualification: QualificationInput,
 ) -> IssueLifecycleEvent | None:
-    """Return the latest active label admission for a pre-activation route.
+    """Derive the first occurrence's source without persisting another state."""
 
-    A pre-activation route has no formal predecessor.  Its first occurrence is
-    therefore bounded by the durable Issue-timeline event that admitted the
-    currently active action label.  This is a derived view only; it is not a
-    persisted occurrence token.
+    return _routing_admission_event(qualification.lifecycle_events, qualification.current_routing)
+
+
+def _initial_source_admission(
+    events: tuple[FormalLifecycleEvent, ...],
+    lifecycle: tuple[IssueLifecycleEvent, ...],
+    comments: tuple[Mapping[str, object], ...],
+    *,
+    original_request: Mapping[str, object] | None,
+    repository: str | None,
+    authorization_ancestry: tuple[tuple[str, str], ...],
+    current_revision: str | None,
+) -> IssueLifecycleEvent | None:
+    """Bind the first consequence to its admitted source, not its successor.
+
+    A unique original admission can anchor legacy evidence. If routing has
+    changed before the first result, the exact accepted decision must bind the
+    active admission before that result. Neither label equality nor a later
+    re-admission can repair an unbound earlier occurrence.
     """
 
-    routing = qualification.current_routing
-    if routing is None:
+    first = events[0]
+    if not first.valid or first.role is None or first.action is None:
         return None
-    expected_label = f"{_ACTION_LABEL_PREFIX}{routing[1]}"
-    admission: IssueLifecycleEvent | None = None
-    for event in qualification.lifecycle_events:
-        if not event.valid:
+    result_order = _comment_order_key(first, lifecycle)
+    correlation = _CORRELATION.fullmatch(first.application_correlation or "")
+    if result_order is None or correlation is None:
+        return None
+    decisions: list[tuple[str, int]] = []
+    accepted = None
+    for comment in comments:
+        body = comment.get("body")
+        if (
+            not isinstance(body, str)
+            or _marker(body) != "APPLICATION_DECISION"
+            or not _is_github_actions_comment(comment)
+            or _field(body, "Request-Comment") != correlation.group(1)
+        ):
             continue
-        if event.event == "labeled" and event.label == expected_label:
-            admission = event
-        elif event.event == "unlabeled" and event.label == expected_label:
-            admission = None
+        record = parse_application_decision(body)
+        if record is None or (
+            record.disposition,
+            record.issue_number,
+            record.change,
+            record.role,
+            record.action,
+            record.result_kind,
+        ) != (
+            "ACCEPTED",
+            first.issue_number,
+            first.change,
+            first.role,
+            first.action,
+            first.result_kind,
+        ):
+            return None
+        application_revision = correlation.group(7)
+        if current_revision is None or any(
+            before != after and (before, after) not in authorization_ancestry
+            for before, after in (
+                (record.authorization_revision, application_revision),
+                (application_revision, current_revision),
+            )
+        ):
+            return None
+        accepted = record
+        matches = tuple(
+            item
+            for item in lifecycle
+            if item.event == "commented" and item.event_id == comment.get("id") and item.valid
+        )
+        if len(matches) != 1:
+            return None
+        decisions.append(_lifecycle_order_key(matches[0]))
+    if len(decisions) > 1:
+        return None
+    boundary = decisions[0] if decisions else result_order
+    if decisions and boundary >= result_order:
+        return None
+    prefix = tuple(item for item in lifecycle if _lifecycle_order_key(item) < boundary)
+    admission = _routing_admission_event(prefix, (first.role, first.action))
+    if admission is None:
+        return None
+    routing_events = {"closed", "labeled", "reopened", "unlabeled"}
+    if sum(item.event in routing_events for item in prefix) != 1:
+        # With re-admission, ACCEPTED alone cannot tell whether the original
+        # ingress belonged to a superseded occurrence. Cross-Issue timestamps
+        # must establish causality; unrelated event/comment IDs cannot break
+        # a same-second tie. The unique initial admission retains its legacy
+        # evidence boundary (including immutable intent after an ingress edit).
+        if (
+            accepted is None
+            or original_request is None
+            or repository is None
+            or not github_original_request_matches(original_request, accepted, repository)
+        ):
+            return None
+        created = original_request.get("created_at")
+        if (
+            not isinstance(created, str)
+            or admission.created_at is None
+            or not admission.created_at < created < boundary[0]
+        ):
+            return None
+    if any(
+        item.event in routing_events and boundary < _lifecycle_order_key(item) < result_order
+        for item in lifecycle
+    ):
+        return None
     return admission
+
+
+def bind_initial_source_admission(
+    qualification: QualificationInput,
+    comments: tuple[Mapping[str, object], ...],
+    *,
+    original_request: Mapping[str, object] | None,
+    repository: str,
+) -> QualificationInput:
+    """Re-evaluate the same pure predicate with newly observed source evidence."""
+
+    if qualification.change != "unset" or not qualification.events:
+        return qualification
+    return replace(
+        qualification,
+        initial_source_admission=_initial_source_admission(
+            qualification.events,
+            qualification.lifecycle_events,
+            comments,
+            original_request=original_request,
+            repository=repository,
+            authorization_ancestry=qualification.authorization_ancestry,
+            current_revision=qualification.current_revision,
+        ),
+    )
 
 
 def _qualify_preactivation_consequence(
     qualification: QualificationInput,
 ) -> QualificationDecision:
-    """Qualify the latest Change=unset consequence, when one exists."""
+    """Use the shared consequence contract with the initial admission anchor."""
 
     if not qualification.events:
-        # The first pre-activation occurrence is still valid, but its
-        # occurrence anchor is derived later from the active routing admission.
+        if qualification.mode != "current":
+            return _indeterminate("formal-lifecycle-evidence-missing")
+        # Structural pre-activation compatibility; dispatch occurrence ownership
+        # is separately derived from the actual active admission.
         return QualificationDecision(
             ObservationProvenance.QUALIFIED,
             "preactivation-change-unset",
         )
+    latest = qualification.events[-1]
     if not _valid_sha(qualification.current_revision) or not _lifecycle_integrity(
         qualification.lifecycle_events
     ):
         return _indeterminate("preactivation-lifecycle-evidence-incomplete")
-    latest = qualification.events[-1]
-    if (
-        not latest.valid
-        or latest.issue_number != qualification.issue_number
-        or latest.change != "unset"
-        or qualification.state != "open"
-        or qualification.current_routing is None
-        or latest.terminal
-        or latest.successor != qualification.current_routing
-    ):
-        return _indeterminate("current-preactivation-postcondition-not-qualified", latest)
     if any(
-        not _formal_interval_is_bound(qualification.events, index, qualification.lifecycle_events)
-        for index in range(len(qualification.events))
+        not event.valid
+        or event.issue_number != qualification.issue_number
+        or event.change != qualification.change
+        for event in qualification.events
     ):
-        return _indeterminate("preactivation-lifecycle-binding-incomplete", latest)
-    return _qualified("current-preactivation-route-qualified", latest)
+        return _indeterminate("latest-formal-evidence-incomplete", latest)
+    if qualification.initial_source_admission is None:
+        return _indeterminate("initial-source-admission-unqualified", latest)
+    if (
+        latest.default_branch_revision != qualification.current_revision
+        and (
+            latest.default_branch_revision,
+            qualification.current_revision,
+        )
+        not in qualification.authorization_ancestry
+    ):
+        return _indeterminate("latest-formal-evidence-stale", latest)
+    return _qualify_lifecycle_projection(
+        qualification, qualification.events, initial_source_bound=True
+    )
 
 
 def _same_application_intent(
@@ -811,6 +985,8 @@ def _formal_interval_is_bound(
     events: tuple[FormalLifecycleEvent, ...],
     index: int,
     lifecycle_events: tuple[IssueLifecycleEvent, ...],
+    *,
+    initial_source_bound: bool = False,
 ) -> bool:
     next_event = None if index + 1 >= len(events) else events[index + 1]
     interval = _event_interval(events[index], next_event, lifecycle_events)
@@ -824,7 +1000,7 @@ def _formal_interval_is_bound(
         current = events[index]
         source = (current.role, current.action)
         if index == 0:
-            return False
+            return initial_source_bound and not current.terminal and current.successor == source
         previous = events[index - 1]
         if not current.terminal and current.successor == source and previous.successor == source:
             return True
@@ -835,7 +1011,9 @@ def _formal_interval_is_bound(
         return (
             _same_application_intent(previous, current)
             and previous.successor == current.successor
-            and _formal_interval_is_bound(events, index - 1, lifecycle_events)
+            and _formal_interval_is_bound(
+                events, index - 1, lifecycle_events, initial_source_bound=initial_source_bound
+            )
         )
     return interval is not None and _interval_binds_successor(
         interval,
@@ -1144,6 +1322,18 @@ def qualify_current_formal_consequence(
         relevant_suffix.append(event)
     relevant_suffix.reverse()
     suffix = tuple(relevant_suffix)
+    return _qualify_lifecycle_projection(qualification, suffix)
+
+
+def _qualify_lifecycle_projection(
+    qualification: QualificationInput,
+    suffix: tuple[FormalLifecycleEvent, ...],
+    *,
+    initial_source_bound: bool = False,
+) -> QualificationDecision:
+    """One current/pending/terminal projection contract for a bound chain."""
+
+    latest = suffix[-1]
     for index in range(len(suffix) - 1):
         previous = suffix[index]
         current = suffix[index + 1]
@@ -1155,7 +1345,10 @@ def qualify_current_formal_consequence(
     if qualification.mode == "current":
         for index in range(len(suffix)):
             if not _formal_interval_is_bound(
-                suffix, index, qualification.lifecycle_events
+                suffix,
+                index,
+                qualification.lifecycle_events,
+                initial_source_bound=initial_source_bound,
             ) and not (
                 index + 1 < len(suffix)
                 and _one_time_322_handoff_interval(qualification, suffix[index], suffix[index + 1])
@@ -1224,13 +1417,14 @@ def qualify_current_formal_consequence(
                 suffix,
                 len(suffix) - 2,
                 qualification.lifecycle_events,
+                initial_source_bound=initial_source_bound,
             )
         )
         if not duplicate_reuses_bound_successor:
             return _indeterminate("accepted-successor-lifecycle-binding-incomplete", latest)
     for index in range(len(suffix) - 1):
         if not _formal_interval_is_bound(
-            suffix, index, qualification.lifecycle_events
+            suffix, index, qualification.lifecycle_events, initial_source_bound=initial_source_bound
         ) and not _one_time_322_handoff_interval(qualification, suffix[index], suffix[index + 1]):
             return _indeterminate("issue-lifecycle-binding-incomplete", suffix[index])
 
@@ -1265,6 +1459,10 @@ def derive_current_frontier(qualification: QualificationInput) -> CurrentFrontie
     occurrence_anchor = (
         None if decision.event is not None else _current_routing_admission_event(qualification)
     )
+    # A structurally eligible route is not proof of a current occurrence.
+    # Without either source witness the consumer cannot prove absence of work.
+    if decision.event is None and occurrence_anchor is None:
+        return None
     return CurrentFrontier(
         issue_number=qualification.issue_number,
         change=qualification.change,

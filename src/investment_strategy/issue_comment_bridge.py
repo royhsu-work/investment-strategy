@@ -41,6 +41,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _accepted_correction_observer_for_batch,
     _accepted_recovery_boundary,
     _application_owned_worker_result,
+    _claimed_source,
     _materialization_effects,
     _qualified_accepted_original_effects,
     _qualified_physical_original_accepted_effects,
@@ -72,6 +73,7 @@ from investment_strategy.scheduled_agent_carrier import (
     QualifiedCarrierPlan,
     github_comment_has_app_provenance,
     github_complete_run_jobs,
+    github_original_request_matches,
     github_paginated_mappings,
     github_read_bytes_with_retry,
     github_repository_api_url,
@@ -95,6 +97,8 @@ from investment_strategy.scheduled_agent_effects import (
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     CurrentFrontier,
+    QualificationInput,
+    bind_initial_source_admission,
     build_qualification_input,
     derive_current_frontier,
     qualify_current_formal_consequence,
@@ -3261,6 +3265,68 @@ def _authorization_ancestry(
     return ((authorization_revision, current_revision),)
 
 
+def _observe_initial_source_admission(
+    qualification: QualificationInput,
+    comments: tuple[Mapping[str, object], ...],
+    *,
+    repository: str,
+    token: str,
+    read: GitHubReader,
+) -> QualificationInput:
+    """Acquire only evidence required by the initial-occurrence predicate."""
+
+    if (
+        qualification.change != "unset"
+        or not qualification.events
+        or qualification.initial_source_admission is not None
+        or qualification.current_revision is None
+    ):
+        return qualification
+    correlation = _application_correlation_fields(
+        qualification.events[0].application_correlation or ""
+    )
+    if correlation is None:
+        return qualification
+    records = [
+        record
+        for record in _application_decisions(comments)
+        if record.request_comment_id == _positive_int_string(correlation[1])
+        and record.disposition == "ACCEPTED"
+    ]
+    if len(records) != 1:
+        return qualification
+    record = records[0]
+    ancestry = qualification.authorization_ancestry
+    for before, after in (
+        (record.authorization_revision, correlation[7]),
+        (correlation[7], qualification.current_revision),
+    ):
+        if before == after or (before, after) in ancestry:
+            continue
+        observed = _authorization_ancestry(
+            repository, token, authorization_revision=before, current_revision=after, read=read
+        )
+        if observed is None:
+            return qualification
+        ancestry = (*ancestry, *observed)
+    qualification = replace(qualification, authorization_ancestry=ancestry)
+    qualification = bind_initial_source_admission(
+        qualification, comments, original_request=None, repository=repository
+    )
+    if qualification.initial_source_admission is not None:
+        return qualification
+    try:
+        original = read(repository, token, f"issues/comments/{record.request_comment_id}")
+    except (HTTPError, OSError, ValueError):
+        return qualification
+    return bind_initial_source_admission(
+        qualification,
+        comments,
+        original_request=original if isinstance(original, Mapping) else None,
+        repository=repository,
+    )
+
+
 def _fresh_completion_postconditions(
     raw_worker_result: str,
     *,
@@ -3472,6 +3538,9 @@ def _formal_consequence(
         ),
         lifecycle_events=lifecycle_events,
         authorization_ancestry=formal_authorization_ancestry,
+    )
+    qualification = _observe_initial_source_admission(
+        qualification, issue_comments, repository=repository, token=token, read=read
     )
     decision = qualify_current_formal_consequence(qualification)
     if not decision.qualified or decision.event is None:
@@ -4343,6 +4412,9 @@ def _derive_frontier(
         if ancestry is None:
             return None, False
         qualification = replace(qualification, authorization_ancestry=ancestry)
+    qualification = _observe_initial_source_admission(
+        qualification, issue_comments, repository=repository, token=token, read=read
+    )
     frontier = derive_current_frontier(qualification)
     return frontier, frontier is not None
 
@@ -4478,12 +4550,12 @@ def _belongs_to_current_frontier(
     *,
     occurrence_created_at: str | None = None,
 ) -> bool:
-    """Bind one ingress to the derived current occurrence.
+    """Retain evidence not proven historical relative to the current frontier.
 
     Formal routes use the latest qualified consequence comment as their causal
     boundary.  A first pre-activation route has no such consequence, so it
-    uses the active Issue-timeline routing admission.  Missing admission or
-    ambiguous timing never widens the occurrence to repository history.
+    uses the active Issue-timeline routing admission.  This is a candidate
+    filter, not proof of current-occurrence authority.
     """
 
     boundary = _frontier_comment_id(frontier)
@@ -4494,9 +4566,10 @@ def _belongs_to_current_frontier(
     anchor_time = frontier.occurrence_anchor.created_at
     if anchor_time is None:
         return False
-    # A missing ingress timestamp is an incomplete current-source observation;
-    # retain it for fail-closed classification rather than treating it as old.
-    return occurrence_created_at is None or occurrence_created_at > anchor_time
+    # Cross-Issue timestamps have second precision. Only strictly earlier
+    # evidence is historical here. Retain ties and missing timestamps for
+    # the existing ingress/decision classifier, without inferring causality.
+    return occurrence_created_at is None or occurrence_created_at >= anchor_time
 
 
 def _accepted_intent_owns_frontier(
@@ -4952,30 +5025,90 @@ def qualify_application_completion(
     invalid_request_ids: set[int] = set()
     ingress_created_at: dict[int, str | None] = {}
     unbound_request_ids: set[int] = set()
+    # The raw wire deliberately permits omission of the source identity.
+    # A machine decision on its actual Issue can identify such a transport as
+    # historical/foreign, but only the complete local decision read owns
+    # current-source acceptance. Do not recreate an authorization envelope.
+    observed_decisions: dict[int, list[tuple[ApplicationDecisionRecord, bool]]] = {}
+    conflicting_decision_ids: set[int] = set()
+    for comment in recent:
+        if not is_github_actions_comment(comment):
+            continue
+        record = parse_application_decision(comment.get("body"))
+        if record is not None:
+            observed_decisions.setdefault(record.request_comment_id, []).append(
+                (
+                    record,
+                    _positive_int(comment.get("id")) is not None
+                    and comment.get("issue_url")
+                    == github_repository_api_url(repository, f"issues/{record.issue_number}"),
+                )
+            )
     for comment in (*recent, *issue_comments):
         if not _trusted_connector_comment(comment, owner):
             continue
         body = comment.get("body")
-        if not isinstance(body, str) or body.splitlines()[:1] != ["EFFECT_REQUEST"]:
+        if not isinstance(body, str):
             continue
-
-        # Transport history is repository-wide, but application completion is
-        # exact-source-local.  Legacy envelopes use their carried source; the
-        # post-protocol semantic envelope uses one opaque dispatch correlation.
-        # A semantic envelope with neither is unresolved evidence and therefore
-        # fails closed instead of being guessed into the current Action.
-        source_hint = _effect_request_source_hint(body)
-        legacy_source_hint = _legacy_raw_source_hint(body)
-        encoded_source_identity = _legacy_encoded_source_identity(body)
+        marker = body.splitlines()[:1]
+        if marker not in (["EFFECT_REQUEST"], ["WORKER_RESULT"]):
+            continue
         comment_id = _positive_int(comment.get("id"))
         if comment_id is None:
             invalid_request_ids.add(-1)
             continue
         ingress_created_at[comment_id] = _comment_time(comment)
-        try:
-            request = parse_application_request(body)
-        except ValueError:
+
+        # Normalize physical ingress into the same source filter and reducer.
+        # Native raw claims are hints only; the persisted decision (if any)
+        # owns source authority. An unbound live transport cannot prove NONE.
+        if marker == ["WORKER_RESULT"]:
             request = None
+            legacy_source_hint = None
+            encoded_source_identity = None
+            observed = observed_decisions.get(comment_id, [])
+            local = [record for record in decisions if record.request_comment_id == comment_id]
+            if observed and (
+                len(observed) != 1
+                or not observed[0][1]
+                or (
+                    (local or observed[0][0].issue_number == source.issue_number)
+                    and local != [observed[0][0]]
+                )
+            ):
+                invalid_request_ids.add(comment_id)
+                if local:
+                    conflicting_decision_ids.add(comment_id)
+                continue
+            if len(local) > 1:
+                invalid_request_ids.add(comment_id)
+                conflicting_decision_ids.add(comment_id)
+                continue
+            record = local[0] if local else observed[0][0] if observed else None
+            try:
+                source_hint = (
+                    WorkerRequest(record.issue_number, record.role, record.action)
+                    if record is not None
+                    else _claimed_source(body.partition("\n")[2])
+                )
+            except ValueError:
+                source_hint = None
+            if source_hint != source:
+                if record is None:
+                    # A worker's claimed foreign source cannot exclude a live
+                    # or not-yet-visible Application from observation.
+                    source_hint = None
+                elif not github_original_request_matches(comment, record, repository):
+                    invalid_request_ids.add(comment_id)
+                    continue
+        else:
+            source_hint = _effect_request_source_hint(body)
+            legacy_source_hint = _legacy_raw_source_hint(body)
+            encoded_source_identity = _legacy_encoded_source_identity(body)
+            try:
+                request = parse_application_request(body)
+            except ValueError:
+                request = None
         source_bound = False
         if source_hint is not None:
             if source_hint != source:
@@ -5033,18 +5166,8 @@ def qualify_application_completion(
         elif comment_id not in invalid_request_ids:
             candidates[comment_id] = candidate
 
-    if (
-        not relevant_decisions
-        and not candidates
-        and not invalid_request_ids
-        and not unbound_request_ids
-        and not any(
-            parse_formal_result(comment, current_revision=current_revision) is not None
-            for comment in issue_comments
-        )
-    ):
-        return ApplicationCompletion("NONE", "application-completion-none")
-
+    # Absence of ingress is meaningful only relative to a qualified current
+    # occurrence. All candidates, including the empty set, share that proof.
     issue = read(repository, token, f"issues/{source.issue_number}")
     if not isinstance(issue, Mapping):
         return ApplicationCompletion(
@@ -5123,6 +5246,7 @@ def qualify_application_completion(
             and observation.issue_number == source.issue_number
             and observation.routing == (source.role, source.action)
             and len(current_accepted) == 1
+            and current_accepted[0].request_comment_id not in conflicting_decision_ids
         ):
             resumed = accepted_state(current_accepted[0], source)
             if resumed.state != "NONE":
@@ -5189,6 +5313,10 @@ def qualify_application_completion(
         )
     if frontier_owner_decisions:
         frontier_owner = frontier_owner_decisions[0]
+        if frontier_owner.request_comment_id in conflicting_decision_ids:
+            return ApplicationCompletion(
+                "INVALID", "application-completion-preaccept-evidence-unknown"
+            )
         if frontier_owner.disposition != "ACCEPTED":
             return ApplicationCompletion(
                 "INVALID",
@@ -5284,6 +5412,10 @@ def qualify_application_completion(
         current_request_ids.difference_update(aborted_ids)
     accepted = [record for record in relevant_decisions if record.disposition == "ACCEPTED"]
     accepted_request_ids = {record.request_comment_id for record in accepted}
+    if conflicting_decision_ids.intersection(
+        record.request_comment_id for record in relevant_decisions
+    ):
+        return ApplicationCompletion("INVALID", "application-completion-preaccept-evidence-unknown")
     frontier_correlation = (
         None
         if frontier is None or frontier.event is None

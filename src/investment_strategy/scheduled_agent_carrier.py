@@ -15,7 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from investment_strategy.scheduled_agent_wire import LineWireContract
+from investment_strategy.scheduled_agent_wire import ApplicationDecisionRecord, LineWireContract
 
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -160,6 +160,24 @@ def github_comment_has_app_provenance(
         and user.get("login") == actor
         and isinstance(app, Mapping)
         and app.get("slug") == app_slug
+    )
+
+
+def github_original_request_matches(
+    comment: Mapping[str, object],
+    record: ApplicationDecisionRecord,
+    repository: str,
+) -> bool:
+    """Verify immutable request bytes and exact connector provenance, not authority."""
+
+    body = comment.get("body")
+    return (
+        comment.get("id") == record.request_comment_id
+        and isinstance(body, str)
+        and github_comment_has_app_provenance(
+            comment, actor=repository.split("/", 1)[0], app_slug="chatgpt-codex-connector"
+        )
+        and hashlib.sha256(body.encode()).hexdigest() == record.request_body_sha256
     )
 
 

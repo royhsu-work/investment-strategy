@@ -1738,13 +1738,38 @@ def test_current_frontier_reuses_formal_ancestry_after_main_advances() -> None:
     assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
 
 
-def test_preaccept_live_application_run_is_not_redispatched() -> None:
+@pytest.mark.parametrize(
+    ("wire", "created_at"),
+    [
+        ("legacy", "2026-09-18T01:00:00Z"),
+        ("native", "2026-09-18T01:00:00Z"),
+        ("native-minimal", "2026-09-18T01:00:00Z"),
+        ("native-foreign-claim", "2026-09-18T01:00:00Z"),
+        ("legacy", "2026-09-18T00:00:00Z"),
+        ("native", "2026-09-18T00:00:00Z"),
+        ("legacy", "2026-09-17T23:59:59Z"),
+        ("native", "2026-09-17T23:59:59Z"),
+    ],
+)
+@pytest.mark.parametrize("run_visible", [True, False])
+def test_preaccept_application_cannot_be_redispatched(
+    wire: str, created_at: str, run_visible: bool
+) -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     request = _effect_request_comment(
         comment_id=654,
-        created_at="2026-09-18T01:00:00Z",
+        created_at=created_at,
         authorization_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
     )
+
+    if wire != "legacy":
+        raw = json.loads(base64.b64decode(str(request["body"]).splitlines()[-1].split(": ", 1)[1]))
+        if wire == "native-minimal":
+            for field in ("issue_number", "role", "action", "change"):
+                del raw[field]
+        if wire == "native-foreign-claim":
+            raw["issue_number"] = 139
+        request["body"] = "WORKER_RESULT\n" + json.dumps(raw)
 
     def fake_read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("issues/comments?"):
@@ -1756,6 +1781,8 @@ def test_preaccept_live_application_run_is_not_redispatched() -> None:
         if path.startswith("issues/138/timeline?"):
             return _preactivation_admission()
         if path.startswith("actions/workflows/"):
+            if not run_visible:
+                return {"workflow_runs": []}
             return {
                 "workflow_runs": [
                     {
@@ -1777,9 +1804,94 @@ def test_preaccept_live_application_run_is_not_redispatched() -> None:
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "RESUMABLE"
-    assert completion.reason == "application-completion-preaccept-in-progress"
+    if created_at == "2026-09-17T23:59:59Z":
+        assert completion.state == "NONE"
+    elif run_visible and wire in {"legacy", "native"}:
+        assert completion.state == "RESUMABLE"
+        assert completion.reason == "application-completion-preaccept-in-progress"
+    else:
+        assert completion.state == "INVALID"
     assert completion.job_id is None
+
+
+@pytest.mark.parametrize(
+    ("decision_kind", "created_at"),
+    [
+        ("accepted", "2026-09-18T01:00:00Z"),
+        ("rejected", "2026-09-18T01:00:00Z"),
+        ("foreign-copy", "2026-09-18T01:00:00Z"),
+        ("duplicate", "2026-09-18T01:00:00Z"),
+        ("wrong-digest", "2026-09-18T01:00:00Z"),
+        ("local-conflict", "2026-09-18T01:00:00Z"),
+        ("wrong-digest", "2026-09-18T00:00:00Z"),
+    ],
+)
+def test_native_minimal_history_needs_exact_machine_source_binding(
+    decision_kind: str, created_at: str
+) -> None:
+    """A source-less raw comment is not a second owner after its durable decision."""
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at=created_at,
+        issue_number=139,
+    )
+    decision = _application_decision_comment(
+        request, disposition="REJECTED" if decision_kind == "rejected" else "ACCEPTED"
+    )
+    body = str(request["body"])
+    raw = json.loads(base64.b64decode(body.splitlines()[-1].split(": ", 1)[1]))
+    for field in ("issue_number", "role", "action", "change"):
+        del raw[field]
+    native_body = "WORKER_RESULT\n" + json.dumps(raw)
+    request["body"] = native_body
+    decision["body"] = str(decision["body"]).replace(
+        hashlib.sha256(body.encode()).hexdigest(), hashlib.sha256(native_body.encode()).hexdigest()
+    )
+    decision["issue_url"] = "https://api.github.com/repos/owner/repo/issues/" + (
+        "140" if decision_kind == "foreign-copy" else "139"
+    )
+    if decision_kind == "wrong-digest":
+        decision["body"] = str(decision["body"]).replace(
+            hashlib.sha256(native_body.encode()).hexdigest(), "f" * 64
+        )
+    local: list[dict[str, object]] = []
+    if decision_kind == "local-conflict":
+        local = [
+            {
+                **decision,
+                "id": 702,
+                "body": str(decision["body"]).replace("Issue: 139", "Issue: 138"),
+            }
+        ]
+    recent = [request, decision]
+    if decision_kind == "duplicate":
+        recent.append({**decision, "id": 701})
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return recent
+        if path.startswith("issues/138/comments?"):
+            return local
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return _preactivation_admission()
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": []}
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+    assert completion.state == ("NONE" if decision_kind in {"accepted", "rejected"} else "INVALID")
+    if decision_kind == "local-conflict":
+        assert completion.reason == "application-completion-preaccept-evidence-unknown"
 
 
 def _completion_matrix_reader(
@@ -2223,6 +2335,33 @@ def test_terminal_preactcept_candidates_do_not_compete_by_raw_cardinality(
     assert completion.state != "AMBIGUOUS"
 
 
+@pytest.mark.parametrize("wire", ["legacy", "native"])
+def test_same_second_preaccept_releases_on_exact_terminal_evidence(wire: str) -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T00:00:00Z",
+        authorization_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+    )
+    if wire == "native":
+        raw = base64.b64decode(str(request["body"]).splitlines()[-1].split(": ", 1)[1])
+        request["body"] = "WORKER_RESULT\n" + raw.decode("utf-8")
+
+    for live_ids, expected in [({654}, "RESUMABLE"), (set(), "REJECTED")]:
+        completion = bridge.qualify_application_completion(
+            "owner/repo",
+            "token",
+            source=source,
+            current_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+            read=_completion_matrix_reader([request], live_ids=live_ids),
+            now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+        )
+        assert completion.state == expected
+        assert completion.request_comment_id == 654
+        if not live_ids:
+            assert completion.reason == "application-completion-terminal-no-accept"
+
+
 def test_terminal_preactcept_candidate_survives_archived_authorization_revision() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     request = _effect_request_comment(
@@ -2487,172 +2626,93 @@ def test_missing_acceptance_is_not_resumed_before_semantic_replay() -> None:
     assert completion.reason == "application-completion-preaccept-evidence-unknown"
 
 
-def test_unrelated_legacy_request_does_not_poison_current_source() -> None:
-    source = bridge.WorkerRequest(138, "lead", "explore-change")
-    unrelated = _effect_request_comment(
-        comment_id=653,
-        created_at="2026-09-18T00:59:00Z",
-        issue_number=999,
-    )
-    body = unrelated["body"]
-    assert isinstance(body, str)
-    encoded = body.splitlines()[2].removeprefix("Worker-Result-B64: ")
-    unrelated["body"] = "\n".join(
-        (
-            "EFFECT_REQUEST",
-            "Dispatch-Request-Comment-ID: 100",
-            "Dispatch-Run-ID: 200",
-            f"Worker-Result-B64: {encoded}",
-        )
-    )
-
-    def fake_read(_repository: str, _token: str, path: str) -> object:
-        if path.startswith("issues/comments?"):
-            return [unrelated]
-        if path.startswith("issues/138/comments?"):
-            return []
-        raise AssertionError(path)
-
-    completion = bridge.qualify_application_completion(
-        "owner/repo",
-        "token",
-        source=source,
-        current_revision=REVISION,
-        read=fake_read,
-        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
-    )
-
-    assert completion.state == "NONE"
-    assert completion.reason == "application-completion-none"
-
-
-def test_historical_raw_request_is_source_filtered_before_frontier_read() -> None:
-    source = bridge.WorkerRequest(138, "lead", "explore-change")
-    unrelated = {
-        "id": 652,
-        "body": "\n".join(
-            (
-                "EFFECT_REQUEST",
-                "Workflow: #234",
-                "Action: resolve-question",
-                "Worker-Result: legacy raw payload",
-            )
-        ),
-        "created_at": "2026-09-17T12:00:00Z",
-        "user": {"login": "owner"},
-        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
-    }
-
-    def fake_read(_repository: str, _token: str, path: str) -> object:
-        if path.startswith("issues/comments?"):
-            return [unrelated]
-        if path.startswith("issues/138/comments?"):
-            return []
-        raise AssertionError(path)
-
-    completion = bridge.qualify_application_completion(
-        "owner/repo",
-        "token",
-        source=source,
-        current_revision=REVISION,
-        read=fake_read,
-        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
-    )
-
-    assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
-
-
-def test_malformed_legacy_encoded_source_is_filtered_before_frontier_read() -> None:
+@pytest.mark.parametrize(
+    "encoding",
+    ["legacy-envelope", "raw-source", "malformed-json", "obsolete-identity", "truncated"],
+)
+@pytest.mark.parametrize("admitted", [True, False])
+def test_unrelated_legacy_ingress_does_not_own_current_occurrence(
+    encoding: str, admitted: bool
+) -> None:
+    """Source filtering cannot substitute for independently qualified occurrence evidence."""
     source = bridge.WorkerRequest(138, "lead", "explore-change")
 
-    def legacy_comment(comment_id: int, raw_worker_result: str) -> dict[str, object]:
-        encoded = base64.b64encode(raw_worker_result.encode("utf-8")).decode("ascii")
+    def legacy_comment(comment_id: int, lines: tuple[str, ...]) -> dict[str, object]:
         return {
             "id": comment_id,
-            "body": "\n".join(
-                (
-                    "EFFECT_REQUEST",
-                    "Dispatch-Request-Comment-ID: 100",
-                    "Dispatch-Decision-Comment-ID: 200",
-                    f"Worker-Result-B64: {encoded}",
-                )
-            ),
-            "created_at": "2026-09-17T12:00:00Z",
+            "body": "\n".join(("EFFECT_REQUEST", *lines)),
+            "created_at": "2026-09-18T00:59:00Z",
             "user": {"login": "owner"},
             "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
         }
 
-    malformed_json = legacy_comment(
-        657,
-        '{"issue_number": 999, "role": "executor", "action": "merge-pr", '
-        '"result_content": "unterminated',
-    )
-    obsolete_identity = legacy_comment(
-        658,
-        json.dumps(
-            {
-                "issue_nuber": 998,
-                "role": "executor",
-                "action": "merge-pr",
-                "result_content": "obsolete action vocabulary",
-                "requested_effects": [],
-            }
-        ),
-    )
-
-    def fake_read(_repository: str, _token: str, path: str) -> object:
-        if path.startswith("issues/comments?"):
-            return [malformed_json, obsolete_identity]
-        if path.startswith("issues/138/comments?"):
-            return []
-        raise AssertionError(path)
-
-    completion = bridge.qualify_application_completion(
-        "owner/repo",
-        "token",
-        source=source,
-        current_revision=REVISION,
-        read=fake_read,
-        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
-    )
-
-    assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
-
-
-def test_truncated_legacy_encoded_source_is_filtered_before_frontier_read() -> None:
-    source = bridge.WorkerRequest(138, "lead", "explore-change")
-    raw_worker_result = json.dumps(
-        {
-            "issue_number": 999,
-            "role": "lead",
-            "action": "explore-change",
-            "result_content": "historical payload " + ("x" * 7000),
-            "requested_effects": [],
-        },
-        separators=(",", ":"),
-    )
-    encoded = base64.b64encode(raw_worker_result.encode("utf-8")).decode("ascii")
-    truncated = encoded[:160] + "..."
-    unrelated = {
-        "id": 659,
-        "body": "\n".join(
+    if encoding == "raw-source":
+        unrelated = legacy_comment(
+            652, ("Workflow: #234", "Action: resolve-question", "Worker-Result: legacy raw payload")
+        )
+    elif encoding == "legacy-envelope":
+        original = _effect_request_comment(
+            comment_id=653, created_at="2026-09-18T00:59:00Z", issue_number=999
+        )
+        body = original["body"]
+        assert isinstance(body, str)
+        unrelated = legacy_comment(
+            653,
             (
-                "EFFECT_REQUEST",
+                "Dispatch-Request-Comment-ID: 100",
+                "Dispatch-Run-ID: 200",
+                body.splitlines()[2],
+            ),
+        )
+    else:
+        if encoding == "malformed-json":
+            raw = (
+                '{"issue_number": 999, "role": "executor", "action": "merge-pr", '
+                '"result_content": "unterminated'
+            )
+        elif encoding == "obsolete-identity":
+            raw = json.dumps(
+                {
+                    "issue_nuber": 998,
+                    "role": "executor",
+                    "action": "merge-pr",
+                    "result_content": "obsolete action vocabulary",
+                    "requested_effects": [],
+                }
+            )
+        else:
+            raw = json.dumps(
+                {
+                    "issue_number": 999,
+                    "role": "lead",
+                    "action": "explore-change",
+                    "result_content": "historical payload " + ("x" * 7000),
+                    "requested_effects": [],
+                },
+                separators=(",", ":"),
+            )
+        encoded = base64.b64encode(raw.encode()).decode("ascii")
+        if encoding == "truncated":
+            encoded = encoded[:160] + "..."
+        unrelated = legacy_comment(
+            659,
+            (
                 "Dispatch-Request-Comment-ID: 100",
                 "Dispatch-Decision-Comment-ID: 200",
-                f"Worker-Result-B64: {truncated}",
-            )
-        ),
-        "created_at": "2026-09-17T12:00:00Z",
-        "user": {"login": "owner"},
-        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
-    }
+                f"Worker-Result-B64: {encoded}",
+            ),
+        )
 
     def fake_read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("issues/comments?"):
             return [unrelated]
         if path.startswith("issues/138/comments?"):
             return []
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return _preactivation_admission() if admitted else []
+        # Foreign ingress must not trigger a source-local run/authorization read.
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -2664,7 +2724,63 @@ def test_truncated_legacy_encoded_source_is_filtered_before_frontier_read() -> N
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
 
-    assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+    expected = (
+        bridge.ApplicationCompletion("NONE", "application-completion-none")
+        if admitted
+        else bridge.ApplicationCompletion(
+            "INVALID", "application-completion-current-frontier-invalid"
+        )
+    )
+    assert completion == expected
+
+
+@pytest.mark.parametrize("admission", ["valid", "missing", "wrong", "ambiguous"])
+def test_preactivation_empty_ingress_requires_qualified_frontier(
+    admission: str,
+) -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    timeline = _preactivation_admission()
+    if admission == "missing":
+        timeline = []
+    elif admission == "wrong":
+        timeline[0]["label"] = {"name": "action:propose-change"}
+    elif admission == "ambiguous":
+        timeline.append(
+            {
+                "id": 43,
+                "event": "labeled",
+                "created_at": "2026-09-18T00:00:01Z",
+                "label": {"name": "action:propose-change"},
+            }
+        )
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return []
+        if path.startswith("issues/138/comments?"):
+            return []
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return timeline
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+    expected = (
+        bridge.ApplicationCompletion("NONE", "application-completion-none")
+        if admission == "valid"
+        else bridge.ApplicationCompletion(
+            "INVALID", "application-completion-current-frontier-invalid"
+        )
+    )
+    assert completion == expected
 
 
 def test_preactivation_ingress_before_routing_admission_is_historical() -> None:

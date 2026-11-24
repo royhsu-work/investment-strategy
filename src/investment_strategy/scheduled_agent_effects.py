@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import hashlib
 import json
 import os
@@ -89,7 +88,21 @@ from investment_strategy.scheduled_agent_validation_resource import (
     verify_implementation_candidate,
     work_product_path_allowed,
 )
-from investment_strategy.scheduled_agent_wire import LineWireContract
+from investment_strategy.scheduled_agent_wire import (
+    APPLICATION_DECISION_DISPOSITIONS as _APPLICATION_DECISION_DISPOSITIONS,
+)
+from investment_strategy.scheduled_agent_wire import (
+    APPLICATION_DECISION_MARKER,
+)
+from investment_strategy.scheduled_agent_wire import (
+    APPLICATION_DECISION_WIRE as _APPLICATION_DECISION_WIRE,
+)
+from investment_strategy.scheduled_agent_wire import (
+    ApplicationDecisionRecord as ApplicationDecisionRecord,
+)
+from investment_strategy.scheduled_agent_wire import (
+    parse_application_decision as parse_application_decision,
+)
 from investment_strategy.scheduled_agent_worker import parse_worker_result
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
@@ -142,46 +155,8 @@ class EffectBatch:
     typed_result: BoundedActionResult | None = None
 
 
-APPLICATION_DECISION_MARKER = "APPLICATION_DECISION"
-_APPLICATION_DECISION_DISPOSITIONS = frozenset({"ACCEPTED", "REJECTED"})
-_APPLICATION_DECISION_WIRE = LineWireContract(
-    APPLICATION_DECISION_MARKER,
-    (
-        "Request-Comment",
-        "Request-Body-SHA256",
-        "Authorization-Revision",
-        "Issue",
-        "Role",
-        "Action",
-        "Change",
-        "Result-Kind",
-        "Disposition",
-        "Worker-Result-SHA256",
-        "Application-Intent-B64",
-        "Reason",
-    ),
-)
-_APPLICATION_DECISION_FIELDS = _APPLICATION_DECISION_WIRE.fields
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SEMANTIC_INTENT_VERSION = 2
-
-
-@dataclass(frozen=True)
-class ApplicationDecisionRecord:
-    """Immutable application acceptance/rejection evidence for one exact request."""
-
-    request_comment_id: int
-    request_body_sha256: str
-    authorization_revision: str
-    issue_number: int
-    role: str
-    action: str
-    change: str
-    result_kind: str
-    disposition: str
-    worker_result_sha256: str
-    raw_worker_result: str
-    reason: str
 
 
 def _sha256_text(value: str) -> str:
@@ -294,69 +269,6 @@ def render_application_decision_body(
             "Application-Intent-B64": encoded_intent,
             "Reason": normalized_reason,
         }
-    )
-
-
-def parse_application_decision(body: object) -> ApplicationDecisionRecord | None:
-    """Parse and verify one application decision comment."""
-
-    if not isinstance(body, str):
-        return None
-    # Historical decision comments were parsed with splitlines(); retain that
-    # compatibility while sourcing field order from the same producer schema.
-    lines = body.splitlines()
-    if (
-        len(lines) != len(_APPLICATION_DECISION_FIELDS) + 1
-        or lines[0] != APPLICATION_DECISION_MARKER
-    ):
-        return None
-    values: dict[str, str] = {}
-    for line in lines[1:]:
-        key, separator, value = line.partition(": ")
-        if not separator or key in values or key not in _APPLICATION_DECISION_FIELDS:
-            return None
-        if not value or value != value.strip():
-            return None
-        values[key] = value
-    if tuple(values) != _APPLICATION_DECISION_FIELDS:
-        return None
-    try:
-        request_comment_id = int(values["Request-Comment"])
-        issue_number = int(values["Issue"])
-    except ValueError:
-        return None
-    encoded = values["Application-Intent-B64"]
-    try:
-        raw_worker_result = base64.b64decode(encoded.encode("ascii"), validate=True).decode("utf-8")
-    except (UnicodeDecodeError, ValueError, binascii.Error):
-        return None
-    if (
-        request_comment_id <= 0
-        or issue_number <= 0
-        or not re.fullmatch(r"[0-9a-f]{64}", values["Request-Body-SHA256"])
-        or not re.fullmatch(r"[0-9a-f]{40}", values["Authorization-Revision"])
-        or values["Disposition"] not in _APPLICATION_DECISION_DISPOSITIONS
-        or not values["Role"]
-        or not values["Action"]
-        or not values["Change"]
-        or not values["Result-Kind"]
-        or not re.fullmatch(r"[0-9a-f]{64}", values["Worker-Result-SHA256"])
-        or _sha256_text(raw_worker_result) != values["Worker-Result-SHA256"]
-    ):
-        return None
-    return ApplicationDecisionRecord(
-        request_comment_id=request_comment_id,
-        request_body_sha256=values["Request-Body-SHA256"],
-        authorization_revision=values["Authorization-Revision"],
-        issue_number=issue_number,
-        role=values["Role"],
-        action=values["Action"],
-        change=values["Change"],
-        result_kind=values["Result-Kind"],
-        disposition=values["Disposition"],
-        worker_result_sha256=values["Worker-Result-SHA256"],
-        raw_worker_result=raw_worker_result,
-        reason=values["Reason"],
     )
 
 

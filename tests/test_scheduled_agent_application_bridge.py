@@ -2951,8 +2951,9 @@ def test_v2_unavailable_physical_source_is_qualified_once(
     ("original_count", "tampered"),
     [(0, False), (1, False), (2, False), (1, True)],
 )
+@pytest.mark.parametrize("wire", ["legacy", "native", "native-minimal"])
 def test_elided_v2_immutable_original_proof_preserves_physical_effects(
-    monkeypatch: pytest.MonkeyPatch, original_count: int, tampered: bool
+    monkeypatch: pytest.MonkeyPatch, original_count: int, tampered: bool, wire: str
 ) -> None:
     """v2 semantic zero is not proof of zero immutable physical Effects."""
 
@@ -2970,7 +2971,16 @@ def test_elided_v2_immutable_original_proof_preserves_physical_effects(
         }
         for index in range(original_count)
     ]
-    body = _effect_request(physical)
+    if wire == "legacy":
+        body = _effect_request(physical)
+    else:
+        ingress = dict(physical)
+        if wire == "native-minimal":
+            for key in ("issue_number", "role", "action", "change"):
+                del ingress[key]
+            if original_count == 0:
+                del ingress["requested_effects"]
+        body = "WORKER_RESULT\n" + json.dumps(ingress, sort_keys=True)
     projected = dict(physical, _semantic_intent_version=2, requested_effects=[])
     record = _accepted_record(
         json.dumps(projected),
