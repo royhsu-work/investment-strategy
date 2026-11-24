@@ -5414,9 +5414,7 @@ def qualify_application_completion(
     if conflicting_decision_ids.intersection(
         record.request_comment_id for record in relevant_decisions
     ):
-        return ApplicationCompletion(
-            "INVALID", "application-completion-preaccept-evidence-unknown"
-        )
+        return ApplicationCompletion("INVALID", "application-completion-preaccept-evidence-unknown")
     frontier_correlation = (
         None
         if frontier is None or frontier.event is None
