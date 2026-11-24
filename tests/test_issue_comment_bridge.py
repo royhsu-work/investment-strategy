@@ -2667,6 +2667,50 @@ def test_truncated_legacy_encoded_source_is_filtered_before_frontier_read() -> N
     assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
 
 
+@pytest.mark.parametrize("admission", ["missing", "wrong", "ambiguous"])
+def test_preactivation_missing_qualified_frontier_never_proves_no_application(
+    admission: str,
+) -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    timeline = _preactivation_admission()
+    if admission == "missing":
+        timeline = []
+    elif admission == "wrong":
+        timeline[0]["label"] = {"name": "action:propose-change"}
+    else:
+        timeline.append(
+            {
+                "id": 43,
+                "event": "labeled",
+                "created_at": "2026-09-18T00:00:01Z",
+                "label": {"name": "action:propose-change"},
+            }
+        )
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return []
+        if path.startswith("issues/138/comments?"):
+            return []
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return timeline
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+    assert completion == bridge.ApplicationCompletion(
+        "INVALID", "application-completion-current-frontier-invalid"
+    )
+
+
 def test_preactivation_ingress_before_routing_admission_is_historical() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     historical = _effect_request_comment(
