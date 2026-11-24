@@ -5,6 +5,7 @@ from dataclasses import replace
 
 import pytest
 
+from investment_strategy.scheduled_agent_action_model import TRANSITIONS, Action
 from investment_strategy.scheduled_agent_formal_qualification import (
     QualificationDecision,
     build_qualification_input,
@@ -1423,3 +1424,80 @@ def test_application_owned_lowercase_successor_is_reconciled() -> None:
     assert event is not None
     assert event.valid
     assert event.successor == ("lead", "propose-change")
+
+# Exercise real qualification with model-derived preactivation self-transitions,
+# not merely the transition table or a repeated semantic payload.
+@pytest.mark.parametrize(
+    ("action", "result"),
+    [
+        (action.value, result.value)
+        for action in (Action.EXPLORE_CHANGE, Action.PROPOSE_CHANGE, Action.RESOLVE_QUESTION)
+        for result, successor in TRANSITIONS[action].items()
+        if successor is action
+    ],
+)
+@pytest.mark.parametrize("occurrences", [1, 2, 3])
+@pytest.mark.parametrize("mode", ["current", "pending"])
+@pytest.mark.parametrize("admitted", [True, False])
+def test_preactivation_recurrence_uses_admission_and_distinct_occurrences(
+    action: str,
+    result: str,
+    occurrences: int,
+    mode: str,
+    admitted: bool,
+) -> None:
+    route = ("lead", action)
+    comments = [
+        _comment(
+            100 + index,
+            action=action,
+            role="lead",
+            result=result,
+            successor=f"lead / {action}",
+            request_id=900 + index,
+            change="unset",
+        )
+        for index in range(occurrences)
+    ]
+    events: list[dict[str, object]] = []
+    if admitted:
+        events.append(
+            {
+                "id": 10,
+                "event": "labeled",
+                "created_at": "2026-09-12T00:00:00Z",
+                "label": {"name": f"action:{action}"},
+            }
+        )
+    events.extend(
+        {
+            "id": 100 + index,
+            "event": "commented",
+            "created_at": f"2026-09-12T00:00:{index + 1:02d}Z",
+        }
+        for index in range(occurrences)
+    )
+    correlation = f"application:{899 + occurrences}:229:unset:lead:{action}:{result}:{_REVISION}"
+    qualification = build_qualification_input(
+        issue_number=229,
+        change="unset",
+        state="open",
+        current_routing=route,
+        comments=comments,
+        current_revision=_REVISION,
+        mode=mode,  # type: ignore[arg-type]
+        expected_routing=route,
+        source_routing=route,
+        expected_result_kind=result,
+        expected_application_correlation=correlation,
+        lifecycle_events=events,
+    )
+    assert qualify_current_formal_consequence(qualification).qualified is admitted
+    if mode == "pending" and admitted:
+        wrong_request = replace(
+            qualification,
+            expected_application_correlation=correlation.replace(
+                f"application:{899 + occurrences}:", "application:9999:"
+            ),
+        )
+        assert not qualify_current_formal_consequence(wrong_request).qualified
