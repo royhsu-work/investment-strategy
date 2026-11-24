@@ -1431,7 +1431,7 @@ def test_application_owned_lowercase_successor_is_reconciled() -> None:
     ("action", "result"),
     [
         (action.value, result.value)
-        for action in (Action.EXPLORE_CHANGE, Action.PROPOSE_CHANGE, Action.RESOLVE_QUESTION)
+        for action in (Action.EXPLORE_CHANGE, Action.PROPOSE_CHANGE)
         for result, successor in TRANSITIONS[action].items()
         if successor is action
     ],
@@ -1501,3 +1501,104 @@ def test_preactivation_recurrence_uses_admission_and_distinct_occurrences(
             ),
         )
         assert not qualify_current_formal_consequence(wrong_request).qualified
+
+@pytest.mark.parametrize(
+    ("action", "result", "successor"),
+    [
+        (action.value, result.value, successor.value if successor is not None else None)
+        for action in (Action.EXPLORE_CHANGE, Action.PROPOSE_CHANGE)
+        for result, successor in TRANSITIONS[action].items()
+        if successor in {None, Action.EXPLORE_CHANGE, Action.PROPOSE_CHANGE}
+    ],
+)
+@pytest.mark.parametrize("projected", [True, False])
+@pytest.mark.parametrize("admission", ["valid", "missing", "wrong", "superseded"])
+def test_preactivation_consequence_qualifies_source_and_projection(
+    action: str,
+    result: str,
+    successor: str | None,
+    projected: bool,
+    admission: str,
+) -> None:
+    source = ("lead", action)
+    target = ("lead", successor) if successor is not None else None
+    comment = _comment(
+        100,
+        action=action,
+        role="lead",
+        result=result,
+        successor=f"lead / {successor}" if successor is not None else None,
+        request_id=900,
+        change="unset",
+    )
+    events: list[dict[str, object]] = []
+    if admission != "missing":
+        label = "action:implement-change" if admission == "wrong" else f"action:{action}"
+        events.append(
+            {
+                "id": 10,
+                "event": "labeled",
+                "created_at": "2026-09-12T00:00:00Z",
+                "label": {"name": label},
+            }
+        )
+    if admission == "superseded":
+        events.extend(
+            [
+                {
+                    "id": 11,
+                    "event": "unlabeled",
+                    "created_at": "2026-09-12T00:00:01Z",
+                    "label": {"name": f"action:{action}"},
+                },
+                {
+                    "id": 12,
+                    "event": "labeled",
+                    "created_at": "2026-09-12T00:00:02Z",
+                    "label": {"name": f"action:{action}"},
+                },
+            ]
+        )
+    events.append(
+        {"id": 100, "event": "commented", "created_at": "2026-09-12T00:00:03Z"}
+    )
+    if projected and successor != action:
+        events.append(
+            {
+                "id": 101,
+                "event": "unlabeled",
+                "created_at": "2026-09-12T00:00:04Z",
+                "label": {"name": f"action:{action}"},
+            }
+        )
+        if successor is not None:
+            events.append(
+                {
+                    "id": 102,
+                    "event": "labeled",
+                    "created_at": "2026-09-12T00:00:05Z",
+                    "label": {"name": f"action:{successor}"},
+                }
+            )
+        else:
+            events.append(
+                {"id": 102, "event": "closed", "created_at": "2026-09-12T00:00:05Z"}
+            )
+    qualification = build_qualification_input(
+        issue_number=229,
+        change="unset",
+        state="closed" if projected and target is None else "open",
+        current_routing=target if projected else source,
+        comments=(comment,),
+        current_revision=_REVISION,
+        mode="current" if projected else "pending",
+        expected_routing=target,
+        expected_terminal=target is None,
+        source_routing=source,
+        expected_result_kind=result,
+        expected_application_correlation=(
+            f"application:900:229:unset:lead:{action}:{result}:{_REVISION}"
+        ),
+        lifecycle_events=events,
+    )
+    assert qualify_current_formal_consequence(qualification).qualified is (admission == "valid")
