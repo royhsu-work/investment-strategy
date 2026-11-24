@@ -334,6 +334,4 @@ def test_maintenance_dependency_ref_binds_both_distinct_issues() -> None:
             repair_issue_number=435,
         )
     with pytest.raises(ValueError):
-        decision_ref_for_boundary(
-            HumanDecisionBoundary.MAINTENANCE_DEPENDENCY, issue_number=435
-        )
+        decision_ref_for_boundary(HumanDecisionBoundary.MAINTENANCE_DEPENDENCY, issue_number=435)

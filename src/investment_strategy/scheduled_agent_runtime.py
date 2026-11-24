@@ -534,9 +534,7 @@ def _qualify_current_observations(
         # current consequence.  Keep the strict qualifier for open routes and
         # closed routing debt so active and premature-close cases still fail
         # closed.
-        if (
-            observation.state == "closed" and observation.routing is None and not require_completed
-        ):
+        if observation.state == "closed" and observation.routing is None and not require_completed:
             qualified.append(observation)
             continue
         comments = _github_issue_comment_pages(
