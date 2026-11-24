@@ -47,16 +47,27 @@ Selection is complete and provenance-qualified before work is authorized. Formal
 priority over pre-activation work. More than one formal candidate is a WIP=1 violation and fails
 closed. finish-first ordering is deterministic. Closed Issues are not reopened by a normal dispatch.
 
-### Bounded Human-directed #468 recovery priority
+### Bounded Human-directed maintenance priority
 
-Human expressly directed #468 to complete before stalled #435. The executable
-model MAY select #468 even while exactly #435 remains the other open formal
-Change. This temporary two-Issue exception is not a general priority queue,
-a new Action, or a waiver of PROPOSAL_READY or other semantic gates. Only
-one Action runs per wake. A third open formal Issue, closed-routing debt,
-incomplete evidence, or invalid provenance remains fail closed. #435's
-identity, routing, accepted effects, and recovery obligations are preserved.
-After #468 retires, normal selection resumes #435 without rewinding it.
+The sole optional designation is the `[tool.investment-strategy.maintenance-priority]`
+table in default-branch `pyproject.toml`, containing exactly two distinct positive
+Issue numbers: `blocked_issue` and `repair_issue`. Only a separately Human-authorized,
+independently reviewed default-branch amendment may set, replace or remove this
+policy data. Issue prose, labels, workers, transport and unmerged branches cannot
+supply it. Dispatch and Application reauthorization read the designation at the
+current default-branch revision when competing routed work could require it.
+Unavailable or malformed authority cannot authorize work. Absence means ordinary
+selection.
+
+The existing executable model MAY select the designated repair while exactly the
+designated blocked Issue remains the other open formal Change. This temporary
+two-Issue exception is not a general priority queue, a new Action, or a waiver of
+PROPOSAL_READY or other semantic gates. Only one Action runs per wake. A third
+open formal Issue, closed-routing debt, incomplete evidence, or invalid provenance
+remains fail closed. The blocked Issue's identity, routing, accepted effects and
+recovery obligations are preserved. After the repair retires, ordinary selection
+resumes without rewinding the blocked Issue. No standing authority to select
+another pair is granted.
 
 ## Fresh dispatch and one-wake boundary
 

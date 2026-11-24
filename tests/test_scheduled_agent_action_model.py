@@ -228,49 +228,68 @@ def test_selection_fails_closed_for_ambiguous_or_unqualified_state(
     assert decision.role is None
 
 
+@pytest.mark.parametrize("pair", [(435, 468), (900, 850)])
 @pytest.mark.parametrize(
     ("change", "action"),
     [
         ("unset", Action.EXPLORE_CHANGE),
         ("unset", Action.PROPOSE_CHANGE),
-        ("issue468-scope", Action.REVIEW_OPENSPEC),
+        ("repair-scope", Action.REVIEW_OPENSPEC),
     ],
 )
-def test_scoped_human_priority_precedes_435_without_rewriting_it(
-    change: str, action: Action
+def test_scoped_human_priority_precedes_blocked_without_rewriting_it(
+    pair: tuple[int, int], change: str, action: Action
 ) -> None:
-    selected = select_work(
-        AuthoritativeObservations(
-            issues=(
-                IssueObservation(137, "open", "unset", Action.EXPLORE_CHANGE, 1),
-                IssueObservation(435, "open", "restore-t1", Action.IMPLEMENT_CHANGE, 2),
-                IssueObservation(468, "open", change, action, 3),
-            )
-        )
+    blocked, repair = pair
+    observed = AuthoritativeObservations(
+        issues=(
+            IssueObservation(137, "open", "unset", Action.EXPLORE_CHANGE, 1),
+            IssueObservation(blocked, "open", "restore-t1", Action.IMPLEMENT_CHANGE, 2),
+            IssueObservation(repair, "open", change, action, 3),
+        ),
+        maintenance_priority=pair,
     )
+    selected = select_work(observed)
     assert selected.disposition is SelectionDisposition.AUTHORIZE
-    assert selected.issue_number == 468
+    assert selected.issue_number == repair
     assert selected.action is action
     assert selected.reason == "selected-human-priority-repair"
+    without_policy = select_work(replace(observed, maintenance_priority=None))
+    if change == "unset":
+        assert without_policy.issue_number == blocked
+    else:
+        assert without_policy.reason == "wip-more-than-one"
+    assert select_work(replace(observed, human_authorized=False)).reason == "human-authority-missing"
+    assert select_work(replace(observed, complete=False)).reason == "observations-unqualified"
+    assert (
+        select_work(replace(observed, maintenance_priority=(repair, repair))).reason
+        == "maintenance-priority-invalid"
+    )
 
 
-def test_scoped_human_priority_expires_and_unrelated_parallel_formal_fails() -> None:
+@pytest.mark.parametrize("pair", [(435, 468), (900, 850)])
+def test_scoped_human_priority_expires_and_unrelated_parallel_formal_fails(
+    pair: tuple[int, int],
+) -> None:
+    blocked, repair = pair
     exited = select_work(
         AuthoritativeObservations(
             issues=(
-                IssueObservation(435, "open", "restore-t1", Action.IMPLEMENT_CHANGE),
-                IssueObservation(468, "closed", "issue468-scope", None),
-            )
+                IssueObservation(blocked, "open", "restore-t1", Action.IMPLEMENT_CHANGE),
+                IssueObservation(repair, "closed", "repair-scope", None),
+            ),
+            maintenance_priority=pair,
         )
     )
-    assert exited.issue_number == 435
+    assert exited.issue_number == blocked
     unrelated = select_work(
         AuthoritativeObservations(
             issues=(
-                IssueObservation(435, "open", "restore-t1", Action.IMPLEMENT_CHANGE),
+                IssueObservation(blocked, "open", "restore-t1", Action.IMPLEMENT_CHANGE),
                 IssueObservation(460, "open", "unrelated", Action.REVIEW_OPENSPEC),
-                IssueObservation(468, "open", "unset", Action.EXPLORE_CHANGE),
-            )
+                IssueObservation(repair, "open", "repair-scope", Action.REVIEW_OPENSPEC),
+            ),
+            maintenance_priority=pair,
         )
     )
     assert unrelated.disposition is SelectionDisposition.FAIL_CLOSED

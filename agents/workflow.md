@@ -27,8 +27,9 @@ The worker cannot choose a target, Role, Action, successor, retry, or success. R
 derives routing from the executable model and rejects stale, replayed, ambiguous, contradictory, or
 incomplete input. Exact revision, content-addressed ingress, WIP=1, finish-first, Human authority,
 independent review, exact-head merge, and carrier separation remain mandatory.
-The current default-branch bounded Human-directed #435/#468 exception permits
-#468 priority without changing one-Action-per-wake or result/effect authority.
+The bounded Human-directed maintenance designation in default-branch
+`pyproject.toml` permits one repair to precede its designated blocked workflow
+without changing one-Action-per-wake or result/effect authority.
 
 ## Transport
 

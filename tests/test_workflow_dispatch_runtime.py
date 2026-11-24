@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,7 @@ def _preflight(
     incomplete_results: bool = False,
     exhausted: bool = True,
     human_authorized: bool = True,
+    maintenance_priority: tuple[int, int] | None = None,
 ) -> DispatchPreflight:
     return acquire_dispatch_preflight(
         observations=observations,
@@ -41,6 +43,7 @@ def _preflight(
         incomplete_results=incomplete_results,
         exhausted=exhausted,
         human_authorized=human_authorized,
+        maintenance_priority=maintenance_priority,
     )
 
 
@@ -98,25 +101,32 @@ def test_wip_and_incomplete_observations_fail_closed() -> None:
     assert classify_dispatch(incomplete).completeness == "INDETERMINATE"
 
 
-def test_scoped_human_priority_preserves_activation_proof() -> None:
+@pytest.mark.parametrize("pair", [(435, 468), (900, 850)])
+def test_scoped_human_priority_preserves_activation_proof(pair: tuple[int, int]) -> None:
+    blocked, repair = pair
     before = _preflight(
         (
-            _issue(435, "implement-change", change="restore-t1", order=1),
-            _issue(468, "propose-change", change="unset", order=2),
-        )
+            _issue(blocked, "implement-change", change="restore-t1", order=1),
+            _issue(repair, "propose-change", change="unset", order=2),
+        ),
+        maintenance_priority=pair,
     )
-    assert classify_dispatch(before).selected_issue_id == 468
-    assert action_entry_authorized(before, 468, ("lead", "propose-change"))
+    assert classify_dispatch(before).selected_issue_id == repair
+    assert action_entry_authorized(before, repair, ("lead", "propose-change"))
 
-    after = _preflight(
-        (
-            _issue(435, "implement-change", change="restore-t1", order=1),
-            _issue(468, "propose-change", change="issue468-scope", order=2),
-        )
+    issues = (
+        _issue(blocked, "implement-change", change="restore-t1", order=1),
+        _issue(repair, "propose-change", change="repair-scope", order=2),
     )
-    assert classify_dispatch(after).formal_issue_ids == (435, 468)
-    assert activation_postwrite_accepted(after, issue_number=468, expected_change="issue468-scope")
-    assert not activation_postwrite_accepted(after, issue_number=435, expected_change="restore-t1")
+    after = _preflight(issues, maintenance_priority=pair)
+    assert classify_dispatch(after).formal_issue_ids == tuple(sorted(pair))
+    assert activation_postwrite_accepted(after, issue_number=repair, expected_change="repair-scope")
+    assert not activation_postwrite_accepted(
+        after, issue_number=blocked, expected_change="restore-t1"
+    )
+    assert not activation_postwrite_accepted(
+        _preflight(issues), issue_number=repair, expected_change="repair-scope"
+    )
 
 
 def test_scoped_human_priority_does_not_bypass_closed_debt() -> None:
@@ -125,9 +135,75 @@ def test_scoped_human_priority_does_not_bypass_closed_debt() -> None:
             _issue(435, "implement-change", change="restore-t1"),
             _issue(468, "explore-change", change="unset"),
             _issue(411, "resolve-question", state="closed", routing_debt=True),
-        )
+        ),
+        maintenance_priority=(435, 468),
     )
     assert classify_dispatch(before).disposition == "FAIL_CLOSED"
+
+
+@pytest.mark.parametrize("pair", [(435, 468), (900, 850)])
+def test_production_preflight_reads_priority_at_exact_default_revision(
+    monkeypatch: pytest.MonkeyPatch, pair: tuple[int, int]
+) -> None:
+    blocked, repair = pair
+    revision = "a" * 40
+    issues = (
+        _issue(blocked, "implement-change", change="restore-t1"),
+        _issue(repair, "explore-change", change="unset"),
+    )
+    raw = (
+        "[tool.investment-strategy.maintenance-priority]\n"
+        f"blocked_issue = {blocked}\nrepair_issue = {repair}\n"
+    ).encode()
+
+    def fake_object(url: str, token: str) -> dict[str, object]:
+        assert token == "token"
+        assert url == (
+            f"https://api.github.com/repos/owner/repo/contents/pyproject.toml?ref={revision}"
+        )
+        return {
+            "path": "pyproject.toml",
+            "type": "file",
+            "encoding": "base64",
+            "content": base64.b64encode(raw).decode(),
+            "size": len(raw),
+        }
+
+    monkeypatch.setattr(runtime, "_github_issue_pages", lambda *_args: ())
+    monkeypatch.setattr(runtime, "_normalized_observations", lambda *_args: issues)
+    monkeypatch.setattr(runtime, "_current_default_branch_revision", lambda *_args: revision)
+    monkeypatch.setattr(runtime, "_qualify_current_observations", lambda *_args: issues)
+    monkeypatch.setattr(runtime, "_github_get_object", fake_object)
+    preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
+    assert classify_dispatch(preflight).selected_issue_id == repair
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        "blocked_issue = 435\nrepair_issue = 435",
+        "blocked_issue = true\nrepair_issue = 468",
+        "blocked_issue = 435",
+        "blocked_issue = 435\nrepair_issue = 468\nextra = 1",
+    ],
+)
+def test_malformed_priority_policy_is_not_authority(
+    monkeypatch: pytest.MonkeyPatch, policy: str
+) -> None:
+    raw = ("[tool.investment-strategy.maintenance-priority]\n" + policy).encode()
+    monkeypatch.setattr(
+        runtime,
+        "_github_get_object",
+        lambda *_args: {
+            "path": "pyproject.toml",
+            "type": "file",
+            "encoding": "base64",
+            "content": base64.b64encode(raw).decode(),
+            "size": len(raw),
+        },
+    )
+    with pytest.raises(ValueError, match="maintenance priority policy invalid"):
+        runtime._read_maintenance_priority("owner/repo", "token", "a" * 40)
 
 
 def test_closed_routing_debt_fails_closed_before_selection() -> None:

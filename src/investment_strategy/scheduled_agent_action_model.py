@@ -190,6 +190,7 @@ class AuthoritativeObservations:
     complete: bool = True
     provenance: ObservationProvenance | str = ObservationProvenance.QUALIFIED
     human_authorized: bool = True
+    maintenance_priority: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -471,13 +472,6 @@ def _valid_revision(revision: object) -> bool:
     return isinstance(revision, str) and fullmatch(r"[0-9a-f]{40}", revision) is not None
 
 
-def scoped_human_priority_activation(
-    formal_issue_numbers: tuple[int, ...], issue_number: int
-) -> bool:
-    """Authorize the exact Human-directed #435/#468 bootstrap only."""
-    return issue_number == 468 and formal_issue_numbers == (435, 468)
-
-
 def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
     """Select one current Action from complete, qualified observations.
 
@@ -494,6 +488,18 @@ def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
         return _selection(SelectionDisposition.FAIL_CLOSED, "observations-unqualified")
     if not isinstance(observations.human_authorized, bool) or not observations.human_authorized:
         return _selection(SelectionDisposition.FAIL_CLOSED, "human-authority-missing")
+
+    policy = observations.maintenance_priority
+    if policy is not None and (
+        not isinstance(policy, tuple)
+        or len(policy) != 2
+        or any(
+            not isinstance(number, int) or isinstance(number, bool) or number <= 0
+            for number in policy
+        )
+        or policy[0] == policy[1]
+    ):
+        return _selection(SelectionDisposition.FAIL_CLOSED, "maintenance-priority-invalid")
 
     seen_issue_numbers: set[int] = set()
     formal: list[tuple[IssueObservation, Action]] = []
@@ -546,24 +552,23 @@ def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
             preactivation.append((issue, normalized_action))
 
     formal_ids = tuple(sorted(issue.issue_number for issue, _ in formal))
-    if len(formal) > 1 and not scoped_human_priority_activation(formal_ids, 468):
-        return _selection(SelectionDisposition.FAIL_CLOSED, "wip-more-than-one")
-
-    # Human-directed #468 priority while #435 remains unchanged.
-    # After #468 retires, normal finish-first selection resumes.
-    if 435 in formal_ids:
-        priority = next(
-            (pair for pair in (*formal, *preactivation) if pair[0].issue_number == 468),
-            None,
-        )
-        if priority is not None:
-            issue, action = priority
-            return _selection(
-                SelectionDisposition.AUTHORIZE,
-                "selected-human-priority-repair",
-                issue.issue_number,
-                action,
+    if policy is not None:
+        blocked_issue, repair_issue = policy
+        if formal_ids in ((blocked_issue,), tuple(sorted(policy))):
+            priority = next(
+                (pair for pair in (*formal, *preactivation) if pair[0].issue_number == repair_issue),
+                None,
             )
+            if priority is not None:
+                issue, action = priority
+                return _selection(
+                    SelectionDisposition.AUTHORIZE,
+                    "selected-human-priority-repair",
+                    issue.issue_number,
+                    action,
+                )
+    if len(formal) > 1:
+        return _selection(SelectionDisposition.FAIL_CLOSED, "wip-more-than-one")
     if formal:
         issue, action = formal[0]
         return _selection(

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import time
+import tomllib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -101,6 +103,7 @@ def acquire_dispatch_preflight(
     incomplete_results: bool,
     exhausted: bool,
     human_authorized: bool = True,
+    maintenance_priority: tuple[int, int] | None = None,
 ) -> DispatchPreflight:
     """Build one current-state preflight from fresh GitHub observations."""
 
@@ -137,6 +140,7 @@ def acquire_dispatch_preflight(
             ),
         ),
         human_authorized=human_authorized,
+        maintenance_priority=maintenance_priority,
     )
 
 
@@ -489,8 +493,8 @@ def _qualify_current_observations(
     repository: str,
     token: str,
     observations: tuple[GitHubIssueObservation, ...],
+    current_revision: str | None,
 ) -> tuple[GitHubIssueObservation, ...]:
-    current_revision = _current_default_branch_revision(repository, token)
     qualified: list[GitHubIssueObservation] = []
     for observation in observations:
         if observation.change == "unset":
@@ -582,6 +586,48 @@ def _qualify_current_observations(
     return tuple(qualified)
 
 
+def _read_maintenance_priority(
+    repository: str, token: str, revision: str
+) -> tuple[int, int] | None:
+    """Read the sole reviewed policy designation at an exact default revision."""
+    payload = _github_get_object(
+        f"https://api.github.com/repos/{repository}/contents/pyproject.toml?ref={revision}",
+        token,
+    )
+    content = payload.get("content")
+    if (
+        payload.get("path") != "pyproject.toml"
+        or payload.get("type") != "file"
+        or payload.get("encoding") != "base64"
+        or not isinstance(content, str)
+    ):
+        raise ValueError("maintenance priority policy content unavailable")
+    raw = base64.b64decode(content.replace("\n", ""), validate=True)
+    if payload.get("size") != len(raw):
+        raise ValueError("maintenance priority policy content incomplete")
+    document = tomllib.loads(raw.decode("utf-8"))
+    tool = document.get("tool", {})
+    project = tool.get("investment-strategy", {})
+    policy = project.get("maintenance-priority")
+    if policy is None:
+        return None
+    if not isinstance(policy, dict) or set(policy) != {"blocked_issue", "repair_issue"}:
+        raise ValueError("maintenance priority policy invalid")
+    blocked = policy["blocked_issue"]
+    repair = policy["repair_issue"]
+    if (
+        not isinstance(blocked, int)
+        or isinstance(blocked, bool)
+        or not isinstance(repair, int)
+        or isinstance(repair, bool)
+        or blocked <= 0
+        or repair <= 0
+        or blocked == repair
+    ):
+        raise ValueError("maintenance priority policy invalid")
+    return blocked, repair
+
+
 def acquire_current_github_preflight(
     repository: str,
     token: str,
@@ -592,12 +638,23 @@ def acquire_current_github_preflight(
 
     del repository_root
     observations = _normalized_observations(_github_issue_pages(repository, token))
-    observations = _qualify_current_observations(repository, token, observations)
+    current_revision = _current_default_branch_revision(repository, token)
+    observations = _qualify_current_observations(repository, token, observations, current_revision)
+    # No exception is possible without competing open routed work and a formal Issue.
+    routed = tuple(
+        item for item in observations if item.state == "open" and item.routing is not None
+    )
+    maintenance_priority = None
+    if len(routed) > 1 and any(item.change != "unset" for item in routed):
+        if current_revision is None:
+            raise ValueError("maintenance priority default revision unavailable")
+        maintenance_priority = _read_maintenance_priority(repository, token, current_revision)
     return acquire_dispatch_preflight(
         observations=observations,
         source_total_count=len(observations),
         incomplete_results=False,
         exhausted=True,
+        maintenance_priority=maintenance_priority,
     )
 
 

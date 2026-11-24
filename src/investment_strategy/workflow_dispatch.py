@@ -18,7 +18,6 @@ from investment_strategy.scheduled_agent_action_model import (
     SelectionDecision,
     ShadowComparison,
     role_for,
-    scoped_human_priority_activation,
     select_work,
     shadow_compare_selection,
 )
@@ -94,6 +93,7 @@ class DispatchPreflight:
     issues: tuple[RepositoryIssueSnapshot, ...]
     enumeration: EnumerationEvidence
     human_authorized: bool = True
+    maintenance_priority: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +153,7 @@ def _model_observations(preflight: DispatchPreflight) -> AuthoritativeObservatio
         complete=preflight.enumeration.complete,
         provenance=provenance,
         human_authorized=preflight.human_authorized,
+        maintenance_priority=preflight.maintenance_priority,
     )
 
 
@@ -292,10 +293,7 @@ def activation_postwrite_accepted(
     decision = classify_dispatch(preflight)
     if (
         decision.disposition != "AUTHORIZE"
-        or (
-            decision.formal_issue_ids != (issue_number,)
-            and not scoped_human_priority_activation(decision.formal_issue_ids, issue_number)
-        )
+        or issue_number not in decision.formal_issue_ids
         or decision.selected_issue_id != issue_number
         or decision.selected_routing != ("lead", "propose-change")
     ):
