@@ -1,0 +1,14 @@
+## 1. Feature-local exact materialization and interruption proof
+- [ ] 1.1 RED: reproduce rejection of valid actual feature preimages under same-path main advance (including equal A/B and distinct A/B/P/D) and stale feature ref/preimage rejection, single-parent and unrelated content assertions; confirm failures are the missing behavior.
+- [ ] 1.2 GREEN: consolidate feature-local construction and canonical completion proof on actual P; remove default-path veto only at that boundary; retain first-carrier, identity/cardinality, exact manifest and unrelated content; verify real non-force conditional publication semantics (including concurrent descendant/ref race) through production-shaped tests.
+- [ ] 1.3 REFACTOR/VERIFY: reuse existing materialization/carrier ownership; verify interruption before/after commit/ref/PR and exact witness recognition without replay or UNKNOWN relabeling, focused and full pytest, Ruff lint/format, Mypy and strict OpenSpec.
+
+## 2. Native integration, resolution and recovery
+- [ ] 2.1 RED: same-file non-conflicting edits merge; true conflict cannot integrate; clean candidate retains both changes; explicit resolution exact parents/tree, stale feature ref and later descendant witness recovery; unrelated content retained.
+- [ ] 2.2 GREEN: reuse native common-ancestor three-way integration, remove blanket path-intersection veto from clean integration; use existing Executor/Review and Application-owned exact resolution publication, validate lineage and resolution tree through canonical proof. No overwrite, force, replay, new dispatcher or persistent state.
+- [ ] 2.3 REFACTOR/VERIFY: production-shaped and local Git tests for clean/disputed merge, legal resolution, unknown/partial writes, existing first-carrier and forward correction behavior; full pytest, Ruff lint/format, Mypy, strict OpenSpec.
+
+## 3. Exact integrated candidate checks and merge eligibility
+- [ ] 3.1 RED: feature-only green, wrong base/head/parents/tree/checkout, stale or ambiguous check evidence, concurrent main advance and already-merged readback cannot falsely qualify integration; verify actual needed behavior.
+- [ ] 3.2 GREEN: reuse existing quality, validation resource and merge acceptance owners; distinguish tested feature and exact integrated candidate, bind applicable quality and strict OpenSpec result to actual checkout; requalify current base/head before mutation and observe actual merged identity/tree, preserving existing independent review, archive and correction gates.
+- [ ] 3.3 REFACTOR/VERIFY: reconcile #467 reusable candidate against current main without erasing #469; regression matrix covers scope above and safe concurrent branch/main progression. Run full pytest, Ruff lint/format, Mypy, strict OpenSpec; record exact test evidence and all remaining obligations. No Reviewer PASS, merge or archive marker in implementation tasks.
