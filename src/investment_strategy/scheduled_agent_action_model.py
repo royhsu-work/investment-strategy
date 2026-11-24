@@ -556,7 +556,11 @@ def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
         blocked_issue, repair_issue = policy
         if formal_ids in ((blocked_issue,), tuple(sorted(policy))):
             priority = next(
-                (pair for pair in (*formal, *preactivation) if pair[0].issue_number == repair_issue),
+                (
+                    pair
+                    for pair in (*formal, *preactivation)
+                    if pair[0].issue_number == repair_issue
+                ),
                 None,
             )
             if priority is not None:

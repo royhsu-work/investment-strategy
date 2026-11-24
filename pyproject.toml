@@ -18,11 +18,6 @@ dev = [
   "types-PyYAML>=6.0",
 ]
 
-# Human-directed independent maintenance: refs #435, #468, #469.
-[tool.investment-strategy.maintenance-priority]
-blocked_issue = 435
-repair_issue = 468
-
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

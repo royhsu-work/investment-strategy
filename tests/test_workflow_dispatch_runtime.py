@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 from pathlib import Path
 
 import pytest
@@ -141,69 +140,220 @@ def test_scoped_human_priority_does_not_bypass_closed_debt() -> None:
     assert classify_dispatch(before).disposition == "FAIL_CLOSED"
 
 
-@pytest.mark.parametrize("pair", [(435, 468), (900, 850)])
-def test_production_preflight_reads_priority_at_exact_default_revision(
-    monkeypatch: pytest.MonkeyPatch, pair: tuple[int, int]
-) -> None:
+def _dependency_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+    pair: tuple[int, int],
+    *,
+    phase: str = "explore",
+    fault: str = "",
+) -> list[str]:
+    """Actual acquisition/qualification, with only GitHub GETs substituted."""
     blocked, repair = pair
     revision = "a" * 40
-    issues = (
-        _issue(blocked, "implement-change", change="restore-t1"),
-        _issue(repair, "explore-change", change="unset"),
+    repo_url = "https://api.github.com/repos/owner/repo"
+    state = "closed" if phase in {"completed", "no-go", "bare-close"} else "open"
+    repair_change = "unset" if phase == "explore" else "repair-scope"
+    repair_labels = (
+        []
+        if state == "closed"
+        else [
+            {"name": "action:explore-change" if phase == "explore" else "action:implement-change"}
+        ]
     )
-    raw = (
-        "[tool.investment-strategy.maintenance-priority]\n"
-        f"blocked_issue = {blocked}\nrepair_issue = {repair}\n"
-    ).encode()
+    blocked_issue = {
+        "number": blocked,
+        "id": blocked + 10000,
+        "repository_url": repo_url,
+        "state": "open",
+        "body": "Change: restore-t1\n",
+        "created_at": "2026-09-12T00:00:00Z",
+        "closed_at": None,
+        "labels": [{"name": "action:implement-change"}]
+        + ([] if fault == "missing-label" else [{"name": "human:approved"}]),
+    }
+    repair_issue = {
+        "number": repair,
+        "id": repair + 10000,
+        "repository_url": repo_url,
+        "state": state,
+        "body": f"Change: {repair_change}\n",
+        "created_at": "2026-09-12T00:00:00Z",
+        "closed_at": "2026-09-12T00:00:10Z" if state == "closed" else None,
+        "labels": repair_labels,
+    }
 
-    def fake_object(url: str, token: str) -> dict[str, object]:
-        assert token == "token"
-        assert url == (
-            f"https://api.github.com/repos/owner/repo/contents/pyproject.toml?ref={revision}"
-        )
+    def formal_comment(
+        number: int, change: str, action: str, role: str, result: str, successor: str
+    ) -> dict[str, object]:
+        marker = "REVIEW_RESULT" if action.startswith("review-") else "ACTION_RESULT"
         return {
-            "path": "pyproject.toml",
-            "type": "file",
-            "encoding": "base64",
-            "content": base64.b64encode(raw).decode(),
-            "size": len(raw),
+            "id": 10 if number == blocked else 20,
+            "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
+            "body": "\n".join(
+                (
+                    marker,
+                    f"Workflow: #{number}",
+                    f"Change: {change}",
+                    f"Action: {action}",
+                    f"Role: {role}",
+                    f"Result: {result.upper().replace('-', '_')}",
+                    "Revision: " + "b" * 40,
+                    "Default-Branch-Revision: " + revision,
+                    f"Application-Correlation: application:1:{number}:{change}:"
+                    f"{role}:{action}:{result}:{revision}",
+                    f"Repository-derived successor: {successor}",
+                )
+            ),
         }
 
-    monkeypatch.setattr(runtime, "_github_issue_pages", lambda *_args: ())
-    monkeypatch.setattr(runtime, "_normalized_observations", lambda *_args: issues)
+    blocked_formal = formal_comment(
+        blocked,
+        "restore-t1",
+        "finalize-change",
+        "lead",
+        "more-implementation-required",
+        "Executor / implement-change",
+    )
+    human_comment = {
+        "id": 12,
+        "body": (
+            f"Human-Decision-For: issue:{blocked}:maintenance-dependency:"
+            f"{repair if fault != 'wrong-ref' else repair + 1}"
+        ),
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": None if fault != "app-comment" else {"slug": "agent"},
+        "created_at": "2026-09-12T00:00:03Z",
+        "updated_at": "2026-09-12T00:00:03Z",
+    }
+    blocked_timeline = (
+        {"id": 10, "event": "commented", "created_at": "2026-09-12T00:00:01Z"},
+        {
+            "id": 11,
+            "event": "labeled",
+            "created_at": "2026-09-12T00:00:02Z",
+            "label": {"name": "action:implement-change"},
+        },
+        {"id": 12, "event": "commented", "created_at": "2026-09-12T00:00:03Z"},
+        {
+            "id": 13,
+            "event": "labeled",
+            "created_at": "2026-09-12T00:00:04Z",
+            "label": {"name": "human:approved"},
+            "actor": {"login": "royhsu-work"},
+            "performed_via_github_app": None if fault != "app-event" else {"slug": "agent"},
+        },
+    )
+    if phase == "formal":
+        repair_formal = formal_comment(
+            repair,
+            repair_change,
+            "review-openspec",
+            "reviewer",
+            "pass",
+            "Executor / implement-change",
+        )
+        repair_timeline = (
+            {"id": 20, "event": "commented", "created_at": "2026-09-12T00:00:05Z"},
+            {
+                "id": 21,
+                "event": "labeled",
+                "created_at": "2026-09-12T00:00:06Z",
+                "label": {"name": "action:implement-change"},
+            },
+        )
+    else:
+        repair_formal = formal_comment(
+            repair,
+            repair_change,
+            "finalize-archive" if phase == "completed" else "finalize-change",
+            "lead",
+            "lifecycle-complete" if phase == "completed" else "no-go",
+            "terminal",
+        )
+        repair_timeline = (
+            {"id": 20, "event": "commented", "created_at": "2026-09-12T00:00:05Z"},
+            {"id": 21, "event": "closed", "created_at": "2026-09-12T00:00:10Z"},
+        )
+    urls: list[str] = []
+
+    def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
+        assert token == "token"
+        urls.append(url)
+        if "/issues?" in url:
+            return (blocked_issue, repair_issue)
+        if "/dependencies/blocked_by?" in url:
+            if f"/issues/{blocked}/" in url:
+                if fault == "missing-edge":
+                    return ()
+                if fault == "multiple":
+                    return (repair_issue, repair_issue)
+                if fault == "cross-repo":
+                    return ({**repair_issue, "repository_url": repo_url + "-other"},)
+                if fault == "wrong-state":
+                    return ({**repair_issue, "state": "closed"},)
+                return (repair_issue,)
+            return (blocked_issue,) if fault == "cycle" else ()
+        if f"/issues/{blocked}/comments?" in url:
+            return (human_comment, blocked_formal)
+        if f"/issues/{blocked}/timeline?" in url:
+            return blocked_timeline
+        if f"/issues/{repair}/comments?" in url:
+            return () if phase == "bare-close" else (repair_formal,)
+        if f"/issues/{repair}/timeline?" in url:
+            return repair_timeline
+        raise AssertionError(url)
+
+    monkeypatch.setattr(runtime, "_github_get_list_page", fake_page)
     monkeypatch.setattr(runtime, "_current_default_branch_revision", lambda *_args: revision)
-    monkeypatch.setattr(runtime, "_qualify_current_observations", lambda *_args: issues)
-    monkeypatch.setattr(runtime, "_github_get_object", fake_object)
+    return urls
+
+
+@pytest.mark.parametrize("pair", [(435, 468), (900, 850)])
+@pytest.mark.parametrize("phase", ["explore", "formal", "completed"])
+def test_native_dependency_drives_fresh_selection_and_completion(
+    monkeypatch: pytest.MonkeyPatch, pair: tuple[int, int], phase: str
+) -> None:
+    blocked, repair = pair
+    urls = _dependency_fixture(monkeypatch, pair, phase=phase)
     preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
-    assert classify_dispatch(preflight).selected_issue_id == repair
+    decision = classify_dispatch(preflight)
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == (blocked if phase == "completed" else repair)
+    assert not any("pyproject.toml" in url for url in urls)
+    assert any(f"/issues/{blocked}/dependencies/blocked_by?" in url for url in urls)
+
+
+@pytest.mark.parametrize("phase", ["no-go", "bare-close"])
+def test_dependency_closure_without_delivery_cannot_resume(
+    monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    _dependency_fixture(monkeypatch, (435, 468), phase=phase)
+    preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
+    assert classify_dispatch(preflight).disposition == "FAIL_CLOSED"
 
 
 @pytest.mark.parametrize(
-    "policy",
+    "fault",
     [
-        "blocked_issue = 435\nrepair_issue = 435",
-        "blocked_issue = true\nrepair_issue = 468",
-        "blocked_issue = 435",
-        "blocked_issue = 435\nrepair_issue = 468\nextra = 1",
+        "missing-label",
+        "wrong-ref",
+        "app-comment",
+        "app-event",
+        "missing-edge",
+        "multiple",
+        "cross-repo",
+        "wrong-state",
+        "cycle",
     ],
 )
-def test_malformed_priority_policy_is_not_authority(
-    monkeypatch: pytest.MonkeyPatch, policy: str
+def test_native_dependency_requires_exact_human_authority_and_coherent_relation(
+    monkeypatch: pytest.MonkeyPatch, fault: str
 ) -> None:
-    raw = ("[tool.investment-strategy.maintenance-priority]\n" + policy).encode()
-    monkeypatch.setattr(
-        runtime,
-        "_github_get_object",
-        lambda *_args: {
-            "path": "pyproject.toml",
-            "type": "file",
-            "encoding": "base64",
-            "content": base64.b64encode(raw).decode(),
-            "size": len(raw),
-        },
-    )
-    with pytest.raises(ValueError, match="maintenance priority policy invalid"):
-        runtime._read_maintenance_priority("owner/repo", "token", "a" * 40)
+    _dependency_fixture(monkeypatch, (435, 468), fault=fault)
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.disposition == "FAIL_CLOSED"
+    assert decision.selected_issue_id is None
 
 
 def test_closed_routing_debt_fails_closed_before_selection() -> None:
@@ -320,6 +470,8 @@ def test_production_preflight_qualifies_from_issue_timeline(
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
         del token
         requested_urls.append(url)
+        if "/dependencies/blocked_by?" in url:
+            return ()
         if "/issues?" in url:
             return (issue,)
         if "/comments?" in url:
@@ -335,6 +487,10 @@ def test_production_preflight_qualifies_from_issue_timeline(
 
     assert requested_urls == [
         "https://api.github.com/repos/owner/repo/issues?state=all&per_page=100&page=1",
+        (
+            "https://api.github.com/repos/owner/repo/issues/229"
+            "/dependencies/blocked_by?per_page=100&page=1"
+        ),
         (
             "https://api.github.com/repos/owner/repo/issues/229/comments?per_page=100"
             "&sort=created&direction=desc"
@@ -399,6 +555,8 @@ def test_production_preflight_qualifies_recovery_after_default_branch_advances(
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
         del token
         requested_urls.append(url)
+        if "/dependencies/blocked_by?" in url:
+            return ()
         if "/issues?" in url:
             return (issue,)
         if "/comments?" in url:
@@ -495,6 +653,8 @@ def test_production_preflight_ignores_closed_inert_history(
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
         del token
         requested_urls.append(url)
+        if "/dependencies/blocked_by?" in url:
+            return ()
         if "/issues?" in url:
             return (historical, active)
         if "/issues/229/comments?" in url:
@@ -580,6 +740,8 @@ def test_production_preflight_ignores_closed_inert_history_with_null_body(
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
         del token
         requested_urls.append(url)
+        if "/dependencies/blocked_by?" in url:
+            return ()
         if "/issues?" in url:
             return (historical, active)
         if "/issues/229/comments?" in url:

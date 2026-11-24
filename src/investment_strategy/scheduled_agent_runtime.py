@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import re
 import time
-import tomllib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -15,6 +13,15 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.request import Request, urlopen
 
+from investment_strategy.human_authority import (
+    APPROVAL_LABEL,
+    HumanDecisionBoundary,
+    decision_comment_from_raw,
+    decision_ref_for_boundary,
+    is_human_decision_approved,
+    label_event_from_raw,
+    parse_decision_ref,
+)
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import role_for
 from investment_strategy.scheduled_agent_carrier import (
@@ -26,6 +33,7 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
     qualify_current_formal_consequence,
 )
+from investment_strategy.scheduled_agent_formal_result import FormalLifecycleEvent
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
     EnumerationEvidence,
@@ -62,6 +70,7 @@ class GitHubIssueObservation:
     authoritative: bool
     current_state_provenance: ObservationProvenance = ObservationProvenance.QUALIFIED
     routing_debt: bool = False
+    human_approval_present: bool = False
 
 
 @dataclass(frozen=True)
@@ -299,6 +308,7 @@ def normalize_github_issue(
         authoritative=authoritative,
         current_state_provenance=ObservationProvenance.QUALIFIED,
         routing_debt=routing_debt,
+        human_approval_present=APPROVAL_LABEL in labels,
     )
 
 
@@ -469,9 +479,15 @@ def _qualify_current_observation(
     lifecycle_events: tuple[Mapping[str, object], ...],
     current_revision: str | None,
     authorization_ancestry: tuple[tuple[str, str], ...] = (),
+    *,
+    require_completed: bool = False,
 ) -> GitHubIssueObservation:
     if observation.change == "unset":
-        return observation
+        return (
+            replace(observation, current_state_provenance=ObservationProvenance.INDETERMINATE)
+            if require_completed
+            else observation
+        )
     qualification_input = build_qualification_input(
         issue_number=observation.issue_number,
         change=observation.change,
@@ -483,10 +499,15 @@ def _qualify_current_observation(
         authorization_ancestry=authorization_ancestry,
     )
     decision = qualify_current_formal_consequence(qualification_input)
-    return replace(
-        observation,
-        current_state_provenance=decision.provenance,
-    )
+    if require_completed and not (
+        decision.qualified
+        and isinstance(decision.event, FormalLifecycleEvent)
+        and decision.event.terminal
+        and decision.event.action == "finalize-archive"
+        and decision.event.result_kind == "lifecycle-complete"
+    ):
+        return replace(observation, current_state_provenance=ObservationProvenance.INDETERMINATE)
+    return replace(observation, current_state_provenance=decision.provenance)
 
 
 def _qualify_current_observations(
@@ -494,11 +515,18 @@ def _qualify_current_observations(
     token: str,
     observations: tuple[GitHubIssueObservation, ...],
     current_revision: str | None,
+    *,
+    required_completion: int | None = None,
 ) -> tuple[GitHubIssueObservation, ...]:
     qualified: list[GitHubIssueObservation] = []
     for observation in observations:
+        require_completed = observation.issue_number == required_completion
         if observation.change == "unset":
-            qualified.append(observation)
+            qualified.append(
+                replace(observation, current_state_provenance=ObservationProvenance.INDETERMINATE)
+                if require_completed
+                else observation
+            )
             continue
         # Closed Issues without a current routing label are inert historical
         # workflow records.  Their pre-activation terminal evidence may use
@@ -506,7 +534,9 @@ def _qualify_current_observations(
         # current consequence.  Keep the strict qualifier for open routes and
         # closed routing debt so active and premature-close cases still fail
         # closed.
-        if observation.state == "closed" and observation.routing is None:
+        if (
+            observation.state == "closed" and observation.routing is None and not require_completed
+        ):
             qualified.append(observation)
             continue
         comments = _github_issue_comment_pages(
@@ -576,6 +606,7 @@ def _qualify_current_observations(
                 lifecycle_events,
                 current_revision,
                 tuple(authorization_ancestry),
+                require_completed=require_completed,
             )
             if current_revision is not None
             else replace(
@@ -586,46 +617,138 @@ def _qualify_current_observations(
     return tuple(qualified)
 
 
-def _read_maintenance_priority(
-    repository: str, token: str, revision: str
-) -> tuple[int, int] | None:
-    """Read the sole reviewed policy designation at an exact default revision."""
-    payload = _github_get_object(
-        f"https://api.github.com/repos/{repository}/contents/pyproject.toml?ref={revision}",
-        token,
+def _read_blocked_by(
+    repository: str, token: str, issue_number: int
+) -> tuple[Mapping[str, object], ...]:
+    """Read GitHub's native relationship; use the existing paginated GET boundary."""
+    entries: list[Mapping[str, object]] = []
+    page = 1
+    while True:
+        batch = _github_get_list_page(
+            f"https://api.github.com/repos/{repository}/issues/{issue_number}"
+            f"/dependencies/blocked_by?per_page=100&page={page}",
+            token,
+        )
+        entries.extend(batch)
+        if len(batch) < 100:
+            return tuple(entries)
+        page += 1
+
+
+def _maintenance_approval(
+    repository: str,
+    token: str,
+    blocked: GitHubIssueObservation,
+    repair_issue: int | None,
+) -> bool:
+    """Consume the existing exact-ref Human decision predicate; never grant approval."""
+    if not blocked.human_approval_present:
+        return False
+    comments = tuple(
+        decision_comment_from_raw(raw)
+        for raw in _github_issue_comment_pages(repository, token, blocked.issue_number)
+        if isinstance(raw.get("body"), str)
+        and parse_decision_ref(cast(str, raw["body"])) is not None
     )
-    content = payload.get("content")
-    if (
-        payload.get("path") != "pyproject.toml"
-        or payload.get("type") != "file"
-        or payload.get("encoding") != "base64"
-        or not isinstance(content, str)
-    ):
-        raise ValueError("maintenance priority policy content unavailable")
-    raw = base64.b64decode(content.replace("\n", ""), validate=True)
-    if payload.get("size") != len(raw):
-        raise ValueError("maintenance priority policy content incomplete")
-    document = tomllib.loads(raw.decode("utf-8"))
-    tool = document.get("tool", {})
-    project = tool.get("investment-strategy", {})
-    policy = project.get("maintenance-priority")
-    if policy is None:
+    events = tuple(
+        label_event_from_raw(raw)
+        for raw in _github_issue_timeline_pages(repository, token, blocked.issue_number)
+        if raw.get("event") == "labeled"
+        and isinstance(raw.get("label"), Mapping)
+        and cast(Mapping[str, object], raw["label"]).get("name") == APPROVAL_LABEL
+    )
+    if repair_issue is None:
+        # A current approved maintenance decision without its native relation is
+        # contradictory, not permission to silently resume the blocked workflow.
+        prefix = f"issue:{blocked.issue_number}:maintenance-dependency:"
+        refs = tuple(
+            ref
+            for comment in comments
+            if (ref := parse_decision_ref(comment.body)) is not None and ref.startswith(prefix)
+        )
+        return any(
+            is_human_decision_approved(
+                expected_ref=ref,
+                approval_label_present=True,
+                comments=comments,
+                label_events=events,
+            )
+            for ref in refs
+        )
+    return is_human_decision_approved(
+        expected_ref=decision_ref_for_boundary(
+            HumanDecisionBoundary.MAINTENANCE_DEPENDENCY,
+            issue_number=blocked.issue_number,
+            repair_issue_number=repair_issue,
+        ),
+        approval_label_present=True,
+        comments=comments,
+        label_events=events,
+    )
+
+
+def _read_maintenance_priority(
+    repository: str,
+    token: str,
+    observations: tuple[GitHubIssueObservation, ...],
+) -> tuple[int, int] | None:
+    """Reconstruct a bounded authorized dependency, never a configuration override."""
+    formal = tuple(
+        item
+        for item in observations
+        if item.state == "open" and item.change != "unset" and item.routing is not None
+    )
+    if any(item.routing_debt for item in observations) or len(formal) > 2:
         return None
-    if not isinstance(policy, dict) or set(policy) != {"blocked_issue", "repair_issue"}:
-        raise ValueError("maintenance priority policy invalid")
-    blocked = policy["blocked_issue"]
-    repair = policy["repair_issue"]
+    by_number = {item.issue_number: item for item in observations}
+    pairs: list[tuple[int, int]] = []
+    for blocked in formal:
+        entries = _read_blocked_by(repository, token, blocked.issue_number)
+        if not entries:
+            if _maintenance_approval(repository, token, blocked, None):
+                raise ValueError("approved maintenance dependency missing")
+            continue
+        if len(entries) != 1:
+            raise ValueError("maintenance dependency must be unique")
+        entry = entries[0]
+        number = entry.get("number")
+        identity = entry.get("id")
+        if (
+            not isinstance(number, int)
+            or isinstance(number, bool)
+            or number <= 0
+            or number == blocked.issue_number
+            or not isinstance(identity, int)
+            or isinstance(identity, bool)
+            or identity <= 0
+            or entry.get("repository_url") != f"https://api.github.com/repos/{repository}"
+            or "pull_request" in entry
+        ):
+            raise ValueError("maintenance dependency identity invalid")
+        repair = by_number.get(number)
+        if (
+            repair is None
+            or not repair.authoritative
+            or repair.state != entry.get("state")
+            or (repair.state == "open" and repair.routing is None)
+        ):
+            raise ValueError("maintenance dependency observation contradictory")
+        if not _maintenance_approval(repository, token, blocked, number):
+            raise ValueError("maintenance dependency Human authority missing")
+        pairs.append((blocked.issue_number, number))
+    if len(pairs) > 1:
+        raise ValueError("maintenance dependency must be unique")
+    if not pairs:
+        return None
+    pair = pairs[0]
+    repair = by_number[pair[1]]
     if (
-        not isinstance(blocked, int)
-        or isinstance(blocked, bool)
-        or not isinstance(repair, int)
-        or isinstance(repair, bool)
-        or blocked <= 0
-        or repair <= 0
-        or blocked == repair
+        repair.state == "open"
+        and repair not in formal
+        and _read_blocked_by(repository, token, repair.issue_number)
     ):
-        raise ValueError("maintenance priority policy invalid")
-    return blocked, repair
+        raise ValueError("maintenance repair has another dependency")
+    return pair
 
 
 def acquire_current_github_preflight(
@@ -639,16 +762,34 @@ def acquire_current_github_preflight(
     del repository_root
     observations = _normalized_observations(_github_issue_pages(repository, token))
     current_revision = _current_default_branch_revision(repository, token)
-    observations = _qualify_current_observations(repository, token, observations, current_revision)
-    # No exception is possible without competing open routed work and a formal Issue.
-    routed = tuple(
-        item for item in observations if item.state == "open" and item.routing is not None
-    )
-    maintenance_priority = None
-    if len(routed) > 1 and any(item.change != "unset" for item in routed):
+    try:
+        maintenance_priority = _read_maintenance_priority(repository, token, observations)
+    except ValueError:
+        return acquire_dispatch_preflight(
+            observations=observations,
+            source_total_count=len(observations),
+            incomplete_results=False,
+            exhausted=True,
+            human_authorized=False,
+        )
+    required_completion = None
+    if maintenance_priority is not None:
         if current_revision is None:
-            raise ValueError("maintenance priority default revision unavailable")
-        maintenance_priority = _read_maintenance_priority(repository, token, current_revision)
+            return acquire_dispatch_preflight(
+                observations=observations,
+                source_total_count=len(observations),
+                incomplete_results=False,
+                exhausted=True,
+                human_authorized=False,
+            )
+        repair_number = maintenance_priority[1]
+        repair = next(item for item in observations if item.issue_number == repair_number)
+        if repair.state == "closed":
+            required_completion = repair.issue_number
+            maintenance_priority = None
+    observations = _qualify_current_observations(
+        repository, token, observations, current_revision, required_completion=required_completion
+    )
     return acquire_dispatch_preflight(
         observations=observations,
         source_total_count=len(observations),

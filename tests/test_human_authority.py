@@ -87,6 +87,7 @@ def test_normal_direct_propose_human_boundary_is_absent_while_others_remain() ->
     assert set(HumanDecisionBoundary) == {
         HumanDecisionBoundary.ADVISORY_ADMISSION,
         HumanDecisionBoundary.ESCALATION_RESPONSE,
+        HumanDecisionBoundary.MAINTENANCE_DEPENDENCY,
     }
     with pytest.raises(ValueError, match="unmapped Human-reserved boundary"):
         decision_ref_for_boundary("propose-admission", issue_number=47)
@@ -315,3 +316,24 @@ def test_provenance_migration_is_prospective_not_retroactive() -> None:
         in shared
     )
     assert "current applicable\nHuman-authority path" in shared
+
+
+def test_maintenance_dependency_ref_binds_both_distinct_issues() -> None:
+    assert (
+        decision_ref_for_boundary(
+            HumanDecisionBoundary.MAINTENANCE_DEPENDENCY,
+            issue_number=435,
+            repair_issue_number=468,
+        )
+        == "issue:435:maintenance-dependency:468"
+    )
+    with pytest.raises(ValueError):
+        decision_ref_for_boundary(
+            HumanDecisionBoundary.MAINTENANCE_DEPENDENCY,
+            issue_number=435,
+            repair_issue_number=435,
+        )
+    with pytest.raises(ValueError):
+        decision_ref_for_boundary(
+            HumanDecisionBoundary.MAINTENANCE_DEPENDENCY, issue_number=435
+        )

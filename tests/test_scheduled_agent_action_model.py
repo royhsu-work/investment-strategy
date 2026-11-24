@@ -259,7 +259,9 @@ def test_scoped_human_priority_precedes_blocked_without_rewriting_it(
         assert without_policy.issue_number == blocked
     else:
         assert without_policy.reason == "wip-more-than-one"
-    assert select_work(replace(observed, human_authorized=False)).reason == "human-authority-missing"
+    assert (
+        select_work(replace(observed, human_authorized=False)).reason == "human-authority-missing"
+    )
     assert select_work(replace(observed, complete=False)).reason == "observations-unqualified"
     assert (
         select_work(replace(observed, maintenance_priority=(repair, repair))).reason

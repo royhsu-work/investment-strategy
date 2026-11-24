@@ -47,27 +47,36 @@ Selection is complete and provenance-qualified before work is authorized. Formal
 priority over pre-activation work. More than one formal candidate is a WIP=1 violation and fails
 closed. finish-first ordering is deterministic. Closed Issues are not reopened by a normal dispatch.
 
-### Bounded Human-directed maintenance priority
+### Bounded Human-directed maintenance dependency
 
-The sole optional designation is the `[tool.investment-strategy.maintenance-priority]`
-table in default-branch `pyproject.toml`, containing exactly two distinct positive
-Issue numbers: `blocked_issue` and `repair_issue`. Only a separately Human-authorized,
-independently reviewed default-branch amendment may set, replace or remove this
-policy data. Issue prose, labels, workers, transport and unmerged branches cannot
-supply it. Dispatch and Application reauthorization read the designation at the
-current default-branch revision when competing routed work could require it.
-Unavailable or malformed authority cannot authorize work. Absence means ordinary
-selection.
+A single Human-authorized repair may precede its blocked formal workflow.
+The designation is derived afresh from the same-repository GitHub Issue
+`blocked_by` relation, not repository files, Issue prose, worker input or a
+priority queue. The blocked Issue must have the existing reserved Human
+approval capability and provenance-bound decision for the exact reference
+`issue:<blocked>:maintenance-dependency:<repair>`. The relation alone does
+not grant Human authority. A different pair requires its own Human decision,
+not a code, configuration, specification or deployment change.
 
-The existing executable model MAY select the designated repair while exactly the
-designated blocked Issue remains the other open formal Change. This temporary
-two-Issue exception is not a general priority queue, a new Action, or a waiver of
-PROPOSAL_READY or other semantic gates. Only one Action runs per wake. A third
-open formal Issue, closed-routing debt, incomplete evidence, or invalid provenance
-remains fail closed. The blocked Issue's identity, routing, accepted effects and
-recovery obligations are preserved. After the repair retires, ordinary selection
-resumes without rewinding the blocked Issue. No standing authority to select
-another pair is granted.
+The existing selector MAY select only the repair while the blocked Issue
+remains open and formal, with no other formal workflow and no further
+unresolved dependency of the repair. A third formal Issue, multiple or cyclic
+dependencies, missing/contradictory identity, unqualified Human authority,
+closed-routing debt or incomplete reads MUST NOT authorize an exception.
+PROPOSAL_READY, all semantic gates and one Action per wake still apply.
+The blocked Issue's identity, routing, accepted effects and recovery
+obligations remain unchanged. Closure alone does not establish delivery:
+while the relation remains, only qualified formal `finalize-archive` /
+`lifecycle-complete` evidence permits ordinary selection to resume. An
+unsuccessful closure requires a separately authorized correction, not replay.
+Human may retire the resolved designation by removing the relation and its
+approval; an unresolved authorized designation must not silently disappear.
+Dispatch and Application consume the same fresh acquisition and selector.
+No new Action, workflow state, queue, or permission for workers to create
+dependencies or Human approval is introduced. An independent Human-directed
+maintenance release remains the out-of-band repair path when the dispatcher
+itself cannot lawfully select its repair; it does not fabricate normal Actions
+or bypass independent review and release gates.
 
 ## Fresh dispatch and one-wake boundary
 
