@@ -2588,7 +2588,9 @@ def test_unrelated_legacy_ingress_does_not_own_current_occurrence(
     expected = (
         bridge.ApplicationCompletion("NONE", "application-completion-none")
         if admitted
-        else bridge.ApplicationCompletion("INVALID", "application-completion-current-frontier-invalid")
+        else bridge.ApplicationCompletion(
+            "INVALID", "application-completion-current-frontier-invalid"
+        )
     )
     assert completion == expected
 
@@ -2635,7 +2637,9 @@ def test_preactivation_empty_ingress_requires_qualified_frontier(
     expected = (
         bridge.ApplicationCompletion("NONE", "application-completion-none")
         if admission == "valid"
-        else bridge.ApplicationCompletion("INVALID", "application-completion-current-frontier-invalid")
+        else bridge.ApplicationCompletion(
+            "INVALID", "application-completion-current-frontier-invalid"
+        )
     )
     assert completion == expected
 
