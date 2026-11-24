@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 from dataclasses import replace
 
 import pytest
@@ -12,6 +14,7 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     qualify_current_formal_consequence,
 )
 from investment_strategy.scheduled_agent_formal_result import parse_formal_result
+from investment_strategy.scheduled_agent_wire import APPLICATION_DECISION_WIRE
 from investment_strategy.workflow_dispatch import ObservationProvenance
 
 _CHANGE = "qualify-active-formal-consequences"
@@ -1609,3 +1612,193 @@ def test_preactivation_consequence_qualifies_source_and_projection(
             ),
         )
         assert not qualify_current_formal_consequence(wrong_request).qualified
+
+
+@pytest.mark.parametrize("mode", ["current", "pending"])
+@pytest.mark.parametrize("superseded", [False, True])
+def test_preactivation_alternating_recurrence_uses_causal_transitions(
+    mode: str, superseded: bool
+) -> None:
+    """A legal A -> B -> A is not an unbound administrative ABA."""
+    transitions = [
+        ("explore-change", "proposal-ready", "propose-change"),
+        ("propose-change", "research-required", "explore-change"),
+        ("explore-change", "research-required", "explore-change"),
+    ]
+    comments = [
+        _comment(
+            100 + index,
+            role="lead",
+            action=action,
+            result=result,
+            successor=f"lead / {successor}",
+            request_id=900 + index,
+            change="unset",
+        )
+        for index, (action, result, successor) in enumerate(transitions)
+    ]
+    events: list[dict[str, object]] = [
+        {
+            "id": 10,
+            "event": "labeled",
+            "created_at": "2026-09-12T00:00:00Z",
+            "label": {"name": "action:explore-change"},
+        },
+        *_lifecycle_events(comments[:2]),
+        {"id": 102, "event": "commented", "created_at": "2026-09-12T00:00:09Z"},
+        {
+            "id": 200,
+            "event": "labeled",
+            "created_at": "2026-09-12T00:00:10Z",
+            "label": {"name": "human:approved"},
+        },
+    ]
+    if superseded:
+        events.extend(
+            [
+                {
+                    "id": 201,
+                    "event": "unlabeled",
+                    "created_at": "2026-09-12T00:00:11Z",
+                    "label": {"name": "action:explore-change"},
+                },
+                {
+                    "id": 202,
+                    "event": "labeled",
+                    "created_at": "2026-09-12T00:00:12Z",
+                    "label": {"name": "action:propose-change"},
+                },
+                {
+                    "id": 203,
+                    "event": "unlabeled",
+                    "created_at": "2026-09-12T00:00:13Z",
+                    "label": {"name": "action:propose-change"},
+                },
+                {
+                    "id": 204,
+                    "event": "labeled",
+                    "created_at": "2026-09-12T00:00:14Z",
+                    "label": {"name": "action:explore-change"},
+                },
+            ]
+        )
+    route = ("lead", "explore-change")
+    qualification = build_qualification_input(
+        issue_number=229,
+        change="unset",
+        state="open",
+        current_routing=route,
+        comments=comments,
+        current_revision=_REVISION,
+        mode=mode,  # type: ignore[arg-type]
+        expected_routing=route,
+        source_routing=route,
+        expected_result_kind="research-required",
+        expected_application_correlation=(
+            f"application:902:229:unset:lead:explore-change:research-required:{_REVISION}"
+        ),
+        lifecycle_events=events,
+    )
+    assert qualify_current_formal_consequence(qualification).qualified is not superseded
+
+
+@pytest.mark.parametrize(
+    ("evidence", "qualified"),
+    [
+        ("exact", True),
+        ("missing", False),
+        ("foreign", False),
+        ("wrong-request", False),
+        ("wrong-result", False),
+        ("before-admission", False),
+        ("after-result", False),
+        ("duplicate", False),
+    ],
+)
+def test_readmission_requires_exact_accepted_source_boundary(evidence: str, qualified: bool) -> None:
+    """A later equal label cannot retroactively bind an earlier occurrence."""
+    raw = json.dumps(
+        {
+            "issue_number": 229,
+            "role": "lead",
+            "action": "explore-change",
+            "change": "unset",
+            "result_kind": "research-required",
+            "evidence_ref": "source-evidence",
+            "result_content": "bounded research",
+            "requested_effects": [],
+        }
+    )
+    accepted: dict[str, object] = {
+        "id": 50,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {
+            "slug": "chatgpt-codex-connector" if evidence == "foreign" else "github-actions"
+        },
+        "body": APPLICATION_DECISION_WIRE.render(
+            {
+                "Request-Comment": "999" if evidence == "wrong-request" else "900",
+                "Request-Body-SHA256": "f" * 64,
+                "Authorization-Revision": _REVISION,
+                "Issue": "229",
+                "Role": "lead",
+                "Action": "explore-change",
+                "Change": "unset",
+                "Result-Kind": "blocked" if evidence == "wrong-result" else "research-required",
+                "Disposition": "ACCEPTED",
+                "Worker-Result-SHA256": hashlib.sha256(raw.encode()).hexdigest(),
+                "Application-Intent-B64": base64.b64encode(raw.encode()).decode(),
+                "Reason": "accepted",
+            }
+        ),
+    }
+    formal = _comment(
+        100,
+        role="lead",
+        action="explore-change",
+        result="research-required",
+        successor="lead / explore-change",
+        request_id=900,
+        change="unset",
+    )
+    events: list[dict[str, object]] = [
+        {
+            "id": 10,
+            "event": "labeled",
+            "created_at": "2026-09-12T00:00:00Z",
+            "label": {"name": "action:explore-change"},
+        },
+        {
+            "id": 11,
+            "event": "unlabeled",
+            "created_at": "2026-09-12T00:00:02Z",
+            "label": {"name": "action:explore-change"},
+        },
+        {
+            "id": 12,
+            "event": "labeled",
+            "created_at": "2026-09-12T00:00:03Z",
+            "label": {"name": "action:explore-change"},
+        },
+        {"id": 100, "event": "commented", "created_at": "2026-09-12T00:00:05Z"},
+    ]
+    comments = [formal]
+    if evidence != "missing":
+        comments.append(accepted)
+        second = {"before-admission": 1, "after-result": 6}.get(evidence, 4)
+        events.append(
+            {"id": 50, "event": "commented", "created_at": f"2026-09-12T00:00:{second:02d}Z"}
+        )
+    if evidence == "duplicate":
+        comments.append({**accepted, "id": 51})
+        events.append({"id": 51, "event": "commented", "created_at": "2026-09-12T00:00:04Z"})
+    qualification = build_qualification_input(
+        issue_number=229,
+        change="unset",
+        state="open",
+        current_routing=("lead", "explore-change"),
+        comments=comments,
+        current_revision=_REVISION,
+        lifecycle_events=events,
+    )
+    assert qualify_current_formal_consequence(qualification).qualified is qualified
