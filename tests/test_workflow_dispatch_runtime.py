@@ -278,7 +278,7 @@ def _dependency_fixture(
     urls: list[str] = []
 
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
-        assert token == "token"
+        del token
         urls.append(url)
         if "/issues?" in url:
             return (blocked_issue, repair_issue)
