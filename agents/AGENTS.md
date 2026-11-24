@@ -109,7 +109,8 @@ The successor is only eligible for a later fresh wake, even when its derived Rol
 A worker cannot select an Issue, Role, Action, target, successor, retry, or success. The application
 derives those facts from current state and the executable model.
 
-The normal path has no second lifecycle graph, generic orchestration kernel, hidden progress state,
+The normal path has no second workflow graph for lifecycle transitions, generic orchestration kernel,
+hidden progress state,
 lock/lease/retry counter, timer, or mailbox authority. A failed or incomplete Action returns its
 bounded legal result and is reconstructed from current state on the next wake.
 

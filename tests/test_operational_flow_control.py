@@ -14,8 +14,9 @@ def test_dispatch_selection_is_complete_wip_ordered_and_fail_closed() -> None:
     workflow = _normalized(ROOT / "agents/workflow.md")
     for required in (
         "Selection is complete and provenance-qualified",
-        "Formal Change work has priority",
-        "WIP=1 violation",
+        "From the runnable set choose exactly one Action by existing formal-first policy",
+        "WIP=1 bounds the execution selection, not the number of unfinished formal Changes",
+        "Suspended work consumes no execution slot",
         "Finish-first ordering is deterministic",
         "fail closed",
         "one Action per Scheduled Task wake",

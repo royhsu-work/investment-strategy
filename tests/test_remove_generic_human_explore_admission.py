@@ -31,8 +31,10 @@ def _governance() -> str:
 def test_pre_activation_queue_is_action_only_and_bounded() -> None:
     text = _governance()
     assert "bounded pre-activation Actions" in text
-    assert "Formal Change work has priority over pre-activation work" in text
-    assert "WIP=1 violation" in text
+    assert "From the runnable set choose exactly one Action by existing formal-first policy" in text
+    assert "WIP=1 bounds the execution selection, not the number of unfinished formal Changes" in text
+    assert "Suspended work consumes no execution slot" in text
+    assert "WIP=1 violation" not in text
     assert "Historical role labels" in text
 
 

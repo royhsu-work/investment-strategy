@@ -68,7 +68,7 @@ class RepositoryIssueSnapshot:
 
 @dataclass(frozen=True)
 class EnumerationEvidence:
-    """Completeness and provenance for one Issue enumeration."""
+    """Structural completeness and provenance, independent of formal frontier proof."""
 
     observed_count: int
     source_total_count: int | None
@@ -256,10 +256,7 @@ def pending_continuation_candidate(
         or decision.reason != "observations-unqualified"
         or preflight.human_authorized is not True
         or preflight.dependencies is None
-        or enumeration.incomplete_results
-        or not enumeration.exhausted
-        or enumeration.source_total_count is None
-        or enumeration.observed_count != enumeration.source_total_count
+        or not enumeration.complete
     ):
         return None
     pending = tuple(
@@ -280,7 +277,6 @@ def pending_continuation_candidate(
             else issue
             for issue in preflight.issues
         ),
-        enumeration=replace(enumeration, observation_provenance=ObservationProvenance.QUALIFIED),
     )
     if action_entry_authorized(hypothetical, source.issue_number, source.routing):
         return source

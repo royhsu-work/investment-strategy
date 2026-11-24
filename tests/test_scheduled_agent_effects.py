@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import json
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from email.message import Message
 from io import BytesIO
 from types import SimpleNamespace
@@ -5098,6 +5099,14 @@ def test_pending_accepted_continuation_cannot_bypass_selected_runnable_work() ->
         dependencies=((999, (None,)),),
     )
     assert effects._pending_continuation_is_eligible(suspended_competitor, source, _CHANGE)
+    incomplete_source = acquire_dispatch_preflight(
+        observations=(replace(observations[0], authoritative=False), observations[1]),
+        source_total_count=2,
+        incomplete_results=False,
+        exhausted=True,
+        dependencies=((999, (None,)),),
+    )
+    assert not effects._pending_continuation_is_eligible(incomplete_source, source, _CHANGE)
     suspended_source = acquire_dispatch_preflight(
         observations=observations,
         source_total_count=2,

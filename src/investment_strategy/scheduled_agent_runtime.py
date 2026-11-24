@@ -130,11 +130,7 @@ def acquire_dispatch_preflight(
             exhausted=exhausted,
             observation_provenance=(
                 ObservationProvenance.QUALIFIED
-                if all(
-                    observation.authoritative
-                    and observation.current_state_provenance is ObservationProvenance.QUALIFIED
-                    for observation in observations
-                )
+                if all(observation.authoritative for observation in observations)
                 else ObservationProvenance.INDETERMINATE
             ),
         ),
