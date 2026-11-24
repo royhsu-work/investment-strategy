@@ -8136,3 +8136,135 @@ def test_fresh_review_ingress_cannot_supply_legacy_formal_projection() -> None:
             repository=_REPOSITORY,
             current_revision=_REVISION,
         )
+
+
+@pytest.mark.parametrize("case", ["bookkeeping", "code-only", "material", "diverged", "incomplete"])
+def test_semantic_review_preserves_actual_revision_across_nonsemantic_descendants(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    from investment_strategy import scheduled_agent_validation_resource as resource
+
+    reviewed, head = "c" * 40, "b" * 40
+    task_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    source = WorkerRequest(138, "reviewer", "review-openspec")
+    monkeypatch.setattr(bridge, "_machine_carrier_head", lambda **_kwargs: head)
+
+    def read(_repo: str, _token: str, path: str, **_kwargs: object) -> object:
+        if path == f"compare/{reviewed}...{head}":
+            return {
+                "status": "diverged" if case == "diverged" else "ahead",
+                "base_commit": {"sha": reviewed},
+                "ahead_by": 1,
+                "behind_by": 1 if case == "diverged" else 0,
+                "files": None if case == "incomplete" else [
+                    {
+                        "filename": "src/example.py" if case == "code-only" else task_path,
+                        "status": "modified",
+                    }
+                ],
+            }
+        if path.startswith(f"contents/{task_path}?ref="):
+            revision = path.rsplit("=", 1)[1]
+            content = "- [ ] 1.1 Preserve intent\n" if revision == reviewed else (
+                "- [x] 1.1 Changed intent\n" if case == "material"
+                else "- [x] 1.1 Preserve intent\n"
+            )
+            return {"content": base64.b64encode(content.encode()).decode(), "encoding": "base64"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(resource, "_github_json", read)
+    raw = json.dumps(
+        {
+            "_semantic_intent_version": 2,
+            "result_kind": "pass",
+            "evidence_ref": f"https://github.com/{_REPOSITORY}/commit/{reviewed}",
+            "result_content": "independent semantic review",
+            "requested_effects": [],
+        }
+    )
+
+    def project() -> str:
+        return bridge._fresh_application_worker_result(
+            raw,
+            source=source,
+            change=_CHANGE,
+            repository=_REPOSITORY,
+            token=_REVISION,
+            current_revision=_REVISION,
+            default_branch="main",
+            request_comment_id=777,
+        )
+
+    if case not in {"bookkeeping", "code-only"}:
+        with pytest.raises(RuntimeError, match="review target"):
+            project()
+        return
+    result = bridge.parse_worker_result(project(), source, authorized_change=_CHANGE)
+    formal = bridge._formal_result_body(result, source=source)
+    assert formal is not None
+    assert bridge._field(formal, "Revision") == reviewed
+    assert bridge._field(formal, "Default-Branch-Revision") == _REVISION
+
+
+@pytest.mark.parametrize("case", ["valid", "missing-pr", "wrong-repository", "wrong-issue", "wrong-head"])
+def test_archive_findings_require_exact_carrier_identity(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    source = WorkerRequest(138, "reviewer", "review-archive")
+    head = "b" * 40
+    branch = bridge._archive_branch(_CHANGE)
+    assert branch is not None
+
+    def read(_repo: str, _token: str, path: str, **_kwargs: object) -> object:
+        if path == f"git/ref/heads/{branch}":
+            return {"object": {"sha": head}}
+        if path.startswith("pulls?"):
+            return [] if case == "missing-pr" else [{"number": 401}]
+        if path == "pulls/401":
+            return {
+                "number": 401,
+                "state": "open",
+                "merged": False,
+                "draft": False,
+                "title": f"Archive OpenSpec change {_CHANGE}",
+                "body": "Refs #999" if case == "wrong-issue" else "Refs #138",
+                "head": {
+                    "ref": branch,
+                    "sha": "c" * 40 if case == "wrong-head" else head,
+                    "repo": {"full_name": "other/repo" if case == "wrong-repository" else _REPOSITORY},
+                },
+                "base": {"ref": "main", "sha": _REVISION, "repo": {"full_name": _REPOSITORY}},
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_github_json", read)
+    raw = json.dumps(
+        {
+            "_semantic_intent_version": 2,
+            "result_kind": "findings",
+            "evidence_ref": f"https://github.com/{_REPOSITORY}/commit/{head}",
+            "result_content": "archive findings",
+            "requested_effects": [],
+        }
+    )
+
+    def project() -> str:
+        return bridge._fresh_application_worker_result(
+            raw,
+            source=source,
+            change=_CHANGE,
+            repository=_REPOSITORY,
+            token=_REVISION,
+            current_revision=_REVISION,
+            default_branch="main",
+            request_comment_id=777,
+        )
+
+    if case != "valid":
+        with pytest.raises(RuntimeError, match="review target"):
+            project()
+        return
+    result = bridge.parse_worker_result(project(), source, authorized_change=_CHANGE)
+    formal = bridge._formal_result_body(result, source=source)
+    assert formal is not None
+    assert bridge._field(formal, "Revision") == head
