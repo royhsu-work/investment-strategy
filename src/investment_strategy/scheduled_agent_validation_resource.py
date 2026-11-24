@@ -1399,6 +1399,37 @@ def _ancestor_comparison_paths(
     )
 
 
+def openspec_review_revision_applies(
+    repository: str,
+    token: str,
+    *,
+    change: str,
+    reviewed_revision: str,
+    head_revision: str,
+) -> bool:
+    """Reuse ancestry and monotonic task-marker proof for semantic review applicability."""
+
+    if not _valid_sha(reviewed_revision) or not _valid_sha(head_revision):
+        return False
+    if reviewed_revision == head_revision:
+        return True
+    task_path = f"openspec/changes/{change}/tasks.md"
+    try:
+        paths = _ancestor_comparison_paths(
+            repository, token, base_sha=reviewed_revision, revision=head_revision
+        )
+        semantic_paths = {path for path in paths if path.startswith("openspec/")}
+        if not semantic_paths:
+            return True
+        if semantic_paths != {task_path}:
+            return False
+        reviewed = _content_text_at(repository, token, path=task_path, revision=reviewed_revision)
+        current = _content_text_at(repository, token, path=task_path, revision=head_revision)
+        return _task_marker_update_is_monotonic(reviewed, current)
+    except (HTTPError, OSError, RuntimeError, ValueError):
+        return False
+
+
 def _safe_historical_carrier_reconciliation(
     repository: str,
     token: str,

@@ -1126,8 +1126,34 @@ def archive_pr_readiness_complete(
     if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
         return False
     pull_request = _github_json(repository, token, f"pulls/{number}")
-    if not isinstance(pull_request, Mapping):
-        return False
+    return (
+        isinstance(pull_request, Mapping)
+        and pull_request.get("number") == number
+        and pull_request.get("draft") is False
+        and archive_pr_identity_matches(
+            pull_request,
+            repository=repository,
+            issue_number=issue_number,
+            change=change,
+            branch=branch,
+            branch_sha=cast(str, branch_sha),
+            default_branch=cast(str, default_branch),
+        )
+    )
+
+
+def archive_pr_identity_matches(
+    pull_request: Mapping[str, object],
+    *,
+    repository: str,
+    issue_number: int,
+    change: str,
+    branch: str,
+    branch_sha: str,
+    default_branch: str,
+) -> bool:
+    """Qualify the Archive carrier identity independently of source readiness."""
+
     head = pull_request.get("head")
     base = pull_request.get("base")
     if not isinstance(head, Mapping) or not isinstance(base, Mapping):
@@ -1135,7 +1161,6 @@ def archive_pr_readiness_complete(
     return (
         pull_request.get("state") == "open"
         and pull_request.get("merged") is not True
-        and pull_request.get("draft") is False
         and pull_request.get("title") == f"Archive OpenSpec change {change}"
         and _references_issue(pull_request.get("body"), issue_number)
         and head.get("ref") == branch
@@ -2194,7 +2219,7 @@ class GitHubEffectAdapter:
             # carrier predicate below is proven.  Keep this bounded reader
             # compatibility while migration envelopes drain.
             return True
-        if spec.evidence_target is EvidenceTarget.ARCHIVE_PR_HEAD:
+        if spec.completion_predicate == "archive-pr-successor-ready":
             return archive_pr_readiness_complete(
                 repository=self.repository,
                 token=self.token,
@@ -4526,7 +4551,7 @@ def consequence_postconditions_complete(
                 or not _valid_sha(correlation_fields[7])
             ):
                 return False
-        if spec.evidence_target is EvidenceTarget.ARCHIVE_PR_HEAD:
+        if spec.completion_predicate == "archive-pr-successor-ready":
             return archive_pr_readiness_complete(
                 repository=repository,
                 token=token,
