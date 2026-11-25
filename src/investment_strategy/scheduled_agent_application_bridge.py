@@ -115,7 +115,10 @@ from investment_strategy.scheduled_agent_runtime import (
     normalize_github_issue,
 )
 from investment_strategy.scheduled_agent_validation_resource import (
+    NativeValidationAssessment,
+    NativeValidationObservation,
     ValidationResourceTarget,
+    assess_development_quality,
     openspec_review_revision_applies,
 )
 from investment_strategy.scheduled_agent_wire import (
@@ -1409,6 +1412,89 @@ def _qualified_physical_original_accepted_effects(
     ):
         return None
     return physical
+
+
+def accepted_development_request(
+    record: ApplicationDecisionRecord, source: WorkerRequest
+) -> bool:
+    """Recognize only the already-defined physical-only development consequence."""
+
+    if record.disposition != "ACCEPTED" or record.result_kind != "more-implementation-required":
+        return False
+    try:
+        batch = parse_effect_batch(
+            record.raw_worker_result, source, authorized_change=record.change
+        )
+        return batch.development_materialization() is not None
+    except (TypeError, ValueError):
+        return False
+
+
+def observe_accepted_development_verification(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+    read: Callable[[str, str, str], object],
+) -> NativeValidationAssessment | None:
+    """Reconstruct one settled physical development attempt from its immutable source.
+
+    None leaves ordinary completion/recovery ownership unchanged. A verdict
+    never authorizes materialization, formal result, checkpoint, or routing.
+    """
+
+    if record.disposition != "ACCEPTED" or (
+        record.issue_number, record.role, record.action
+    ) != (source.issue_number, source.role, source.action):
+        return None
+    accepted = parse_effect_batch(record.raw_worker_result, source, authorized_change=record.change)
+    request = accepted.development_materialization()
+    if request is None:
+        return None
+    unknown = NativeValidationAssessment(NativeValidationObservation("UNKNOWN"))
+    if record.worker_result_sha256 != hashlib.sha256(record.raw_worker_result.encode()).hexdigest():
+        return unknown
+    try:
+        original = _qualified_physical_original_accepted_effects(
+            record=record, source=source, repository=repository, token=token, read=read
+        )
+        if original is None or original.development_materialization() != request:
+            return unknown
+        payload = json.loads(original.effects[0].payload_json)
+        if not isinstance(payload, Mapping):
+            return unknown
+        proof = prove_materialization(
+            payload,
+            source,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            accepted_authorization_revision=record.authorization_revision,
+            allow_pending_continuation=True,
+            accepted_intent=True,
+        )
+        if proof.disposition != "COMPLETE" or proof.witness is None or proof.target is None:
+            # Unsettled physical effects remain under their existing recovery owner.
+            return None
+        target = replace(proof.target, revision=proof.witness.revision)
+        if target.branch != request.branch or target.change != record.change:
+            return unknown
+        return assess_development_quality(
+            target,
+            source,
+            record.request_comment_id,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            current_target=proof.target.revision == proof.witness.revision,
+            read=read,
+        )
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return unknown
 
 
 def _verified_zero_original_accepted_effects(

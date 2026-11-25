@@ -44,6 +44,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _materialization_effects,
     _qualified_accepted_original_effects,
     _qualified_physical_original_accepted_effects,
+    accepted_development_request,
     application_artifact_stage,
     application_continuation_correlation,
     canonicalize_raw_worker_result,
@@ -51,6 +52,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     classify_application_exception_recovery,
     classify_post_effect_result_recovery,
     dispatch_correlation_for,
+    observe_accepted_development_verification,
     parse_application_continuation_request,
     parse_application_request,
     read_application_exception_artifact,
@@ -116,6 +118,7 @@ from investment_strategy.scheduled_agent_runtime import (
     is_github_actions_comment,
     normalize_github_issue,
 )
+from investment_strategy.scheduled_agent_validation_resource import NativeValidationInvocation
 from investment_strategy.scheduled_agent_wire import RUNTIME_REPAIR_REQUEST_WIRE
 from investment_strategy.scheduled_agent_worker import (
     WorkerActionResult,
@@ -187,6 +190,7 @@ class ApplicationCompletion:
     # Application-owned exact accepted-source proof, not Bridge-local history.
     accepted_record: ApplicationDecisionRecord | None = None
     accepted_decision_sha256: str | None = None
+    validation_invocation: NativeValidationInvocation | None = None
 
 
 # The canonical proof owns permission. This Bridge-only table preserves the
@@ -5375,11 +5379,106 @@ def qualify_application_completion(
         ]
         current_request_ids.difference_update(aborted_ids)
     accepted = [record for record in relevant_decisions if record.disposition == "ACCEPTED"]
-    accepted_request_ids = {record.request_comment_id for record in accepted}
     if conflicting_decision_ids.intersection(
         record.request_comment_id for record in relevant_decisions
     ):
         return ApplicationCompletion("INVALID", "application-completion-preaccept-evidence-unknown")
+
+    # Retire only physically settled development attempts with qualified terminal
+    # CI. Their immutable acceptance and history remain intact. This happens before
+    # accepted-owner cardinality reduction, not as a formal Action transition.
+    development_pending: dict[int, ApplicationCompletion] = {}
+    settled: set[int] = set()
+    for record in accepted:
+        if (
+            not accepted_development_request(record, source)
+            or _accepted_decision_sha256(record, issue_comments) is None
+            or _authorization_ancestry(
+                repository,
+                token,
+                authorization_revision=record.authorization_revision,
+                current_revision=current_revision,
+                read=read,
+            )
+            is None
+            or any(
+                isinstance(comment.get("body"), str)
+                and cast(str, comment["body"]).splitlines()[:1]
+                in (["ACTION_RESULT"], ["SLICE_CHECKPOINT"])
+                and f"application:{record.request_comment_id}:{source.issue_number}:"
+                in cast(str, comment["body"])
+                for comment in issue_comments
+            )
+        ):
+            continue
+        leaf_ids = _continuation_transport_comment_ids(
+            repository=repository,
+            owner=owner,
+            token=token,
+            read=read,
+            source=source,
+            record=record,
+            issue_comments=issue_comments,
+            recent_comments=recent,
+        )
+        # A continuation may still own a physical write. Leave its existing
+        # recovery path intact until the complete transport chain is settled.
+        if leaf_ids is None or leaf_ids:
+            continue
+        runs = _application_runs(repository, token, record.request_comment_id, read=read)
+        if runs is None or len(runs) != 1 or runs[0].get("status") != "completed":
+            continue
+        run = runs[0]
+        run_repo = run.get("repository")
+        if (
+            run.get("event") != "issue_comment"
+            or run.get("path") != f".github/workflows/{_APPLICATION_WORKFLOW}"
+            or not isinstance(run_repo, Mapping)
+            or run_repo.get("full_name") != repository
+        ):
+            continue
+        run_id = _positive_int(run.get("id"))
+        run_attempt = _positive_int(runs[0].get("run_attempt"))
+        if run_id is None or run_attempt is None:
+            continue
+        jobs = github_complete_run_jobs(
+            repository, token, run_id=run_id, run_attempt=run_attempt, read=read
+        )
+        job = None if jobs is None else jobs.single_apply
+        if job is None or job.status != "completed":
+            continue
+        repository_info = read(repository, token, "")
+        default_branch = (
+            repository_info.get("default_branch")
+            if isinstance(repository_info, Mapping)
+            else None
+        )
+        if not isinstance(default_branch, str):
+            continue
+        verification = observe_accepted_development_verification(
+            record=record,
+            source=source,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            read=read,
+        )
+        if verification is None:
+            continue
+        if verification.observation.verdict in {"PASS", "FAIL"}:
+            settled.add(record.request_comment_id)
+        else:
+            development_pending[record.request_comment_id] = ApplicationCompletion(
+                "RESUMABLE",
+                "application-completion-development-verification-"
+                + verification.observation.verdict.lower().replace("_", "-"),
+                request_comment_id=record.request_comment_id,
+                validation_invocation=verification.invocation,
+            )
+    accepted = [record for record in accepted if record.request_comment_id not in settled]
+    current_request_ids.difference_update(settled)
+    accepted_request_ids = {record.request_comment_id for record in accepted}
     frontier_correlation = (
         None
         if frontier is None or frontier.event is None
@@ -5511,6 +5610,8 @@ def qualify_application_completion(
     # edited or deleted after ACCEPT, do not parse its new text and do not
     # replay worker semantics; the exact accepted record remains the only
     # resumable payload.
+    if record.request_comment_id in development_pending:
+        return development_pending[record.request_comment_id]
     return accepted_state(record, source)
 
 
@@ -6247,6 +6348,46 @@ def main() -> int:
                     f"issue-{source.issue_number}:{source.action}",
                 )
         continuation_body = None
+        if (
+            completion.validation_invocation is not None
+            and source is not None
+            and decision.disposition == "AUTHORIZE"
+            and decision.selected_issue_id == source.issue_number
+            and decision.selected_routing == (source.role, source.action)
+        ):
+            # Verification is a read-only native CI obligation, not a worker
+            # Action. Reconstruct source, exact target and inventory immediately
+            # before the existing Actions-write transport actuates it.
+            try:
+                fresh = classify_dispatch(acquire_current_github_preflight(repository, token))
+                rechecked = qualify_application_completion(
+                    repository,
+                    token,
+                    source=source,
+                    current_revision=args.revision,
+                    current_dispatch_request_comment_id=identity[1],
+                    current_dispatch_issue_number=identity[0],
+                )
+                invocation = completion.validation_invocation
+                if (
+                    fresh.disposition == "AUTHORIZE"
+                    and fresh.selected_issue_id == source.issue_number
+                    and fresh.selected_routing == (source.role, source.action)
+                    and rechecked.validation_invocation == invocation
+                ):
+                    try:
+                        _application_github_json(
+                            repository,
+                            token,
+                            f"actions/workflows/{invocation.obligation.gate.workflow}/dispatches",
+                            method="POST",
+                            payload=invocation.payload(),
+                        )
+                    finally:
+                        # A lost response is observed, never blindly retried.
+                        invocation.obligation.observe(token)
+            except (OSError, RuntimeError, ValueError, TypeError):
+                pass
         if completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
             if (
                 completion.reason

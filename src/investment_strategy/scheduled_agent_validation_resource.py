@@ -442,6 +442,86 @@ class NativeValidationInvocation:
         return {"ref": self.obligation.definition_branch, "inputs": inputs}
 
 
+@dataclass(frozen=True)
+class NativeValidationAssessment:
+    """Fresh evidence and, only for an outstanding gate, its necessary invocation."""
+
+    observation: NativeValidationObservation
+    invocation: NativeValidationInvocation | None = None
+
+
+def assess_development_quality(
+    target: ValidationResourceTarget,
+    source: WorkerRequest,
+    request_comment_id: int,
+    *,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+    current_target: bool,
+    read: Callable[[str, str, str], object] | None = None,
+) -> NativeValidationAssessment:
+    """Consume the native candidate verdict or derive the same gate's invocation.
+
+    Caller must first qualify the exact settled materialization and current
+    accepted source. No candidate content or worker-supplied workflow is authority.
+    """
+
+    unknown = NativeValidationAssessment(NativeValidationObservation("UNKNOWN"))
+    if target.branch is None or not _valid_sha(current_revision):
+        return unknown
+    try:
+        path = f".github/workflows/{QUALITY_GATE.workflow}"
+        candidate_blob = _content_sha_at(
+            target.repository, token, path=path, revision=target.revision
+        )
+        baseline_blob = _content_sha_at(
+            target.repository, token, path=path, revision=current_revision
+        )
+        if candidate_blob is None or baseline_blob is None:
+            return unknown
+        unchanged = candidate_blob == baseline_blob
+        obligation = NativeValidationObligation(
+            QUALITY_GATE,
+            target,
+            source,
+            request_comment_id,
+            current_revision if unchanged else target.revision,
+            default_branch if unchanged else target.branch,
+        )
+        push = observe_native_validation(
+            target.repository,
+            token,
+            gate=QUALITY_GATE,
+            revision=target.revision,
+            definition_revision=target.revision,
+            definition_branch=target.branch,
+            read=read,
+        )
+        dispatched = obligation.observe(token, read=read)
+        observations = (push, dispatched)
+        verdicts = {observation.verdict for observation in observations}
+        attempts = tuple(
+            sorted({attempt for observation in observations for attempt in observation.attempts})
+        )
+        if "UNKNOWN" in verdicts or {"PASS", "FAIL"} <= verdicts:
+            return NativeValidationAssessment(NativeValidationObservation("UNKNOWN", attempts))
+        if "PENDING" in verdicts:
+            return NativeValidationAssessment(NativeValidationObservation("PENDING", attempts))
+        if "PASS" in verdicts:
+            return NativeValidationAssessment(NativeValidationObservation("PASS", attempts))
+        if "FAIL" in verdicts:
+            return NativeValidationAssessment(NativeValidationObservation("FAIL", attempts))
+        observation = NativeValidationObservation(
+            "NO_VERDICT" if "NO_VERDICT" in verdicts else "MISSING", attempts
+        )
+        return NativeValidationAssessment(
+            observation, obligation.invocation(observation) if current_target else None
+        )
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return unknown
+
+
 def native_development_quality_passed(
     repository: str,
     token: str,
