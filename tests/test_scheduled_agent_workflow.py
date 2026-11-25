@@ -33,4 +33,10 @@ def test_workflow_document_is_a_human_projection_of_the_action_model() -> None:
 def test_quality_workflow_checks_the_exact_pull_request_head() -> None:
     workflow = Path(".github/workflows/quality.yml").read_text(encoding="utf-8")
 
-    assert "ref: ${{ github.event.pull_request.head.sha || github.sha }}" in workflow
+    assert (
+        "TARGET_REVISION: $" + "{{ inputs.target_revision || github.event.pull_request.head.sha || "
+        "github.sha }}"
+    ) in workflow
+    assert "ref: $" + "{{ env.TARGET_REVISION }}" in workflow
+    assert 'test "$actual" = "$TARGET_REVISION"' in workflow
+    assert workflow.index("Verify exact checkout") < workflow.index("Run tests")

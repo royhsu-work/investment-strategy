@@ -2057,6 +2057,8 @@ def test_preaccept_exception_blocks_unchanged_code_but_recovers_after_applicatio
         ("nested-raw-invalid", "TERMINAL_NO_ACCEPT"),
         ("nested-raw-unknown-write", "INVALID"),
         ("nested-raw-valid", "NEEDS_REPAIR"),
+        ("edited-original", "INVALID"),
+        ("unavailable-original", "INVALID"),
         ("valid-worker", "NEEDS_REPAIR"),
         ("wrong-head", "NEEDS_REPAIR"),
         ("missing-stage", "NEEDS_REPAIR"),
@@ -2209,6 +2211,18 @@ def test_native_malformed_worker_preaccept_exception_retires_without_main_advanc
             }
         if path == "issues/322":
             return current_issue
+        if path == "issues/comments/6710179912":
+            if case == "unavailable-original":
+                return None
+            return {
+                **request,
+                "body": candidate.body,
+                "updated_at": (
+                    "2026-11-07T16:51:33Z"
+                    if case == "edited-original"
+                    else candidate.created_at
+                ),
+            }
         raise AssertionError(path)
 
     raw_wire = case.startswith("nested-raw-")

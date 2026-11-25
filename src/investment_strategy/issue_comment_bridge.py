@@ -47,6 +47,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _qualified_physical_original_accepted_effects,
     application_artifact_stage,
     application_continuation_correlation,
+    canonicalize_raw_worker_result,
     classify_accepted_read_only_effects,
     classify_application_exception_recovery,
     classify_post_effect_result_recovery,
@@ -56,6 +57,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     read_application_exception_artifact,
     read_application_recovery_artifact,
     render_application_continuation_request,
+    render_application_request,
 )
 from investment_strategy.scheduled_agent_application_bridge import (
     _github_json as _application_github_json,
@@ -4081,20 +4083,24 @@ def _preaccept_exception_repair_status(
         return "INVALID"
     _recorded_run_id, original_revision = attempts[max(attempts)]
 
-    # A deterministic typed-input rejection is terminal even on unchanged
-    # application code.  This is narrower than repairing a valid worker result:
-    # it needs the original immutable request, the current authoritative source,
-    # every native attempt's pre-ACCEPT/zero-write evidence and the same parser
-    # that rejected the payload.  The caller has already ruled out ACCEPTED.
+    # An immutable, fully qualified invalid input can be retired without a
+    # code advance. Reuse the admission parser for each physical wire rather
+    # than comparing diagnostics or validating only the semantic JSON fields.
     if candidate is not None and current_issue is not None:
         request = candidate.request
         body = candidate.body
         observed = normalize_github_issue(current_issue)
-        if (
+        raw_transport = body is not None and body.startswith("WORKER_RESULT\n")
+        legacy_bound = (
             request is not None
-            and body is not None
-            and candidate.request_comment_id == request_comment_id
             and request.authorization_revision == original_revision
+            and request.dispatch_correlation
+            == dispatch_correlation_for(repository, source, original_revision)
+        )
+        if (
+            body is not None
+            and (raw_transport or legacy_bound)
+            and candidate.request_comment_id == request_comment_id
             and run.get("head_sha") == original_revision
             and observed is not None
             and observed.authoritative
@@ -4102,16 +4108,9 @@ def _preaccept_exception_repair_status(
             and observed.issue_number == source.issue_number
             and observed.routing == (source.role, source.action)
             and isinstance(observed.change, str)
-            and observed.change not in {"", "unset"}
-            and request.dispatch_correlation
-            == dispatch_correlation_for(repository, source, original_revision)
+            and bool(observed.change)
             and set(attempts) == set(range(1, latest_attempt + 1))
-        ):
-            try:
-                original_request = parse_application_request(body)
-            except ValueError:
-                original_request = None
-            if original_request == request and all(
+            and all(
                 one(cast(str, comment["body"]), "Revision: ") == original_revision
                 and one(cast(str, comment["body"]), "Result: ") == "execution-exception"
                 and one(cast(str, comment["body"]), "Change: ") == observed.change
@@ -4120,19 +4119,59 @@ def _preaccept_exception_repair_status(
                 and one(cast(str, comment["body"]), "Unfinished-Work: ")
                 == "pre-accept-worker-result-qualification"
                 for comment in matches
+            )
+        ):
+            # The run name/request ID binds the native attempt to the original
+            # connector comment. A current edited copy is not immutable input.
+            try:
+                original = read(repository, token, f"issues/comments/{request_comment_id}")
+            except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+                return "INVALID"
+            if (
+                not isinstance(original, Mapping)
+                or original.get("id") != request_comment_id
+                or original.get("body") != body
+                or not _trusted_connector_comment(original, repository.split("/", 1)[0])
+                or candidate.created_at is None
+                or original.get("created_at") != candidate.created_at
+                or original.get("updated_at") != candidate.created_at
             ):
+                return "INVALID"
+            for attempt in range(1, latest_attempt + 1):
+                inventory = github_complete_run_jobs(
+                    repository, token, run_id=attempts[attempt][0], run_attempt=attempt, read=read
+                )
+                job = None if inventory is None else inventory.single_apply
+                if (
+                    job is None
+                    or job.status != "completed"
+                    or job.conclusion not in _TERMINAL_NO_ACCEPT_CONCLUSIONS
+                ):
+                    return "INVALID"
+            if raw_transport:
                 try:
-                    parse_worker_result(
-                        request.raw_worker_result,
-                        source,
+                    canonicalize_raw_worker_result(
+                        body=body,
+                        source=source,
                         authorized_change=observed.change,
+                        repository=repository,
+                        current_revision=original_revision,
                     )
-                except ValueError as exc:
-                    if all(
-                        one(cast(str, comment["body"]), "Raw-Error: ") == str(exc)
-                        for comment in matches
-                    ):
-                        return "TERMINAL_INVALID_INPUT"
+                except ValueError:
+                    return "TERMINAL_INVALID_INPUT"
+            elif request is not None:
+                try:
+                    original_request = parse_application_request(body)
+                except ValueError:
+                    return "INVALID"
+                if original_request != request:
+                    return "INVALID"
+                try:
+                    render_application_request(
+                        request, source=source, authorized_change=observed.change
+                    )
+                except ValueError:
+                    return "TERMINAL_INVALID_INPUT"
 
     if original_revision == current_revision:
         return "BLOCKED"
