@@ -6113,3 +6113,49 @@ def test_development_materialization_has_no_checkpoint_or_routing_authority() ->
     )
     assert not refused.applied
     assert applied == list(batch.effects)
+
+
+def test_marker_only_checkpoint_requires_verified_development_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid task delta does not establish that the preceding code passed CI."""
+
+    source = WorkerRequest(138, "executor", "implement-change")
+    payload = json.loads(_implementation_checkpoint_effects()[0]["payload_json"])
+    payload["files"] = [
+        {
+            "path": f"openspec/changes/{payload['change']}/tasks.md",
+            "blob_sha": "d" * 40,
+            "expected_sha": "e" * 40,
+        }
+    ]
+    request = effects.find_materialization_payload(payload, source)
+    assert request is not None
+    monkeypatch.setattr(
+        effects,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: SimpleNamespace(
+            disposition="QUALIFIED", branch=request.branch, head_sha=request.base_sha
+        ),
+    )
+    monkeypatch.setattr(effects, "task_checkpoint_is_exact", lambda *_a, **_k: True)
+
+    def read(_repository: str, _token: str, path: str, **_kwargs: object) -> object:
+        if "actions/" in path:
+            return {"total_count": 0, "workflow_runs": []}
+        if "check-runs" in path:
+            return {"total_count": 0, "check_runs": []}
+        return None
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    monkeypatch.setattr(
+        "investment_strategy.scheduled_agent_validation_resource._github_json", read
+    )
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        _TEST_TOKEN,
+        source,
+        authorized_change=request.change,
+        current_revision=_REVISION,
+    )
+    assert not adapter.validate_implementation_checkpoint(request, ("1.1",))
