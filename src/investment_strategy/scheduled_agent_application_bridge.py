@@ -97,6 +97,7 @@ from investment_strategy.scheduled_agent_effects import (
     parse_application_decision,
     parse_effect_batch,
     persist_native_application_evidence_comment,
+    supported_effect_guard,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
@@ -496,15 +497,34 @@ def render_application_request(
         if not isinstance(decoded, Mapping) or not isinstance(decoded.get("change"), str):
             raise ValueError("application request authorized Change is required")
         authorized_change = cast(str, decoded["change"])
-    _qualify_worker_materializations(request.raw_worker_result, source, authorized_change)
+    _qualify_worker_request(request.raw_worker_result, source, authorized_change)
 
     return _render_accepted_application_wire(request)
 
 
-def _qualify_worker_materializations(raw: str, source: WorkerRequest, change: str) -> None:
-    """Use the operation owner to decode nested materialization identity before ACCEPT."""
-    for payload in _materialization_effects(raw, source, change=change):
-        find_materialization_payload(payload, source)
+def _qualify_worker_request(raw: str, source: WorkerRequest, change: str) -> None:
+    """Pure admission judgment shared by raw, legacy and retirement consumers."""
+    batch = parse_effect_batch(raw, source, authorized_change=change)
+    if batch.typed_result is None:
+        raise ValueError("application worker result is missing")
+    consequence_spec_for(batch.typed_result.action, batch.typed_result.result.kind)
+    for effect in batch.effects:
+        try:
+            payload = json.loads(effect.payload_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("application requested effect is invalid JSON") from exc
+        if not isinstance(payload, Mapping):
+            raise ValueError("application requested effect is not an object")
+        if effect.kind == GITHUB_MUTATION_KIND and payload.get("operation") == (
+            "application-materialize"
+        ):
+            # Preserve the operation decoder's precise diagnostic and immutable
+            # Change binding; never discard malformed nested materialization.
+            materialization = find_materialization_payload(payload, source)
+            if materialization is None or materialization.expected_change != change:
+                raise ValueError("application materialization Change identity is invalid")
+        if not supported_effect_guard(source, effect, requested=True):
+            raise ValueError("application requested effect violates its operation contract")
 
 
 def canonicalize_raw_worker_result(
@@ -8618,7 +8638,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         )
     else:
         semantic_worker_result = plan.raw_worker_result
-        _qualify_worker_materializations(semantic_worker_result, plan.source, effective_change)
+        _qualify_worker_request(semantic_worker_result, plan.source, effective_change)
     try:
         semantic_decoded = json.loads(semantic_worker_result)
     except json.JSONDecodeError:

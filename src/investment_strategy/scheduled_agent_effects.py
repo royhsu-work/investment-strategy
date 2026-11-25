@@ -1164,6 +1164,8 @@ def _routing_label(value: object) -> bool:
 def _github_mutation_structurally_valid(
     source: WorkerRequest,
     payload: Mapping[str, object],
+    *,
+    requested: bool = False,
 ) -> bool:
     if payload.get("issue_number") != source.issue_number:
         return False
@@ -1185,12 +1187,21 @@ def _github_mutation_structurally_valid(
         expected = payload.get("expected")
         return (
             _valid_fields(fields, _ALLOWED_ISSUE_FIELDS)
-            and isinstance(expected, Mapping)
-            and _valid_fields(expected, _ALLOWED_ISSUE_FIELDS)
+            and (
+                (requested and "expected" not in payload)
+                or _valid_fields(expected, _ALLOWED_ISSUE_FIELDS)
+            )
         )
     if operation == "issue-label-add":
         return _is_nonempty_string(payload.get("label")) and _routing_label(payload.get("label"))
     if operation == "workflow-dispatch":
+        # Archive dispatch target fields are derived from fresh repository
+        # identity; a worker may omit them, but not nominate another workflow.
+        if requested and "inputs" not in payload:
+            return (
+                payload.get("workflow_id", _ARCHIVE_WORKFLOW_ID) == _ARCHIVE_WORKFLOW_ID
+                and ("ref" not in payload or _valid_branch(payload["ref"]))
+            )
         inputs = payload.get("inputs")
         if (
             payload.get("workflow_id") != _ARCHIVE_WORKFLOW_ID
@@ -1207,42 +1218,51 @@ def _github_mutation_structurally_valid(
         revision = cast(str, inputs["revision"])
         return inputs["request_key"] == f"archive-{issue}-{revision}"
     if operation == "ref-delete":
-        return _valid_ref(payload.get("ref")) and _valid_sha(payload.get("expected_sha"))
+        return (
+            (requested and "ref" not in payload or _valid_ref(payload.get("ref")))
+            and (
+                requested and "expected_sha" not in payload
+                or _valid_sha(payload.get("expected_sha"))
+            )
+        )
     if operation == "pull-request-create":
         head = payload.get("head")
+        archive = source.action == "finalize-change"
         if (
-            not _is_nonempty_string(payload.get("title"))
+            not (
+                requested and archive and "title" not in payload
+                or _is_nonempty_string(payload.get("title"))
+            )
             or not isinstance(payload.get("body", ""), str)
-            or not _valid_branch(head)
-            or not _valid_branch(payload.get("base"))
+            or not (requested and "head" not in payload or _valid_branch(head))
+            or not (requested and "base" not in payload or _valid_branch(payload.get("base")))
             or not isinstance(payload.get("draft", False), bool)
         ):
             return False
         if isinstance(head, str) and head.startswith("agent/archive-"):
-            return _valid_sha(payload.get("expected_head_sha"))
+            return (
+                requested and "expected_head_sha" not in payload
+                or _valid_sha(payload.get("expected_head_sha"))
+            )
         return "expected_head_sha" not in payload
-    if operation == "pull-request-update":
+    if operation in {"pull-request-update", "pull-request-ready", "pull-request-merge"}:
         number = payload.get("number")
-        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
-            return False
-        return _valid_sha(payload.get("expected_head_sha")) and _valid_fields(
-            payload.get("fields"), _ALLOWED_PR_FIELDS
-        )
-    if operation == "pull-request-ready":
-        number = payload.get("number")
-        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
-            return False
-        return _valid_sha(payload.get("expected_head_sha"))
-    if operation == "pull-request-merge":
-        number = payload.get("number")
-        method = payload.get("merge_method", "merge")
-        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
-            return False
-        if (
-            not _valid_sha(payload.get("expected_head_sha"))
-            or not isinstance(method, str)
-            or method not in _ALLOWED_MERGE_METHODS
+        number_valid = type(number) is int and number > 0
+        head_valid = _valid_sha(payload.get("expected_head_sha"))
+        fields = payload.get("fields")
+        retirement = operation == "pull-request-update" and fields == {"state": "closed"}
+        # Only a non-retirement control can obtain its exact target from the
+        # fresh carrier owner. Closing an existing PR requires a bound head.
+        if not (number_valid or (requested and not retirement and "number" not in payload)) or not (
+            head_valid or (requested and not retirement and "expected_head_sha" not in payload)
         ):
+            return False
+        if operation == "pull-request-update":
+            return _valid_fields(fields, _ALLOWED_PR_FIELDS)
+        if operation == "pull-request-ready":
+            return True
+        method = payload.get("merge_method", "merge")
+        if not isinstance(method, str) or method not in _ALLOWED_MERGE_METHODS:
             return False
         presentation_keys = {"commit_title", "commit_message"} & set(payload)
         if not presentation_keys:
@@ -1291,8 +1311,10 @@ def _routing_transition_structurally_valid(
     return True
 
 
-def supported_effect_guard(source: WorkerRequest, effect: StagedEffect) -> bool:
-    """Validate the bounded structural effect surface used by mapped Skills."""
+def supported_effect_guard(
+    source: WorkerRequest, effect: StagedEffect, *, requested: bool = False
+) -> bool:
+    """Validate requested or freshly bound effects through the same operation owner."""
 
     payload = _effect_payload(effect)
     if payload is None or payload.get("issue_number") != source.issue_number:
@@ -1317,7 +1339,7 @@ def supported_effect_guard(source: WorkerRequest, effect: StagedEffect) -> bool:
             derived=effect.derived,
         )
     if effect.kind == GITHUB_MUTATION_KIND:
-        return _github_mutation_structurally_valid(source, payload)
+        return _github_mutation_structurally_valid(source, payload, requested=requested)
     return False
 
 
