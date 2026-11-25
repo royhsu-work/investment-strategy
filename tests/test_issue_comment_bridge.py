@@ -7429,7 +7429,15 @@ def test_terminal_carrier_effect_reconciles_by_operation_postcondition(
     elif operation == "issue-update":
         payload = {"issue_number": 322, "operation": operation, "fields": {"title": "new"}}
     intent["requested_effects"][0]["payload_json"] = json.dumps(payload)
-    ingress_comment["body"] = render_application_request(
+    # Historical ACCEPTED ingress can predate the current admission contract.
+    # Recovery must still reject an unauthorized issue mutation, not fail while
+    # manufacturing the fixture through today's stricter admission renderer.
+    render = (
+        application._render_accepted_application_wire
+        if operation == "issue-update"
+        else render_application_request
+    )
+    ingress_comment["body"] = render(
         replace(
             request,
             raw_worker_result=json.dumps(intent),
