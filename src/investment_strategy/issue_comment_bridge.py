@@ -4909,6 +4909,7 @@ def qualify_application_completion(
     read: GitHubReader = _github_json,
     current_dispatch_request_comment_id: int | None = None,
     current_dispatch_issue_number: int | None = None,
+    admitting_request_comment_id: int | None = None,
     now: datetime | None = None,
 ) -> ApplicationCompletion:
     """Return one exhaustive consequence disposition from durable evidence."""
@@ -5449,9 +5450,7 @@ def qualify_application_completion(
             continue
         repository_info = read(repository, token, "")
         default_branch = (
-            repository_info.get("default_branch")
-            if isinstance(repository_info, Mapping)
-            else None
+            repository_info.get("default_branch") if isinstance(repository_info, Mapping) else None
         )
         if not isinstance(default_branch, str):
             continue
@@ -5514,6 +5513,18 @@ def qualify_application_completion(
         )
     if len(accepted) > 1:
         return ApplicationCompletion("AMBIGUOUS", "application-completion-accepted-ambiguous")
+    if admitting_request_comment_id is not None:
+        # Phase A has freshly qualified this exact ingress. It may exclude only
+        # itself, never another candidate, an invalid input, or an ACCEPTED owner.
+        if (
+            admitting_request_comment_id not in current_request_ids
+            or admitting_request_comment_id in current_invalid_request_ids
+            or admitting_request_comment_id in decisions_by_request
+        ):
+            return ApplicationCompletion(
+                "INVALID", "application-completion-current-admission-unqualified"
+            )
+        current_request_ids.remove(admitting_request_comment_id)
     classifications: dict[int, PreacceptClassification] = {}
     for request_id in current_request_ids - accepted_request_ids:
         candidate = candidates[request_id]

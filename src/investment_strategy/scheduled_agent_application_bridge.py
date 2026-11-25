@@ -1414,9 +1414,7 @@ def _qualified_physical_original_accepted_effects(
     return physical
 
 
-def accepted_development_request(
-    record: ApplicationDecisionRecord, source: WorkerRequest
-) -> bool:
+def accepted_development_request(record: ApplicationDecisionRecord, source: WorkerRequest) -> bool:
     """Recognize only the already-defined physical-only development consequence."""
 
     if record.disposition != "ACCEPTED" or record.result_kind != "more-implementation-required":
@@ -1446,9 +1444,11 @@ def observe_accepted_development_verification(
     never authorizes materialization, formal result, checkpoint, or routing.
     """
 
-    if record.disposition != "ACCEPTED" or (
-        record.issue_number, record.role, record.action
-    ) != (source.issue_number, source.role, source.action):
+    if record.disposition != "ACCEPTED" or (record.issue_number, record.role, record.action) != (
+        source.issue_number,
+        source.role,
+        source.action,
+    ):
         return None
     accepted = parse_effect_batch(record.raw_worker_result, source, authorized_change=record.change)
     request = accepted.development_materialization()
@@ -8725,6 +8725,36 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     else:
         semantic_worker_result = plan.raw_worker_result
         _qualify_worker_request(semantic_worker_result, plan.source, effective_change)
+        if plan.source.action == "implement-change":
+            incoming = parse_effect_batch(
+                semantic_worker_result, plan.source, authorized_change=effective_change
+            )
+            prior_comments = _paged_github_list(
+                repository,
+                token,
+                f"issues/{plan.source.issue_number}/comments?sort=created&direction=asc",
+            )
+            has_development = any(
+                is_github_actions_comment(comment)
+                and (record := parse_application_decision(comment.get("body"))) is not None
+                and accepted_development_request(record, plan.source)
+                for comment in prior_comments
+            )
+            if incoming.development_materialization() is not None or has_development:
+                # Local import preserves the existing bridge ownership boundary.
+                from investment_strategy.issue_comment_bridge import (
+                    qualify_application_completion,
+                )
+
+                ownership = qualify_application_completion(
+                    repository,
+                    token,
+                    source=plan.source,
+                    current_revision=args.revision,
+                    admitting_request_comment_id=plan.request_comment_id,
+                )
+                if ownership.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
+                    raise RuntimeError("application development ownership is not released")
     try:
         semantic_decoded = json.loads(semantic_worker_result)
     except json.JSONDecodeError:
