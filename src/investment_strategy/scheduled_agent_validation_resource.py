@@ -567,6 +567,83 @@ def assess_development_quality(
         return unknown
 
 
+def assess_openspec_validation(
+    target: ValidationResourceTarget,
+    source: WorkerRequest,
+    request_comment_id: int,
+    *,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+    current_target: bool,
+    required_change: str | None = None,
+    read: Callable[[str, str, str], object] | None = None,
+) -> NativeValidationAssessment:
+    """Observe the authoritative validator baseline against the exact target."""
+
+    if not _valid_sha(current_revision) or not _valid_branch(default_branch):
+        return NativeValidationAssessment(NativeValidationObservation("UNKNOWN"))
+    obligation = NativeValidationObligation(
+        OPENSPEC_GATE,
+        target,
+        source,
+        request_comment_id,
+        current_revision,
+        default_branch,
+        required_change,
+    )
+    observation = obligation.observe(token, read=read)
+    return NativeValidationAssessment(
+        observation, obligation.invocation(observation) if current_target else None
+    )
+
+
+def assess_completion_validation(
+    target: ValidationResourceTarget,
+    source: WorkerRequest,
+    request_comment_id: int,
+    *,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+    current_target: bool,
+    read: Callable[[str, str, str], object] | None = None,
+) -> NativeValidationAssessment:
+    """Require both applicable exact gates before the marker consequence."""
+
+    quality = assess_development_quality(
+        target,
+        source,
+        request_comment_id,
+        token=token,
+        current_revision=current_revision,
+        default_branch=default_branch,
+        current_target=current_target,
+        read=read,
+    )
+    if quality.observation.verdict != "PASS":
+        return quality
+    strict = assess_openspec_validation(
+        target,
+        source,
+        request_comment_id,
+        token=token,
+        current_revision=current_revision,
+        default_branch=default_branch,
+        current_target=current_target,
+        required_change=target.change,
+        read=read,
+    )
+    if strict.observation.verdict != "PASS":
+        return strict
+    return NativeValidationAssessment(
+        NativeValidationObservation(
+            "PASS",
+            tuple(sorted(set(quality.observation.attempts + strict.observation.attempts))),
+        )
+    )
+
+
 def native_development_quality_passed(
     repository: str,
     token: str,
