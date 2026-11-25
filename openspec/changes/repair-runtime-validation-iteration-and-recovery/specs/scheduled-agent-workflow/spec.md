@@ -21,7 +21,9 @@ A qualified mechanical validator verdict SHALL identify the affected candidate r
 - GIVEN settled effects and a required check canceled, timed out, or terminated by its execution environment
 - WHEN no current qualified exact-target verdict exists and verification is freshly authorized
 - THEN the existing repository-owned verification path SHALL obtain an eligible validation attempt for that same target without repeating any settled mutation
-- AND completion SHALL require complete evidence for the applicable workflow, checkout, attempt and required steps; a skipped mandatory check or an unrelated success cannot qualify
+- AND the validation obligation owner derives the required validator and exact target; an ordinary native wake may actuate only that qualified invocation when no usable verdict or eligible active invocation exists, including a completely observed absence of a run
+- AND completion SHALL require complete evidence for the applicable workflow definition and validator baseline, checkout, attempt and required steps; a skipped mandatory check or an unrelated success cannot qualify
+- AND an unavailable observation or unknown invocation outcome permits fresh observation without assuming absence, retrying a settled physical effect, or completing the obligation
 
 ### Requirement: Legacy accepted completion preserves evidence and current obligations
 

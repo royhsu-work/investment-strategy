@@ -12,7 +12,7 @@ Runtime treats a qualified mechanical validation failure as an interrupted accep
 - Reconcile legacy accepted applications and verify the native workflow can resume #474 after release.
 
 - Bind both transport formats to one complete request contract, including each requested operation's payload. Retire proven zero-write invalid requests and reobserve unavailable evidence on unchanged main. Verify that an eligible corrected request can finish.
-- Qualify CI evidence by required step, checkout and attempt. Reacquire validation without replaying settled work when CI ended without a usable verdict.
+- Qualify CI evidence by required step, checkout and attempt. Reacquire missing exact-target validation through the existing repository-owned CI invocation capability, without replaying settled work or requiring a new commit, when no usable verdict or eligible active attempt exists.
 
 ## Capabilities
 
