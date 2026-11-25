@@ -27,23 +27,23 @@ acceptance at its applicable gate.
 
 ## Implement one bounded slice
 
-1. RED: add a focused behavioral test and confirm the failure is the intended gap.
-2. GREEN: implement the minimum approved behavior.
-3. REFACTOR: remove duplication without changing meaning.
-4. VERIFY: run focused validation and the complete required gates:
-   uv run pytest
-   uv run ruff check .
-   uv run ruff format --check .
-   uv run mypy src tests
+1. RED: materialize focused behavioral tests through the authorized development effect and observe
+   native CI. Confirm all static checks pass and the intended target behavior fails before GREEN.
+2. GREEN: implement the minimum approved behavior and observe exact-revision native CI.
+3. REFACTOR: remove duplication without changing meaning; revalidate changed revisions.
+4. VERIFY: require the full native Python Quality gates in order: Ruff lint, Ruff format check,
+   Mypy, pytest, plus exact-revision OpenSpec mechanical validation when applicable.
 
-The semantic Executor does not assume a mutable checkout or shell. For a real implementation slice,
-start from the exact current implementation-carrier head, overlay RED tests only, run the focused test
-and prove the intended failure, then reset to that exact base. Submit complete candidate source/tests
-as content-addressed blobs; repository-owned Actions perform focused GREEN and the full four-gate
-verification above. Only after those exact checks and fresh Issue/Change/routing/PR/head/main,
-review, and Human reauthorization observations may application persist `APPLICATION_DECISION:
-ACCEPTED` and materialize the already-verified blobs. A verifier failure before ACCEPT leaves zero
-authoritative repository consequence; it is not repaired by pushing a broken candidate.
+The semantic Executor does not assume a mutable checkout, shell, installed dependencies or local
+execution. Native CI supplies behavioral and mechanical evidence. Submit complete development
+source/tests as content-addressed blobs on the exact existing carrier. Application fresh-qualifies
+the source, review, Human authority and preimage before ACCEPT and physical materialization. A
+physical development commit preserves task markers and creates no formal completion result,
+checkpoint, routing or merge effect. The same slice can span commits and fresh wakes. Observe
+qualified terminal CI for the exact revision; ordinary FAIL is corrected within the same Action.
+An intended behavioral RED requires all static gates to pass, not setup, import or unrelated failure.
+Pending CI, unavailable evidence and unknown physical effects are not verdicts or permission to
+repeat writes; the application owns exact verification and remaining obligations.
 
 Persist task markers and one bounded SLICE_CHECKPOINT/result only after VERIFY succeeds. Results identify
 the exact Action, revision, tests, and remaining approved work; they do not carry routing authority.
@@ -67,7 +67,8 @@ Every fresh `Executor / implement-change` invocation reconstructs current recove
 `tasks.md`, the current implementation PR/head, and current code/tests/evidence. It identifies the
 first incomplete slice and executes exactly one bounded slice with the sequence RED -> GREEN -> REFACTOR -> VERIFY.
 
-After VERIFY succeeds, persist task markers first and then one bounded SLICE_CHECKPOINT containing
+After the slice implementation satisfies VERIFY, persist task markers first and require applicable
+mechanical gates on the resulting exact marker HEAD, then one bounded SLICE_CHECKPOINT containing
 the exact Change, verified revision, completed task IDs, gate evidence, and remaining approved
 boundary. The checkpoint obligation must be durable before READY or MORE_IMPLEMENTATION_REQUIRED is
 emitted, before continuation or handoff, or before application derives a successor.

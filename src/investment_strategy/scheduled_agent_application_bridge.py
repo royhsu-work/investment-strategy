@@ -43,6 +43,7 @@ from investment_strategy.scheduled_agent_application_carrier import (
 )
 from investment_strategy.scheduled_agent_application_materialization import (
     MaterializationProof,
+    MaterializationRequest,
     find_materialization_payload,
     materialization_requires_validation,
     observe_materialization_target,
@@ -97,6 +98,7 @@ from investment_strategy.scheduled_agent_effects import (
     parse_application_decision,
     parse_effect_batch,
     persist_native_application_evidence_comment,
+    supported_effect_guard,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
@@ -114,7 +116,11 @@ from investment_strategy.scheduled_agent_runtime import (
     normalize_github_issue,
 )
 from investment_strategy.scheduled_agent_validation_resource import (
+    NativeValidationAssessment,
+    NativeValidationObservation,
     ValidationResourceTarget,
+    assess_completion_validation,
+    assess_development_quality,
     openspec_review_revision_applies,
 )
 from investment_strategy.scheduled_agent_wire import (
@@ -496,9 +502,34 @@ def render_application_request(
         if not isinstance(decoded, Mapping) or not isinstance(decoded.get("change"), str):
             raise ValueError("application request authorized Change is required")
         authorized_change = cast(str, decoded["change"])
-    parse_worker_result(request.raw_worker_result, source, authorized_change=authorized_change)
+    _qualify_worker_request(request.raw_worker_result, source, authorized_change)
 
     return _render_accepted_application_wire(request)
+
+
+def _qualify_worker_request(raw: str, source: WorkerRequest, change: str) -> None:
+    """Pure admission judgment shared by raw, legacy and retirement consumers."""
+    batch = parse_effect_batch(raw, source, authorized_change=change)
+    if batch.typed_result is None:
+        raise ValueError("application worker result is missing")
+    consequence_spec_for(batch.typed_result.action, batch.typed_result.result.kind)
+    for effect in batch.effects:
+        try:
+            payload = json.loads(effect.payload_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("application requested effect is invalid JSON") from exc
+        if not isinstance(payload, Mapping):
+            raise ValueError("application requested effect is not an object")
+        if effect.kind == GITHUB_MUTATION_KIND and payload.get("operation") == (
+            "application-materialize"
+        ):
+            # Preserve the operation decoder's precise diagnostic and immutable
+            # Change binding; never discard malformed nested materialization.
+            materialization = find_materialization_payload(payload, source)
+            if materialization is None or materialization.expected_change != change:
+                raise ValueError("application materialization Change identity is invalid")
+        if not supported_effect_guard(source, effect, requested=True):
+            raise ValueError("application requested effect violates its operation contract")
 
 
 def canonicalize_raw_worker_result(
@@ -1383,6 +1414,157 @@ def _qualified_physical_original_accepted_effects(
     ):
         return None
     return physical
+
+
+def _implementation_marker_candidate(
+    request: MaterializationRequest | None, source: WorkerRequest, result_kind: str
+) -> bool:
+    """Recognize a changed slice marker, not historical no-op bookkeeping."""
+    return (
+        request is not None
+        and source.role == "executor"
+        and source.action == "implement-change"
+        and result_kind in {"ready", "more-implementation-required"}
+        and request.pr_number is not None
+        and len(request.files) == 1
+        and request.files[0].path == f"openspec/changes/{request.change}/tasks.md"
+        and request.files[0].expected_sha != request.files[0].blob_sha
+    )
+
+
+@dataclass(frozen=True)
+class AcceptedValidationCandidate:
+    """One materialization and its applicable native gate, derived from Effects."""
+
+    request: MaterializationRequest
+    effect: StagedEffect
+    kind: Literal["development", "marker"]
+
+
+def _validation_candidate(batch: EffectBatch) -> AcceptedValidationCandidate | None:
+    if batch.typed_result is None or not batch.effects:
+        return None
+    development = batch.development_materialization()
+    if development is not None:
+        return AcceptedValidationCandidate(development, batch.effects[0], "development")
+    originals = [effect for effect in batch.effects if effect.kind == GITHUB_MUTATION_KIND]
+    if len(originals) != 1 or originals[0] != batch.effects[0]:
+        return None
+    effect = originals[0]
+    payload = _effect_payload({"kind": effect.kind, "payload_json": effect.payload_json})
+    if payload is None:
+        return None
+    request = find_materialization_payload(payload, batch.source)
+    if request is None or not _implementation_marker_candidate(
+        request, batch.source, batch.typed_result.result.kind.value
+    ):
+        return None
+    for suffix in batch.effects[1:]:
+        body = _effect_payload({"kind": suffix.kind, "payload_json": suffix.payload_json})
+        if (
+            suffix.derived
+            or suffix.kind != "issue-comment"
+            or body is None
+            or not isinstance(body.get("body"), str)
+            or _marker(cast(str, body["body"])) not in {"SLICE_CHECKPOINT", "ACTION_RESULT"}
+        ):
+            return None
+    return AcceptedValidationCandidate(request, effect, "marker")
+
+
+def accepted_validation_candidate(
+    record: ApplicationDecisionRecord, source: WorkerRequest
+) -> AcceptedValidationCandidate | None:
+    if record.disposition != "ACCEPTED":
+        return None
+    try:
+        batch = parse_effect_batch(
+            record.raw_worker_result, source, authorized_change=record.change
+        )
+        return _validation_candidate(batch)
+    except (TypeError, ValueError):
+        return None
+
+
+def accepted_development_request(record: ApplicationDecisionRecord, source: WorkerRequest) -> bool:
+    candidate = accepted_validation_candidate(record, source)
+    return candidate is not None and candidate.kind == "development"
+
+
+def observe_accepted_development_verification(
+    *,
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+    read: Callable[[str, str, str], object],
+) -> NativeValidationAssessment | None:
+    """Reconstruct a settled candidate from its immutable physical source.
+
+    A verdict never authorizes materialization, formal result, checkpoint or routing.
+    """
+
+    if (record.issue_number, record.role, record.action) != (
+        source.issue_number,
+        source.role,
+        source.action,
+    ):
+        return None
+    candidate = accepted_validation_candidate(record, source)
+    if candidate is None:
+        return None
+    request = candidate.request
+    unknown = NativeValidationAssessment(NativeValidationObservation("UNKNOWN"))
+    if record.worker_result_sha256 != hashlib.sha256(record.raw_worker_result.encode()).hexdigest():
+        return unknown
+    try:
+        original = _qualified_physical_original_accepted_effects(
+            record=record, source=source, repository=repository, token=token, read=read
+        )
+        actual = None if original is None else _validation_candidate(original)
+        if actual is None or actual.request != request or actual.kind != candidate.kind:
+            return unknown
+        payload = json.loads(actual.effect.payload_json)
+        if not isinstance(payload, Mapping):
+            return unknown
+        proof = prove_materialization(
+            payload,
+            source,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            accepted_authorization_revision=record.authorization_revision,
+            allow_pending_continuation=True,
+            accepted_intent=True,
+        )
+        if proof.disposition != "COMPLETE" or proof.witness is None or proof.target is None:
+            return None
+        target = replace(proof.target, revision=proof.witness.revision)
+        if target.branch != request.branch or target.change != record.change:
+            return unknown
+        current_target = proof.target.revision == proof.witness.revision
+        if candidate.kind == "marker" and not current_target:
+            return unknown
+        assess = (
+            assess_development_quality
+            if candidate.kind == "development"
+            else assess_completion_validation
+        )
+        return assess(
+            target,
+            source,
+            record.request_comment_id,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            current_target=current_target,
+            read=read,
+        )
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return unknown
 
 
 def _verified_zero_original_accepted_effects(
@@ -2982,6 +3164,20 @@ def _fresh_application_worker_result(
     request_comment_id: int,
 ) -> str:
     """Reconcile fresh repository consequences from immutable semantic input."""
+
+    batch = parse_effect_batch(raw_worker_result, source, authorized_change=change)
+    if batch.development_materialization() is not None:
+        # Keep immutable semantic evidence, but do not synthesize a formal
+        # result for a development-only write.
+        development = json.loads(raw_worker_result)
+        development.update(
+            issue_number=source.issue_number,
+            role=source.role,
+            action=source.action,
+            change=change,
+            _semantic_intent_version=2,
+        )
+        return json.dumps(development, sort_keys=True, separators=(",", ":"))
 
     try:
         result_revision = _machine_result_revision(
@@ -4844,7 +5040,9 @@ def _recover_deterministic_accepted_merge_failure(
     return True
 
 
-def _write_validation_outputs(target: ValidationResourceTarget | None) -> None:
+def _write_validation_outputs(
+    target: ValidationResourceTarget | None, *, require_tasks: bool = False
+) -> None:
     output_path = os.environ.get("GITHUB_OUTPUT")
     if not output_path:
         return
@@ -4857,6 +5055,7 @@ def _write_validation_outputs(target: ValidationResourceTarget | None) -> None:
                 f"validation_correlation={target.correlation}",
                 f"validation_pr_number={target.pr_number}",
                 f"validation_change={target.change}",
+                f"validation_required_change={target.change if require_tasks else ''}",
             )
         )
     with Path(output_path).open("a", encoding="utf-8") as output:
@@ -7069,6 +7268,21 @@ def _observe_accepted_post_effect_result(
     owns no independent state, effect registry or GitHub transport.
     """
 
+    candidate = accepted_validation_candidate(record, source)
+    if candidate is not None and candidate.kind == "marker":
+        verification = observe_accepted_development_verification(
+            record=record,
+            source=source,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            read=_github_json,
+        )
+        if verification is not None:
+            if verification.observation.verdict == "PASS":
+                return AcceptedPostEffectProof("COMPLETE", "exact marker and gates proven")
+            return AcceptedPostEffectProof("INDETERMINATE", "marker validation not complete")
     if (source, record.change, record.result_kind) != (
         WorkerRequest(record.issue_number, "lead", "propose-change"),
         "unset",
@@ -8502,6 +8716,9 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         change = _preflight_change(preflight, source)
         if change is None:
             raise ValueError("WORKER_RESULT authoritative Change is unavailable")
+        context.source = source
+        context.change = change
+        context.stage = "pre-accept-worker-result-qualification"
         request = canonicalize_raw_worker_result(
             body=body,
             source=source,
@@ -8592,6 +8809,37 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         )
     else:
         semantic_worker_result = plan.raw_worker_result
+        _qualify_worker_request(semantic_worker_result, plan.source, effective_change)
+        if plan.source.action == "implement-change":
+            incoming = parse_effect_batch(
+                semantic_worker_result, plan.source, authorized_change=effective_change
+            )
+            prior_comments = _paged_github_list(
+                repository,
+                token,
+                f"issues/{plan.source.issue_number}/comments?sort=created&direction=asc",
+            )
+            has_development = any(
+                is_github_actions_comment(comment)
+                and (record := parse_application_decision(comment.get("body"))) is not None
+                and accepted_validation_candidate(record, plan.source) is not None
+                for comment in prior_comments
+            )
+            if _validation_candidate(incoming) is not None or has_development:
+                # Local import preserves the existing bridge ownership boundary.
+                from investment_strategy.issue_comment_bridge import (
+                    qualify_application_completion,
+                )
+
+                ownership = qualify_application_completion(
+                    repository,
+                    token,
+                    source=plan.source,
+                    current_revision=args.revision,
+                    admitting_request_comment_id=plan.request_comment_id,
+                )
+                if ownership.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
+                    raise RuntimeError("application development ownership is not released")
     try:
         semantic_decoded = json.loads(semantic_worker_result)
     except json.JSONDecodeError:
@@ -8662,7 +8910,10 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     # but their checkpoint is a distinct non-idempotent, revision-bound effect.
     # First construct the exact carrier without comments or routing; only a
     # later fresh proof of its actual head may bind and persist the checkpoint.
-    defer_accepted_checkpoint = False
+    marker_candidate = _implementation_marker_candidate(
+        parsed_materialization, plan.source, worker_result.typed_result.result.kind.value
+    )
+    defer_accepted_checkpoint = marker_candidate and accepted_intent is None
     historical_formal_only = False
     if (
         accepted_intent is not None
@@ -8727,6 +8978,26 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 _write_carrier_outputs(ApplyResult(True, "already-formally-committed"))
                 _write_validation_outputs(None)
                 return 0
+            if marker_candidate:
+                if (
+                    target is None
+                    or checkpoint_proof.witness is None
+                    or checkpoint_proof.witness.revision != target.revision
+                ):
+                    raise RuntimeError("marker verification requires its exact current witness")
+                completion = assess_completion_validation(
+                    target,
+                    plan.source,
+                    plan.request_comment_id,
+                    token=token,
+                    current_revision=args.revision,
+                    default_branch=args.default_branch,
+                    current_target=True,
+                )
+                if completion.observation.verdict != "PASS":
+                    _write_carrier_outputs(ApplyResult(False, "marker-validation-observing"))
+                    _write_validation_outputs(None)
+                    return 0
         elif (
             continuation is not None
             and checkpoint_proof.historical_witness is not None
@@ -8860,7 +9131,24 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             accepted_original = semantic_worker_result
             if accepted_intent is None:
                 raise RuntimeError("post-effect recovery lost its immutable accepted intent")
-            if requires_validation:
+            if marker_candidate:
+                # Only the proven physical prefix may be considered previously
+                # attempted; the checkpoint and formal result were deferred.
+                candidate = accepted_validation_candidate(accepted_intent, plan.source)
+                projected = _validation_candidate(
+                    parse_effect_batch(
+                        application_worker_result, plan.source, authorized_change=effective_change
+                    )
+                )
+                if (
+                    candidate is None
+                    or projected is None
+                    or candidate.kind != "marker"
+                    or candidate.request != projected.request
+                ):
+                    raise RuntimeError("accepted marker projection is not exact")
+                uncertain_effect_index = 0
+            elif requires_validation:
                 # Keep the existing exact first-activation proof/validation gate.
                 original_identity = _accepted_activation_effect_identity(
                     accepted_original,
@@ -9233,7 +9521,10 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     else:
         target = None
     _write_carrier_outputs(result)
-    _write_validation_outputs(target)
+    _write_validation_outputs(
+        target,
+        require_tasks=worker_result.typed_result.result.kind.value == _FIRST_ACTIVATION_RESULT,
+    )
     if not recovery_evidence_written:
         _write_application_recovery_evidence(
             args.recovery_evidence_path,

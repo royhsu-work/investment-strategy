@@ -2291,3 +2291,251 @@ def _apply_public_work_product(fixture: _ProofGitRepository) -> resource.Validat
         authorization_revision=fixture.main,
         accepted_authorization_revision=fixture.authorization,
     )
+
+
+@pytest.mark.parametrize("malformed_task", ["- [ ] RED: missing identifier", "- [x] malformed"])
+def test_task_slices_rejects_malformed_checkbox_among_valid_tasks(
+    malformed_task: str,
+) -> None:
+    content = f"## 1. Development\n\n- [ ] 1.1 RED: valid task\n{malformed_task}\n"
+
+    assert resource._task_slices(content) is None
+    assert resource._first_incomplete_slice_task_ids(content) is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "## 1. First\n- [ ] RED: no ID\n",
+        "## 1. First\n- [ ] 1.1 first\n- [ ] 1.1 duplicate\n",
+        "- [ ] 1.1 unassigned\n## 2. Second\n- [ ] 2.1 second\n",
+        "## 1. Empty\n## 2. Second\n- [ ] 2.1 second\n",
+        "## 1. First\n- [ ] 1.1 first\n## Notes\n- [ ] 1.2 unassigned\n",
+    ],
+)
+def test_task_contract_rejects_incomplete_or_invalid_slices(content: str) -> None:
+    assert resource._task_slices(content) is None
+    assert resource._first_incomplete_slice_task_ids(content) is None
+
+
+def test_task_contract_ignores_fenced_examples_but_marker_delta_cannot_edit_them() -> None:
+    current = (
+        "## 1. First\n- [ ] 1.1 real\n```markdown\n- [ ] 1.1 example\n- [ ] RED: example\n```\n"
+    )
+    assert resource._task_slices(current) == ((("1.1", False),),)
+    assert resource._first_incomplete_slice_task_ids(current) == ("1.1",)
+    valid = current.replace("[ ] 1.1 real", "[x] 1.1 real")
+    assert resource._task_marker_delta(current, valid) == ("1.1",)
+    assert (
+        resource._task_marker_delta(current, current.replace("[ ] 1.1 example", "[x] 1.1 example"))
+        is None
+    )
+
+
+def test_task_contract_validation_uses_same_owner_and_distinguishes_partial_artifacts(
+    tmp_path: Path,
+) -> None:
+    changes = tmp_path / "openspec" / "changes"
+    active = changes / "active-change"
+    active.mkdir(parents=True)
+    archived = changes / "archive" / "historic-change"
+    archived.mkdir(parents=True)
+    (archived / "tasks.md").write_text("- [ ] old historical task\n", encoding="utf-8")
+    assert resource.validate_task_contracts(tmp_path) == ()
+    assert resource.validate_task_contracts(tmp_path, required_change="active-change") == (
+        "openspec/changes/active-change/tasks.md: required task artifact is missing",
+    )
+    task_file = active / "tasks.md"
+    task_file.write_text("## 1. First\n- [ ] 1.1 real\n- [ ] RED: missing ID\n", encoding="utf-8")
+    assert resource.validate_task_contracts(tmp_path) == (
+        "openspec/changes/active-change/tasks.md:3: "
+        "task checkbox requires a dotted numeric identifier",
+    )
+    task_file.write_text("## 1. First\n- [ ] 1.1 real\n", encoding="utf-8")
+    assert resource.validate_task_contracts(tmp_path, required_change="active-change") == ()
+
+
+@pytest.mark.parametrize(
+    ("fault", "expected"),
+    [
+        ("none", "PASS"),
+        ("missing", "MISSING"),
+        ("pending", "PENDING"),
+        ("cancelled", "NO_VERDICT"),
+        ("timed_out", "NO_VERDICT"),
+        ("pytest_fail", "FAIL"),
+        ("lint_fail", "FAIL"),
+        ("environment_failure", "NO_VERDICT"),
+        ("unproven_failure", "UNKNOWN"),
+        ("checkout", "UNKNOWN"),
+        ("definition", "UNKNOWN"),
+        ("skipped", "UNKNOWN"),
+        ("attempt", "UNKNOWN"),
+        ("short", "UNKNOWN"),
+        ("earlier_missing", "UNKNOWN"),
+        ("earlier_cancelled", "PASS"),
+        ("earlier_failed", "UNKNOWN"),
+    ],
+)
+def test_native_quality_verdict_qualifies_real_target_and_producer(
+    fault: str, expected: str
+) -> None:
+    branch = "agent/example"
+    run_id, attempt, job_id = 101, 1, 102
+    if fault.startswith("earlier_"):
+        attempt = 2
+    gate = resource.QUALITY_GATE
+    run = {
+        "id": run_id,
+        "run_attempt": attempt,
+        "event": "push",
+        "path": ".github/workflows/quality.yml",
+        "head_sha": _REVISION,
+        "head_branch": branch,
+        "display_title": f"Python Quality {run_id} @ {_REVISION}",
+        "repository": {"full_name": _REPOSITORY},
+        "head_repository": {"full_name": _REPOSITORY},
+        "status": "in_progress" if fault == "pending" else "completed",
+        "conclusion": "cancelled" if fault == "cancelled" else "success",
+    }
+    if fault == "timed_out":
+        run["conclusion"] = "timed_out"
+    failed_step = {
+        "pytest_fail": "Run tests",
+        "lint_fail": "Ruff lint",
+        "environment_failure": "Install locked quality environment",
+        "unproven_failure": "Run tests",
+    }.get(fault)
+    if failed_step is not None:
+        run["conclusion"] = "failure"
+    names = (gate.identity_step, "Install locked quality environment", *gate.required_steps)
+    steps = [
+        {
+            "name": name,
+            "conclusion": (
+                "failure"
+                if name == failed_step
+                else "skipped"
+                if (
+                    (failed_step is not None and index > names.index(failed_step))
+                    or (fault == "skipped" and name == "Mypy")
+                )
+                else "success"
+            ),
+        }
+        for index, name in enumerate(names)
+    ]
+    job = {
+        "id": job_id,
+        "run_id": run_id,
+        "run_attempt": attempt + 1 if fault == "attempt" else attempt,
+        "name": "quality",
+        "status": "completed",
+        "conclusion": "failure" if failed_step is not None else "success",
+        "steps": steps,
+    }
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/quality.yml/runs?"):
+            return {
+                "total_count": 0 if fault == "missing" else 2 if fault == "short" else 1,
+                "workflow_runs": [] if fault == "missing" else [run],
+            }
+        if path == f"actions/runs/{run_id}/attempts/{attempt}/jobs":
+            return {"total_count": 1, "jobs": [job]}
+        if attempt == 2 and path == f"actions/runs/{run_id}/attempts/1":
+            if fault == "earlier_missing":
+                return None
+            return {
+                **run,
+                "run_attempt": 1,
+                "status": "completed",
+                "conclusion": "cancelled" if fault == "earlier_cancelled" else "failure",
+            }
+        if attempt == 2 and path == f"actions/runs/{run_id}/attempts/1/jobs":
+            earlier_steps = [
+                {
+                    "name": name,
+                    "conclusion": "failure" if name == "Run tests" else "success",
+                }
+                for name in names
+            ]
+            return {
+                "total_count": 1,
+                "jobs": [
+                    {
+                        **job,
+                        "id": job_id + 1,
+                        "run_attempt": 1,
+                        "conclusion": "cancelled" if fault == "earlier_cancelled" else "failure",
+                        "steps": earlier_steps,
+                    }
+                ],
+            }
+        raise AssertionError(path)
+
+    def logs(_repo: str, _token: str, observed_job: int) -> str:
+        assert observed_job in {job_id, job_id + 1}
+        values = {
+            "validation_target_repository": _REPOSITORY,
+            "validation_target_sha": _REVISION,
+            "validator_checkout_head": _PR_HEAD if fault == "checkout" else _REVISION,
+            "validation_correlation": str(run_id),
+            "validation_workflow_ref": (
+                f"{_REPOSITORY}/.github/workflows/quality.yml@refs/heads/{branch}"
+            ),
+            "validation_workflow_sha": _PR_HEAD if fault == "definition" else _REVISION,
+            "validation_run_id": str(run_id),
+            "validation_run_attempt": str(1 if observed_job == job_id + 1 else attempt),
+        }
+        if fault == "pytest_fail" or (fault == "earlier_failed" and observed_job == job_id + 1):
+            values["validation_exit_pytest"] = "1"
+        if fault == "lint_fail":
+            values["validation_exit_ruff_lint"] = "1"
+        return "\n".join(f"2026-11-25T00:00:00Z {key}={value}" for key, value in values.items())
+
+    observation = resource.observe_native_validation(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        gate=gate,
+        revision=_REVISION,
+        definition_revision=_REVISION,
+        definition_branch=branch,
+        read=read,
+        read_log=logs,
+    )
+    assert observation.verdict == expected
+
+
+def test_native_invocation_uses_source_and_observed_attempts_without_retry_state() -> None:
+    target = resource.ValidationResourceTarget(
+        _REPOSITORY, _PR_HEAD, "effect-request-138", 479, _CHANGE, branch="agent/example"
+    )
+    source = WorkerRequest(138, "executor", "implement-change")
+    obligation = resource.NativeValidationObligation(
+        resource.QUALITY_GATE, target, source, 777, _REVISION, "main"
+    )
+    missing = resource.NativeValidationObservation("MISSING")
+    first = obligation.invocation(missing)
+    assert first is not None
+    assert first == obligation.invocation(missing)
+    assert first.payload() == {
+        "ref": "main",
+        "inputs": {
+            "target_repository": _REPOSITORY,
+            "target_revision": _PR_HEAD,
+            "correlation": first.correlation,
+        },
+    }
+    terminated = obligation.invocation(
+        resource.NativeValidationObservation("NO_VERDICT", ((7, 1),))
+    )
+    assert terminated is not None
+    assert terminated.correlation != first.correlation
+    for observation in (
+        resource.NativeValidationObservation("PASS"),
+        resource.NativeValidationObservation("FAIL"),
+        resource.NativeValidationObservation("UNKNOWN"),
+        resource.NativeValidationObservation("PENDING"),
+    ):
+        assert obligation.invocation(observation) is None

@@ -2053,6 +2053,12 @@ def test_preaccept_exception_blocks_unchanged_code_but_recovers_after_applicatio
     ("case", "expected"),
     [
         ("malformed", "TERMINAL_NO_ACCEPT"),
+        ("nested-invalid", "TERMINAL_NO_ACCEPT"),
+        ("nested-raw-invalid", "TERMINAL_NO_ACCEPT"),
+        ("nested-raw-unknown-write", "INVALID"),
+        ("nested-raw-valid", "NEEDS_REPAIR"),
+        ("edited-original", "INVALID"),
+        ("unavailable-original", "INVALID"),
         ("valid-worker", "NEEDS_REPAIR"),
         ("wrong-head", "NEEDS_REPAIR"),
         ("missing-stage", "NEEDS_REPAIR"),
@@ -2086,9 +2092,18 @@ def test_native_malformed_worker_preaccept_exception_retires_without_main_advanc
     worker = json.loads(base64.b64decode(encoded))
     worker["evidence_ref"] = (
         "pr#429@head"
-        if case == "valid-worker"
+        if case == "valid-worker" or case.startswith("nested-")
         else "PR #429 source-and-tests blob manifest, nine exact file preimages"
     )
+    if case.startswith("nested-") and case != "nested-raw-valid":
+        worker["requested_effects"] = [
+            {
+                "kind": "github-mutation",
+                "payload_json": json.dumps(
+                    {"operation": "application-materialize", "issue_number": 999}
+                ),
+            }
+        ]
     raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
     request["body"] = body.replace(encoded, base64.b64encode(raw.encode()).decode())
     correlation_line = (
@@ -2145,7 +2160,12 @@ def test_native_malformed_worker_preaccept_exception_retires_without_main_advanc
         exception["body"] = cast(str, exception["body"]).replace(
             "Change: restore-no-work-idle-discovery", "Change: another-change"
         )
-    if case == "write-unknown":
+    if case.startswith("nested-"):
+        exception["body"] = cast(str, exception["body"]).replace(
+            "Raw-Error: result evidence reference is invalid",
+            "Raw-Error: original diagnostic wording is not the input verdict",
+        )
+    if case in {"write-unknown", "nested-raw-unknown-write"}:
         exception["body"] = cast(str, exception["body"]).replace(
             "Mutation-Outcome: NO_APPLICATION_WRITE_ATTEMPTED", "Mutation-Outcome: UNKNOWN"
         )
@@ -2191,14 +2211,25 @@ def test_native_malformed_worker_preaccept_exception_retires_without_main_advanc
             }
         if path == "issues/322":
             return current_issue
+        if path == "issues/comments/6710179912":
+            if case == "unavailable-original":
+                return None
+            return {
+                **request,
+                "body": candidate.body,
+                "updated_at": (
+                    "2026-11-07T16:51:33Z" if case == "edited-original" else candidate.created_at
+                ),
+            }
         raise AssertionError(path)
 
+    raw_wire = case.startswith("nested-raw-")
     candidate = bridge._IngressCandidate(
         6710179912,
-        cast(str, request["body"]),
+        "WORKER_RESULT\n" + raw if raw_wire else cast(str, request["body"]),
         "2026-11-07T16:51:32Z",
-        revision,
-        ingress,
+        None if raw_wire else revision,
+        None if raw_wire else ingress,
     )
     decisions = (
         {
@@ -4295,7 +4326,9 @@ def test_elided_original_exception_selection_preserves_carrier_ownership(
                 ),
             }
         ]
-    original_body = render_application_request(
+    # Historical wire may predate current ingress qualification. Preserve its
+    # original bytes so this test still exercises accepted-effect ownership.
+    original_body = application._render_accepted_application_wire(
         bridge.ApplicationRequest(
             authorization_revision=REVISION,
             raw_worker_result=json.dumps(original),
@@ -7396,7 +7429,15 @@ def test_terminal_carrier_effect_reconciles_by_operation_postcondition(
     elif operation == "issue-update":
         payload = {"issue_number": 322, "operation": operation, "fields": {"title": "new"}}
     intent["requested_effects"][0]["payload_json"] = json.dumps(payload)
-    ingress_comment["body"] = render_application_request(
+    # Historical ACCEPTED ingress can predate the current admission contract.
+    # Recovery must still reject an unauthorized issue mutation, not fail while
+    # manufacturing the fixture through today's stricter admission renderer.
+    render = (
+        application._render_accepted_application_wire
+        if operation == "issue-update"
+        else render_application_request
+    )
+    ingress_comment["body"] = render(
         replace(
             request,
             raw_worker_result=json.dumps(intent),

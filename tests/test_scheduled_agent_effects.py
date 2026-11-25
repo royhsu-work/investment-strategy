@@ -6035,3 +6035,127 @@ def test_legacy_322_untrusted_forward_mapping_cannot_release_original_effects() 
         accepted_intent=True,
         forward_correction_satisfaction=correction_mapping,
     )
+
+
+def test_development_materialization_has_no_checkpoint_or_routing_authority() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    task = _implementation_checkpoint_effects()[0]
+    payload = json.loads(task["payload_json"])
+    payload["files"] = [
+        {
+            "path": "tests/test_stage_one.py",
+            "blob_sha": "d" * 40,
+            "expected_sha": "e" * 40,
+        }
+    ]
+    requested = [{"kind": "github-mutation", "payload_json": json.dumps(payload)}]
+    batch = parse_effect_batch(
+        _raw(result_kind="more-implementation-required", requested_effects=requested), source
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        validate_implementation_checkpoint=lambda *_args: pytest.fail("development is not VERIFY"),
+    )
+    assert result.applied
+    assert applied == list(batch.effects)
+    assert all(not effect.derived for effect in applied)
+
+    # Neither a marker-bearing manifest nor an extra comment can acquire
+    # development-only authority.
+    marker_payload = dict(payload)
+    assert batch.typed_result is not None
+    marker_payload["files"] = [
+        {
+            "path": f"openspec/changes/{batch.typed_result.change}/tasks.md",
+            "blob_sha": "d" * 40,
+            "expected_sha": "e" * 40,
+        }
+    ]
+    marker_batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=[
+                {"kind": "github-mutation", "payload_json": json.dumps(marker_payload)}
+            ],
+        ),
+        source,
+    )
+    assert marker_batch.development_materialization() is None
+    extra = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=[
+                *requested,
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps({"issue_number": 138, "body": "evidence"}),
+                },
+            ],
+        ),
+        source,
+    )
+    assert extra.development_materialization() is None
+
+    ready = parse_effect_batch(_raw(result_kind="ready", requested_effects=requested), source)
+    refused = apply_effect_batch(
+        ready,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: pytest.fail("unverified READY must not write"),
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+    )
+    assert not refused.applied
+    assert applied == list(batch.effects)
+
+
+def test_marker_only_checkpoint_requires_verified_development_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid task delta does not establish that the preceding code passed CI."""
+
+    source = WorkerRequest(138, "executor", "implement-change")
+    payload = json.loads(_implementation_checkpoint_effects()[0]["payload_json"])
+    payload["files"] = [
+        {
+            "path": f"openspec/changes/{payload['change']}/tasks.md",
+            "blob_sha": "d" * 40,
+            "expected_sha": "e" * 40,
+        }
+    ]
+    request = effects.find_materialization_payload(payload, source)
+    assert request is not None
+    monkeypatch.setattr(
+        effects,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: SimpleNamespace(
+            disposition="QUALIFIED", branch=request.branch, head_sha=request.base_sha
+        ),
+    )
+    monkeypatch.setattr(effects, "task_checkpoint_is_exact", lambda *_a, **_k: True)
+
+    def read(_repository: str, _token: str, path: str, **_kwargs: object) -> object:
+        if "actions/" in path:
+            return {"total_count": 0, "workflow_runs": []}
+        if "check-runs" in path:
+            return {"total_count": 0, "check_runs": []}
+        return None
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    monkeypatch.setattr(
+        "investment_strategy.scheduled_agent_validation_resource._github_json", read
+    )
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        _TEST_TOKEN,
+        source,
+        authorized_change=request.change,
+        current_revision=_REVISION,
+    )
+    assert not adapter.validate_implementation_checkpoint(request, ("1.1",))

@@ -12,7 +12,6 @@ import re
 import sys
 import time
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -45,17 +44,21 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _materialization_effects,
     _qualified_accepted_original_effects,
     _qualified_physical_original_accepted_effects,
+    accepted_validation_candidate,
     application_artifact_stage,
     application_continuation_correlation,
+    canonicalize_raw_worker_result,
     classify_accepted_read_only_effects,
     classify_application_exception_recovery,
     classify_post_effect_result_recovery,
     dispatch_correlation_for,
+    observe_accepted_development_verification,
     parse_application_continuation_request,
     parse_application_request,
     read_application_exception_artifact,
     read_application_recovery_artifact,
     render_application_continuation_request,
+    render_application_request,
 )
 from investment_strategy.scheduled_agent_application_bridge import (
     _github_json as _application_github_json,
@@ -73,6 +76,7 @@ from investment_strategy.scheduled_agent_carrier import (
     QualifiedCarrierPlan,
     github_comment_has_app_provenance,
     github_complete_run_jobs,
+    github_complete_workflow_runs,
     github_original_request_matches,
     github_paginated_mappings,
     github_read_bytes_with_retry,
@@ -114,6 +118,7 @@ from investment_strategy.scheduled_agent_runtime import (
     is_github_actions_comment,
     normalize_github_issue,
 )
+from investment_strategy.scheduled_agent_validation_resource import NativeValidationInvocation
 from investment_strategy.scheduled_agent_wire import RUNTIME_REPAIR_REQUEST_WIRE
 from investment_strategy.scheduled_agent_worker import (
     WorkerActionResult,
@@ -185,6 +190,7 @@ class ApplicationCompletion:
     # Application-owned exact accepted-source proof, not Bridge-local history.
     accepted_record: ApplicationDecisionRecord | None = None
     accepted_decision_sha256: str | None = None
+    validation_invocation: NativeValidationInvocation | None = None
 
 
 # The canonical proof owns permission. This Bridge-only table preserves the
@@ -2158,91 +2164,16 @@ def _complete_workflow_runs(
     *,
     read: GitHubReader,
 ) -> tuple[Mapping[str, object], ...] | None:
-    """Read one complete workflow-run history with a single counted-page proof.
+    """Use the common native run inventory for issue-comment transport."""
 
-    Event-filtered GitHub searches are capped at 1,000 runs. When the count
-    exceeds that cap, switch to unfiltered pages and require native event
-    provenance before selecting issue_comment runs. A failed/inconsistent
-    observation never proves absence.
-    """
-
-    path = f"actions/workflows/{quote(workflow, safe='')}/runs"
-
-    def page(number: int, *, filtered: bool) -> Mapping[str, object] | None:
-        params: dict[str, str | int] = {"per_page": 100, "page": number}
-        if filtered:
-            params = {"event": "issue_comment", **params}
-        payload = read(repository, token, f"{path}?{urlencode(params)}")
-        if not isinstance(payload, Mapping) or not isinstance(payload.get("workflow_runs"), list):
-            return None
-        return payload
-
-    first = page(1, filtered=True)
-    if first is None:
-        return None
-    total_count = first.get("total_count")
-    if total_count is not None and (type(total_count) is not int or total_count < 0):
-        return None
-
-    if type(total_count) is int:
-        filtered = total_count <= 1000
-        if not filtered:
-            unfiltered_first = page(1, filtered=False)
-            if unfiltered_first is None:
-                return None
-            unfiltered_count = unfiltered_first.get("total_count")
-            if type(unfiltered_count) is not int or unfiltered_count < total_count:
-                return None
-            first = unfiltered_first
-            total_count = unfiltered_count
-
-        # Both counted modes use the same complete-page, stable-count and
-        # unique-run-ID qualification. The event proof differs only when the
-        # GitHub search cap forces an unfiltered history.
-        pages = max(1, (total_count + 99) // 100)
-        with ThreadPoolExecutor(max_workers=min(8, pages)) as pool:
-            remaining = tuple(pool.map(lambda n: page(n, filtered=filtered), range(2, pages + 1)))
-        runs: list[Mapping[str, object]] = []
-        for index, payload in enumerate((first, *remaining)):
-            if payload is None or payload.get("total_count") != total_count:
-                return None
-            rows = payload.get("workflow_runs")
-            if not isinstance(rows, list) or len(rows) != min(100, total_count - index * 100):
-                return None
-            for run in rows:
-                if (
-                    not isinstance(run, Mapping)
-                    or type(run.get("id")) is not int
-                    or (not filtered and not isinstance(run.get("event"), str))
-                ):
-                    return None
-                runs.append(cast(Mapping[str, object], run))
-        ids = [cast(int, run["id"]) for run in runs]
-        if len(ids) != len(set(ids)):
-            return None
-        return tuple(run for run in runs if filtered or run.get("event") == "issue_comment")
-
-    # Historical injected readers without total_count retain a bounded
-    # short-page terminator; do not trust a filtered 1,000-result cap.
-    legacy_runs: list[Mapping[str, object]] = []
-    current = first
-    number = 1
-    while True:
-        raw_runs = current["workflow_runs"]
-        if not isinstance(raw_runs, list) or current.get("total_count") is not None:
-            return None
-        if any(not isinstance(run, Mapping) for run in raw_runs):
-            return None
-        legacy_runs.extend(cast(list[Mapping[str, object]], raw_runs))
-        if len(raw_runs) < 100:
-            return tuple(legacy_runs)
-        if len(legacy_runs) >= 1000:
-            return None
-        number += 1
-        next_page = page(number, filtered=True)
-        if next_page is None:
-            return None
-        current = next_page
+    return github_complete_workflow_runs(
+        repository,
+        token,
+        workflow,
+        read=read,
+        filters={"event": "issue_comment"},
+        allow_legacy_uncounted=True,
+    )
 
 
 def _prior_dispatch_handoff_reason(
@@ -4081,20 +4012,24 @@ def _preaccept_exception_repair_status(
         return "INVALID"
     _recorded_run_id, original_revision = attempts[max(attempts)]
 
-    # A deterministic typed-input rejection is terminal even on unchanged
-    # application code.  This is narrower than repairing a valid worker result:
-    # it needs the original immutable request, the current authoritative source,
-    # every native attempt's pre-ACCEPT/zero-write evidence and the same parser
-    # that rejected the payload.  The caller has already ruled out ACCEPTED.
+    # An immutable, fully qualified invalid input can be retired without a
+    # code advance. Reuse the admission parser for each physical wire rather
+    # than comparing diagnostics or validating only the semantic JSON fields.
     if candidate is not None and current_issue is not None:
         request = candidate.request
         body = candidate.body
         observed = normalize_github_issue(current_issue)
-        if (
+        raw_transport = body is not None and body.startswith("WORKER_RESULT\n")
+        legacy_bound = (
             request is not None
-            and body is not None
-            and candidate.request_comment_id == request_comment_id
             and request.authorization_revision == original_revision
+            and request.dispatch_correlation
+            == dispatch_correlation_for(repository, source, original_revision)
+        )
+        if (
+            body is not None
+            and (raw_transport or legacy_bound)
+            and candidate.request_comment_id == request_comment_id
             and run.get("head_sha") == original_revision
             and observed is not None
             and observed.authoritative
@@ -4102,16 +4037,9 @@ def _preaccept_exception_repair_status(
             and observed.issue_number == source.issue_number
             and observed.routing == (source.role, source.action)
             and isinstance(observed.change, str)
-            and observed.change not in {"", "unset"}
-            and request.dispatch_correlation
-            == dispatch_correlation_for(repository, source, original_revision)
+            and bool(observed.change)
             and set(attempts) == set(range(1, latest_attempt + 1))
-        ):
-            try:
-                original_request = parse_application_request(body)
-            except ValueError:
-                original_request = None
-            if original_request == request and all(
+            and all(
                 one(cast(str, comment["body"]), "Revision: ") == original_revision
                 and one(cast(str, comment["body"]), "Result: ") == "execution-exception"
                 and one(cast(str, comment["body"]), "Change: ") == observed.change
@@ -4120,19 +4048,59 @@ def _preaccept_exception_repair_status(
                 and one(cast(str, comment["body"]), "Unfinished-Work: ")
                 == "pre-accept-worker-result-qualification"
                 for comment in matches
+            )
+        ):
+            # The run name/request ID binds the native attempt to the original
+            # connector comment. A current edited copy is not immutable input.
+            try:
+                original = read(repository, token, f"issues/comments/{request_comment_id}")
+            except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+                return "INVALID"
+            if (
+                not isinstance(original, Mapping)
+                or original.get("id") != request_comment_id
+                or original.get("body") != body
+                or not _trusted_connector_comment(original, repository.split("/", 1)[0])
+                or candidate.created_at is None
+                or original.get("created_at") != candidate.created_at
+                or original.get("updated_at") != candidate.created_at
             ):
+                return "INVALID"
+            for attempt in range(1, latest_attempt + 1):
+                inventory = github_complete_run_jobs(
+                    repository, token, run_id=attempts[attempt][0], run_attempt=attempt, read=read
+                )
+                job = None if inventory is None else inventory.single_apply
+                if (
+                    job is None
+                    or job.status != "completed"
+                    or job.conclusion not in _TERMINAL_NO_ACCEPT_CONCLUSIONS
+                ):
+                    return "INVALID"
+            if raw_transport:
                 try:
-                    parse_worker_result(
-                        request.raw_worker_result,
-                        source,
+                    canonicalize_raw_worker_result(
+                        body=body,
+                        source=source,
                         authorized_change=observed.change,
+                        repository=repository,
+                        current_revision=original_revision,
                     )
-                except ValueError as exc:
-                    if all(
-                        one(cast(str, comment["body"]), "Raw-Error: ") == str(exc)
-                        for comment in matches
-                    ):
-                        return "TERMINAL_INVALID_INPUT"
+                except ValueError:
+                    return "TERMINAL_INVALID_INPUT"
+            elif request is not None:
+                try:
+                    original_request = parse_application_request(body)
+                except ValueError:
+                    return "INVALID"
+                if original_request != request:
+                    return "INVALID"
+                try:
+                    render_application_request(
+                        request, source=source, authorized_change=observed.change
+                    )
+                except ValueError:
+                    return "TERMINAL_INVALID_INPUT"
 
     if original_revision == current_revision:
         return "BLOCKED"
@@ -4941,6 +4909,7 @@ def qualify_application_completion(
     read: GitHubReader = _github_json,
     current_dispatch_request_comment_id: int | None = None,
     current_dispatch_issue_number: int | None = None,
+    admitting_request_comment_id: int | None = None,
     now: datetime | None = None,
 ) -> ApplicationCompletion:
     """Return one exhaustive consequence disposition from durable evidence."""
@@ -5411,11 +5380,112 @@ def qualify_application_completion(
         ]
         current_request_ids.difference_update(aborted_ids)
     accepted = [record for record in relevant_decisions if record.disposition == "ACCEPTED"]
-    accepted_request_ids = {record.request_comment_id for record in accepted}
     if conflicting_decision_ids.intersection(
         record.request_comment_id for record in relevant_decisions
     ):
         return ApplicationCompletion("INVALID", "application-completion-preaccept-evidence-unknown")
+
+    # Retire only physically settled development attempts with qualified terminal
+    # CI. Their immutable acceptance and history remain intact. This happens before
+    # accepted-owner cardinality reduction, not as a formal Action transition.
+    development_pending: dict[int, ApplicationCompletion] = {}
+    settled: set[int] = set()
+    for record in accepted:
+        validation_candidate = accepted_validation_candidate(record, source)
+        if (
+            validation_candidate is None
+            or _accepted_decision_sha256(record, issue_comments) is None
+            or _authorization_ancestry(
+                repository,
+                token,
+                authorization_revision=record.authorization_revision,
+                current_revision=current_revision,
+                read=read,
+            )
+            is None
+            or any(
+                isinstance(comment.get("body"), str)
+                and cast(str, comment["body"]).splitlines()[:1]
+                in (["ACTION_RESULT"], ["SLICE_CHECKPOINT"])
+                and f"application:{record.request_comment_id}:{source.issue_number}:"
+                in cast(str, comment["body"])
+                for comment in issue_comments
+            )
+        ):
+            continue
+        leaf_ids = _continuation_transport_comment_ids(
+            repository=repository,
+            owner=owner,
+            token=token,
+            read=read,
+            source=source,
+            record=record,
+            issue_comments=issue_comments,
+            recent_comments=recent,
+        )
+        # A continuation may still own a physical write. Leave its existing
+        # recovery path intact until the complete transport chain is settled.
+        if leaf_ids is None or leaf_ids:
+            continue
+        runs = _application_runs(repository, token, record.request_comment_id, read=read)
+        if runs is None or len(runs) != 1 or runs[0].get("status") != "completed":
+            continue
+        run = runs[0]
+        run_repo = run.get("repository")
+        if (
+            run.get("event") != "issue_comment"
+            or run.get("path") != f".github/workflows/{_APPLICATION_WORKFLOW}"
+            or not isinstance(run_repo, Mapping)
+            or run_repo.get("full_name") != repository
+        ):
+            continue
+        run_id = _positive_int(run.get("id"))
+        run_attempt = _positive_int(runs[0].get("run_attempt"))
+        if run_id is None or run_attempt is None:
+            continue
+        jobs = github_complete_run_jobs(
+            repository, token, run_id=run_id, run_attempt=run_attempt, read=read
+        )
+        job = None if jobs is None else jobs.single_apply
+        if job is None or job.status != "completed":
+            continue
+        repository_info = read(repository, token, "")
+        default_branch = (
+            repository_info.get("default_branch") if isinstance(repository_info, Mapping) else None
+        )
+        if not isinstance(default_branch, str):
+            continue
+        verification = observe_accepted_development_verification(
+            record=record,
+            source=source,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            read=read,
+        )
+        if verification is None:
+            continue
+        if validation_candidate.kind == "development" and verification.observation.verdict in {
+            "PASS",
+            "FAIL",
+        }:
+            settled.add(record.request_comment_id)
+        elif validation_candidate.kind == "marker" and verification.observation.verdict == "PASS":
+            # Exact verification releases the gate, not the accepted consequence.
+            # Its existing completion/continuation owner still owns the suffix.
+            continue
+        else:
+            development_pending[record.request_comment_id] = ApplicationCompletion(
+                "RESUMABLE",
+                "application-completion-development-verification-"
+                + verification.observation.verdict.lower().replace("_", "-"),
+                request_comment_id=record.request_comment_id,
+                validation_invocation=verification.invocation,
+            )
+    accepted = [record for record in accepted if record.request_comment_id not in settled]
+    current_request_ids.difference_update(settled)
+    accepted_request_ids = {record.request_comment_id for record in accepted}
     frontier_correlation = (
         None
         if frontier is None or frontier.event is None
@@ -5451,6 +5521,18 @@ def qualify_application_completion(
         )
     if len(accepted) > 1:
         return ApplicationCompletion("AMBIGUOUS", "application-completion-accepted-ambiguous")
+    if admitting_request_comment_id is not None:
+        # Phase A has freshly qualified this exact ingress. It may exclude only
+        # itself, never another candidate, an invalid input, or an ACCEPTED owner.
+        if (
+            admitting_request_comment_id not in current_request_ids
+            or admitting_request_comment_id in current_invalid_request_ids
+            or admitting_request_comment_id in decisions_by_request
+        ):
+            return ApplicationCompletion(
+                "INVALID", "application-completion-current-admission-unqualified"
+            )
+        current_request_ids.remove(admitting_request_comment_id)
     classifications: dict[int, PreacceptClassification] = {}
     for request_id in current_request_ids - accepted_request_ids:
         candidate = candidates[request_id]
@@ -5547,6 +5629,8 @@ def qualify_application_completion(
     # edited or deleted after ACCEPT, do not parse its new text and do not
     # replay worker semantics; the exact accepted record remains the only
     # resumable payload.
+    if record.request_comment_id in development_pending:
+        return development_pending[record.request_comment_id]
     return accepted_state(record, source)
 
 
@@ -6283,6 +6367,46 @@ def main() -> int:
                     f"issue-{source.issue_number}:{source.action}",
                 )
         continuation_body = None
+        if (
+            completion.validation_invocation is not None
+            and source is not None
+            and decision.disposition == "AUTHORIZE"
+            and decision.selected_issue_id == source.issue_number
+            and decision.selected_routing == (source.role, source.action)
+        ):
+            # Verification is a read-only native CI obligation, not a worker
+            # Action. Reconstruct source, exact target and inventory immediately
+            # before the existing Actions-write transport actuates it.
+            try:
+                fresh = classify_dispatch(acquire_current_github_preflight(repository, token))
+                rechecked = qualify_application_completion(
+                    repository,
+                    token,
+                    source=source,
+                    current_revision=args.revision,
+                    current_dispatch_request_comment_id=identity[1],
+                    current_dispatch_issue_number=identity[0],
+                )
+                invocation = completion.validation_invocation
+                if (
+                    fresh.disposition == "AUTHORIZE"
+                    and fresh.selected_issue_id == source.issue_number
+                    and fresh.selected_routing == (source.role, source.action)
+                    and rechecked.validation_invocation == invocation
+                ):
+                    try:
+                        _application_github_json(
+                            repository,
+                            token,
+                            f"actions/workflows/{invocation.obligation.gate.workflow}/dispatches",
+                            method="POST",
+                            payload=invocation.payload(),
+                        )
+                    finally:
+                        # A lost response is observed, never blindly retried.
+                        invocation.obligation.observe(token)
+            except (OSError, RuntimeError, ValueError, TypeError):
+                pass
         if completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
             if (
                 completion.reason

@@ -40,14 +40,14 @@ rules:
 
   tasks:
     - Organize tasks by vertical feature slice and observable behavior, not by architectural dependency order.
-    - Start every feature slice with RED tests and run them before production implementation.
+    - Start every feature slice with RED tests and obtain the intended native CI failure after Ruff lint, Ruff format check and Mypy pass, before production implementation. Development commits may span wakes without completing the slice.
     - Verify RED failures are caused by the missing or incorrect target behavior, not syntax, import, fixture, setup, or unrelated failures.
     - Implement the minimum GREEN behavior for the slice, then refactor if needed.
     - Refactor production and test code together within the approved slice. Retire or consolidate superseded tests when their still-applicable requirements, safety invariants, supported historical compatibility, and demonstrated failure modes are preserved by verified equivalent or stronger replacement coverage, or authoritative evidence establishes that the protected behavior is no longer required. Do not retain obsolete implementation solely to satisfy obsolete test assumptions, or delete, skip, weaken, or redefine tests merely to obtain GREEN. Preserve unique regression protection; record the rationale, affected contract and replacement or retirement evidence in existing delivery evidence for independent review. No new test registry or approval gate is required.
-    - Complete each slice only after slice tests, the full regression suite, type checks, and lint checks are green.
-    - Use Markdown checkboxes and keep RED, GREEN, and REFACTOR work grouped at feature-slice granularity.
+    - Complete each slice only after native CI proves its focused tests, full regression suite, type checks and lint checks are green, and the resulting exact marker HEAD satisfies every applicable mechanical gate.
+    - Use Markdown checkboxes with unique dotted numeric task IDs inside recognized nonempty numbered feature slices; keep RED, GREEN, and REFACTOR work grouped at feature-slice granularity. The shared executable Task Contract in scheduled_agent_validation_resource.py owns parsing and validation; do not duplicate its grammar.
     - Include behavioral tests that verify public Decision and analytical Backtest artifacts contain the exact required disclaimer text.
     - Trace Behavior/Product tasks through proposal, capability specs, and design; Engineering/Governance tasks such as lint, type checks, and OpenSpec validation may trace through this config and design without adding artificial capability requirements.
     - Implementation task markers SHALL describe only work Executor can implement and VERIFY during implement-change.
     - Reviewer PASS, merge completion, archive completion, and later lifecycle transitions SHALL remain lifecycle gates and MUST NOT be implementation task markers.
-    - Before declaring a change complete, run strict OpenSpec validation and resolve all reported issues.
+    - Before declaring a change complete, run strict OpenSpec validation and the applicable shared repository Task Contract validation at the exact revision, require both to pass, and resolve all reported issues.

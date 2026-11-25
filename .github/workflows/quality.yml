@@ -1,4 +1,5 @@
 name: Python Quality
+run-name: Python Quality ${{ inputs.correlation || github.event.pull_request.number || github.run_id }} @ ${{ inputs.target_revision || github.event.pull_request.head.sha || github.sha }}
 
 on:
   push:
@@ -12,6 +13,7 @@ on:
       - ".github/workflows/quality.yml"
       - "README.md"
       - "agents/**"
+      - "openspec/changes/**/tasks.md"
   pull_request:
     paths:
       - "src/**"
@@ -23,14 +25,56 @@ on:
       - ".github/workflows/quality.yml"
       - "README.md"
       - "agents/**"
+      - "openspec/changes/**/tasks.md"
+
+  workflow_dispatch:
+    inputs:
+      target_repository:
+        description: Exact same repository containing the verification target
+        required: true
+        type: string
+      target_revision:
+        description: Exact commit SHA to verify
+        required: true
+        type: string
+      correlation:
+        description: Repository-owned verification correlation identifier
+        required: true
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   quality:
     runs-on: ubuntu-latest
+    env:
+      TARGET_REPOSITORY: ${{ inputs.target_repository || github.event.pull_request.head.repo.full_name || github.repository }}
+      TARGET_REVISION: ${{ inputs.target_revision || github.event.pull_request.head.sha || github.sha }}
+      VALIDATION_CORRELATION: ${{ inputs.correlation || github.run_id }}
     steps:
+      - name: Qualify verification target
+        shell: bash
+        run: |
+          [[ "$TARGET_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          test -n "$VALIDATION_CORRELATION"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            test "$TARGET_REPOSITORY" = "$GITHUB_REPOSITORY"
+          fi
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ env.TARGET_REPOSITORY }}
+          ref: ${{ env.TARGET_REVISION }}
+          persist-credentials: false
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          actual=$(git rev-parse HEAD)
+          printf 'validation_target_repository=%s\nvalidation_target_sha=%s\n' "$TARGET_REPOSITORY" "$TARGET_REVISION"
+          printf 'validation_correlation=%s\nvalidator_checkout_head=%s\n' "$VALIDATION_CORRELATION" "$actual"
+          printf 'validation_workflow_ref=%s\nvalidation_workflow_sha=%s\n' "$GITHUB_WORKFLOW_REF" "$GITHUB_WORKFLOW_SHA"
+          printf 'validation_run_id=%s\nvalidation_run_attempt=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+          test "$actual" = "$TARGET_REVISION"
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.10.0"
@@ -38,11 +82,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Run tests
-        run: uv run pytest
+      - name: Install locked quality environment
+        run: uv sync --locked
       - name: Ruff lint
-        run: uv run ruff check .
+        run: |
+          status=0
+          .venv/bin/ruff check . || status=$?
+          printf 'validation_exit_ruff_lint=%s\n' "$status"
+          exit "$status"
       - name: Ruff format check
-        run: uv run ruff format --check .
+        run: |
+          status=0
+          .venv/bin/ruff format --check . || status=$?
+          printf 'validation_exit_ruff_format=%s\n' "$status"
+          exit "$status"
       - name: Mypy
-        run: uv run mypy src tests
+        run: |
+          status=0
+          .venv/bin/mypy src tests || status=$?
+          printf 'validation_exit_mypy=%s\n' "$status"
+          exit "$status"
+      - name: Run tests
+        run: |
+          status=0
+          .venv/bin/pytest || status=$?
+          printf 'validation_exit_pytest=%s\n' "$status"
+          exit "$status"

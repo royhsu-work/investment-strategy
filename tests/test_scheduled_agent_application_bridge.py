@@ -5903,7 +5903,11 @@ def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     assert "WORK_PRODUCT_REQUEST" not in workflow
     assert "FORMALIZE_CHANGE_REQUEST" not in workflow
     assert "End invocation at CarrierRequired boundary" in workflow
-    assert workflow.count("steps.apply.outputs.carrier_required != 'true'") == 8
+    assert workflow.count("steps.apply.outputs.carrier_required != 'true'") == 9
+    task_gate = workflow.split("      - name: Validate repository task contract", 1)[1]
+    task_gate = task_gate.split("      - name: Persist the derived successor", 1)[0]
+    assert "steps.apply.outputs.carrier_required != 'true'" in task_gate
+    assert "steps.validation.outputs.validation_required == 'true'" in task_gate
     recovery_name = "application-recovery-evidence"
     recovery_path = f"$RUNNER_TEMP/{recovery_name}"
     assert workflow.count(f'--recovery-evidence-path "{recovery_path}"') == 2
@@ -6026,6 +6030,15 @@ def test_main_exits_at_carrier_boundary_before_formal_continuation(
     )
     monkeypatch.setattr(bridge, "_machine_result_revision", lambda *_args, **_kwargs: _REVISION)
 
+    def observe_prior_comments(
+        repository: str, token: str, path: str
+    ) -> tuple[dict[str, object], ...]:
+        assert (repository, token) == (_REPOSITORY, "token")
+        assert path == "issues/138/comments?sort=created&direction=asc"
+        return ()
+
+    monkeypatch.setattr(bridge, "_paged_github_list", observe_prior_comments)
+
     def carrier_application(
         *_args: object, **_kwargs: object
     ) -> tuple[EffectBatch, bridge.ApplyResult]:
@@ -6046,7 +6059,7 @@ def test_main_exits_at_carrier_boundary_before_formal_continuation(
     monkeypatch.setattr(
         bridge,
         "_write_validation_outputs",
-        lambda target: events.append(f"validation:{target}"),
+        lambda target, **_kwargs: events.append(f"validation:{target}"),
     )
 
     assert bridge.main() == 0
@@ -7605,13 +7618,24 @@ def test_accepted_checkpoint_and_formal_projection_rebind_only_after_proven_targ
     assert rebound["result_content"] == rebound_bodies[1]
 
 
-@pytest.mark.parametrize("materialized", [False, True])
-@pytest.mark.parametrize("result_kind", ["ready", "blocked"])
+@pytest.mark.parametrize(
+    ("materialized", "result_kind", "verdict"),
+    [
+        (False, "ready", "MISSING"),
+        (True, "ready", "PASS"),
+        (True, "ready", "PENDING"),
+        (True, "ready", "FAIL"),
+        (True, "ready", "UNKNOWN"),
+        (False, "blocked", "MISSING"),
+        (True, "blocked", "MISSING"),
+    ],
+)
 def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proof(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     materialized: bool,
     result_kind: str,
+    verdict: Literal["PASS", "FAIL", "PENDING", "MISSING", "UNKNOWN"],
 ) -> None:
     """Phase B first creates its carrier, then binds a checkpoint on a fresh wake."""
     source = WorkerRequest(138, "executor", "implement-change")
@@ -7720,6 +7744,7 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
         pr_number=178,
         change=_CHANGE,
         validation_required=False,
+        branch=f"agent/{_CHANGE}",
     )
     monkeypatch.setattr(
         bridge,
@@ -7730,6 +7755,7 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
             {
                 "disposition": "COMPLETE" if materialized else "INCOMPLETE",
                 "target": target if materialized else None,
+                "witness": SimpleNamespace(revision=revision) if materialized else None,
                 "reason": None,
             },
         )(),
@@ -7737,6 +7763,13 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
     monkeypatch.setattr(bridge, "_accepted_checkpoint_already_durable", lambda *_a, **_k: False)
     # This scenario is explicitly precommit; no authoritative formal result exists.
     monkeypatch.setattr(bridge, "_qualified_committed_implementation_result", lambda **_kw: None)
+    observed_targets: list[ValidationResourceTarget] = []
+
+    def observe_completion(target: ValidationResourceTarget, *_a: object, **_kw: object) -> object:
+        observed_targets.append(target)
+        return bridge.NativeValidationAssessment(bridge.NativeValidationObservation(verdict))
+
+    monkeypatch.setattr(bridge, "assess_completion_validation", observe_completion, raising=False)
     calls: list[dict[str, object]] = []
 
     def fake_apply(raw_result: str, **kwargs: object) -> tuple[EffectBatch, bridge.ApplyResult]:
@@ -7744,7 +7777,14 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
         return EffectBatch(source=source, effects=()), bridge.ApplyResult(False, "controlled-stop")
 
     monkeypatch.setattr(bridge, "run_guarded_effect_application", fake_apply)
-    assert bridge.main() == 1
+    outcome = bridge.main()
+    if materialized and result_kind == "ready":
+        assert observed_targets == [target]
+        if verdict != "PASS":
+            assert outcome == 0
+            assert calls == []
+            return
+    assert outcome == 1
     assert len(calls) == 1
     call = calls[0]
     assert call["accepted_intent"] is True
@@ -8323,3 +8363,167 @@ def test_archive_findings_require_exact_carrier_identity(
     formal = bridge._formal_result_body(result, source=source)
     assert formal is not None
     assert bridge._field(formal, "Revision") == head
+
+
+@pytest.mark.parametrize("wire", ["raw", "legacy"])
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [
+        ("github-mutation", "{"),
+        ("github-mutation", "[]"),
+        ("unknown-effect", '{"issue_number": 138}'),
+        ("issue-comment", '{"issue_number": 139, "body": "foreign"}'),
+        ("issue-comment", '{"issue_number": 138, "body": ""}'),
+        ("routing-transition", '{"issue_number": 138, "action": "review-openspec"}'),
+        ("github-mutation", '{"issue_number": 138, "operation": "unknown"}'),
+        ("github-mutation", '{"issue_number": 138, "operation": "issue-update", "fields": {}}'),
+        (
+            "github-mutation",
+            '{"issue_number": 138, "operation": "issue-label-add", "label": "human:approved"}',
+        ),
+    ],
+)
+def test_worker_ingress_uses_shared_operation_contract(wire: str, kind: str, payload: str) -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    worker = _worker_result(action=source.action, result_kind="ready-for-openspec-review")
+    worker["change"] = _CHANGE
+    worker["requested_effects"] = [{"kind": kind, "payload_json": payload}]
+    raw = json.dumps(worker, sort_keys=True)
+    with pytest.raises(ValueError, match="application requested effect"):
+        if wire == "raw":
+            bridge.canonicalize_raw_worker_result(
+                body=f"WORKER_RESULT\n{raw}\n",
+                source=source,
+                authorized_change=_CHANGE,
+                repository=_REPOSITORY,
+                current_revision=_REVISION,
+            )
+        else:
+            bridge.render_application_request(
+                ApplicationRequest(_REVISION, raw), source=source, authorized_change=_CHANGE
+            )
+
+
+@pytest.mark.parametrize("wire", ["raw", "legacy"])
+def test_worker_ingress_rejects_invalid_nested_materialization_identity(wire: str) -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    worker = _worker_result(action="resolve-question", result_kind="ready-for-openspec-review")
+    worker["change"] = _CHANGE
+    payload = {"operation": "application-materialize", "issue_number": 139}
+    worker["requested_effects"] = [{"kind": "github-mutation", "payload_json": json.dumps(payload)}]
+    raw = json.dumps(worker, sort_keys=True)
+    with pytest.raises(ValueError, match="application materialization Issue identity is invalid"):
+        if wire == "raw":
+            bridge.canonicalize_raw_worker_result(
+                body=f"WORKER_RESULT\n{raw}\n",
+                source=source,
+                authorized_change=_CHANGE,
+                repository=_REPOSITORY,
+                current_revision=_REVISION,
+            )
+        else:
+            bridge.render_application_request(
+                ApplicationRequest(_REVISION, raw), source=source, authorized_change=_CHANGE
+            )
+
+
+@pytest.mark.parametrize(
+    ("workflow_name", "expected_count"),
+    [
+        ("openspec-validate.yml", 1),
+        ("scheduled-agent-application.yml", 1),
+        ("openspec-archive.yml", 2),
+    ],
+)
+def test_existing_mechanical_workflows_consume_shared_task_contract(
+    workflow_name: str, expected_count: int
+) -> None:
+    workflow = (Path(".github/workflows") / workflow_name).read_text(encoding="utf-8")
+    owner = "python -m investment_strategy.scheduled_agent_validation_resource"
+    assert workflow.count(owner) == expected_count
+    assert "openspec validate" in workflow
+    if workflow_name == "scheduled-agent-application.yml":
+        assert workflow.index(owner) < workflow.index("--validation-passed")
+        assert "--root validation-target" in workflow
+    if workflow_name == "openspec-archive.yml":
+        assert workflow.index(owner) < workflow.index('openspec archive "$CHANGE" --yes')
+        assert workflow.rindex(owner) > workflow.index('openspec archive "$CHANGE" --yes')
+
+
+def test_external_and_inline_validation_bind_authoritative_baseline_to_target() -> None:
+    external = Path(".github/workflows/openspec-validate.yml").read_text(encoding="utf-8")
+    inline = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
+    for workflow in (external, inline):
+        assert "validation_baseline_checkout_head=" in workflow
+        assert "validation_workflow_sha=" in workflow
+        assert "validation_run_attempt=" in workflow
+        assert "validation_required_change=" in workflow
+        assert 'test "$baseline_sha" = "$VALIDATOR_BASELINE_SHA"' in workflow
+    assert "github.event_name == 'workflow_dispatch' && github.workflow_sha" in external
+    assert "path: validation-owner" in external
+    assert "path: validation-target" in external
+    assert 'git -C "$VALIDATOR_ROOT" rev-parse HEAD' in external
+    assert ' --root "$GITHUB_WORKSPACE/validation-target"' in external
+    assert 'args+=(--require-change "$REQUIRED_CHANGE")' in external
+    assert 'git -C "$GITHUB_WORKSPACE" rev-parse HEAD' in inline
+
+
+def test_quality_workflow_has_exact_target_native_invocation() -> None:
+    workflow = Path(".github/workflows/quality.yml").read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in workflow
+    assert "target_repository:" in workflow
+    assert "target_revision:" in workflow
+    assert "correlation:" in workflow
+    assert "validation_target_repository=" in workflow
+    assert "validation_correlation=" in workflow
+    assert "validator_checkout_head=" in workflow
+    assert workflow.index("Ruff lint") < workflow.index("Ruff format check")
+    assert workflow.index("Ruff format check") < workflow.index("Mypy")
+    assert workflow.index("Mypy") < workflow.index("Run tests")
+
+
+def test_development_projection_does_not_create_formal_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    worker = _worker_result(
+        action=source.action, role=source.role, result_kind="more-implementation-required"
+    )
+    worker["change"] = _CHANGE
+    effect = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps(
+            {
+                "issue_number": source.issue_number,
+                "operation": "application-materialize",
+                "expected_change": _CHANGE,
+                "change": _CHANGE,
+                "branch": f"agent/{_CHANGE}",
+                "base_sha": _REVISION,
+                "message": "test: develop first incomplete slice",
+                "pr_number": 479,
+                "files": [
+                    {
+                        "path": "tests/test_development.py",
+                        "blob_sha": "b" * 40,
+                        "expected_sha": "c" * 40,
+                    }
+                ],
+            }
+        ),
+    }
+    worker["requested_effects"] = [effect]
+    monkeypatch.setattr(bridge, "_machine_result_revision", lambda *_a, **_k: _REVISION)
+    projected = bridge._fresh_application_worker_result(
+        json.dumps(worker),
+        source=source,
+        change=_CHANGE,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+        request_comment_id=777,
+    )
+    requested = json.loads(projected)["requested_effects"]
+    assert [item["kind"] for item in requested] == ["github-mutation"]
+    assert json.loads(requested[0]["payload_json"]) == json.loads(effect["payload_json"])

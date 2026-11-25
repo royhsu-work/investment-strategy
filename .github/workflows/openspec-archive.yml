@@ -200,6 +200,19 @@ jobs:
             --list-file "$RUNNER_TEMP/openspec-changes.json" \
             >> "$GITHUB_OUTPUT"
 
+      - name: Set up uv for task contract
+        if: steps.completion.outputs.should_archive == 'true'
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+
+      - name: Verify task contract before archive
+        if: steps.completion.outputs.should_archive == 'true'
+        env:
+          CHANGE: ${{ steps.classify.outputs.change }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: uv run python -m investment_strategy.scheduled_agent_validation_resource --require-change "$CHANGE"
+
       - name: Verify change before archive
         if: steps.completion.outputs.should_archive == 'true'
         env:
@@ -290,6 +303,7 @@ jobs:
         run: |
           openspec list
           openspec validate --all --strict --json --no-interactive
+          PYTHONPATH=src uv run python -m investment_strategy.scheduled_agent_validation_resource
           test ! -d "openspec/changes/$CHANGE"
           find openspec/changes/archive -maxdepth 1 -type d -name "*-$CHANGE" -print -quit | grep -q .
           python .github/scripts/openspec_archive.py verify-source \

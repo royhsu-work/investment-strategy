@@ -2495,7 +2495,7 @@ def test_application_continuation_at_r2_preserves_durable_r1_formal_result(
 
     monkeypatch.setattr(application, "GitHubEffectAdapter", DurableReader)
     monkeypatch.setattr(application, "_write_carrier_outputs", lambda *_a: None)
-    monkeypatch.setattr(application, "_write_validation_outputs", lambda *_a: None)
+    monkeypatch.setattr(application, "_write_validation_outputs", lambda *_a, **_k: None)
 
     effects_written: list[StagedEffect] = []
     model_decision = ActionApplicationDecision(

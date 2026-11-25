@@ -106,6 +106,11 @@ A Scheduled Task wake performs exactly this bounded sequence:
 9. persist the one successor Action or terminal state and exit.
 
 The successor is only eligible for a later fresh wake, even when its derived Role is unchanged.
+Within one selected Action, an authorized physical development effect may finish a bounded wake
+without completing the semantic Action or changing routing. The next fresh wake reconstructs the
+same unfinished slice and its exact native CI and effect evidence; it must not replay settled
+physical effects or invent a formal result. A semantic completion requires its exact verified
+checkpoint and applicable gates before the normal successor/terminal sequence.
 A worker cannot select an Issue, Role, Action, target, successor, retry, or success. The application
 derives those facts from current state and the executable model.
 
@@ -204,8 +209,14 @@ or direct ref creation/update. Any PR/ref effect is application-bound to the aut
 repository, default branch, and exact current target before mutation.
 
 Exact-R validation checks the target repository/revision, validator checkout HEAD == R, the qualified
-pinned OpenSpec baseline, and strict validation PASS. Eligibility is derived from the governed
-required gate rather than a source-role/action whitelist.
+pinned OpenSpec baseline, native strict validation PASS and applicable repository Task Contract PASS.
+Privileged validation binds the authoritative validator revision separately from target artifact
+revision; candidate CI verifies the proposed implementation without granting it authority.
+Eligibility is derived from the governed required gate rather than a source-role/action whitelist.
+The application-owned validation resource derives any necessary exact-target native CI invocation
+from the outstanding gate, settled writes and qualified run inventory; transport only actuates it.
+A qualified ordinary FAIL is normal correction, while missing or unsettled evidence remains an
+observation obligation. No unqualified evidence or prior-head result can complete a slice.
 
 Implementation review and archive review are independent. Their PASS results select the explicit
 Actions merge-implementation-pr and merge-archive-pr. Executor merge application rechecks the exact
