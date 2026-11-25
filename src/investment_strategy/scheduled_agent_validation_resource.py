@@ -330,7 +330,13 @@ def observe_native_validation(
             for attempt_run in attempt_runs:
                 attempt_number = cast(int, attempt_run["run_attempt"])
                 identity = ((run_id, attempt_number),)
-                if attempt_run.get("status") in {"queued", "in_progress", "waiting", "requested", "pending"}:
+                if attempt_run.get("status") in {
+                    "queued",
+                    "in_progress",
+                    "waiting",
+                    "requested",
+                    "pending",
+                }:
                     results.append(NativeValidationObservation("PENDING", identity))
                     continue
                 if attempt_run.get("status") != "completed":
@@ -367,7 +373,8 @@ def observe_native_validation(
                     "validator_checkout_head": revision,
                     "validation_correlation": run_correlation,
                     "validation_workflow_ref": (
-                        f"{repository}/.github/workflows/{gate.workflow}@refs/heads/{definition_branch}"
+                        f"{repository}/.github/workflows/{gate.workflow}"
+                        f"@refs/heads/{definition_branch}"
                     ),
                     "validation_workflow_sha": definition_revision,
                     "validation_run_id": str(run_id),
