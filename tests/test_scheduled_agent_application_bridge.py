@@ -7618,13 +7618,24 @@ def test_accepted_checkpoint_and_formal_projection_rebind_only_after_proven_targ
     assert rebound["result_content"] == rebound_bodies[1]
 
 
-@pytest.mark.parametrize("materialized", [False, True])
-@pytest.mark.parametrize("result_kind", ["ready", "blocked"])
+@pytest.mark.parametrize(
+    ("materialized", "result_kind", "verdict"),
+    [
+        (False, "ready", "MISSING"),
+        (True, "ready", "PASS"),
+        (True, "ready", "PENDING"),
+        (True, "ready", "FAIL"),
+        (True, "ready", "UNKNOWN"),
+        (False, "blocked", "MISSING"),
+        (True, "blocked", "MISSING"),
+    ],
+)
 def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proof(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     materialized: bool,
     result_kind: str,
+    verdict: Literal["PASS", "FAIL", "PENDING", "MISSING", "UNKNOWN"],
 ) -> None:
     """Phase B first creates its carrier, then binds a checkpoint on a fresh wake."""
     source = WorkerRequest(138, "executor", "implement-change")
@@ -7733,6 +7744,7 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
         pr_number=178,
         change=_CHANGE,
         validation_required=False,
+        branch=f"agent/{_CHANGE}",
     )
     monkeypatch.setattr(
         bridge,
@@ -7750,6 +7762,13 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
     monkeypatch.setattr(bridge, "_accepted_checkpoint_already_durable", lambda *_a, **_k: False)
     # This scenario is explicitly precommit; no authoritative formal result exists.
     monkeypatch.setattr(bridge, "_qualified_committed_implementation_result", lambda **_kw: None)
+    observed_targets: list[ValidationResourceTarget] = []
+
+    def observe_completion(target: ValidationResourceTarget, *_a: object, **_kw: object) -> object:
+        observed_targets.append(target)
+        return bridge.NativeValidationAssessment(bridge.NativeValidationObservation(verdict))
+
+    monkeypatch.setattr(bridge, "assess_completion_validation", observe_completion, raising=False)
     calls: list[dict[str, object]] = []
 
     def fake_apply(raw_result: str, **kwargs: object) -> tuple[EffectBatch, bridge.ApplyResult]:
@@ -7757,7 +7776,14 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
         return EffectBatch(source=source, effects=()), bridge.ApplyResult(False, "controlled-stop")
 
     monkeypatch.setattr(bridge, "run_guarded_effect_application", fake_apply)
-    assert bridge.main() == 1
+    outcome = bridge.main()
+    if materialized and result_kind == "ready":
+        assert observed_targets == [target]
+        if verdict != "PASS":
+            assert outcome == 0
+            assert calls == []
+            return
+    assert outcome == 1
     assert len(calls) == 1
     call = calls[0]
     assert call["accepted_intent"] is True
