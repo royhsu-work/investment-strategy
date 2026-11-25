@@ -278,6 +278,7 @@ class GitHubSequence:
                             {"name": name, "conclusion": "success"}
                             for name in (
                                 resources.QUALITY_GATE.identity_step,
+                                *resources.QUALITY_GATE.setup_steps,
                                 *resources.QUALITY_GATE.required_steps,
                             )
                         ],

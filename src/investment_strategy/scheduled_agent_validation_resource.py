@@ -102,6 +102,8 @@ class NativeValidationGate:
     job: str
     identity_step: str
     required_steps: tuple[str, ...]
+    setup_steps: tuple[str, ...] = ()
+    failure_markers: tuple[tuple[str, str], ...] = ()
 
 
 QUALITY_GATE = NativeValidationGate(
@@ -110,6 +112,13 @@ QUALITY_GATE = NativeValidationGate(
     "quality",
     "Verify exact checkout",
     ("Ruff lint", "Ruff format check", "Mypy", "Run tests"),
+    ("Install locked quality environment",),
+    (
+        ("Ruff lint", "validation_exit_ruff_lint"),
+        ("Ruff format check", "validation_exit_ruff_format"),
+        ("Mypy", "validation_exit_mypy"),
+        ("Run tests", "validation_exit_pytest"),
+    ),
 )
 OPENSPEC_GATE = NativeValidationGate(
     "openspec-validate.yml",
@@ -122,7 +131,12 @@ OPENSPEC_GATE = NativeValidationGate(
         "Qualify executable compatibility",
         "Show active changes",
         "Validate all OpenSpec artifacts",
+        "Install locked task validation environment",
         "Validate repository task contract",
+    ),
+    failure_markers=(
+        ("Validate all OpenSpec artifacts", "validation_exit_openspec_strict"),
+        ("Validate repository task contract", "validation_exit_task_contract"),
     ),
 )
 
@@ -145,6 +159,50 @@ def _native_identity_matches(log: str, expected: Mapping[str, str]) -> bool:
         if match is not None and match[1] in values:
             values[match[1]].append(match[2])
     return all(values[name] == [value] for name, value in expected.items())
+
+
+def _native_step_verdict(
+    gate: NativeValidationGate,
+    steps: list[Mapping[str, object]],
+    log: str,
+    run_conclusion: object,
+    job_conclusion: object,
+) -> Literal["PASS", "FAIL", "NO_VERDICT", "UNKNOWN"]:
+    """Separate a completed tool verdict from an interrupted verification."""
+
+    names = (gate.identity_step, *gate.setup_steps, *gate.required_steps)
+    if tuple(step.get("name") for step in steps) != names:
+        return "UNKNOWN"
+    conclusions = tuple(step.get("conclusion") for step in steps)
+    if conclusions == ("success",) * len(names):
+        return "PASS" if run_conclusion == job_conclusion == "success" else "UNKNOWN"
+    if run_conclusion != "failure" or job_conclusion != "failure":
+        return "UNKNOWN"
+    if conclusions.count("failure") != 1:
+        return "UNKNOWN"
+    index = conclusions.index("failure")
+    if (
+        index == 0
+        or any(value != "success" for value in conclusions[:index])
+        or any(value != "skipped" for value in conclusions[index + 1 :])
+    ):
+        return "UNKNOWN"
+    marker = dict(gate.failure_markers).get(names[index])
+    if marker is None:
+        # The exact checkout succeeded; setup failed before a tool verdict.
+        return "NO_VERDICT"
+    values = [
+        match[2]
+        for line in log.splitlines()
+        if (match := _NATIVE_LOG_FIELD.fullmatch(line)) is not None and match[1] == marker
+    ]
+    if values == ["1"]:
+        return "FAIL"
+    if len(values) == 1 and (
+        values[0] == "no-verdict" or (values[0].isdecimal() and int(values[0]) > 1)
+    ):
+        return "NO_VERDICT"
+    return "UNKNOWN"
 
 
 def observe_native_validation(
@@ -240,7 +298,7 @@ def observe_native_validation(
                 not isinstance(step, Mapping) for step in raw_steps
             ):
                 return NativeValidationObservation("UNKNOWN")
-            required = (gate.identity_step, *gate.required_steps)
+            required = (gate.identity_step, *gate.setup_steps, *gate.required_steps)
             steps = [step for step in raw_steps if step.get("name") in required]
             if tuple(step.get("name") for step in steps) != required:
                 return NativeValidationObservation("UNKNOWN")
@@ -261,18 +319,13 @@ def observe_native_validation(
             if gate == OPENSPEC_GATE:
                 expected["validation_baseline_checkout_head"] = definition_revision
                 expected["validation_required_change"] = required_change or ""
-            if not _native_identity_matches(logs(repository, token, job_id), expected):
+            log = logs(repository, token, job_id)
+            if not _native_identity_matches(log, expected):
                 return NativeValidationObservation("UNKNOWN")
-            if (
-                run.get("conclusion") == "success"
-                and job.get("conclusion") == "success"
-                and all(step.get("conclusion") == "success" for step in steps)
-            ):
-                results.append(NativeValidationObservation("PASS", identity))
-            else:
-                # A process failure is not, without explicit tool-verdict
-                # evidence, a qualified mechanical FAIL or safe re-invocation.
-                results.append(NativeValidationObservation("UNKNOWN", identity))
+            verdict = _native_step_verdict(
+                gate, steps, log, run.get("conclusion"), job.get("conclusion")
+            )
+            results.append(NativeValidationObservation(verdict, identity))
         attempts = tuple(sorted(attempt for result in results for attempt in result.attempts))
         verdicts = {result.verdict for result in results}
         if not verdicts:
@@ -2957,6 +3010,7 @@ def _task_contract_main() -> int:
     for error in errors:
         print(error, file=sys.stderr)
     if errors:
+        print("validation_exit_task_contract=1")
         return 1
     print("Repository Task Contract: PASS")
     return 0

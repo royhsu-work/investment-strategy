@@ -146,7 +146,25 @@ jobs:
 
       - name: Validate all OpenSpec artifacts
         working-directory: validation-target
-        run: openspec validate --all --strict --json --no-interactive
+        shell: bash
+        run: |
+          status=0
+          report="$RUNNER_TEMP/openspec-validation.json"
+          openspec validate --all --strict --json --no-interactive > "$report" || status=$?
+          cat "$report"
+          if [[ "$status" == 1 ]] && jq -e '
+            (.summary.totals.failed | type == "number" and . > 0) and
+            (.items | type == "array" and any(.[]; .valid == false))
+          ' "$report" >/dev/null; then
+            echo "validation_exit_openspec_strict=1"
+          elif [[ "$status" != 0 ]]; then
+            echo "validation_exit_openspec_strict=no-verdict"
+          fi
+          exit "$status"
+
+      - name: Install locked task validation environment
+        working-directory: ${{ env.VALIDATOR_ROOT }}
+        run: uv sync --locked
 
       - name: Validate repository task contract
         working-directory: ${{ env.VALIDATOR_ROOT }}
@@ -158,4 +176,11 @@ jobs:
           if [[ -n "$REQUIRED_CHANGE" ]]; then
             args+=(--require-change "$REQUIRED_CHANGE")
           fi
-          uv run python -m investment_strategy.scheduled_agent_validation_resource --root "$GITHUB_WORKSPACE/validation-target" "${args[@]}"
+          status=0
+          report="$RUNNER_TEMP/task-validation.txt"
+          uv run --no-sync python -m investment_strategy.scheduled_agent_validation_resource --root "$GITHUB_WORKSPACE/validation-target" "${args[@]}" > "$report" 2>&1 || status=$?
+          cat "$report"
+          if [[ "$status" != 0 ]] && ! grep -qx 'validation_exit_task_contract=1' "$report"; then
+            echo "validation_exit_task_contract=no-verdict"
+          fi
+          exit "$status"

@@ -82,11 +82,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install locked quality environment
+        run: uv sync --locked
       - name: Ruff lint
-        run: uv run ruff check .
+        run: |
+          status=0
+          .venv/bin/ruff check . || status=$?
+          printf 'validation_exit_ruff_lint=%s\n' "$status"
+          exit "$status"
       - name: Ruff format check
-        run: uv run ruff format --check .
+        run: |
+          status=0
+          .venv/bin/ruff format --check . || status=$?
+          printf 'validation_exit_ruff_format=%s\n' "$status"
+          exit "$status"
       - name: Mypy
-        run: uv run mypy src tests
+        run: |
+          status=0
+          .venv/bin/mypy src tests || status=$?
+          printf 'validation_exit_mypy=%s\n' "$status"
+          exit "$status"
       - name: Run tests
-        run: uv run pytest
+        run: |
+          status=0
+          .venv/bin/pytest || status=$?
+          printf 'validation_exit_pytest=%s\n' "$status"
+          exit "$status"
