@@ -8387,3 +8387,50 @@ def test_quality_workflow_has_exact_target_native_invocation() -> None:
     assert workflow.index("Ruff lint") < workflow.index("Ruff format check")
     assert workflow.index("Ruff format check") < workflow.index("Mypy")
     assert workflow.index("Mypy") < workflow.index("Run tests")
+
+
+def test_development_projection_does_not_create_formal_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    worker = _worker_result(
+        action=source.action, role=source.role, result_kind="more-implementation-required"
+    )
+    worker["change"] = _CHANGE
+    effect = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps(
+            {
+                "issue_number": source.issue_number,
+                "operation": "application-materialize",
+                "expected_change": _CHANGE,
+                "change": _CHANGE,
+                "branch": f"agent/{_CHANGE}",
+                "base_sha": _REVISION,
+                "message": "test: develop first incomplete slice",
+                "pr_number": 479,
+                "files": [
+                    {
+                        "path": "tests/test_development.py",
+                        "blob_sha": "b" * 40,
+                        "expected_sha": "c" * 40,
+                    }
+                ],
+            }
+        ),
+    }
+    worker["requested_effects"] = [effect]
+    monkeypatch.setattr(bridge, "_machine_result_revision", lambda *_a, **_k: _REVISION)
+    projected = bridge._fresh_application_worker_result(
+        json.dumps(worker),
+        source=source,
+        change=_CHANGE,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+        request_comment_id=777,
+    )
+    requested = json.loads(projected)["requested_effects"]
+    assert [item["kind"] for item in requested] == ["github-mutation"]
+    assert json.loads(requested[0]["payload_json"]) == json.loads(effect["payload_json"])

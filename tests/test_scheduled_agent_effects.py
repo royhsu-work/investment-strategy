@@ -6035,3 +6035,45 @@ def test_legacy_322_untrusted_forward_mapping_cannot_release_original_effects() 
         accepted_intent=True,
         forward_correction_satisfaction=correction_mapping,
     )
+
+
+def test_development_materialization_has_no_checkpoint_or_routing_authority() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    task = _implementation_checkpoint_effects()[0]
+    payload = json.loads(task["payload_json"])
+    payload["files"] = [
+        {
+            "path": "tests/test_stage_one.py",
+            "blob_sha": "d" * 40,
+            "expected_sha": "e" * 40,
+        }
+    ]
+    requested = [{"kind": "github-mutation", "payload_json": json.dumps(payload)}]
+    batch = parse_effect_batch(
+        _raw(result_kind="more-implementation-required", requested_effects=requested), source
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        validate_implementation_checkpoint=lambda *_args: pytest.fail("development is not VERIFY"),
+    )
+    assert result.applied
+    assert applied == list(batch.effects)
+    assert all(not effect.derived for effect in applied)
+
+    ready = parse_effect_batch(_raw(result_kind="ready", requested_effects=requested), source)
+    refused = apply_effect_batch(
+        ready,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: pytest.fail("unverified READY must not write"),
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+    )
+    assert not refused.applied
+    assert applied == list(batch.effects)
