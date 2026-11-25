@@ -370,6 +370,7 @@ def github_complete_run_job_inventory(
             return None
         page += 1
 
+
 def github_complete_run_jobs(
     repository: str,
     token: str,
@@ -484,6 +485,7 @@ def github_complete_workflow_runs(
         if next_page is None:
             return None
         current = next_page
+
 
 def github_run_artifact_inventory(
     payload: object,

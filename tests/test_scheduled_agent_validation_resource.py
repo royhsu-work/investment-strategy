@@ -2354,6 +2354,7 @@ def test_task_contract_validation_uses_same_owner_and_distinguishes_partial_arti
     task_file.write_text("## 1. First\n- [ ] 1.1 real\n", encoding="utf-8")
     assert resource.validate_task_contracts(tmp_path, required_change="active-change") == ()
 
+
 @pytest.mark.parametrize(
     ("fault", "expected"),
     [
