@@ -44,7 +44,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     _materialization_effects,
     _qualified_accepted_original_effects,
     _qualified_physical_original_accepted_effects,
-    accepted_development_request,
+    accepted_validation_candidate,
     application_artifact_stage,
     application_continuation_correlation,
     canonicalize_raw_worker_result,
@@ -5391,8 +5391,9 @@ def qualify_application_completion(
     development_pending: dict[int, ApplicationCompletion] = {}
     settled: set[int] = set()
     for record in accepted:
+        validation_candidate = accepted_validation_candidate(record, source)
         if (
-            not accepted_development_request(record, source)
+            validation_candidate is None
             or _accepted_decision_sha256(record, issue_comments) is None
             or _authorization_ancestry(
                 repository,
@@ -5465,8 +5466,15 @@ def qualify_application_completion(
         )
         if verification is None:
             continue
-        if verification.observation.verdict in {"PASS", "FAIL"}:
+        if validation_candidate.kind == "development" and verification.observation.verdict in {
+            "PASS",
+            "FAIL",
+        }:
             settled.add(record.request_comment_id)
+        elif validation_candidate.kind == "marker" and verification.observation.verdict == "PASS":
+            # Exact verification releases the gate, not the accepted consequence.
+            # Its existing completion/continuation owner still owns the suffix.
+            continue
         else:
             development_pending[record.request_comment_id] = ApplicationCompletion(
                 "RESUMABLE",
