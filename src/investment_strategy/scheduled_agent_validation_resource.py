@@ -206,6 +206,37 @@ def _native_step_verdict(
     return "UNKNOWN"
 
 
+def _native_run_attempts(
+    repository: str,
+    token: str,
+    run: Mapping[str, object],
+    *,
+    run_id: int,
+    latest_attempt: int,
+    read: Callable[[str, str, str], object],
+) -> tuple[Mapping[str, object], ...] | None:
+    """Enumerate the immutable attempt history, not just GitHub's latest projection."""
+
+    identity_fields = ("id", "event", "path", "head_sha", "head_branch", "display_title")
+    attempts: list[Mapping[str, object]] = []
+    for number in range(1, latest_attempt):
+        earlier = _as_mapping(read(repository, token, f"actions/runs/{run_id}/attempts/{number}"))
+        if (
+            earlier is None
+            or earlier.get("run_attempt") != number
+            or earlier.get("status") != "completed"
+            or any(earlier.get(key) != run.get(key) for key in identity_fields)
+            or any(
+                (repo := _as_mapping(earlier.get(key))) is None
+                or repo.get("full_name") != repository
+                for key in ("repository", "head_repository")
+            )
+        ):
+            return None
+        attempts.append(earlier)
+    return (*attempts, run)
+
+
 def observe_native_validation(
     repository: str,
     token: str,
@@ -291,60 +322,67 @@ def observe_native_validation(
                 or head_repo.get("full_name") != repository
             ):
                 return NativeValidationObservation("UNKNOWN")
-            identity = ((run_id, attempt),)
-            if run.get("status") in {"queued", "in_progress", "waiting", "requested", "pending"}:
-                results.append(NativeValidationObservation("PENDING", identity))
-                continue
-            if run.get("status") != "completed":
-                return NativeValidationObservation("UNKNOWN")
-            jobs = github_complete_run_job_inventory(
-                repository, token, run_id=run_id, run_attempt=attempt, read=observe
+            attempt_runs = _native_run_attempts(
+                repository, token, run, run_id=run_id, latest_attempt=attempt, read=observe
             )
-            if jobs is None:
+            if attempt_runs is None:
                 return NativeValidationObservation("UNKNOWN")
-            named = [job for job in jobs if job.get("name") == gate.job]
-            if run.get("conclusion") in {"cancelled", "timed_out", "startup_failure"}:
-                if any(job.get("status") != "completed" for job in jobs):
+            for attempt_run in attempt_runs:
+                attempt_number = cast(int, attempt_run["run_attempt"])
+                identity = ((run_id, attempt_number),)
+                if attempt_run.get("status") in {"queued", "in_progress", "waiting", "requested", "pending"}:
+                    results.append(NativeValidationObservation("PENDING", identity))
+                    continue
+                if attempt_run.get("status") != "completed":
                     return NativeValidationObservation("UNKNOWN")
-                results.append(NativeValidationObservation("NO_VERDICT", identity))
-                continue
-            if len(named) != 1 or named[0].get("status") != "completed":
-                return NativeValidationObservation("UNKNOWN")
-            job = named[0]
-            job_id = cast(int, job["id"])
-            raw_steps = job.get("steps")
-            if not isinstance(raw_steps, list) or any(
-                not isinstance(step, Mapping) for step in raw_steps
-            ):
-                return NativeValidationObservation("UNKNOWN")
-            required = (gate.identity_step, *gate.setup_steps, *gate.required_steps)
-            steps = [step for step in raw_steps if step.get("name") in required]
-            if tuple(step.get("name") for step in steps) != required:
-                return NativeValidationObservation("UNKNOWN")
-            if steps[0].get("conclusion") != "success":
-                return NativeValidationObservation("UNKNOWN")
-            expected = {
-                "validation_target_repository": repository,
-                "validation_target_sha": revision,
-                "validator_checkout_head": revision,
-                "validation_correlation": run_correlation,
-                "validation_workflow_ref": (
-                    f"{repository}/.github/workflows/{gate.workflow}@refs/heads/{definition_branch}"
-                ),
-                "validation_workflow_sha": definition_revision,
-                "validation_run_id": str(run_id),
-                "validation_run_attempt": str(attempt),
-            }
-            if gate == OPENSPEC_GATE:
-                expected["validation_baseline_checkout_head"] = definition_revision
-                expected["validation_required_change"] = required_change or ""
-            log = logs(repository, token, job_id)
-            if not _native_identity_matches(log, expected):
-                return NativeValidationObservation("UNKNOWN")
-            verdict = _native_step_verdict(
-                gate, steps, log, run.get("conclusion"), job.get("conclusion")
-            )
-            results.append(NativeValidationObservation(verdict, identity))
+                jobs = github_complete_run_job_inventory(
+                    repository, token, run_id=run_id, run_attempt=attempt_number, read=observe
+                )
+                if jobs is None:
+                    return NativeValidationObservation("UNKNOWN")
+                named = [job for job in jobs if job.get("name") == gate.job]
+                if attempt_run.get("conclusion") in {"cancelled", "timed_out", "startup_failure"}:
+                    if any(job.get("status") != "completed" for job in jobs):
+                        return NativeValidationObservation("UNKNOWN")
+                    results.append(NativeValidationObservation("NO_VERDICT", identity))
+                    continue
+                if len(named) != 1 or named[0].get("status") != "completed":
+                    return NativeValidationObservation("UNKNOWN")
+                job = named[0]
+                job_id = cast(int, job["id"])
+                raw_steps = job.get("steps")
+                if not isinstance(raw_steps, list) or any(
+                    not isinstance(step, Mapping) for step in raw_steps
+                ):
+                    return NativeValidationObservation("UNKNOWN")
+                required = (gate.identity_step, *gate.setup_steps, *gate.required_steps)
+                steps = [step for step in raw_steps if step.get("name") in required]
+                if tuple(step.get("name") for step in steps) != required:
+                    return NativeValidationObservation("UNKNOWN")
+                if steps[0].get("conclusion") != "success":
+                    return NativeValidationObservation("UNKNOWN")
+                expected = {
+                    "validation_target_repository": repository,
+                    "validation_target_sha": revision,
+                    "validator_checkout_head": revision,
+                    "validation_correlation": run_correlation,
+                    "validation_workflow_ref": (
+                        f"{repository}/.github/workflows/{gate.workflow}@refs/heads/{definition_branch}"
+                    ),
+                    "validation_workflow_sha": definition_revision,
+                    "validation_run_id": str(run_id),
+                    "validation_run_attempt": str(attempt_number),
+                }
+                if gate == OPENSPEC_GATE:
+                    expected["validation_baseline_checkout_head"] = definition_revision
+                    expected["validation_required_change"] = required_change or ""
+                log = logs(repository, token, job_id)
+                if not _native_identity_matches(log, expected):
+                    return NativeValidationObservation("UNKNOWN")
+                verdict = _native_step_verdict(
+                    gate, steps, log, attempt_run.get("conclusion"), job.get("conclusion")
+                )
+                results.append(NativeValidationObservation(verdict, identity))
         attempts = tuple(sorted(attempt for result in results for attempt in result.attempts))
         verdicts = {result.verdict for result in results}
         if not verdicts:
