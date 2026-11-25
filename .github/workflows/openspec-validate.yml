@@ -55,6 +55,14 @@ jobs:
         with:
           repository: ${{ env.VALIDATION_TARGET_REPOSITORY }}
           ref: ${{ env.VALIDATION_TARGET_SHA }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
 
       - name: Verify exact checkout revision
         shell: bash
@@ -101,3 +109,8 @@ jobs:
 
       - name: Validate all OpenSpec artifacts
         run: openspec validate --all --strict --json --no-interactive
+
+      - name: Validate repository task contract
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: uv run python -m investment_strategy.scheduled_agent_validation_resource

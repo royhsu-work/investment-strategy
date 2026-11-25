@@ -496,9 +496,15 @@ def render_application_request(
         if not isinstance(decoded, Mapping) or not isinstance(decoded.get("change"), str):
             raise ValueError("application request authorized Change is required")
         authorized_change = cast(str, decoded["change"])
-    parse_worker_result(request.raw_worker_result, source, authorized_change=authorized_change)
+    _qualify_worker_materializations(request.raw_worker_result, source, authorized_change)
 
     return _render_accepted_application_wire(request)
+
+
+def _qualify_worker_materializations(raw: str, source: WorkerRequest, change: str) -> None:
+    """Use the operation owner to decode nested materialization identity before ACCEPT."""
+    for payload in _materialization_effects(raw, source, change=change):
+        find_materialization_payload(payload, source)
 
 
 def canonicalize_raw_worker_result(
@@ -4844,7 +4850,9 @@ def _recover_deterministic_accepted_merge_failure(
     return True
 
 
-def _write_validation_outputs(target: ValidationResourceTarget | None) -> None:
+def _write_validation_outputs(
+    target: ValidationResourceTarget | None, *, require_tasks: bool = False
+) -> None:
     output_path = os.environ.get("GITHUB_OUTPUT")
     if not output_path:
         return
@@ -4857,6 +4865,7 @@ def _write_validation_outputs(target: ValidationResourceTarget | None) -> None:
                 f"validation_correlation={target.correlation}",
                 f"validation_pr_number={target.pr_number}",
                 f"validation_change={target.change}",
+                f"validation_required_change={target.change if require_tasks else ''}",
             )
         )
     with Path(output_path).open("a", encoding="utf-8") as output:
@@ -8502,6 +8511,9 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         change = _preflight_change(preflight, source)
         if change is None:
             raise ValueError("WORKER_RESULT authoritative Change is unavailable")
+        context.source = source
+        context.change = change
+        context.stage = "pre-accept-worker-result-qualification"
         request = canonicalize_raw_worker_result(
             body=body,
             source=source,
@@ -8592,6 +8604,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         )
     else:
         semantic_worker_result = plan.raw_worker_result
+        _qualify_worker_materializations(semantic_worker_result, plan.source, effective_change)
     try:
         semantic_decoded = json.loads(semantic_worker_result)
     except json.JSONDecodeError:
@@ -9233,7 +9246,9 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     else:
         target = None
     _write_carrier_outputs(result)
-    _write_validation_outputs(target)
+    _write_validation_outputs(
+        target, require_tasks=worker_result.typed_result.result.kind.value == _FIRST_ACTIVATION_RESULT
+    )
     if not recovery_evidence_written:
         _write_application_recovery_evidence(
             args.recovery_evidence_path,

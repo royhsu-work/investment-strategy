@@ -368,7 +368,6 @@ jobs:
 
       - name: Install qualified OpenSpec baseline
         if: steps.apply.outputs.carrier_required != 'true' && steps.validation.outputs.validation_required == 'true'
-        working-directory: validation-target
         shell: bash
         run: |
           openspec_version="$(tr -d '[:space:]' < .github/openspec-version)"
@@ -382,13 +381,25 @@ jobs:
 
       - name: Qualify pinned OpenSpec compatibility
         if: steps.apply.outputs.carrier_required != 'true' && steps.validation.outputs.validation_required == 'true'
-        working-directory: validation-target
         run: python .github/scripts/openspec_compatibility.py
 
       - name: Validate exact OpenSpec target strictly
         if: steps.apply.outputs.carrier_required != 'true' && steps.validation.outputs.validation_required == 'true'
         working-directory: validation-target
         run: openspec validate --all --strict --json --no-interactive
+
+      - name: Validate repository task contract
+        if: steps.apply.outputs.carrier_required != 'true' && steps.validation.outputs.validation_required == 'true'
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          REQUIRED_CHANGE: ${{ steps.apply.outputs.validation_required_change }}
+        shell: bash
+        run: |
+          args=()
+          if [[ -n "$REQUIRED_CHANGE" ]]; then
+            args+=(--require-change "$REQUIRED_CHANGE")
+          fi
+          uv run python -m investment_strategy.scheduled_agent_validation_resource --root validation-target "${args[@]}"
 
       - name: Persist the derived successor after exact validation
         id: post_validation_apply
