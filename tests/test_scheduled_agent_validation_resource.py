@@ -2471,3 +2471,37 @@ def test_native_quality_verdict_qualifies_real_target_and_producer(
         read_log=logs,
     )
     assert observation.verdict == expected
+
+
+def test_native_invocation_uses_source_and_observed_attempts_without_retry_state() -> None:
+    target = resource.ValidationResourceTarget(
+        _REPOSITORY, _PR_HEAD, "effect-request-138", 479, _CHANGE, branch="agent/example"
+    )
+    source = WorkerRequest(138, "executor", "implement-change")
+    obligation = resource.NativeValidationObligation(
+        resource.QUALITY_GATE, target, source, 777, _REVISION, "main"
+    )
+    missing = resource.NativeValidationObservation("MISSING")
+    first = obligation.invocation(missing)
+    assert first is not None
+    assert first == obligation.invocation(missing)
+    assert first.payload() == {
+        "ref": "main",
+        "inputs": {
+            "target_repository": _REPOSITORY,
+            "target_revision": _PR_HEAD,
+            "correlation": first.correlation,
+        },
+    }
+    terminated = obligation.invocation(
+        resource.NativeValidationObservation("NO_VERDICT", ((7, 1),))
+    )
+    assert terminated is not None
+    assert terminated.correlation != first.correlation
+    for observation in (
+        resource.NativeValidationObservation("PASS"),
+        resource.NativeValidationObservation("FAIL"),
+        resource.NativeValidationObservation("UNKNOWN"),
+        resource.NativeValidationObservation("PENDING"),
+    ):
+        assert obligation.invocation(observation) is None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import os
 import re
@@ -214,6 +215,7 @@ def observe_native_validation(
     definition_revision: str,
     definition_branch: str,
     correlation: str | None = None,
+    correlation_prefix: str | None = None,
     required_change: str | None = None,
     read: Callable[[str, str, str], object] | None = None,
     read_log: Callable[[str, str, int], str] | None = None,
@@ -231,7 +233,8 @@ def observe_native_validation(
         or not _valid_sha(revision)
         or not _valid_sha(definition_revision)
         or not _valid_branch(definition_branch)
-        or (correlation is None and revision != definition_revision)
+        or (correlation is not None and correlation_prefix is not None)
+        or (correlation is None and correlation_prefix is None and revision != definition_revision)
     ):
         return NativeValidationObservation("UNKNOWN")
     observe = _github_json if read is None else read
@@ -248,9 +251,25 @@ def observe_native_validation(
             return NativeValidationObservation("UNKNOWN")
         results: list[NativeValidationObservation] = []
         for run in inventory:
-            event = "push" if correlation is None else "workflow_dispatch"
+            event = (
+                "push"
+                if correlation is None and correlation_prefix is None
+                else "workflow_dispatch"
+            )
             run_id, attempt = run.get("id"), run.get("run_attempt")
             run_correlation = str(run_id) if correlation is None else correlation
+            if correlation_prefix is not None:
+                title = run.get("display_title")
+                if not isinstance(title, str):
+                    return NativeValidationObservation("UNKNOWN")
+                match = re.fullmatch(
+                    rf"{re.escape(gate.title)} ({re.escape(correlation_prefix)}-[0-9a-f]{{16}})"
+                    rf" @ {revision}",
+                    title,
+                )
+                if match is None:
+                    continue
+                run_correlation = match[1]
             if (
                 run.get("event") != event
                 or run.get("display_title") != f"{gate.title} {run_correlation} @ {revision}"
@@ -341,6 +360,84 @@ def observe_native_validation(
         return NativeValidationObservation("NO_VERDICT", attempts)
     except (OSError, RuntimeError, ValueError, TypeError):
         return NativeValidationObservation("UNKNOWN")
+
+
+@dataclass(frozen=True)
+class NativeValidationObligation:
+    """An exact Application-owned gate, with no durable retry or routing state."""
+
+    gate: NativeValidationGate
+    target: ValidationResourceTarget
+    source: WorkerRequest
+    request_comment_id: int
+    definition_revision: str
+    definition_branch: str
+    required_change: str | None = None
+
+    @property
+    def correlation_prefix(self) -> str:
+        identity = (
+            self.target.repository,
+            self.source.issue_number,
+            self.source.role,
+            self.source.action,
+            self.target.change,
+            self.request_comment_id,
+            self.gate.workflow,
+            self.target.revision,
+            self.definition_revision,
+            self.required_change,
+        )
+        digest = hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
+        return f"validation-{digest}"
+
+    def observe(
+        self,
+        token: str,
+        *,
+        read: Callable[[str, str, str], object] | None = None,
+        read_log: Callable[[str, str, int], str] | None = None,
+    ) -> NativeValidationObservation:
+        return observe_native_validation(
+            self.target.repository,
+            token,
+            gate=self.gate,
+            revision=self.target.revision,
+            definition_revision=self.definition_revision,
+            definition_branch=self.definition_branch,
+            correlation_prefix=self.correlation_prefix,
+            required_change=self.required_change,
+            read=read,
+            read_log=read_log,
+        )
+
+    def invocation(self, observed: NativeValidationObservation) -> NativeValidationInvocation | None:
+        """A complete absence or terminated attempt permits one fresh read-only CI request."""
+
+        if observed.verdict not in {"MISSING", "NO_VERDICT"}:
+            return None
+        digest = hashlib.sha256(
+            json.dumps(observed.attempts, separators=(",", ":")).encode()
+        ).hexdigest()[:16]
+        return NativeValidationInvocation(self, f"{self.correlation_prefix}-{digest}")
+
+
+@dataclass(frozen=True)
+class NativeValidationInvocation:
+    """An invocation-local exact verification plan; never a worker-supplied Effect."""
+
+    obligation: NativeValidationObligation
+    correlation: str
+
+    def payload(self) -> Mapping[str, object]:
+        inputs = {
+            "target_repository": self.obligation.target.repository,
+            "target_revision": self.obligation.target.revision,
+            "correlation": self.correlation,
+        }
+        if self.obligation.gate == OPENSPEC_GATE:
+            inputs["required_change"] = self.obligation.required_change or ""
+        return {"ref": self.obligation.definition_branch, "inputs": inputs}
 
 
 def native_development_quality_passed(
