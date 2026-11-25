@@ -1447,9 +1447,7 @@ def _validation_candidate(batch: EffectBatch) -> AcceptedValidationCandidate | N
     development = batch.development_materialization()
     if development is not None:
         return AcceptedValidationCandidate(development, batch.effects[0], "development")
-    originals = [
-        effect for effect in batch.effects if effect.kind == GITHUB_MUTATION_KIND
-    ]
+    originals = [effect for effect in batch.effects if effect.kind == GITHUB_MUTATION_KIND]
     if len(originals) != 1 or originals[0] != batch.effects[0]:
         return None
     effect = originals[0]
