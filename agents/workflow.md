@@ -14,14 +14,16 @@ revisions, transport runs, and carrier output is durable evidence, not a competi
 
 ## One Action per Scheduled Task wake
 
-The normal contract is one Action per Scheduled Task wake.
-
-The normal contract is one Action per Scheduled Task wake.
+The normal contract is one Action per Scheduled Task wake. A vertical slice may span several
+commits and fresh wakes of that same Action.
 
 Each wake performs one fresh dispatch, one semantic Action, one structured result, fresh repository
 reauthorization, exact necessary effects, required validation, postcondition observation,
 next_action(current_action, result), and persistence of one successor or terminal state before exit.
-The successor is executed only by a later fresh wake.
+The successor is executed only by a later fresh wake. An authorized development-only commit
+preserves current routing and does not produce a formal completion result or slice checkpoint;
+the next wake reconstructs the same incomplete slice and native CI evidence. Only a verified
+completion checkpoint at the exact marker HEAD permits the completion result and successor.
 
 The worker cannot choose a target, Role, Action, successor, retry, or success. Repository application
 derives routing from the executable model and rejects stale, replayed, ambiguous, contradictory, or

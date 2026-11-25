@@ -31,12 +31,12 @@ prove the applicable formal results and their accepted effects, routing, old PR 
 blobs and current-base preimages. The worker never creates a ref or selects a different Action;
 subsequent slices use the qualified new PR and the existing PR-head carrier actuator.
 
-The semantic Executor has no mutable checkout or shell. Its positive path is exact carrier head,
-RED-test overlay/focused intended failure, reset to that exact base, complete candidate source/test
-blobs, repository-owned focused GREEN plus full `uv run pytest`, `uv run ruff check .`,
-`uv run ruff format --check .`, and `uv run mypy src tests`, then fresh reauthorization and ACCEPT.
-Only the already-verified content is materialized after ACCEPT; a pre-ACCEPT verifier failure has
-zero authoritative repository consequence.
+The semantic Executor has no assured mutable checkout, shell or installed dependencies. Follow the
+mapped implementation Skill for RED/GREEN/REFACTOR/VERIFY using native CI and content-addressed
+development materialization under fresh Application authorization. Physical development commits
+are not slice completion. A settled ordinary validation FAIL remains same-Action development;
+unknown effects remain subject to the application recovery contract. Completion requires verified
+first-incomplete task criteria, the exact marker HEAD and all applicable gates.
 
 Before READY or review handoff, verify the exact current implementation PR head is non-Draft and
 all required checks are current. The implementation-review Action is the next model-derived Action.
