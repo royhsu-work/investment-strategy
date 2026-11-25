@@ -2291,3 +2291,13 @@ def _apply_public_work_product(fixture: _ProofGitRepository) -> resource.Validat
         authorization_revision=fixture.main,
         accepted_authorization_revision=fixture.authorization,
     )
+
+
+@pytest.mark.parametrize("malformed_task", ["- [ ] RED: missing identifier", "- [x] malformed"])
+def test_task_slices_rejects_malformed_checkbox_among_valid_tasks(
+    malformed_task: str,
+) -> None:
+    content = f"## 1. Development\n\n- [ ] 1.1 RED: valid task\n{malformed_task}\n"
+
+    assert resource._task_slices(content) is None
+    assert resource._first_incomplete_slice_task_ids(content) is None
