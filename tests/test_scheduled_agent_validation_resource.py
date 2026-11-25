@@ -2372,13 +2372,18 @@ def test_task_contract_validation_uses_same_owner_and_distinguishes_partial_arti
         ("skipped", "UNKNOWN"),
         ("attempt", "UNKNOWN"),
         ("short", "UNKNOWN"),
+        ("earlier_missing", "UNKNOWN"),
+        ("earlier_cancelled", "PASS"),
+        ("earlier_failed", "UNKNOWN"),
     ],
 )
 def test_native_quality_verdict_qualifies_real_target_and_producer(
     fault: str, expected: str
 ) -> None:
     branch = "agent/example"
-    run_id, attempt, job_id = 101, 2, 102
+    run_id, attempt, job_id = 101, 1, 102
+    if fault.startswith("earlier_"):
+        attempt = 2
     gate = resource.QUALITY_GATE
     run = {
         "id": run_id,
@@ -2438,10 +2443,39 @@ def test_native_quality_verdict_qualifies_real_target_and_producer(
             }
         if path == f"actions/runs/{run_id}/attempts/{attempt}/jobs":
             return {"total_count": 1, "jobs": [job]}
+        if attempt == 2 and path == f"actions/runs/{run_id}/attempts/1":
+            if fault == "earlier_missing":
+                return None
+            return {
+                **run,
+                "run_attempt": 1,
+                "status": "completed",
+                "conclusion": "cancelled" if fault == "earlier_cancelled" else "failure",
+            }
+        if attempt == 2 and path == f"actions/runs/{run_id}/attempts/1/jobs":
+            earlier_steps = [
+                {
+                    "name": name,
+                    "conclusion": "failure" if name == "Run tests" else "success",
+                }
+                for name in names
+            ]
+            return {
+                "total_count": 1,
+                "jobs": [
+                    {
+                        **job,
+                        "id": job_id + 1,
+                        "run_attempt": 1,
+                        "conclusion": "cancelled" if fault == "earlier_cancelled" else "failure",
+                        "steps": earlier_steps,
+                    }
+                ],
+            }
         raise AssertionError(path)
 
     def logs(_repo: str, _token: str, observed_job: int) -> str:
-        assert observed_job == job_id
+        assert observed_job in {job_id, job_id + 1}
         values = {
             "validation_target_repository": _REPOSITORY,
             "validation_target_sha": _REVISION,
@@ -2452,9 +2486,9 @@ def test_native_quality_verdict_qualifies_real_target_and_producer(
             ),
             "validation_workflow_sha": _PR_HEAD if fault == "definition" else _REVISION,
             "validation_run_id": str(run_id),
-            "validation_run_attempt": str(attempt),
+            "validation_run_attempt": str(1 if observed_job == job_id + 1 else attempt),
         }
-        if fault == "pytest_fail":
+        if fault == "pytest_fail" or (fault == "earlier_failed" and observed_job == job_id + 1):
             values["validation_exit_pytest"] = "1"
         if fault == "lint_fail":
             values["validation_exit_ruff_lint"] = "1"
