@@ -1185,12 +1185,9 @@ def _github_mutation_structurally_valid(
     if operation == "issue-update":
         fields = payload.get("fields")
         expected = payload.get("expected")
-        return (
-            _valid_fields(fields, _ALLOWED_ISSUE_FIELDS)
-            and (
-                (requested and "expected" not in payload)
-                or _valid_fields(expected, _ALLOWED_ISSUE_FIELDS)
-            )
+        return _valid_fields(fields, _ALLOWED_ISSUE_FIELDS) and (
+            (requested and "expected" not in payload)
+            or _valid_fields(expected, _ALLOWED_ISSUE_FIELDS)
         )
     if operation == "issue-label-add":
         return _is_nonempty_string(payload.get("label")) and _routing_label(payload.get("label"))
@@ -1198,9 +1195,8 @@ def _github_mutation_structurally_valid(
         # Archive dispatch target fields are derived from fresh repository
         # identity; a worker may omit them, but not nominate another workflow.
         if requested and "inputs" not in payload:
-            return (
-                payload.get("workflow_id", _ARCHIVE_WORKFLOW_ID) == _ARCHIVE_WORKFLOW_ID
-                and ("ref" not in payload or _valid_branch(payload["ref"]))
+            return payload.get("workflow_id", _ARCHIVE_WORKFLOW_ID) == _ARCHIVE_WORKFLOW_ID and (
+                "ref" not in payload or _valid_branch(payload["ref"])
             )
         inputs = payload.get("inputs")
         if (
@@ -1218,19 +1214,17 @@ def _github_mutation_structurally_valid(
         revision = cast(str, inputs["revision"])
         return inputs["request_key"] == f"archive-{issue}-{revision}"
     if operation == "ref-delete":
-        return (
-            (requested and "ref" not in payload or _valid_ref(payload.get("ref")))
-            and (
-                requested and "expected_sha" not in payload
-                or _valid_sha(payload.get("expected_sha"))
-            )
+        return (requested and "ref" not in payload or _valid_ref(payload.get("ref"))) and (
+            requested and "expected_sha" not in payload or _valid_sha(payload.get("expected_sha"))
         )
     if operation == "pull-request-create":
         head = payload.get("head")
         archive = source.action == "finalize-change"
         if (
             not (
-                requested and archive and "title" not in payload
+                requested
+                and archive
+                and "title" not in payload
                 or _is_nonempty_string(payload.get("title"))
             )
             or not isinstance(payload.get("body", ""), str)
@@ -1241,7 +1235,8 @@ def _github_mutation_structurally_valid(
             return False
         if isinstance(head, str) and head.startswith("agent/archive-"):
             return (
-                requested and "expected_head_sha" not in payload
+                requested
+                and "expected_head_sha" not in payload
                 or _valid_sha(payload.get("expected_head_sha"))
             )
         return "expected_head_sha" not in payload
