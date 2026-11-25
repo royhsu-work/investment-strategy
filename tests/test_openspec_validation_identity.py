@@ -20,7 +20,13 @@ def test_openspec_validation_proves_exact_checkout_identity() -> None:
     assert "github.event.pull_request.head.repo.full_name" in workflow
     assert "repository: ${{ env.VALIDATION_TARGET_REPOSITORY }}" in workflow
     assert "ref: ${{ env.VALIDATION_TARGET_SHA }}" in workflow
-    assert "git rev-parse HEAD" in workflow
+    assert 'actual_sha="$(git -C validation-target rev-parse HEAD)"' in workflow
+    assert 'baseline_sha="$(git -C "$VALIDATOR_ROOT" rev-parse HEAD)"' in workflow
+    assert 'test "$baseline_sha" = "$VALIDATOR_BASELINE_SHA"' in workflow
+    assert 'echo "validation_baseline_checkout_head=$baseline_sha"' in workflow
+    assert 'echo "validator_checkout_head=$actual_sha"' in workflow
+    assert "ref: ${{ env.VALIDATOR_BASELINE_SHA }}" in workflow
+    assert "path: validation-owner" in workflow
     assert '"$actual_sha" != "$VALIDATION_TARGET_SHA"' in workflow
     assert "GITHUB_STEP_SUMMARY" in workflow
 
