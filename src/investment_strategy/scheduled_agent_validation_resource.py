@@ -653,14 +653,18 @@ def _task_marker_delta(current: str, candidate: str) -> tuple[str, ...] | None:
     if len(current_lines) != len(candidate_lines):
         return None
 
+    actual_lines = {number for number, _line in _task_source_lines(current)}
     changed_ids: list[str] = []
-    for current_line, candidate_line in zip(current_lines, candidate_lines, strict=True):
+    for number, (current_line, candidate_line) in enumerate(
+        zip(current_lines, candidate_lines, strict=True), 1
+    ):
         if current_line == candidate_line:
             continue
         current_match = _TASK_LINE.match(current_line)
         candidate_match = _TASK_LINE.match(candidate_line)
         if (
-            current_match is None
+            number not in actual_lines
+            or current_match is None
             or candidate_match is None
             or current_match.group("state") != " "
             or candidate_match.group("state") != "x"
@@ -674,31 +678,111 @@ def _task_marker_delta(current: str, candidate: str) -> tuple[str, ...] | None:
     return tuple(changed_ids)
 
 
-def _task_slices(content: str) -> tuple[tuple[tuple[str, bool], ...], ...] | None:
-    """Parse non-empty, uniquely identified task slices in source order."""
+_TASK_CHECKBOX = re.compile(r"^\s*(?:[-+*]|\d+[.)])\s+\[(?:[ xX]?\]|[ xX](?:\s|$))")
+_TASK_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 
+
+def _task_source_lines(content: str) -> list[tuple[int, str]]:
+    """Return actual Markdown source lines, excluding fenced illustrations."""
+
+    lines: list[tuple[int, str]] = []
+    fence: str | None = None
+    for number, line in enumerate(content.splitlines(), 1):
+        match = _TASK_FENCE.match(line)
+        if fence is not None:
+            if match is not None:
+                marker = match.group(1)
+                if (
+                    marker[0] == fence[0]
+                    and len(marker) >= len(fence)
+                    and not match.group(2).strip()
+                ):
+                    fence = None
+            continue
+        if match is not None:
+            fence = match.group(1)
+            continue
+        lines.append((number, line))
+    return lines
+
+
+@dataclass(frozen=True)
+class TaskContract:
+    """One deterministic interpretation shared by validation and checkpoints."""
+
+    slices: tuple[tuple[tuple[str, bool], ...], ...]
+    errors: tuple[tuple[int, str], ...]
+
+
+def _parse_task_contract(content: str) -> TaskContract:
     slices: list[list[tuple[str, bool]]] = []
+    headings: list[int] = []
     current_slice: list[tuple[str, bool]] | None = None
     seen_ids: set[str] = set()
-    for line in content.splitlines():
+    errors: list[tuple[int, str]] = []
+    for number, line in _task_source_lines(content):
         if _SLICE_HEADING.match(line) is not None:
             current_slice = []
             slices.append(current_slice)
+            headings.append(number)
+            continue
+        if re.match(r"^#{1,2}\s", line):
+            current_slice = None
             continue
         task = _TASK_LINE.match(line)
         if task is None:
+            if _TASK_CHECKBOX.match(line) is not None:
+                errors.append((number, "task checkbox requires a dotted numeric identifier"))
             continue
-        if current_slice is None:
-            return None
         task_id = task.group("id")
+        if current_slice is None:
+            errors.append((number, "task is outside a recognized slice"))
+            continue
         if task_id in seen_ids:
-            return None
+            errors.append((number, f"duplicate task identifier {task_id}"))
+            continue
         seen_ids.add(task_id)
         current_slice.append((task_id, task.group("state") == "x"))
 
-    if not slices or any(not task_slice for task_slice in slices):
-        return None
-    return tuple(tuple(task_slice) for task_slice in slices)
+    if not slices:
+        errors.append((1, "no recognized task slices"))
+    for heading, task_slice in zip(headings, slices, strict=True):
+        if not task_slice:
+            errors.append((heading, "task slice is empty"))
+    return TaskContract(tuple(tuple(task_slice) for task_slice in slices), tuple(errors))
+
+
+def _task_slices(content: str) -> tuple[tuple[tuple[str, bool], ...], ...] | None:
+    """Return the complete contract, never silently omit an invalid task."""
+
+    contract = _parse_task_contract(content)
+    return None if contract.errors else contract.slices
+
+
+def validate_task_contracts(root: Path, *, required_change: str | None = None) -> tuple[str, ...]:
+    """Validate active task artifacts; absence is allowed only before readiness."""
+
+    changes = root / "openspec" / "changes"
+    if not changes.is_dir():
+        return ("openspec/changes: required changes directory is missing",)
+    if required_change is not None and not _valid_change(required_change):
+        return ("invalid required Change identity",)
+    errors: list[str] = []
+    if required_change is not None:
+        required = changes / required_change / "tasks.md"
+        if not required.is_file():
+            errors.append(f"{required.relative_to(root)}: required task artifact is missing")
+    for path in sorted(changes.glob("*/tasks.md")):
+        if path.parent.name == "archive":
+            continue
+        relative = path.relative_to(root)
+        try:
+            contract = _parse_task_contract(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError) as error:
+            errors.append(f"{relative}: {error}")
+            continue
+        errors.extend(f"{relative}:{line}: {reason}" for line, reason in contract.errors)
+    return tuple(errors)
 
 
 def _first_incomplete_slice_task_ids(content: str) -> tuple[str, ...] | None:
@@ -2636,3 +2720,23 @@ def apply_work_product(
         accepted_authorization_revision=accepted_authorization_revision,
         allow_pending_continuation=allow_pending_continuation,
     )
+
+
+def _task_contract_main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Validate repository Task/Slice contracts")
+    parser.add_argument("--root", type=Path, default=Path.cwd())
+    parser.add_argument("--require-change")
+    args = parser.parse_args()
+    errors = validate_task_contracts(args.root, required_change=args.require_change)
+    for error in errors:
+        print(error, file=sys.stderr)
+    if errors:
+        return 1
+    print("Repository Task Contract: PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_task_contract_main())

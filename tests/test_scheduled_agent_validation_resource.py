@@ -2301,3 +2301,56 @@ def test_task_slices_rejects_malformed_checkbox_among_valid_tasks(
 
     assert resource._task_slices(content) is None
     assert resource._first_incomplete_slice_task_ids(content) is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "## 1. First\n- [ ] RED: no ID\n",
+        "## 1. First\n- [ ] 1.1 first\n- [ ] 1.1 duplicate\n",
+        "- [ ] 1.1 unassigned\n## 2. Second\n- [ ] 2.1 second\n",
+        "## 1. Empty\n## 2. Second\n- [ ] 2.1 second\n",
+        "## 1. First\n- [ ] 1.1 first\n## Notes\n- [ ] 1.2 unassigned\n",
+    ],
+)
+def test_task_contract_rejects_incomplete_or_invalid_slices(content: str) -> None:
+    assert resource._task_slices(content) is None
+    assert resource._first_incomplete_slice_task_ids(content) is None
+
+
+def test_task_contract_ignores_fenced_examples_but_marker_delta_cannot_edit_them() -> None:
+    current = (
+        "## 1. First\n- [ ] 1.1 real\n"
+        "```markdown\n- [ ] 1.1 example\n- [ ] RED: example\n```\n"
+    )
+    assert resource._task_slices(current) == ((("1.1", False),),)
+    assert resource._first_incomplete_slice_task_ids(current) == ("1.1",)
+    valid = current.replace("[ ] 1.1 real", "[x] 1.1 real")
+    assert resource._task_marker_delta(current, valid) == ("1.1",)
+    assert (
+        resource._task_marker_delta(current, current.replace("[ ] 1.1 example", "[x] 1.1 example"))
+        is None
+    )
+
+
+def test_task_contract_validation_uses_same_owner_and_distinguishes_partial_artifacts(
+    tmp_path: Path,
+) -> None:
+    changes = tmp_path / "openspec" / "changes"
+    active = changes / "active-change"
+    active.mkdir(parents=True)
+    archived = changes / "archive" / "historic-change"
+    archived.mkdir(parents=True)
+    (archived / "tasks.md").write_text("- [ ] old historical task\n", encoding="utf-8")
+    assert resource.validate_task_contracts(tmp_path) == ()
+    assert resource.validate_task_contracts(tmp_path, required_change="active-change") == (
+        "openspec/changes/active-change/tasks.md: required task artifact is missing",
+    )
+    task_file = active / "tasks.md"
+    task_file.write_text("## 1. First\n- [ ] 1.1 real\n- [ ] RED: missing ID\n", encoding="utf-8")
+    assert resource.validate_task_contracts(tmp_path) == (
+        "openspec/changes/active-change/tasks.md:3: "
+        "task checkbox requires a dotted numeric identifier",
+    )
+    task_file.write_text("## 1. First\n- [ ] 1.1 real\n", encoding="utf-8")
+    assert resource.validate_task_contracts(tmp_path, required_change="active-change") == ()
