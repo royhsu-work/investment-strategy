@@ -9247,7 +9247,8 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         target = None
     _write_carrier_outputs(result)
     _write_validation_outputs(
-        target, require_tasks=worker_result.typed_result.result.kind.value == _FIRST_ACTIVATION_RESULT
+        target,
+        require_tasks=worker_result.typed_result.result.kind.value == _FIRST_ACTIVATION_RESULT,
     )
     if not recovery_evidence_written:
         _write_application_recovery_evidence(
