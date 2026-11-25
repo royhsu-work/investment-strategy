@@ -8331,9 +8331,7 @@ def test_worker_ingress_rejects_invalid_nested_materialization_identity(wire: st
     worker = _worker_result(action="resolve-question", result_kind="ready-for-openspec-review")
     worker["change"] = _CHANGE
     payload = {"operation": "application-materialize", "issue_number": 139}
-    worker["requested_effects"] = [
-        {"kind": "github-mutation", "payload_json": json.dumps(payload)}
-    ]
+    worker["requested_effects"] = [{"kind": "github-mutation", "payload_json": json.dumps(payload)}]
     raw = json.dumps(worker, sort_keys=True)
     with pytest.raises(ValueError, match="application materialization Issue identity is invalid"):
         if wire == "raw":
