@@ -2,7 +2,7 @@
 
 ### Requirement: Known mechanical validation failure permits same-Action correction
 
-A qualified mechanical validator verdict SHALL identify the affected candidate revision, validation check, and authoritative run and attempt. This contract covers OpenSpec Strict Validation, Pytest, Ruff, Mypy, and other governed mechanical checks. A qualified FAIL SHALL retain the same Action and mapped author. The Application SHALL preserve the old acceptance and exact write identity, observe prior effects, and freshly authorize any corrected revision. A predecessor with unresolved writes SHALL be reconciled before any conflicting write. An exact PASS SHALL satisfy only its applicable validation obligation. Formal Result and successor effects SHALL follow the established completion gates, including independent review where required.
+A qualified mechanical validator verdict SHALL identify the affected candidate revision, validation check, and authoritative run and attempt. This contract covers OpenSpec Strict Validation, Pytest, Ruff, Mypy, and other governed mechanical checks. A qualified FAIL SHALL retain the same Action and mapped author. A known ordinary mechanical failure with settled writes SHALL NOT itself require mutation Recovery; review findings and specification blockers SHALL use their existing correction routes. Unknown or partially completed durable obligations SHALL use the existing recovery owner. The Application SHALL preserve the old acceptance and exact write identity, observe prior effects, and freshly authorize any corrected revision. A predecessor with unresolved writes SHALL be reconciled before any conflicting write. An exact PASS SHALL satisfy only its applicable validation obligation. Formal Result and successor effects SHALL follow the established completion gates, including independent review where required.
 
 #### Scenario: Repeated qualified failures followed by exact success
 
@@ -25,6 +25,46 @@ The Application SHALL reconcile a legacy acceptance or migrate its completion us
 - GIVEN a qualified prior Formal Result exists for a legacy acceptance and successor routing remains incomplete
 - WHEN fresh observations establish the current frontier
 - THEN the Application reconciles only the remaining routing obligation when authorized and does not re-emit the Formal Result or rewind a completed descendant
+
+### Requirement: Development materialization and verified slice completion are distinct consequences
+
+For an approved implementation slice, repository Application SHALL authorize each necessary exact-preimage development materialization on the existing carrier independently of slice completion. An incomplete slice MAY span multiple commits, native CI runs and wakes. Development commits MAY precede mechanical validation and contain a failing candidate; they MUST NOT mark tasks complete, create a verified checkpoint or formal completion result, advance routing or authorize merge. Application SHALL preserve exact accepted intent, observed physical write postconditions and current ownership protection; worker, transport and CI cannot authorize writes. A settled development attempt with an authoritative terminal exact CI verdict SHALL allow fresh same-Action development or completion qualification without committing a formal result; a pending or unknown verdict SHALL allow bounded fresh observation, not a guessed success or competing write. Unknown, conflicting or unsettled effects SHALL retain their existing safety obligations.
+
+Formal implementation tests SHALL execute in the existing native CI environment; the worker MUST NOT rely on local installation, a full local test environment, direct API tokens or direct Actions execution. The existing Python Quality checks SHALL execute Ruff lint, Ruff format check, Mypy, then pytest, stopping at the first failure. Valid RED SHALL require all preceding static checks PASS and an intended target-behavior pytest failure before production correction; syntax, indentation, format, type, import, fixture/setup, dependency and unrelated failure SHALL NOT qualify as RED. GREEN SHALL establish minimum approved behavior and all required gates PASS at the exact revision. Refactor, if needed, SHALL be revalidated. No special RED runner, TEST/VERIFY mode, commit trailer, semantic Action or persisted TDD phase SHALL be required.
+
+Slice completion SHALL require the approved task criteria, fresh exact authorization, exact current required validation PASS (including applicable strict OpenSpec validation), durable task markers, and exactly one effective verified checkpoint and formal completion result before successor or next slice. If task markers produce a new HEAD, applicable gates SHALL validate that HEAD; previous-head PASS SHALL NOT be reused. A GREEN revision MAY satisfy VERIFY when all completion criteria and exact gates hold; no artificial extra commit/run is required. Existing independent review, merge and archive gates remain mandatory.
+
+#### Scenario: CI-only RED and GREEN within one slice
+
+- GIVEN an independently approved slice on the exact existing carrier and fresh authorized development manifest
+- WHEN Application materializes tests before production correction and native CI observes static PASS followed by the intended behavioral failure
+- THEN the revision is valid RED evidence without completing a task, checkpoint, formal result or routing transition
+- AND a fresh authorized correction on the same slice obtains exact GREEN and applicable completion gates before the one verified completion result
+
+#### Scenario: Static or environmental failure is not RED
+
+- GIVEN a candidate CI run
+- WHEN Ruff lint, format or Mypy fails
+- THEN later steps do not execute
+- AND neither static failure nor a pytest import, setup, dependency or unrelated failure qualifies as RED
+- AND the mapped author corrects the candidate under existing fresh authority rather than manufacturing completion or a recovery obligation
+
+#### Scenario: Completion marker changes revision
+
+- GIVEN verified implementation behavior at R1 and a task marker update producing R2
+- WHEN the completion consequence is evaluated
+- THEN R2 receives its own applicable required gates through existing native CI
+- AND no R1 PASS substitutes for R2 PASS
+- AND exactly one effective checkpoint and formal completion result are persisted only after completion postconditions
+
+#### Scenario: Pending or interrupted development is reconstructed
+
+- GIVEN an accepted development manifest with incomplete CI or uncertain materialization
+- WHEN a later wake observes fresh repository evidence
+- THEN settled physical effects are never replayed
+- AND pending CI is observed, while unresolved or competing writes prevent conflicting authorization
+- AND a qualified terminal verdict with settled development writes allows the same Action to continue the first incomplete slice without an intermediate formal completion result
+
 
 ## MODIFIED Requirements
 
@@ -139,6 +179,8 @@ Before cardinality reduction, the existing formal lifecycle and ingress qualifie
 
 With zero current accepted owners and no competing live or ambiguous ingress, the existing dispatcher SHALL return ownership to the mapped author of the same Action and lifecycle occurrence. The existing Application Phase A SHALL re-evaluate the same ownership predicate, bind a corrected candidate to the fresh exact target and preimage, reject reuse of the settled failed candidate, and enforce at most one current acceptance before authorizing effects. A stale or competing candidate SHALL receive no effect or completion authority. An exact qualifying PASS on a fresh candidate SHALL allow only the one formal consequence and derived route under existing gates.
 
+For a qualified development-only materialization under the development/completion contract, the physical effect has its own immutable acceptance and postcondition, but does not commit a formal slice consequence. The same current-frontier qualifier SHALL release a settled development attempt after qualified terminal exact CI PASS or FAIL with no completion effects, before cardinality reduction, without emitting a formal result or deriving a routing mutation. Unknown or competing writes retain existing protections. Historical completion intents SHALL NOT be reclassified as development. A completion intent SHALL retain the existing formal-result commit boundary and require all exact completion gates.
+
 Before any consequential effect, fresh application
 authorization SHALL durably persist one exact `APPLICATION_DECISION: ACCEPTED`
 bound to the request comment, source Issue, Role/Action, Change, authorization
@@ -178,7 +220,7 @@ observe the repository, reconcile exact missing idempotent effects, use a
 carrier only when required, validate postconditions, persist the canonical
 formal result, and derive routing/terminal projection. Failure before ACCEPT
 has zero authoritative repository consequence; failure after ACCEPT resumes
-the same intent and semantic replay count remains zero.
+the same intent and semantic replay count remains zero. For development-only materialization, Phase A SHALL authorize the exact physical effect without requiring a future CI PASS, and Phase B SHALL prove the materialization and observe native CI without persisting a formal completion result or routing mutation. All completion intents remain subject to applicable verification and exact completion postconditions.
 
 When an exact GitHub Actions run terminates before ACCEPT and every relevant
 native `EXECUTION_EXCEPTION` attempt proves `NO_APPLICATION_WRITE_ATTEMPTED`,
@@ -551,3 +593,94 @@ After a lost or ambiguous write response, recovery SHALL observe/reconcile the e
 - WHEN Dispatch and Phase A reconstruct the current occurrence
 - THEN no competing correction gains effect or completion authority
 - AND a committed Formal Result is reconciled through its existing postconditions
+
+### Requirement: One Scheduled Task wake executes exactly one Action
+
+Each normal Scheduled Task wake SHALL fresh-dispatch exactly one repository-authorized Action, load the Role and Skill derived from that Action, execute that Action, return structured result/evidence, apply the necessary repository effects, observe postconditions, persist the unique derived successor or terminal state when the formal consequence completes, and exit at the governed boundary. Development-only materialization may end at a real bounded asynchronous wait without formal result or routing change. A successor Action SHALL execute only on a later wake after fresh dispatch, even when it maps to the same Role.
+
+A normal wake remains exactly-one-Action. When its exact dispatch artifact is `NO_WORK`, the external bootstrap MAY invoke one bounded Lead idle semantic mode as a separate non-Action boundary after the normal dispatch exits. That handoff MUST NOT create an Action or same-wake successor. Any admitted candidate is consumed only by a later fresh normal dispatch.
+
+The Action's primary execution unit SHALL remain a bounded verified slice: Reconstruct -> RED exact gap/blocker -> GREEN legal correction -> VERIFY exact postcondition/revision/gate -> durable checkpoint. An implementation slice MAY span one or more development commits, native CI runs and wakes under the development/completion contract without changing Action or creating a new formal completion result. An intermediate file write, API call, commit, Actions run, or first nonterminal observation MUST NOT by itself complete the slice or justify voluntary Exit. Continue immediately actionable work within current authority and bounded opportunity; an actual external asynchronous wait or exhausted execution opportunity permits later fresh reconstruction without pretending the slice completed. Decompose genuinely oversized delivery at meaningful safe boundaries, not merely because CI spans wakes. Other Actions retain their applicable work-conserving exit contract.
+
+The wake MUST NOT require same-role continuation, cross-role barriers, invocation-role comparison, a continuation cursor, a fresh-worker chain, a public recovery mode, or a separate normal transfer journal. Bounded async observation and at-least-once reconstruction remain safety capabilities, not new routing state.
+
+#### Scenario: Same-role successor waits
+
+- GIVEN Lead completes one Action and application persists a legal next Lead Action
+- WHEN the current wake reaches its postcondition
+- THEN it exits
+- AND the next Lead Action runs only after a later fresh dispatch
+
+#### Scenario: Cross-role successor waits
+
+- GIVEN Executor returns a valid result whose derived successor is Lead-owned
+- WHEN application observes the new Action
+- THEN the current wake exits
+- AND no cross-role journal or wake barrier is required
+- AND a later wake derives Lead from the successor Action
+
+#### Scenario: Intermediate success is not completion
+
+- GIVEN the selected Action has only completed an intermediate write or first external run observation
+- WHEN the slice is evaluated
+- THEN it is not complete
+- AND the Action continues only while its source authority and safe execution opportunity remain current
+
+#### Scenario: NO_WORK is a non-Action idle handoff
+
+- GIVEN the exact normal dispatch result is `NO_WORK`
+- WHEN the bootstrap invokes bounded idle semantics
+- THEN no `Action.IDLE_*`, `action:idle-*`, idle transition, or normal successor is created
+- AND the normal Action-only selector remains unchanged
+- AND a later wake performs any canonical Action execution
+
+#### Scenario: Idle admission hands back to normal dispatch
+
+- GIVEN bounded idle semantics have durably admitted `Change: unset + action:explore-change`
+- WHEN a later fresh normal wake reconstructs repository state
+- THEN normal dispatch authorizes ordinary `Lead / explore-change`
+- AND the idle invocation does not execute or select that Action
+
+#### Scenario: Implementation CI spans wakes
+
+- GIVEN the first incomplete implementation slice has a durably materialized development revision and native CI is pending
+- WHEN bounded same-invocation observation opportunity is exhausted
+- THEN the wake may yield without claiming slice completion or changing routing
+- AND a later fresh dispatch or qualified continuation reconstructs the same slice from exact evidence
+- AND immediately actionable work is not voluntarily abandoned.
+
+### Requirement: Executor persists task completion at verified vertical-slice checkpoints
+
+Executor SHALL treat OpenSpec task checkboxes as durable completion evidence rather than fine-grained live progress state.
+
+For each approved vertical feature slice, after that slice's required `VERIFY` succeeds, Executor SHALL persist completion markers for every task in that slice whose completion criteria are satisfied before starting the next slice or handing off from `implement-change`.
+
+Executor MUST NOT defer completed slice markers until the end of the entire OpenSpec change. Development commits MUST preserve incomplete task markers. When marker persistence changes HEAD, the resulting exact HEAD MUST satisfy applicable required gates before the slice checkpoint and formal result; a previous revision's PASS does not transfer.
+
+The workflow MUST NOT require a dedicated commit for each individual checkbox. Task-marker updates SHOULD be committed together with the corresponding implementation checkpoint when practical.
+
+If execution is interrupted during the current incomplete or unverified slice, that slice's markers MAY remain unpersisted; recovery SHALL reconstruct actual code, test, and task state, while markers from previously verified slices remain durable.
+
+#### Scenario: Verified slice reaches its implementation checkpoint
+
+- GIVEN Executor has completed a vertical slice through its required `VERIFY`
+- AND the slice's task completion criteria are satisfied
+- WHEN Executor prepares to begin the next slice or hand off
+- THEN Executor persists the completed task markers for that slice
+- AND the marker update is normally included with the corresponding implementation checkpoint rather than deferred to the end of the whole change
+
+#### Scenario: Individual task finishes before the slice is verified
+
+- GIVEN work for one task inside the current vertical slice is complete
+- AND the slice has not yet completed its required `VERIFY`
+- WHEN Executor continues implementation
+- THEN the workflow does not require a dedicated task-marker commit for that checkbox
+- AND the slice remains the task-persistence checkpoint
+
+#### Scenario: Run is interrupted during an active slice
+
+- GIVEN previously verified slices have persisted task markers
+- AND Executor is interrupted while the current slice is incomplete or unverified
+- WHEN a later Executor run reconstructs implementation state
+- THEN previously verified slice markers remain durable
+- AND the current slice is reconstructed from repository, test, and task reality without treating missing current-slice markers as proof that no work exists

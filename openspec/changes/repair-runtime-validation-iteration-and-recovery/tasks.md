@@ -1,17 +1,19 @@
-## 1. Same-Action mechanical validation iteration
+## 1. Development lifecycle and same-Action mechanical iteration
 
-- [ ] RED: Reproduce strict and quality FAIL → repeated FAIL → corrected exact PASS through normal Runtime entry points, including pending CI and interruptions before validation, after FAIL, and after PASS. Exercise both Dispatcher and Application ingress across the ownership boundary. Assert pending/unknown validation and unresolved writes retain ownership, stale or competing candidates cannot write, and exact PASS yields one Formal Result and routing.
-- [ ] GREEN: Qualify the verdict and exact revision, preserve prior acceptance as history after proven settlement, reuse the shared current ownership predicate to authorize only one fresh correction, and verify Formal Result and successor routing.
-- [ ] REFACTOR: Consolidate reused validation qualification and run slice tests, regression suite, type checks, lint, and strict OpenSpec validation.
+- [ ] RED: On the exact existing feature branch, use the approved bounded bootstrap only after independent OpenSpec PASS and qualified maintenance capability. Set up static-first existing CI and add focused behavioral tests of normal Runtime development materialization before GREEN, multi-commit/same-slice continuation, exact checkpoint separation, and settled FAIL ownership. Obtain CI with all static checks PASS and intended behavioral pytest failure before Runtime production correction. Separately test actual workflow ordering, fail-fast and task-only trigger. Cover repeated strict/quality FAIL -> corrected exact PASS, pending CI, interruption and stale/competing candidates through real dispatch/application entry points.
+- [ ] GREEN: Reuse typed ingress, accepted exact effect, Carrier, current-frontier reducer and validation owner to authorize development commits without completed markers or formal completion, reconstruct same slice after terminal CI, preserve F1, and require exact current full CI/strict gates plus task criteria for one completion checkpoint/formal result. Update existing CI and materially affected Skill/governance/config as declared in design. Verify task-only HEAD has its own applicable gates; no prior-head borrowing. No new runner, mode, Action, state or token. Assert pending/unknown or unsettled writes retain admission protection and ordinary FAIL does not enter mutation Recovery.
+- [ ] REFACTOR/VERIFY: Consolidate qualification and retire only superseded tests with equivalent coverage; run full native CI (Ruff lint, format, Mypy, pytest) and exact strict OpenSpec validation as applicable; record exact intended RED, GREEN and final revision/gates. Persist slice completion only at the verified exact boundary; no checkpoint for intermediate commits.
 
 ## 2. Fresh recovery observation and mutation deduplication
 
-- [ ] RED: Cover repeated historical digest with improved, unchanged, unknown, and contradictory current evidence, partial effects, and unknown carrier outcomes.
-- [ ] GREEN: Reuse the proof owner and allow fresh observation while retaining deduplication and authorization of outstanding mutations.
-- [ ] REFACTOR: Replace superseded expectations with equivalent coverage of safety and supported history. Run slice tests, regression suite, type checks, lint, and strict OpenSpec validation.
+- [ ] RED: Cover repeated historical digest with improved, unchanged, unknown and contradictory current evidence, partial effects and unknown carrier outcomes. Run intended target behavioral failure after static checks pass in native CI.
+- [ ] GREEN: Reuse proof owner and allow fresh observation while retaining deduplication and fresh authorization for outstanding mutations. Distinguish ordinary settled CI/strict FAIL from unsettled effects; no blind retry, replay or rewind.
+- [ ] REFACTOR/VERIFY: Replace superseded expectations only with equivalent safety/history coverage. Run full native CI and exact applicable strict validation; record exact evidence and one verified slice checkpoint.
 
-## 3. Legacy accepted completion
+## 3. Compatibility and integration
 
-- [ ] RED: Exercise legacy acceptance with stale manifest, existing Formal Result, incomplete routing, rollover, and a completed descendant through the existing entry points.
-- [ ] GREEN: Reconcile qualified remaining obligations without replay or rewind and demonstrate preserved evidence and effects on the deployed baseline in a representative test fixture.
-- [ ] REFACTOR: Verify the migration and normal paths together. Run slice tests, regression suite, type checks, lint, and strict OpenSpec validation.
+- [ ] RED: Exercise legacy acceptance with stale manifest, existing Formal Result, incomplete routing, rollover, completed descendant, interrupted development/marker/checkpoint writes, and exact review/merge gate constraints through existing entry points. Obtain intended behavioral failure with static PASS before production correction.
+- [ ] GREEN: Reconcile only qualified remaining obligations, without replay or rewind. Demonstrate preserved historical evidence and effects, one effective completion result/checkpoint, same-Action continuation, and unchanged dependency graph/qualification in representative native-entry test fixtures. Retain #474/#473 mandatory outcomes and #470/#468/#435 chain.
+- [ ] REFACTOR/VERIFY: Verify migration, normal development and recovery together through full native CI and exact strict validation as applicable; record exact evidence and verified slice completion. No parent completion until all mandatory requirements are satisfied.
+
+Independent OpenSpec/implementation review, lawful merge, default-branch activation, archive and qualified downstream resumption remain lifecycle gates, not implementation task markers.
