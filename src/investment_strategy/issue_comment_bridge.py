@@ -12,7 +12,6 @@ import re
 import sys
 import time
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -75,6 +74,7 @@ from investment_strategy.scheduled_agent_carrier import (
     QualifiedCarrierPlan,
     github_comment_has_app_provenance,
     github_complete_run_jobs,
+    github_complete_workflow_runs,
     github_original_request_matches,
     github_paginated_mappings,
     github_read_bytes_with_retry,
@@ -2160,91 +2160,16 @@ def _complete_workflow_runs(
     *,
     read: GitHubReader,
 ) -> tuple[Mapping[str, object], ...] | None:
-    """Read one complete workflow-run history with a single counted-page proof.
+    """Use the common native run inventory for issue-comment transport."""
 
-    Event-filtered GitHub searches are capped at 1,000 runs. When the count
-    exceeds that cap, switch to unfiltered pages and require native event
-    provenance before selecting issue_comment runs. A failed/inconsistent
-    observation never proves absence.
-    """
-
-    path = f"actions/workflows/{quote(workflow, safe='')}/runs"
-
-    def page(number: int, *, filtered: bool) -> Mapping[str, object] | None:
-        params: dict[str, str | int] = {"per_page": 100, "page": number}
-        if filtered:
-            params = {"event": "issue_comment", **params}
-        payload = read(repository, token, f"{path}?{urlencode(params)}")
-        if not isinstance(payload, Mapping) or not isinstance(payload.get("workflow_runs"), list):
-            return None
-        return payload
-
-    first = page(1, filtered=True)
-    if first is None:
-        return None
-    total_count = first.get("total_count")
-    if total_count is not None and (type(total_count) is not int or total_count < 0):
-        return None
-
-    if type(total_count) is int:
-        filtered = total_count <= 1000
-        if not filtered:
-            unfiltered_first = page(1, filtered=False)
-            if unfiltered_first is None:
-                return None
-            unfiltered_count = unfiltered_first.get("total_count")
-            if type(unfiltered_count) is not int or unfiltered_count < total_count:
-                return None
-            first = unfiltered_first
-            total_count = unfiltered_count
-
-        # Both counted modes use the same complete-page, stable-count and
-        # unique-run-ID qualification. The event proof differs only when the
-        # GitHub search cap forces an unfiltered history.
-        pages = max(1, (total_count + 99) // 100)
-        with ThreadPoolExecutor(max_workers=min(8, pages)) as pool:
-            remaining = tuple(pool.map(lambda n: page(n, filtered=filtered), range(2, pages + 1)))
-        runs: list[Mapping[str, object]] = []
-        for index, payload in enumerate((first, *remaining)):
-            if payload is None or payload.get("total_count") != total_count:
-                return None
-            rows = payload.get("workflow_runs")
-            if not isinstance(rows, list) or len(rows) != min(100, total_count - index * 100):
-                return None
-            for run in rows:
-                if (
-                    not isinstance(run, Mapping)
-                    or type(run.get("id")) is not int
-                    or (not filtered and not isinstance(run.get("event"), str))
-                ):
-                    return None
-                runs.append(cast(Mapping[str, object], run))
-        ids = [cast(int, run["id"]) for run in runs]
-        if len(ids) != len(set(ids)):
-            return None
-        return tuple(run for run in runs if filtered or run.get("event") == "issue_comment")
-
-    # Historical injected readers without total_count retain a bounded
-    # short-page terminator; do not trust a filtered 1,000-result cap.
-    legacy_runs: list[Mapping[str, object]] = []
-    current = first
-    number = 1
-    while True:
-        raw_runs = current["workflow_runs"]
-        if not isinstance(raw_runs, list) or current.get("total_count") is not None:
-            return None
-        if any(not isinstance(run, Mapping) for run in raw_runs):
-            return None
-        legacy_runs.extend(cast(list[Mapping[str, object]], raw_runs))
-        if len(raw_runs) < 100:
-            return tuple(legacy_runs)
-        if len(legacy_runs) >= 1000:
-            return None
-        number += 1
-        next_page = page(number, filtered=True)
-        if next_page is None:
-            return None
-        current = next_page
+    return github_complete_workflow_runs(
+        repository,
+        token,
+        workflow,
+        read=read,
+        filters={"event": "issue_comment"},
+        allow_legacy_uncounted=True,
+    )
 
 
 def _prior_dispatch_handoff_reason(

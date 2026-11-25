@@ -2353,3 +2353,91 @@ def test_task_contract_validation_uses_same_owner_and_distinguishes_partial_arti
     )
     task_file.write_text("## 1. First\n- [ ] 1.1 real\n", encoding="utf-8")
     assert resource.validate_task_contracts(tmp_path, required_change="active-change") == ()
+
+@pytest.mark.parametrize(
+    ("fault", "expected"),
+    [
+        ("none", "PASS"),
+        ("missing", "MISSING"),
+        ("pending", "PENDING"),
+        ("cancelled", "NO_VERDICT"),
+        ("checkout", "UNKNOWN"),
+        ("definition", "UNKNOWN"),
+        ("skipped", "UNKNOWN"),
+        ("attempt", "UNKNOWN"),
+        ("short", "UNKNOWN"),
+    ],
+)
+def test_native_quality_verdict_qualifies_real_target_and_producer(
+    fault: str, expected: str
+) -> None:
+    branch = "agent/example"
+    run_id, attempt, job_id = 101, 2, 102
+    gate = resource.QUALITY_GATE
+    run = {
+        "id": run_id,
+        "run_attempt": attempt,
+        "event": "push",
+        "path": ".github/workflows/quality.yml",
+        "head_sha": _REVISION,
+        "head_branch": branch,
+        "display_title": f"Python Quality {run_id} @ {_REVISION}",
+        "repository": {"full_name": _REPOSITORY},
+        "head_repository": {"full_name": _REPOSITORY},
+        "status": "in_progress" if fault == "pending" else "completed",
+        "conclusion": "cancelled" if fault == "cancelled" else "success",
+    }
+    steps = [
+        {
+            "name": name,
+            "conclusion": "skipped" if fault == "skipped" and name == "Mypy" else "success",
+        }
+        for name in (gate.identity_step, *gate.required_steps)
+    ]
+    job = {
+        "id": job_id,
+        "run_id": run_id,
+        "run_attempt": attempt + 1 if fault == "attempt" else attempt,
+        "name": "quality",
+        "status": "completed",
+        "conclusion": "success",
+        "steps": steps,
+    }
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/quality.yml/runs?"):
+            return {
+                "total_count": 0 if fault == "missing" else 2 if fault == "short" else 1,
+                "workflow_runs": [] if fault == "missing" else [run],
+            }
+        if path == f"actions/runs/{run_id}/attempts/{attempt}/jobs":
+            return {"total_count": 1, "jobs": [job]}
+        raise AssertionError(path)
+
+    def logs(_repo: str, _token: str, observed_job: int) -> str:
+        assert observed_job == job_id
+        values = {
+            "validation_target_repository": _REPOSITORY,
+            "validation_target_sha": _REVISION,
+            "validator_checkout_head": _PR_HEAD if fault == "checkout" else _REVISION,
+            "validation_correlation": str(run_id),
+            "validation_workflow_ref": (
+                f"{_REPOSITORY}/.github/workflows/quality.yml@refs/heads/{branch}"
+            ),
+            "validation_workflow_sha": _PR_HEAD if fault == "definition" else _REVISION,
+            "validation_run_id": str(run_id),
+            "validation_run_attempt": str(attempt),
+        }
+        return "\n".join(f"2026-11-25T00:00:00Z {key}={value}" for key, value in values.items())
+
+    observation = resource.observe_native_validation(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        gate=gate,
+        revision=_REVISION,
+        definition_revision=_REVISION,
+        definition_branch=branch,
+        read=read,
+        read_log=logs,
+    )
+    assert observation.verdict == expected

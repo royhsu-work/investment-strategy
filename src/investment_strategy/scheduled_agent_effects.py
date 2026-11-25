@@ -84,6 +84,7 @@ from investment_strategy.scheduled_agent_runtime import (
 from investment_strategy.scheduled_agent_validation_resource import (
     ValidationResourceTarget,
     completed_task_bookkeeping_is_current,
+    native_development_quality_passed,
     task_checkpoint_is_exact,
     verify_implementation_candidate,
     work_product_path_allowed,
@@ -2071,6 +2072,14 @@ class GitHubEffectAdapter:
             completed_task_ids=completed_task_ids,
         ):
             return False
+        if request.pr_number is not None and not self.accepted_intent and len(request.files) == 1:
+            return native_development_quality_passed(
+                self.repository,
+                self.token,
+                revision=request.base_sha,
+                branch=request.branch,
+                read=_github_json,
+            )
         return verify_implementation_candidate(
             self.repository,
             self.token,

@@ -7,12 +7,13 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from investment_strategy.scheduled_agent_wire import ApplicationDecisionRecord, LineWireContract
@@ -310,14 +311,14 @@ def _qualified_jobs_page(
     return _QualifiedJobsPage(count, jobs, unique_ids) if len(unique_ids) == len(jobs) else None
 
 
-def github_complete_run_jobs(
+def github_complete_run_job_inventory(
     repository: str,
     token: str,
     *,
     run_id: int,
     run_attempt: int,
     read: Callable[[str, str, str], object],
-) -> QualifiedApplicationJobs | None:
+) -> tuple[Mapping[str, object], ...] | None:
     """Read one exhaustive Actions job inventory, or admit no job evidence.
 
     A short page cannot prove the absence of another `apply` job. Every page
@@ -356,7 +357,7 @@ def github_complete_run_jobs(
         seen_ids.update(qualified.ids)
         jobs.extend(qualified.jobs)
         if len(jobs) == total:
-            return _application_jobs_contract(tuple(jobs))
+            return tuple(jobs)
         if page == 0:
             # The default 30-item response was incomplete. Restart from an
             # explicit 100-item first page, never treating it as page 1 of a
@@ -369,6 +370,120 @@ def github_complete_run_jobs(
             return None
         page += 1
 
+def github_complete_run_jobs(
+    repository: str,
+    token: str,
+    *,
+    run_id: int,
+    run_attempt: int,
+    read: Callable[[str, str, str], object],
+) -> QualifiedApplicationJobs | None:
+    """Project the existing Application job contract from the shared inventory."""
+
+    jobs = github_complete_run_job_inventory(
+        repository, token, run_id=run_id, run_attempt=run_attempt, read=read
+    )
+    return None if jobs is None else _application_jobs_contract(jobs)
+
+
+def github_complete_workflow_runs(
+    repository: str,
+    token: str,
+    workflow: str,
+    *,
+    read: Callable[[str, str, str], object],
+    filters: Mapping[str, str],
+    allow_legacy_uncounted: bool = False,
+) -> tuple[Mapping[str, object], ...] | None:
+    """Read one complete workflow-run history with a single counted-page proof.
+
+    Filtered GitHub searches are capped at 1,000 runs. When the count
+    exceeds that cap, switch to unfiltered pages and require native event
+    provenance before selecting the requested runs. A failed/inconsistent
+    observation never proves absence.
+    """
+
+    path = f"actions/workflows/{quote(workflow, safe='')}/runs"
+
+    def page(number: int, *, filtered: bool) -> Mapping[str, object] | None:
+        params: dict[str, str | int] = {"per_page": 100, "page": number}
+        if filtered:
+            params = {**filters, **params}
+        payload = read(repository, token, f"{path}?{urlencode(params)}")
+        if not isinstance(payload, Mapping) or not isinstance(payload.get("workflow_runs"), list):
+            return None
+        return payload
+
+    first = page(1, filtered=True)
+    if first is None:
+        return None
+    total_count = first.get("total_count")
+    if total_count is not None and (type(total_count) is not int or total_count < 0):
+        return None
+
+    if type(total_count) is int:
+        filtered = not filters or total_count <= 1000
+        if not filtered:
+            unfiltered_first = page(1, filtered=False)
+            if unfiltered_first is None:
+                return None
+            unfiltered_count = unfiltered_first.get("total_count")
+            if type(unfiltered_count) is not int or unfiltered_count < total_count:
+                return None
+            first = unfiltered_first
+            total_count = unfiltered_count
+
+        # Both counted modes use the same complete-page, stable-count and
+        # unique-run-ID qualification. The event proof differs only when the
+        # GitHub search cap forces an unfiltered history.
+        pages = max(1, (total_count + 99) // 100)
+        with ThreadPoolExecutor(max_workers=min(8, pages)) as pool:
+            remaining = tuple(pool.map(lambda n: page(n, filtered=filtered), range(2, pages + 1)))
+        runs: list[Mapping[str, object]] = []
+        for index, payload in enumerate((first, *remaining)):
+            if payload is None or payload.get("total_count") != total_count:
+                return None
+            rows = payload.get("workflow_runs")
+            if not isinstance(rows, list) or len(rows) != min(100, total_count - index * 100):
+                return None
+            for run in rows:
+                if (
+                    not isinstance(run, Mapping)
+                    or type(run.get("id")) is not int
+                    or (not filtered and any(not isinstance(run.get(k), str) for k in filters))
+                ):
+                    return None
+                runs.append(cast(Mapping[str, object], run))
+        ids = [cast(int, run["id"]) for run in runs]
+        if len(ids) != len(set(ids)):
+            return None
+        return tuple(
+            run for run in runs if filtered or all(run.get(k) == v for k, v in filters.items())
+        )
+
+    # Historical injected readers without total_count retain a bounded
+    # short-page terminator; do not trust a filtered 1,000-result cap.
+    if not allow_legacy_uncounted:
+        return None
+    legacy_runs: list[Mapping[str, object]] = []
+    current = first
+    number = 1
+    while True:
+        raw_runs = current["workflow_runs"]
+        if not isinstance(raw_runs, list) or current.get("total_count") is not None:
+            return None
+        if any(not isinstance(run, Mapping) for run in raw_runs):
+            return None
+        legacy_runs.extend(cast(list[Mapping[str, object]], raw_runs))
+        if len(raw_runs) < 100:
+            return tuple(legacy_runs)
+        if len(legacy_runs) >= 1000:
+            return None
+        number += 1
+        next_page = page(number, filtered=True)
+        if next_page is None:
+            return None
+        current = next_page
 
 def github_run_artifact_inventory(
     payload: object,
@@ -431,7 +546,13 @@ class _NoRedirect(HTTPRedirectHandler):
         raise HTTPError(req.full_url, code, msg, headers, fp)
 
 
-def read_github_artifact_bytes(repository: str, token: str, api_path: str) -> bytes:
+def read_github_artifact_bytes(
+    repository: str,
+    token: str,
+    api_path: str,
+    *,
+    max_bytes: int = _MAX_CARRIER_ARTIFACT_BYTES,
+) -> bytes:
     """Read one GitHub Actions artifact without leaking the API bearer across redirects."""
 
     if _REPOSITORY.fullmatch(repository) is None or not token:
@@ -446,7 +567,7 @@ def read_github_artifact_bytes(repository: str, token: str, api_path: str) -> by
     )
     try:
         with build_opener(_NoRedirect).open(request, timeout=30) as response:
-            raw = response.read(_MAX_CARRIER_ARTIFACT_BYTES + 1)
+            raw = response.read(max_bytes + 1)
     except HTTPError as exc:
         if exc.code != 302:
             raise RuntimeError("exact GitHub artifact read failed") from exc
@@ -467,14 +588,24 @@ def read_github_artifact_bytes(repository: str, token: str, api_path: str) -> by
         )
         try:
             with build_opener().open(redirected, timeout=30) as response:
-                raw = response.read(_MAX_CARRIER_ARTIFACT_BYTES + 1)
+                raw = response.read(max_bytes + 1)
         except (HTTPError, URLError, TimeoutError) as redirect_exc:
             raise RuntimeError("exact GitHub artifact response is invalid") from redirect_exc
     except (URLError, TimeoutError) as exc:
         raise RuntimeError("exact GitHub artifact response is invalid") from exc
-    if not raw or len(raw) > _MAX_CARRIER_ARTIFACT_BYTES:
+    if not raw or len(raw) > max_bytes:
         raise RuntimeError("exact GitHub artifact size is invalid")
     return raw
+
+
+def read_github_job_log(repository: str, token: str, job_id: int) -> str:
+    """Use the token-stripping Actions download transport for exact job logs."""
+
+    if type(job_id) is not int or job_id <= 0:
+        raise ValueError("native validation job identity is invalid")
+    return read_github_artifact_bytes(
+        repository, token, f"actions/jobs/{job_id}/logs", max_bytes=8 * 1024 * 1024
+    ).decode("utf-8")
 
 
 @dataclass(frozen=True)

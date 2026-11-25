@@ -35,9 +35,12 @@ from investment_strategy.scheduled_agent_carrier import (
     carrier_pr_identity,
     create_exact_git_commit,
     create_exact_git_tree,
+    github_complete_run_job_inventory,
+    github_complete_workflow_runs,
     github_read_bytes_with_retry,
     github_write_bytes,
     make_carrier_plan,
+    read_github_job_log,
 )
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
@@ -88,6 +91,227 @@ class ValidationResourceTarget:
     change: str
     validation_required: bool = True
     branch: str | None = None
+
+
+@dataclass(frozen=True)
+class NativeValidationGate:
+    """One existing native workflow's required verification contract."""
+
+    workflow: str
+    title: str
+    job: str
+    identity_step: str
+    required_steps: tuple[str, ...]
+
+
+QUALITY_GATE = NativeValidationGate(
+    "quality.yml",
+    "Python Quality",
+    "quality",
+    "Verify exact checkout",
+    ("Ruff lint", "Ruff format check", "Mypy", "Run tests"),
+)
+OPENSPEC_GATE = NativeValidationGate(
+    "openspec-validate.yml",
+    "OpenSpec Validate",
+    "validate",
+    "Verify exact checkout revision",
+    (
+        "Install qualified OpenSpec baseline",
+        "Show OpenSpec version",
+        "Qualify executable compatibility",
+        "Show active changes",
+        "Validate all OpenSpec artifacts",
+        "Validate repository task contract",
+    ),
+)
+
+
+@dataclass(frozen=True)
+class NativeValidationObservation:
+    """An invocation-local evidence observation, not persisted routing state."""
+
+    verdict: Literal["PASS", "FAIL", "PENDING", "NO_VERDICT", "MISSING", "UNKNOWN"]
+    attempts: tuple[tuple[int, int], ...] = ()
+
+
+_NATIVE_LOG_FIELD = re.compile(r"^\d{4}-\d\d-\d\dT[^ ]+Z ([a-z_]+)=(.*)$")
+
+
+def _native_identity_matches(log: str, expected: Mapping[str, str]) -> bool:
+    values: dict[str, list[str]] = {name: [] for name in expected}
+    for line in log.splitlines():
+        match = _NATIVE_LOG_FIELD.fullmatch(line)
+        if match is not None and match[1] in values:
+            values[match[1]].append(match[2])
+    return all(values[name] == [value] for name, value in expected.items())
+
+
+def observe_native_validation(
+    repository: str,
+    token: str,
+    *,
+    gate: NativeValidationGate,
+    revision: str,
+    definition_revision: str,
+    definition_branch: str,
+    correlation: str | None = None,
+    required_change: str | None = None,
+    read: Callable[[str, str, str], object] | None = None,
+    read_log: Callable[[str, str, int], str] | None = None,
+) -> NativeValidationObservation:
+    """Qualify exact target and producer separately; never infer PASS from a check name.
+
+    With no explicit correlation, consume the exact same-repository push run.
+    A native workflow_dispatch must carry an independently derived correlation.
+    PR synthetic-merge workflow definitions do not substitute for an exact
+    definition revision. Unknown observations never prove that a run is absent.
+    """
+
+    if (
+        gate not in (QUALITY_GATE, OPENSPEC_GATE)
+        or not _valid_sha(revision)
+        or not _valid_sha(definition_revision)
+        or not _valid_branch(definition_branch)
+        or (correlation is None and revision != definition_revision)
+    ):
+        return NativeValidationObservation("UNKNOWN")
+    observe = _github_json if read is None else read
+    logs = read_github_job_log if read_log is None else read_log
+    try:
+        inventory = github_complete_workflow_runs(
+            repository,
+            token,
+            gate.workflow,
+            filters={"head_sha": definition_revision},
+            read=observe,
+        )
+        if inventory is None:
+            return NativeValidationObservation("UNKNOWN")
+        results: list[NativeValidationObservation] = []
+        for run in inventory:
+            event = "push" if correlation is None else "workflow_dispatch"
+            run_id, attempt = run.get("id"), run.get("run_attempt")
+            run_correlation = str(run_id) if correlation is None else correlation
+            if (
+                run.get("event") != event
+                or run.get("display_title") != f"{gate.title} {run_correlation} @ {revision}"
+            ):
+                continue
+            run_repo = _as_mapping(run.get("repository"))
+            head_repo = _as_mapping(run.get("head_repository"))
+            if (
+                type(run_id) is not int
+                or run_id <= 0
+                or type(attempt) is not int
+                or attempt <= 0
+                or run.get("path") != f".github/workflows/{gate.workflow}"
+                or run.get("head_sha") != definition_revision
+                or run.get("head_branch") != definition_branch
+                or run_repo is None
+                or run_repo.get("full_name") != repository
+                or head_repo is None
+                or head_repo.get("full_name") != repository
+            ):
+                return NativeValidationObservation("UNKNOWN")
+            identity = ((run_id, attempt),)
+            if run.get("status") in {"queued", "in_progress", "waiting", "requested", "pending"}:
+                results.append(NativeValidationObservation("PENDING", identity))
+                continue
+            if run.get("status") != "completed":
+                return NativeValidationObservation("UNKNOWN")
+            jobs = github_complete_run_job_inventory(
+                repository, token, run_id=run_id, run_attempt=attempt, read=observe
+            )
+            if jobs is None:
+                return NativeValidationObservation("UNKNOWN")
+            named = [job for job in jobs if job.get("name") == gate.job]
+            if run.get("conclusion") in {"cancelled", "timed_out", "startup_failure"}:
+                if any(job.get("status") != "completed" for job in jobs):
+                    return NativeValidationObservation("UNKNOWN")
+                results.append(NativeValidationObservation("NO_VERDICT", identity))
+                continue
+            if len(named) != 1 or named[0].get("status") != "completed":
+                return NativeValidationObservation("UNKNOWN")
+            job = named[0]
+            job_id = cast(int, job["id"])
+            raw_steps = job.get("steps")
+            if not isinstance(raw_steps, list) or any(
+                not isinstance(step, Mapping) for step in raw_steps
+            ):
+                return NativeValidationObservation("UNKNOWN")
+            required = (gate.identity_step, *gate.required_steps)
+            steps = [step for step in raw_steps if step.get("name") in required]
+            if tuple(step.get("name") for step in steps) != required:
+                return NativeValidationObservation("UNKNOWN")
+            if steps[0].get("conclusion") != "success":
+                return NativeValidationObservation("UNKNOWN")
+            expected = {
+                "validation_target_repository": repository,
+                "validation_target_sha": revision,
+                "validator_checkout_head": revision,
+                "validation_correlation": run_correlation,
+                "validation_workflow_ref": (
+                    f"{repository}/.github/workflows/{gate.workflow}@refs/heads/{definition_branch}"
+                ),
+                "validation_workflow_sha": definition_revision,
+                "validation_run_id": str(run_id),
+                "validation_run_attempt": str(attempt),
+            }
+            if gate == OPENSPEC_GATE:
+                expected["validation_baseline_checkout_head"] = definition_revision
+                expected["validation_required_change"] = required_change or ""
+            if not _native_identity_matches(logs(repository, token, job_id), expected):
+                return NativeValidationObservation("UNKNOWN")
+            if (
+                run.get("conclusion") == "success"
+                and job.get("conclusion") == "success"
+                and all(step.get("conclusion") == "success" for step in steps)
+            ):
+                results.append(NativeValidationObservation("PASS", identity))
+            else:
+                # A process failure is not, without explicit tool-verdict
+                # evidence, a qualified mechanical FAIL or safe re-invocation.
+                results.append(NativeValidationObservation("UNKNOWN", identity))
+        attempts = tuple(sorted(attempt for result in results for attempt in result.attempts))
+        verdicts = {result.verdict for result in results}
+        if not verdicts:
+            return NativeValidationObservation("MISSING")
+        if "UNKNOWN" in verdicts or {"PASS", "FAIL"} <= verdicts:
+            return NativeValidationObservation("UNKNOWN", attempts)
+        if "PENDING" in verdicts:
+            return NativeValidationObservation("PENDING", attempts)
+        if "PASS" in verdicts:
+            return NativeValidationObservation("PASS", attempts)
+        if "FAIL" in verdicts:
+            return NativeValidationObservation("FAIL", attempts)
+        return NativeValidationObservation("NO_VERDICT", attempts)
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return NativeValidationObservation("UNKNOWN")
+
+
+def native_development_quality_passed(
+    repository: str,
+    token: str,
+    *,
+    revision: str,
+    branch: str,
+    read: Callable[[str, str, str], object] | None = None,
+) -> bool:
+    """Require the settled candidate's exact native quality verdict."""
+
+    return (
+        observe_native_validation(
+            repository,
+            token,
+            gate=QUALITY_GATE,
+            revision=revision,
+            definition_revision=revision,
+            definition_branch=branch,
+            read=read,
+        ).verdict
+        == "PASS"
+    )
 
 
 @dataclass(frozen=True)
