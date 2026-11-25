@@ -4295,7 +4295,9 @@ def test_elided_original_exception_selection_preserves_carrier_ownership(
                 ),
             }
         ]
-    original_body = render_application_request(
+    # Historical wire may predate current ingress qualification. Preserve its
+    # original bytes so this test still exercises accepted-effect ownership.
+    original_body = application._render_accepted_application_wire(
         bridge.ApplicationRequest(
             authorization_revision=REVISION,
             raw_worker_result=json.dumps(original),

@@ -5903,7 +5903,11 @@ def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     assert "WORK_PRODUCT_REQUEST" not in workflow
     assert "FORMALIZE_CHANGE_REQUEST" not in workflow
     assert "End invocation at CarrierRequired boundary" in workflow
-    assert workflow.count("steps.apply.outputs.carrier_required != 'true'") == 8
+    assert workflow.count("steps.apply.outputs.carrier_required != 'true'") == 9
+    task_gate = workflow.split("      - name: Validate repository task contract", 1)[1]
+    task_gate = task_gate.split("      - name: Persist the derived successor", 1)[0]
+    assert "steps.apply.outputs.carrier_required != 'true'" in task_gate
+    assert "steps.validation.outputs.validation_required == 'true'" in task_gate
     recovery_name = "application-recovery-evidence"
     recovery_path = f"$RUNNER_TEMP/{recovery_name}"
     assert workflow.count(f'--recovery-evidence-path "{recovery_path}"') == 2
@@ -6046,7 +6050,7 @@ def test_main_exits_at_carrier_boundary_before_formal_continuation(
     monkeypatch.setattr(
         bridge,
         "_write_validation_outputs",
-        lambda target: events.append(f"validation:{target}"),
+        lambda target, **_kwargs: events.append(f"validation:{target}"),
     )
 
     assert bridge.main() == 0
@@ -8369,3 +8373,17 @@ def test_existing_mechanical_workflows_consume_shared_task_contract(
     if workflow_name == "openspec-archive.yml":
         assert workflow.index(owner) < workflow.index('openspec archive "$CHANGE" --yes')
         assert workflow.rindex(owner) > workflow.index('openspec archive "$CHANGE" --yes')
+
+
+def test_quality_workflow_has_exact_target_native_invocation() -> None:
+    workflow = Path(".github/workflows/quality.yml").read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in workflow
+    assert "target_repository:" in workflow
+    assert "target_revision:" in workflow
+    assert "correlation:" in workflow
+    assert "validation_target_repository=" in workflow
+    assert "validation_correlation=" in workflow
+    assert "validator_checkout_head=" in workflow
+    assert workflow.index("Ruff lint") < workflow.index("Ruff format check")
+    assert workflow.index("Ruff format check") < workflow.index("Mypy")
+    assert workflow.index("Mypy") < workflow.index("Run tests")
