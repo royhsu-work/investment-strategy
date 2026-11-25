@@ -154,6 +154,42 @@ class EffectBatch:
     effects: tuple[StagedEffect, ...]
     typed_result: BoundedActionResult | None = None
 
+    def development_materialization(self) -> MaterializationRequest | None:
+        """Recognize a physical-only implementation consequence, never a checkpoint.
+
+        The existing operation parser owns manifest validation. Task artifacts
+        and all additional effects remain subject to completion qualification.
+        """
+        result = self.typed_result
+        if (
+            result is None
+            or self.source.role != "executor"
+            or self.source.action != "implement-change"
+            or result.result.kind != ResultKind.MORE_IMPLEMENTATION_REQUIRED
+            or len(self.effects) != 1
+        ):
+            return None
+        effect = self.effects[0]
+        if effect.derived or effect.kind != GITHUB_MUTATION_KIND:
+            return None
+        payload = _effect_payload(effect)
+        if payload is None:
+            return None
+        try:
+            request = find_materialization_payload(payload, self.source)
+        except ValueError:
+            return None
+        if (
+            request is None
+            or request.pr_number is None
+            or request.expected_change != result.change
+            or request.change != result.change
+            or not request.files
+            or any(file.path.startswith("openspec/changes/") for file in request.files)
+        ):
+            return None
+        return request
+
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SEMANTIC_INTENT_VERSION = 2
@@ -762,6 +798,17 @@ def _typed_application_plan(
                 f"typed application rejected:{classification}",
                 rejection=rejection,
             ),
+        )
+
+    if batch.development_materialization() is not None:
+        return (
+            decision,
+            derived_transition_effect(
+                issue_number=source.issue_number,
+                change=source.change,
+                successor=decision.successor,
+            ),
+            None,
         )
 
     if not _implementation_checkpoint_effects_complete(
@@ -1387,6 +1434,9 @@ def apply_effect_batch(
     ):
         return ApplyResult(False, "typed application rejected:retirement-effect-cardinality")
 
+    # Physical-only development does not own a formal successor. Its effect
+    # uses the same fresh guards, ACCEPT and postcondition as any other write.
+    apply_derived = apply_derived and batch.development_materialization() is None
     if apply_derived:
         if derived_effect.kind == "routing-transition" and not _typed_successor_effect_matches(
             derived_effect,

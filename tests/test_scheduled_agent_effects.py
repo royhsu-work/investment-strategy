@@ -6066,6 +6066,42 @@ def test_development_materialization_has_no_checkpoint_or_routing_authority() ->
     assert applied == list(batch.effects)
     assert all(not effect.derived for effect in applied)
 
+    # Neither a marker-bearing manifest nor an extra comment can acquire
+    # development-only authority.
+    marker_payload = dict(payload)
+    assert batch.typed_result is not None
+    marker_payload["files"] = [
+        {
+            "path": f"openspec/changes/{batch.typed_result.change}/tasks.md",
+            "blob_sha": "d" * 40,
+            "expected_sha": "e" * 40,
+        }
+    ]
+    marker_batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=[
+                {"kind": "github-mutation", "payload_json": json.dumps(marker_payload)}
+            ],
+        ),
+        source,
+    )
+    assert marker_batch.development_materialization() is None
+    extra = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=[
+                *requested,
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps({"issue_number": 138, "body": "evidence"}),
+                },
+            ],
+        ),
+        source,
+    )
+    assert extra.development_materialization() is None
+
     ready = parse_effect_batch(_raw(result_kind="ready", requested_effects=requested), source)
     refused = apply_effect_batch(
         ready,

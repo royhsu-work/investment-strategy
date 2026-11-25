@@ -2989,6 +2989,20 @@ def _fresh_application_worker_result(
 ) -> str:
     """Reconcile fresh repository consequences from immutable semantic input."""
 
+    batch = parse_effect_batch(raw_worker_result, source, authorized_change=change)
+    if batch.development_materialization() is not None:
+        # Keep immutable semantic evidence, but do not synthesize a formal
+        # result for a development-only write.
+        development = json.loads(raw_worker_result)
+        development.update(
+            issue_number=source.issue_number,
+            role=source.role,
+            action=source.action,
+            change=change,
+            _semantic_intent_version=2,
+        )
+        return json.dumps(development, sort_keys=True, separators=(",", ":"))
+
     try:
         result_revision = _machine_result_revision(
             raw_worker_result,
