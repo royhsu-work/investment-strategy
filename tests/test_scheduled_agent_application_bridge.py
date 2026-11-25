@@ -7755,6 +7755,7 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
             {
                 "disposition": "COMPLETE" if materialized else "INCOMPLETE",
                 "target": target if materialized else None,
+                "witness": SimpleNamespace(revision=revision) if materialized else None,
                 "reason": None,
             },
         )(),

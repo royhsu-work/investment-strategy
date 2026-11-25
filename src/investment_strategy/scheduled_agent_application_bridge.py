@@ -43,6 +43,7 @@ from investment_strategy.scheduled_agent_application_carrier import (
 )
 from investment_strategy.scheduled_agent_application_materialization import (
     MaterializationProof,
+    MaterializationRequest,
     find_materialization_payload,
     materialization_requires_validation,
     observe_materialization_target,
@@ -118,6 +119,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     NativeValidationAssessment,
     NativeValidationObservation,
     ValidationResourceTarget,
+    assess_completion_validation,
     assess_development_quality,
     openspec_review_revision_applies,
 )
@@ -1412,6 +1414,22 @@ def _qualified_physical_original_accepted_effects(
     ):
         return None
     return physical
+
+
+def _implementation_marker_candidate(
+    request: MaterializationRequest | None, source: WorkerRequest, result_kind: str
+) -> bool:
+    """Recognize a changed slice marker, not historical no-op bookkeeping."""
+    return (
+        request is not None
+        and source.role == "executor"
+        and source.action == "implement-change"
+        and result_kind in {"ready", "more-implementation-required"}
+        and request.pr_number is not None
+        and len(request.files) == 1
+        and request.files[0].path == f"openspec/changes/{request.change}/tasks.md"
+        and request.files[0].expected_sha != request.files[0].blob_sha
+    )
 
 
 def accepted_development_request(record: ApplicationDecisionRecord, source: WorkerRequest) -> bool:
@@ -8825,7 +8843,10 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     # but their checkpoint is a distinct non-idempotent, revision-bound effect.
     # First construct the exact carrier without comments or routing; only a
     # later fresh proof of its actual head may bind and persist the checkpoint.
-    defer_accepted_checkpoint = False
+    marker_candidate = _implementation_marker_candidate(
+        parsed_materialization, plan.source, worker_result.typed_result.result.kind.value
+    )
+    defer_accepted_checkpoint = marker_candidate and accepted_intent is None
     historical_formal_only = False
     if (
         accepted_intent is not None
@@ -8890,6 +8911,26 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 _write_carrier_outputs(ApplyResult(True, "already-formally-committed"))
                 _write_validation_outputs(None)
                 return 0
+            if marker_candidate:
+                if (
+                    target is None
+                    or checkpoint_proof.witness is None
+                    or checkpoint_proof.witness.revision != target.revision
+                ):
+                    raise RuntimeError("marker verification requires its exact current witness")
+                completion = assess_completion_validation(
+                    target,
+                    plan.source,
+                    plan.request_comment_id,
+                    token=token,
+                    current_revision=args.revision,
+                    default_branch=args.default_branch,
+                    current_target=True,
+                )
+                if completion.observation.verdict != "PASS":
+                    _write_carrier_outputs(ApplyResult(False, "marker-validation-observing"))
+                    _write_validation_outputs(None)
+                    return 0
         elif (
             continuation is not None
             and checkpoint_proof.historical_witness is not None
