@@ -38,6 +38,10 @@ on:
         description: Repository-owned application correlation identifier
         required: false
         type: string
+      required_change:
+        description: Change whose task artifact is required by this validation obligation
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -49,12 +53,33 @@ jobs:
       VALIDATION_TARGET_SHA: ${{ inputs.target_revision || github.event.pull_request.head.sha || github.sha }}
       VALIDATION_TARGET_REPOSITORY: ${{ inputs.target_repository || github.event.pull_request.head.repo.full_name || github.repository }}
       VALIDATION_CORRELATION: ${{ inputs.correlation || github.run_id }}
+      REQUIRED_CHANGE: ${{ inputs.required_change }}
+      VALIDATOR_BASELINE_SHA: ${{ github.event_name == 'workflow_dispatch' && github.workflow_sha || inputs.target_revision || github.event.pull_request.head.sha || github.sha }}
+      VALIDATOR_ROOT: ${{ github.event_name == 'workflow_dispatch' && 'validation-owner' || 'validation-target' }}
     steps:
+      - name: Qualify validation target
+        shell: bash
+        run: |
+          [[ "$VALIDATION_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$VALIDATOR_BASELINE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            test "$VALIDATION_TARGET_REPOSITORY" = "$GITHUB_REPOSITORY"
+          fi
       - name: Checkout validation target
         uses: actions/checkout@v4
         with:
           repository: ${{ env.VALIDATION_TARGET_REPOSITORY }}
           ref: ${{ env.VALIDATION_TARGET_SHA }}
+          path: validation-target
+          persist-credentials: false
+
+      - name: Checkout authoritative validator baseline
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ env.VALIDATOR_BASELINE_SHA }}
+          path: validation-owner
           persist-credentials: false
 
       - uses: actions/setup-python@v5
@@ -67,7 +92,15 @@ jobs:
       - name: Verify exact checkout revision
         shell: bash
         run: |
-          actual_sha="$(git rev-parse HEAD)"
+          actual_sha="$(git -C validation-target rev-parse HEAD)"
+          baseline_sha="$(git -C "$VALIDATOR_ROOT" rev-parse HEAD)"
+          test "$baseline_sha" = "$VALIDATOR_BASELINE_SHA"
+          echo "validation_baseline_checkout_head=$baseline_sha"
+          echo "validation_workflow_ref=$GITHUB_WORKFLOW_REF"
+          echo "validation_workflow_sha=$GITHUB_WORKFLOW_SHA"
+          echo "validation_run_id=$GITHUB_RUN_ID"
+          echo "validation_run_attempt=$GITHUB_RUN_ATTEMPT"
+          echo "validation_required_change=$REQUIRED_CHANGE"
           echo "validation_target_repository=$VALIDATION_TARGET_REPOSITORY"
           echo "validation_target_sha=$VALIDATION_TARGET_SHA"
           echo "validation_correlation=$VALIDATION_CORRELATION"
@@ -89,6 +122,7 @@ jobs:
           node-version: "22"
 
       - name: Install qualified OpenSpec baseline
+        working-directory: ${{ env.VALIDATOR_ROOT }}
         shell: bash
         run: |
           openspec_version="$(tr -d '[:space:]' < .github/openspec-version)"
@@ -97,20 +131,31 @@ jobs:
             exit 1
           }
           npm install -g "@fission-ai/openspec@$openspec_version"
+          echo "qualified_openspec_version=$openspec_version"
 
       - name: Show OpenSpec version
         run: openspec --version
 
       - name: Qualify executable compatibility
+        working-directory: ${{ env.VALIDATOR_ROOT }}
         run: python .github/scripts/openspec_compatibility.py
 
       - name: Show active changes
+        working-directory: validation-target
         run: openspec list
 
       - name: Validate all OpenSpec artifacts
+        working-directory: validation-target
         run: openspec validate --all --strict --json --no-interactive
 
       - name: Validate repository task contract
+        working-directory: ${{ env.VALIDATOR_ROOT }}
         env:
-          PYTHONPATH: ${{ github.workspace }}/src
-        run: uv run python -m investment_strategy.scheduled_agent_validation_resource
+          PYTHONPATH: ${{ github.workspace }}/${{ env.VALIDATOR_ROOT }}/src
+        shell: bash
+        run: |
+          args=()
+          if [[ -n "$REQUIRED_CHANGE" ]]; then
+            args+=(--require-change "$REQUIRED_CHANGE")
+          fi
+          uv run python -m investment_strategy.scheduled_agent_validation_resource --root "$GITHUB_WORKSPACE/validation-target" "${args[@]}"

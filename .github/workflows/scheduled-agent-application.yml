@@ -341,9 +341,19 @@ jobs:
           VALIDATION_TARGET_REPOSITORY: ${{ steps.validation.outputs.validation_target_repository }}
           VALIDATION_TARGET_REVISION: ${{ steps.validation.outputs.validation_target_revision }}
           VALIDATION_CORRELATION: ${{ steps.validation.outputs.validation_correlation }}
+          VALIDATOR_BASELINE_SHA: ${{ steps.revision.outputs.sha }}
+          REQUIRED_CHANGE: ${{ steps.apply.outputs.validation_required_change }}
         shell: bash
         run: |
           actual_sha="$(git rev-parse HEAD)"
+          baseline_sha="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
+          test "$baseline_sha" = "$VALIDATOR_BASELINE_SHA"
+          echo "validation_baseline_checkout_head=$baseline_sha"
+          echo "validation_workflow_ref=$GITHUB_WORKFLOW_REF"
+          echo "validation_workflow_sha=$GITHUB_WORKFLOW_SHA"
+          echo "validation_run_id=$GITHUB_RUN_ID"
+          echo "validation_run_attempt=$GITHUB_RUN_ATTEMPT"
+          echo "validation_required_change=$REQUIRED_CHANGE"
           echo "validation_target_repository=$VALIDATION_TARGET_REPOSITORY"
           echo "validation_target_revision=$VALIDATION_TARGET_REVISION"
           echo "validation_correlation=$VALIDATION_CORRELATION"

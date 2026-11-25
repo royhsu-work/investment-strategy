@@ -8414,6 +8414,24 @@ def test_existing_mechanical_workflows_consume_shared_task_contract(
         assert workflow.rindex(owner) > workflow.index('openspec archive "$CHANGE" --yes')
 
 
+def test_external_and_inline_validation_bind_authoritative_baseline_to_target() -> None:
+    external = Path(".github/workflows/openspec-validate.yml").read_text(encoding="utf-8")
+    inline = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
+    for workflow in (external, inline):
+        assert "validation_baseline_checkout_head=" in workflow
+        assert "validation_workflow_sha=" in workflow
+        assert "validation_run_attempt=" in workflow
+        assert "validation_required_change=" in workflow
+        assert 'test "$baseline_sha" = "$VALIDATOR_BASELINE_SHA"' in workflow
+    assert "github.event_name == 'workflow_dispatch' && github.workflow_sha" in external
+    assert "path: validation-owner" in external
+    assert "path: validation-target" in external
+    assert 'git -C "$VALIDATOR_ROOT" rev-parse HEAD' in external
+    assert ' --root "$GITHUB_WORKSPACE/validation-target"' in external
+    assert 'args+=(--require-change "$REQUIRED_CHANGE")' in external
+    assert 'git -C "$GITHUB_WORKSPACE" rev-parse HEAD' in inline
+
+
 def test_quality_workflow_has_exact_target_native_invocation() -> None:
     workflow = Path(".github/workflows/quality.yml").read_text(encoding="utf-8")
     assert "workflow_dispatch:" in workflow
