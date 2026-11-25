@@ -2,60 +2,38 @@
 
 ### Requirement: Explicit required deferred follow-up becomes durable before lifecycle completion
 
-When an approved Lead-owned specification or scope decision explicitly classifies work as required separate follow-up or work that MUST still be handled later, the workflow SHALL treat that decision as a durable tracking obligation.
-
-Ordinary out-of-scope statements, non-goals, optional future ideas, and work merely not selected for the current change MUST NOT create this obligation by themselves.
-
-Lead SHALL explicitly classify required separate work and identify its bounded identity, exact source coordination Issue/Change and decision/reference, and affected dependent Issue identities, if any, within the approved decision authority. The repository Application SHALL consume the qualified durable decision at the defer boundary and create or reuse its tracker under the routing-complete requirement. That decision permits only the canonical pre-activation Explore tuple; it MUST NOT manufacture a reserved Human approval or formal activation.
-
-`Reviewer / review-openspec` SHALL treat an approved required-defer decision without reconstructable durable tracker/linkage as a material finding. `Lead / finalize-archive` SHALL reconstruct still-applicable required-defer obligations before `LIFECYCLE_COMPLETE` and MUST NOT complete the lifecycle while a required tracker is missing. If the obligation and intended tracker are unambiguous and only materialization was missed, the mapped Lead MAY request the existing Application-owned idempotent repair; it MUST NOT reinterpret ambiguous scope, directly mutate the tracker or manufacture Human admission. Independent review SHALL verify the exact source, tracker and prerequisite evidence, rather than merely trusting a prior READY or worker summary.
-
-Tracker idempotency SHALL rely on durable source linkage rather than title similarity alone.
+An approved decision explicitly classifying bounded work as necessary separate follow-up SHALL persist its exact source Issue/Change, decision reference, scope and affected dependents under existing authority. The Application SHALL derive tracker and dependency completeness from that source independently of worker-requested effects. Optional, out-of-scope or unregistered prose MUST NOT grant admission. Independent Reviewer SHALL find a missing necessary tracker or dependency at review; lifecycle finalization MUST verify the same postcondition or an exact authoritative supersession.
 
 #### Scenario: Ordinary scope exclusion creates no tracker obligation
 
-- GIVEN an approved change marks an idea as out of scope without saying it must be handled later
-- WHEN Reviewer and Lead reconstruct deferred work
-- THEN no required follow-up tracker is demanded for that statement
+- GIVEN only optional ideas or exclusions
+- WHEN Application reconstructs the decision
+- THEN no Issue or dependency is inferred
 
 #### Scenario: Required deferred work must have a durable tracker
 
-- GIVEN an approved Lead decision explicitly says work W must be handled in a separate later change
-- WHEN Lead records that defer decision
-- THEN Application creates or reuses a tracker linked to the source Change/Issue and decision evidence
-- AND the tracker receives only the authorized pre-activation Explore tuple, not reserved Human approval or formal activation
+- GIVEN a qualified decision explicitly defers required work
+- WHEN the worker omits all requested effects
+- THEN the existing Application still materializes the source-linked Issue and verifies its applicable edges
 
 #### Scenario: OpenSpec review catches a missing required tracker
 
-- GIVEN the OpenSpec artifacts contain an approved required-defer obligation
-- AND no reconstructable linked tracker exists
-- WHEN Reviewer executes `review-openspec`
-- THEN Reviewer records a material finding
-- AND does not treat ordinary unrelated scope exclusions as missing trackers
+- GIVEN a required decision lacks verified tracker or dependencies
+- WHEN the worker reports readiness or PASS
+- THEN Reviewer identifies the gap and readiness cannot complete
 
 #### Scenario: Lifecycle completion fails safe on missing required tracker
 
-- GIVEN a Change is otherwise ready for `LIFECYCLE_COMPLETE`
-- AND a still-applicable required-defer obligation lacks a durable tracker
-- WHEN Lead executes terminal archive finalization
-- THEN lifecycle completion is blocked until the tracker is durably established or the obligation is authoritatively superseded
+- GIVEN required evidence remains missing
+- WHEN terminal archive qualification runs
+- THEN advance only after positive completion or qualified supersession
 
-#### Scenario: Required classification is not inferred from arbitrary text
-
-- GIVEN a qualified decision explicitly registers a required follow-up and its bounded identity and affected dependents
-- AND a worker omits the obligation from its requested effects or subsequent summary
-- WHEN Application or Reviewer reconstructs the consequential boundary
-- THEN the exact registered obligation remains applicable and must be accounted for
-- AND ordinary unregistered prose or a merely optional proposal is not mechanically elevated into a registered obligation
-- AND an independent Reviewer identifies a substantive unregistered required decision as a finding rather than treating machine silence as semantic acceptance
 
 ### Requirement: Operational execution eligibility remains orthogonal to lifecycle state
 
 A Scheduled-Agent work item SHALL derive whether its next legal action is currently executable from the durable preconditions and evidence owned by that action without introducing a parallel lifecycle state for ordinary waits or blockers.
 
 A formal workflow with a qualified unsatisfied Issue prerequisite or declared external prerequisite SHALL remain the same formal workflow, but SHALL be suspended and consume no execution slot. Other runnable work MAY progress under the existing admission, independent review, merge and mutation boundaries. WIP is not a count of unfinished Changes. A generic BLOCKED result or a transient/unknown observation alone is not proof of a persistent prerequisite; existing action-specific result, wait, exception, escalation and recovery evidence remains authoritative and MUST NOT be bypassed. An external declaration is operational and reversible by a qualified Lead/maintainer after fresh evidence that the actual condition clears; no universal external-condition evaluator, new lifecycle label, or Human approval per dependency is introduced.
-
-Dispatch and Application SHALL reconstruct one dependency projection combining the current qualified explicit complete-set declaration and every still-applicable mandatory prerequisite derived from exact qualified required-follow-up decisions. A required follow-up decision SHALL identify the affected dependent Issue(s) within approved authority; split delivery MUST preserve those necessary prerequisites. Independently registered mandatory contributions MUST survive unrelated explicit-set replacements and concurrent independent contributions until exactly and authoritatively superseded. Explicit complete-set declarations retain their existing meaning for explicit edges; a source-derived mandatory edge is not withdrawn by omission from an explicit set. No second persisted dependency registry is introduced. When a qualified required obligation lacks its tracker, the affected dependent is suspended even if no earlier prerequisite was declared; no fabricated Issue node or persistent waiting state is introduced. If a producer itself is a dependent, the producer's exact already-accepted materialization continuation remains eligible only to complete its missing authorized effect, not to start a new semantic Action or bypass other prerequisites or cycle validation. After that completion, subsequent eligibility is evaluated normally. Only qualified terminal lifecycle completion, not closure alone, releases a still-required Issue prerequisite.
 
 #### Scenario: Active workflow waits for an exact external gate
 
@@ -100,212 +78,238 @@ Dispatch and Application SHALL reconstruct one dependency projection combining t
 - AND the Human boundary is represented by the existing provenance-bound escalation/resume contract
 - AND optional advice that is not legally required does not create equivalent blocking semantics
 
-#### Scenario: Necessary prerequisite survives concurrent independent contributions
+Dispatch and Application SHALL hold only affected work while required materialization or dependency effects remain outstanding. Only the exact accepted producer suffix MAY finish its own pending effect without ordinary reselection; independently established prerequisites and structural cycle/target checks remain mandatory.
 
-- GIVEN dependent A has a qualified explicit prerequisite B
-- AND two independently qualified required-follow-up decisions identify A and distinct prerequisite trackers C and D
-- WHEN the shared dependency projection is reconstructed in any observation order with complete current evidence
-- THEN A retains B, C and D unless an exact applicable authority supersedes one of them
-- AND an unrelated explicit-set replacement cannot erase C or D
-- AND no whole-set rewrite or second dependency store is required to preserve the derived edges
+#### Scenario: Missing target and producer self-dependency
 
-#### Scenario: Missing tracker blocks its dependent without a pre-existing blocker
+- GIVEN a required source is durable before any tracker exists
+- WHEN the subsequent producer work depends on that tracker
+- THEN ordinary dependent work is held and the exact authorized Application suffix can create and attach the tracker without running another semantic Action
+- AND independent blockers, including an independently declared edge to that same target, remain binding
 
-- GIVEN an exact registered necessary follow-up identifies A as dependent
-- AND no source-linked tracker is yet durably observable
-- AND A had no prior dependency declaration
-- WHEN Dispatch and Application reconstruct current eligibility
-- THEN A cannot advance past the required prerequisite
-- AND unrelated runnable work is not suspended merely by that obligation
-- AND no fake tracker number or graph node is inferred
-
-#### Scenario: Producer-self obligation does not deadlock accepted completion
-
-- GIVEN a producer is itself the identified dependent of a required follow-up
-- AND its exact Application intent was accepted before the tracker postcondition was complete
-- WHEN the same accepted materialization is reconstructed
-- THEN only the authorized missing effect may continue under the existing continuation contract
-- AND any independent blocker or graph cycle still prevents unsafe advancement
-- AND the producer's later semantic work remains subject to the qualified prerequisite until it is satisfied
-
-#### Scenario: Bare closure cannot release a mandatory source-derived prerequisite
-
-- GIVEN a source-linked mandatory tracker is closed without qualified formal lifecycle completion
-- WHEN eligibility is reconstructed
-- THEN its dependent remains suspended
-- AND exact qualified lifecycle completion of that same tracker releases the prerequisite without a dependency comment mutation
 
 ### Requirement: Required separate follow-up is directly queueable for fresh Explore revalidation
 
-When an approved Explore, specification, or lifecycle decision explicitly classifies work as a still-applicable required separate follow-up, that exact qualified durable defer decision SHALL be sufficient repository authority for Application to create or reuse one corresponding tracker as `Change: unset + action:explore-change` pre-activation work. Lead remains the derived Role and semantic owner.
-
-The tracker MUST retain reconstructable linkage to the source coordination Issue/Change and exact defer decision/reference. Ordinary out-of-scope work, non-goals, optional ideas, speculative cleanup, and merely deferred/uncommitted prose MUST NOT gain admission from this requirement.
-
-Materialization MUST be idempotent and MUST participate in the existing combined pre-activation queue; it MUST NOT create a parallel backlog/status vocabulary.
+An explicitly approved required separate follow-up SHALL authorize source-bound creation, reuse or repair as action-only preactivation work. Each admitted carrier participates in the existing formal-first WIP=1 queue subject to its own applicable prerequisites. A paused workflow consumes no WIP. No carrier SHALL acquire exclusive execution rights by age or existence.
 
 #### Scenario: Required follow-up is created at the defer boundary
 
-- GIVEN an approved decision states that bounded work is required to be handled separately
-- AND no equivalent unresolved tracker exists
-- WHEN Lead persists the defer obligation
-- THEN Application creates one tracker with reconstructable source linkage
-- AND establishes `Change: unset + action:explore-change`
-- AND later Explore fresh-reads whether the obligation remains warranted before any formal Change activation
+- GIVEN explicit required work and no qualified existing tracker
+- WHEN the defer decision becomes durable
+- THEN Application observes a queueable Issue with exact source, Change: unset and action:explore-change, or qualifies its valid advanced state
 
 #### Scenario: Optional future work is mentioned
 
-- GIVEN a proposal or discussion identifies optional future work or a non-goal
-- WHEN the current Change records that scope boundary
-- THEN no pre-activation workflow admission is created solely from that mention
+- GIVEN an optional idea appears in a document
+- WHEN eligibility is reconstructed
+- THEN no Issue gains admission from that text
+
+#### Scenario: A suspended duplicate does not reserve execution
+
+- GIVEN two authorized carriers cover the same work and one is suspended
+- WHEN the dispatcher selects work
+- THEN the other remains eligible only when its own prerequisites and ordinary gates permit
+
 
 ### Requirement: Required separate follow-up work is materialized as one routing-complete postcondition
 
-When an approved specification, scope, or lifecycle decision explicitly classifies work as a required separate/deferred follow-up, the repository Application MUST derive the necessary effects of that obligation independently of the worker's requested-effects list. Completion is one logical postcondition consisting of exactly one deduplicated durable tracker with `Change: unset`, exact source coordination/change and defer-decision/reference linkage, canonical `action:explore-change` routing for new admission, and the applicable dependency preservation contract. Role is derived, not an additional routing label. A valid later qualified descendant or terminal completion of that same tracker MUST be adopted without rewinding it to Explore.
+Required follow-up materialization SHALL complete only after qualified read-back of at least one source-linked routing-complete tracker or lawful descendant and all still-required dependency effects. Before any write, Application SHALL reobserve complete authoritative tracker evidence, exact scope, current authority and source. It SHALL reuse a qualified existing match or repair authorized missing fields before creating. Physical duplicates are permitted after uncertain writes. Multiple verified matches SHALL NOT by themselves block progress or grant authority to choose an arbitrary dependency target. Contradictory provenance and insufficient observations MUST NOT authorize mutation.
 
-Creating or reusing the tracker without completing the required routing MUST NOT satisfy the obligation. Before creating a new tracker or repairing an incomplete one, Application MUST fresh-read the relevant durable trackers and exact qualified source obligation. If exactly one matching tracker exists and is incomplete only in materialization fields the source authority permits, Application MUST repair that tracker idempotently rather than create a duplicate. If multiple or ambiguous matching candidates exist, or the source obligation cannot be reconstructed exactly, Application MUST reject the unsafe mutation rather than guess, duplicate, or infer authority from tracker prose. An incomplete read is not proof of absence. After an unknown response, Application MUST adopt a uniquely qualified positive postcondition and continue only missing effects, or reissue only on qualified proof of non-attempt/noncommit and exact fresh reauthorization. Absence, repeated reads, elapsed time, and run completion alone MUST NOT manufacture such proof. Recoverable evidence gaps use the existing continuation/reconstruction boundary, not a new permanent terminal state. Eventual delivery and correctness remain the approved acceptance outcomes; if the lawful actuator cannot satisfy them under the relevant failure model, the unresolved limitation MUST be returned through the existing Lead/Human decision authority instead of waiving the requirement or claiming completion.
+#### Scenario: Interrupted create before routing
 
-Lifecycle preparation that is already responsible for reconstructing required separate-follow-up obligations MUST verify this same routing-complete postcondition. When a unique matching tracker is incomplete and the approved source obligation still supplies the required authority, the Lead lifecycle owner MAY request the existing Application-owned repair before review handoff. Lifecycle preparation MUST NOT introduce a contradictory local rule that preserves an unrouted required tracker as complete.
+- GIVEN an existing exact tracker lacks only authorized routing
+- WHEN Application fresh-reads it
+- THEN repair only missing state and preserve unrelated labels and content
 
-Dispatcher admission remains unchanged: scheduled dispatch MUST consume canonical action-only routing and MUST NOT infer missing `action:*` routing from Issue body text, source linkage, or the existence of a required-follow-up obligation. The same reconstructed obligation and dependency completeness predicate SHALL protect applicable READY, PASS, lifecycle completion and successor persistence. A final accepted readiness/review outcome cannot substitute for the missing postcondition; the Explore source-result ordering below remains applicable.
+#### Scenario: Accepted operation before any POST or failure artifact
 
-#### Scenario: Required follow-up is created and routed as one logical result
+- GIVEN original accepted source and pending required effect can be qualified
+- WHEN a new legal wake reaches existing continuation ingress
+- THEN exact operation can reenter, reobserve and issue a necessary create without proof that the prior POST never ran
 
-- GIVEN an approved decision explicitly requires a separate follow-up
-- AND no matching tracker exists
-- WHEN Application materializes the obligation
-- THEN exactly one tracker exists with `Change: unset`
-- AND it records the exact source coordination/change and defer-decision/reference linkage
-- AND it is routed to `action:explore-change`
-- AND applicable prerequisite preservation is established
-- AND the producer does not report the obligation complete before those properties are durably observable
+#### Scenario: Delayed POST and lost response
 
-#### Scenario: Interrupted create-before-route is repaired idempotently
+- GIVEN a previous write may yet commit
+- WHEN complete fresh evidence finds no reusable tracker and authority remains valid
+- THEN a necessary create is permitted and any resulting duplicates retain all applicable admission and dependency gates
 
-- GIVEN an approved required separate-follow-up obligation remains applicable
-- AND exactly one matching tracker already exists with exact source linkage and `Change: unset`
-- AND the tracker is missing its required canonical Explore routing because an earlier materialization was interrupted
-- WHEN Application reconstructs the obligation
-- THEN it repairs that same tracker to `action:explore-change`
-- AND it does not create a second tracker
-- AND completion is recognized only after the repaired durable state is re-observed
+#### Scenario: Incomplete enumeration
 
-#### Scenario: Ambiguous matching trackers fail closed
+- GIVEN a page, field or required provenance is unavailable
+- WHEN recovery examines the target
+- THEN perform no guessed write and reobserve on a lawful opportunity
 
-- GIVEN an approved required separate-follow-up obligation remains applicable
-- AND more than one tracker plausibly matches the same required obligation
-- WHEN Lead attempts materialization or repair
-- THEN Lead does not choose a tracker by model judgment
-- AND Lead does not create another tracker
-- AND the obligation remains incomplete pending legal resolution of the ambiguity
+#### Scenario: Already advanced tracker
+
+- GIVEN positive source-bound descendant evidence exists
+- WHEN reconstruction resumes
+- THEN adopt qualified current evidence without rewinding the carrier
 
 #### Scenario: Tracker prose does not create routing authority
 
-- GIVEN an Issue body describes itself as a required follow-up
-- AND canonical `action:*` routing is absent
-- WHEN scheduled dispatch reconstructs eligibility
-- THEN the dispatcher does not infer `Lead / explore-change` from the prose
-- AND the Issue is not admitted solely because its text resembles a required follow-up
+- GIVEN an unrelated or copied body resembles the work
+- WHEN admission or dispatch is evaluated
+- THEN no authoritative match is inferred from wording
 
-#### Scenario: Optional or ordinary deferred work creates no required tracker
+#### Scenario: Retirement is not delivery
 
-- GIVEN approved artifacts describe work only as optional, non-goal, ordinary out-of-scope, or uncommitted future work
-- WHEN Lead evaluates separate-follow-up materialization
-- THEN no required tracker/routing obligation is created from that text alone
+- GIVEN a former tracker is closed without qualified delivery and the necessary decision still applies
+- WHEN the exact authorized retirement and absence of a reusable carrier are verified
+- THEN complete remaining tracking through ordinary reconciliation without crediting the closure as successful delivery
 
-#### Scenario: Lifecycle preparation repairs one uniquely incomplete required tracker
-
-- GIVEN lifecycle preparation reconstructs an applicable approved required separate-follow-up obligation
-- AND exactly one matching tracker exists with exact source linkage and `Change: unset`
-- AND the tracker lacks canonical `Lead / explore-change` routing
-- WHEN Lead prepares the lifecycle boundary for independent review
-- THEN Lead treats the obligation as incomplete
-- AND requests Application to repair the same tracker to the required routing when current authoritative source evidence still permits that repair
-- AND does not hand off lifecycle review while the required postcondition remains incomplete
-
-#### Scenario: Omitted effect cannot bypass READY or PASS
-
-- GIVEN an independently qualified registered obligation applies at a consequential boundary
-- AND the worker submits READY or PASS with no requested tracker effect
-- AND the exact tracker or required dependency is incomplete
-- WHEN Application reconstructs completion
-- THEN the result cannot qualify the consequential boundary or advance the successor before the required postcondition
-- AND Application derives only authorized missing effects or preserves the existing recovery boundary
-- AND Reviewer independently records material findings for a missing required postcondition
-
-#### Scenario: Unknown create outcome is reconciled from source evidence
-
-- GIVEN an authorized create may have committed but its response was lost
-- WHEN a later Application invocation reconstructs that exact accepted intent
-- THEN incomplete or negative reads alone do not authorize another create
-- AND a unique qualified source-linked committed tracker is reused and only the missing suffix is applied
-- AND a first or repeated create is authorized only when its exact non-attempt or noncommit is qualified and the current source and target preconditions still hold
-- AND multiple matches are a conflict, not permission to create or guess
-
-#### Scenario: Already advanced tracker is not rewound
-
-- GIVEN the source-linked tracker has qualified later routing or terminal completion
-- WHEN a producer or reviewer reconstructs its obligation
-- THEN that exact tracker remains the one target
-- AND no new tracker, replay, or rewind to Explore is authorized
 
 ### Requirement: Explore-originated required follow-up decisions are materialized before Propose and preserved through formalization
 
-When decision-complete `Lead / explore-change` explicitly classifies bounded later work as a **required separate follow-up**, the exact durable Explore `ACTION_RESULT` that establishes `PROPOSAL_READY` SHALL record that required-follow-up decision and sufficient bounded identity to reconstruct the intended separate work. After that result is durable and therefore supplies the exact defer-decision reference, Application MUST create, reuse, or repair the required tracker under the existing routing-complete required-follow-up contract and MUST NOT complete routing of the source Issue to `Lead / propose-change` until a fresh observation proves the required tracker and applicable prerequisite postcondition. Where the Explore result is the source reference, persisting that source result before materialization supplies evidence only and MUST NOT by itself qualify completion, successor eligibility, or replay authorization.
+The exact durable Explore result SHALL preserve its explicit required defer decisions before their effects. The owning Application SHALL observe tracking and dependency completeness before completing the source successor. Propose SHALL dereference that exact result and preserve every still-applicable decision through formalization. Recovery SHALL reconstruct the accepted intent, retain historical uncertainty, skip completed effects and reauthorize only the missing suffix.
 
-Ordinary deferred, optional, non-goal, or out-of-scope work MUST NOT gain a tracker obligation merely from presentation wording such as `Deferred work`, `follow-up`, `out of scope`, or `separately reviewable`. Work whose exact separate tracker is already durably established MUST reuse that tracker and MUST NOT create a duplicate.
+#### Scenario: Explore materializes before Propose
 
-If the Explore result is durable but materialization or successor routing is interrupted, reconstruction SHALL consume that same exact Explore result and complete only the missing idempotent materialization/routing effects. It MUST NOT create a second defer decision, infer a replacement classification from prose, or treat a partially materialized tracker as complete.
+- GIVEN a qualified Explore result explicitly defers necessary work
+- WHEN the source result is persisted
+- THEN the successor waits for observed tracker and dependency effects
 
-For an Explore-originated `Lead / propose-change`, Lead MUST dereference the exact durable Explore `ACTION_RESULT`, preserve every still-applicable required-follow-up classification from that result in proposal/readiness evidence, and fresh-verify the corresponding routing-complete tracker state before declaring OpenSpec readiness. If exactly one matching tracker is incomplete only in fields/routing that current source authority permits Lead to establish, Propose MAY request Application to repair only those missing parts under the existing idempotent materialization contract. Missing source authority, multiple/ambiguous matches, or contradictory tracker evidence MUST fail closed.
+#### Scenario: Interrupted Explore materialization
 
-Propose MUST NOT downgrade a required separate-follow-up decision into ordinary deferred prose merely by excluding that later work from the current Change, and MUST NOT upgrade ordinary deferred/optional prose into a required follow-up without the approved source decision. Reviewer and lifecycle responsibilities remain those of the existing global required-follow-up contract; this requirement adds no new Reviewer producer authority or lifecycle topology.
-
-#### Scenario: Explore materializes a newly required separate follow-up before successor routing
-
-- GIVEN `Lead / explore-change` reaches a decision-complete direction
-- AND that decision explicitly requires bounded later work to be handled as a separate follow-up change
-- WHEN Lead records the durable `PROPOSAL_READY` Explore `ACTION_RESULT`
-- THEN that exact result records the required-follow-up classification and bounded follow-up identity
-- AND Application creates, reuses, or repairs exactly one tracker linked to the exact source coordination/change and that durable defer-decision reference
-- AND a fresh observation proves `Change: unset` plus `action:explore-change` on the tracker
-- AND only after that postcondition is complete may the source Issue complete routing to `Lead / propose-change`
-
-#### Scenario: Interrupted Explore materialization resumes from the same durable decision
-
-- GIVEN the exact Explore `ACTION_RESULT` already durably records `PROPOSAL_READY` and one required separate-follow-up decision
-- AND the source Issue remains routed to `Lead / explore-change` because tracker materialization or successor routing was interrupted
-- WHEN a later Explore invocation reconstructs that source
-- THEN it consumes the existing exact Explore result rather than creating a new defer decision
-- AND it fresh-reads matching trackers
-- AND Application creates or repairs only the missing routing-complete postcondition when uniquely authorized
-- AND multiple or ambiguous matches fail closed rather than creating another tracker
+- GIVEN one or more independent writes have committed
+- WHEN reentry reconstructs the same accepted source
+- THEN finish only remaining authorized effects with read-back
 
 #### Scenario: Ordinary deferred wording creates no tracker obligation
 
-- GIVEN an Explore result or formal proposal describes later work as `Deferred work`, `out of scope`, `follow-up`, or `separately reviewable`
-- BUT the approved Explore decision does not classify that work as required separate follow-up
-- WHEN Explore or Propose evaluates tracker materialization
-- THEN no required tracker is created from that wording alone
-- AND the existing semantic distinction between ordinary deferred work and required separate follow-up is preserved
+- GIVEN Explore mentions speculative later work
+- WHEN Propose reads the result
+- THEN no necessary work is inferred from prose
 
-#### Scenario: Propose preserves a required follow-up while keeping it outside current implementation scope
+#### Scenario: Propose preserves a required follow-up
 
-- GIVEN exact Explore result E records one required separate-follow-up decision
-- AND the required tracker is routing-complete and linked to E
-- WHEN the same coordination Issue enters `Lead / propose-change`
-- THEN Lead dereferences E exactly
-- AND proposal/readiness evidence preserves the required-follow-up classification and tracker reference
-- AND the separate work MAY remain outside the current Change implementation scope
-- BUT its required status is not downgraded to ordinary deferred prose
-- AND Reviewer can independently reconstruct the same approved obligation and tracker at `review-openspec`
+- GIVEN required work falls outside current implementation scope
+- WHEN Lead prepares the proposal
+- THEN preserve source linkage and dependency disposition and verify the postcondition before readiness
 
-#### Scenario: Propose repairs only a unique incomplete required tracker
 
-- GIVEN exact Explore result E records a required separate-follow-up decision
-- AND exactly one source-linked matching tracker exists
-- AND that tracker is incomplete only in durable materialization fields or canonical routing that current source authority permits Lead to establish
-- WHEN `Lead / propose-change` prepares OpenSpec readiness
-- THEN Lead requests Application to repair only the missing fields/routing
-- AND does not create a duplicate tracker
-- AND readiness is not reported until a fresh observation proves the routing-complete postcondition
-- AND multiple or ambiguous matching trackers instead fail closed
+### Requirement: Persisted Change identity defines the single active workflow boundary
+
+An open coordination Issue with a valid routing tuple and persisted non-`unset` `Change:` SHALL be a formal workflow. The title is retained as the canonical requirement identity; formal workflow cardinality no longer defines execution capacity. WIP=1 SHALL bound selection to one runnable Action per wake, not the number of open formal workflows. A qualified unsatisfied prerequisite MUST suspend the affected workflow without changing its Issue state, immutable Change, current Action, accepted effects, or recovery obligations.
+
+Lead or the repository maintainer MAY declare or correct already admitted necessary prerequisites within approved scope based on actual blocking evidence. For a legacy declaration stream the latest qualified standalone comment `Blocked by: #<issue-number>, #<issue-number>` (one or more targets) on an open routed Issue SHALL define its complete prerequisite set; an independently observed external prerequisite not represented by an admitted Issue MAY be denoted by `external` in the same list. No additional Human-reserved decision, native Issue dependency, new work admission or routing mutation is implied. Qualification MUST require repository-owner authorship, OWNER association and explicit direct or approved chatgpt-codex-connector provenance; arbitrary commenters, other apps and ordinary prose MUST NOT grant selection authority. GitHub creation time and comment ID determine the current qualifying command. Correction MUST append a new command, not edit or delete one; `Blocked by: none` withdraws a set only when no prerequisite remains applicable. External resumption MUST use a fresh qualified correction based on the actual cleared condition, not a generic retry or automatic interpretation of a BLOCKED result.
+
+A managed complete-set correction SHALL cite the observed effective native declaration comment ID, or an explicit initial empty basis. Its first adoption SHALL preserve the qualified legacy prefix. Once managed, only a correction against the current effective basis may replace or clear that Issue’s set. Complete history in native creation time/ID order determines applicability. Stale/unbased writes SHALL NOT erase accepted independent edges. A native Application correction SHALL additionally prove the exact accepted decision, dependent, authorized edit, baseline, complete graph and read-back; ordinary bot comments cannot qualify. Maintainers can correct an affected downstream on current evidence while its old prerequisite is suspended. Conflicting same-edge decisions require explicit disposition. No dependency satisfaction by semantic equivalence is implied.
+
+Selection and Application reauthorization SHALL consume the same executable dependency graph and current observations. Multiple prerequisites, shared prerequisites and nested prerequisites SHALL be represented by the same graph, without fixed incident identities or pair exceptions. A referenced Issue satisfies a prerequisite only with qualified terminal formal `finalize-archive` / `lifecycle-complete` evidence and closed/no-routing retirement, not bare closure or NO_GO. All unsatisfied prerequisites exclude their source from runnable selection; a completed prerequisite releases only its own edge. Cycles, unknown or unrouted targets, malformed/edited current qualified commands, incomplete enumeration and provenance-invalid selection evidence MUST NOT authorize work. A valid but unsatisfied prerequisite is not an invalid repository. Suspended work SHALL NOT consume an execution slot, require full action-local formal qualification before another eligible workflow runs, or be rewound; structural current identity remains mandatory and formal frontier qualification resumes before that work is selected.
+
+Normal formal lifecycle work SHALL remain open through final Archive merge and `Lead / finalize-archive`. It remains active while open with a valid routing tuple and non-`unset` Change identity until terminal conditions are satisfied, `LIFECYCLE_COMPLETE` is durably persisted, and repository-owned terminal retirement completes the `closed + no workflow routing` postcondition.
+
+A closed coordination Issue retaining any repository-governed workflow routing label SHALL be current closed-routing debt rather than active workflow work. Its disposition MUST come only from bounded current debt classification: a qualifying unfinished premature closure MAY recover only under the existing recovery predicates, while proven terminal/retired routing residue MAY receive only narrow routing-retirement cleanup. Ambiguous, competing, contradictory, or incomplete debt MUST fail closed. A closed Issue with valid terminal completion and no workflow routing labels is terminal history and MUST NOT block later workflow admission.
+
+Open coherently routed `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` coordination Issues SHALL be queued pre-activation work based on current structural routing. Neither form counts as an active workflow before Propose persists an immutable Change identity. Dispatcher selection MUST NOT distinguish an unset Propose by origin, Human admission, comment provenance, or reconstructed semantic readiness.
+
+Lead MUST NOT activate a queued proposal unless fresh executable selection authorizes that exact current runnable Propose and current closed-routing debt is resolved. Every original same-Issue Explore-result, Application, review and merge precondition still applies. The existence of other suspended or queued formal Changes is not an activation veto. Deterministic selection SHALL prefer runnable formal workflows, then runnable pre-activation prerequisites (including transitive prerequisites) of formal workflows, then the ordinary runnable combined Explore/Propose queue. Each group uses earliest GitHub `created_at`, then lower Issue number. A `propose-change` runner MUST re-check that its Issue still matches current executable selection immediately before persisting a non-`unset` Change identity, and independently verify the post-write selection/identity.
+
+A proposal-ready Explore remains pre-activation until repository-owned application legally routes that same Issue to `Lead / propose-change`. The transition SHALL NOT require a generic Human proceed confirmation when the proposal-ready direction remains inside the bounded researched/canonical evidence and introduces no Human-reserved decision. After routing, the same Issue retains its original queue position. Propose SHALL reconstruct the exact durable same-Issue `PROPOSAL_READY` semantic baseline and independently validate its material source/evidence and feasibility basis before activation. An absent/invalid/incomplete but researchable basis routes the same Issue back to Explore without changing queue identity; it does not change dispatcher eligibility or authorize later work. If formalization would introduce a new Human-reserved product/project direction, material externally observable behavior or scope trade-off, explicit risk acceptance, or materially different security/privacy/cost/operational commitment, Lead MUST use the existing `HUMAN_DECISION_REQUIRED` boundary instead of treating routing or Explore execution as Human authority.
+
+#### Scenario: Queued pre-activation work exists while another workflow is active
+
+- GIVEN Change A is an active workflow
+- AND Issue B is an open routed `Lead / explore-change` or `Lead / propose-change` Issue with `Change: unset`
+- WHEN workflow-dynamic dispatch reconstructs work
+- THEN if A is runnable, A is selected before pre-activation B
+- AND if A is suspended, it consumes no selection slot and B may be selected according to the runnable policy and existing Action/Result gates
+
+#### Scenario: Closed terminal handoff still blocks new activation
+
+- GIVEN Change A's coordination Issue is closed
+- AND it retains at least one repository-governed workflow routing label
+- AND queued Explore or Propose work exists with `Change: unset`
+- WHEN workflow-dynamic dispatch reconstructs work
+- THEN Change A is treated as current closed-routing debt rather than active workflow work
+- AND only bounded recovery/terminal-retirement handling may act on that debt
+- AND the queued pre-activation work is not activated until the debt is legally resolved or retired
+
+#### Scenario: Older Explore prevents later direct-Propose activation
+
+- GIVEN no open active workflow exists
+- AND current closed-routing debt is empty
+- AND an older coherently routed `Lead / explore-change + Change: unset` Issue exists
+- AND a newer coherently routed `Lead / propose-change + Change: unset` Issue exists
+- WHEN dispatch selects pre-activation work after direct-Propose admission has been removed
+- THEN the older Explore remains the deterministic combined-queue winner by creation order
+- AND the newer Propose remains queued because current routing participates in the same FIFO, not because a direct-Propose Human-admission predicate exists
+
+#### Scenario: Proposal-ready Explore keeps its queue position when Human authorizes Propose
+
+- GIVEN an Explore Issue is the deterministic combined-queue winner
+- AND Lead returns evidence-backed structured `PROPOSAL_READY` within the bounded current context
+- AND no new Human-reserved decision is introduced
+- WHEN repository-owned application routes the same Issue to `Lead / propose-change`
+- THEN no Human authorization is required for that normal transition under the new contract; the legacy scenario title is retained only as the canonical scenario identity
+- AND the same Issue retains its original GitHub `created_at` and queue position
+- AND Propose may persist the immutable Change identity only after re-checking queue ownership and independently validating its action-local source/evidence and feasibility basis
+
+#### Scenario: Oldest eligible Propose activates after older Explore terminates
+
+- GIVEN no open active workflow exists
+- AND current closed-routing debt is empty
+- AND an older Explore has legally reached terminal `NO_CHANGE_REQUIRED` or `NO_GO` and left pre-activation routing
+- AND at least one coherently routed `Lead / propose-change + Change: unset` Issue remains
+- WHEN dispatch selects pre-activation work
+- THEN the earliest remaining coherent candidate is selected by `created_at`, then Issue number
+- AND Propose may activate only after its action-local source/evidence, feasibility, and activation preconditions pass
+- AND no Human direct-Propose admission predicate is evaluated
+
+#### Scenario: Selected Propose evidence failure preserves Issue ownership without freezing the action
+
+- GIVEN the FIFO-selected pre-activation candidate is current `Lead / propose-change + Change: unset`
+- BUT the mapped Propose action cannot establish a sufficient material source/evidence/feasibility basis
+- WHEN Propose evaluates activation
+- THEN no Change identity is persisted
+- AND the current Issue remains the workflow/queue owner
+- AND, when the gap is researchable within the same bounded problem, the legal action changes to same-Issue `Lead / explore-change`
+- AND a later candidate is not silently authorized as fallback
+
+#### Scenario: Out-of-band coherent Propose routing is operational but not semantic authority
+
+- GIVEN an administrator or connector writes a structurally coherent `Lead / propose-change + Change: unset` tuple
+- WHEN dispatch reconstructs current pre-activation state
+- THEN the Issue participates in deterministic selection from current routing without label-writer provenance reconstruction
+- AND that routing does not manufacture a sufficient evidence-backed same-Issue Explore basis
+- AND consequential Propose activation still fails closed unless its action-local semantic preconditions are satisfied
+- AND a researchable pre-activation evidence gap may route the same Issue to Explore rather than disappearing from the queue
+
+#### Scenario: Two independent complete-set updates race
+
+- GIVEN two qualified writers read the same set and propose different necessary additions
+- WHEN the first update is read back and a stale update arrives later
+- THEN retain the effective set and reapply only the still-authorized disjoint edit against the new basis
+- AND a stale clear cannot remove either edge
+
+#### Scenario: Downstream replacement before old prerequisite resumes
+
+- GIVEN an authorized correction replaces one prerequisite while others remain
+- WHEN the exact downstream declaration is updated
+- THEN preserve every unrelated edge and qualify the replacement's delivery independently
+- AND bare closure or NO_GO of either Issue does not count as successful dependency completion
+
+## ADDED Requirements
+
+### Requirement: Revalidate remaining scope before non-delivery retirement
+
+At existing Explore or material resume/correction boundaries the responsible Role SHALL verify approved scope against current main and actual evidence. Fully satisfied work MAY terminate through preactivation NO_CHANGE_REQUIRED or justified formal Lead resolve-question/NO_GO. Terminal Application MUST preserve the original Change identity, settle independent accepted effects and cleanup obligations, and verify applicable PR disposition before recording terminal close/unroute. PR retirement MUST have exact type-specific authority, fresh repository/head/unmerged proof and read-back. Independent review and all delivery gates remain binding on outstanding work.
+
+#### Scenario: Fully satisfied formal Change has an unmerged PR
+
+- GIVEN deployed main meets every original acceptance condition, an unmerged PR exists and its retirement is authorized
+- WHEN Lead terminates obsolete work
+- THEN Application completes or adopts exact-head closed-unmerged retirement, verifies all required effects and branch dispositions, then verifies closed Issue and retired routing
+- AND interruption resumes the missing suffix without a forced replacement, merge, archive or LIFECYCLE_COMPLETE
+
+#### Scenario: Only partial or unmerged work exists
+
+- GIVEN main meets some or none of the acceptance conditions
+- WHEN another unmerged branch meets more of them
+- THEN retain the necessary remaining scope and existing review obligations; the branch cannot qualify delivery
+
+#### Scenario: Independent effects or cleanup remain
+
+- GIVEN deployed main satisfies the original feature but an accepted follow-up or branch disposition remains outstanding
+- WHEN non-delivery retirement is considered
+- THEN complete or authoritatively supersede those obligations before terminal close; incomplete authority holds the affected operation
