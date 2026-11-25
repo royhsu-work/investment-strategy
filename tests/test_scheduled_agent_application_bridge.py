@@ -8323,3 +8323,51 @@ def test_archive_findings_require_exact_carrier_identity(
     formal = bridge._formal_result_body(result, source=source)
     assert formal is not None
     assert bridge._field(formal, "Revision") == head
+
+
+@pytest.mark.parametrize("wire", ["raw", "legacy"])
+def test_worker_ingress_rejects_invalid_nested_materialization_identity(wire: str) -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    worker = _worker_result(action="resolve-question", result_kind="ready-for-openspec-review")
+    worker["change"] = _CHANGE
+    payload = {"operation": "application-materialize", "issue_number": 139}
+    worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(payload)}
+    ]
+    raw = json.dumps(worker, sort_keys=True)
+    with pytest.raises(ValueError, match="application materialization Issue identity is invalid"):
+        if wire == "raw":
+            bridge.canonicalize_raw_worker_result(
+                body=f"WORKER_RESULT\n{raw}\n",
+                source=source,
+                authorized_change=_CHANGE,
+                repository=_REPOSITORY,
+                current_revision=_REVISION,
+            )
+        else:
+            bridge.render_application_request(
+                ApplicationRequest(_REVISION, raw), source=source, authorized_change=_CHANGE
+            )
+
+
+@pytest.mark.parametrize(
+    ("workflow_name", "expected_count"),
+    [
+        ("openspec-validate.yml", 1),
+        ("scheduled-agent-application.yml", 1),
+        ("openspec-archive.yml", 2),
+    ],
+)
+def test_existing_mechanical_workflows_consume_shared_task_contract(
+    workflow_name: str, expected_count: int
+) -> None:
+    workflow = (Path(".github/workflows") / workflow_name).read_text(encoding="utf-8")
+    owner = "python -m investment_strategy.scheduled_agent_validation_resource"
+    assert workflow.count(owner) == expected_count
+    assert "openspec validate" in workflow
+    if workflow_name == "scheduled-agent-application.yml":
+        assert workflow.index(owner) < workflow.index("--validation-passed")
+        assert "--root validation-target" in workflow
+    if workflow_name == "openspec-archive.yml":
+        assert workflow.index(owner) < workflow.index('openspec archive "$CHANGE" --yes')
+        assert workflow.rindex(owner) > workflow.index('openspec archive "$CHANGE" --yes')
