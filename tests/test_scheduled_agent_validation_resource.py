@@ -2320,8 +2320,7 @@ def test_task_contract_rejects_incomplete_or_invalid_slices(content: str) -> Non
 
 def test_task_contract_ignores_fenced_examples_but_marker_delta_cannot_edit_them() -> None:
     current = (
-        "## 1. First\n- [ ] 1.1 real\n"
-        "```markdown\n- [ ] 1.1 example\n- [ ] RED: example\n```\n"
+        "## 1. First\n- [ ] 1.1 real\n```markdown\n- [ ] 1.1 example\n- [ ] RED: example\n```\n"
     )
     assert resource._task_slices(current) == ((("1.1", False),),)
     assert resource._first_incomplete_slice_task_ids(current) == ("1.1",)
