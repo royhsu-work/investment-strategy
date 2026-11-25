@@ -2362,6 +2362,11 @@ def test_task_contract_validation_uses_same_owner_and_distinguishes_partial_arti
         ("missing", "MISSING"),
         ("pending", "PENDING"),
         ("cancelled", "NO_VERDICT"),
+        ("timed_out", "NO_VERDICT"),
+        ("pytest_fail", "FAIL"),
+        ("lint_fail", "FAIL"),
+        ("environment_failure", "NO_VERDICT"),
+        ("unproven_failure", "UNKNOWN"),
         ("checkout", "UNKNOWN"),
         ("definition", "UNKNOWN"),
         ("skipped", "UNKNOWN"),
@@ -2388,12 +2393,32 @@ def test_native_quality_verdict_qualifies_real_target_and_producer(
         "status": "in_progress" if fault == "pending" else "completed",
         "conclusion": "cancelled" if fault == "cancelled" else "success",
     }
+    if fault == "timed_out":
+        run["conclusion"] = "timed_out"
+    failed_step = {
+        "pytest_fail": "Run tests",
+        "lint_fail": "Ruff lint",
+        "environment_failure": "Install locked quality environment",
+        "unproven_failure": "Run tests",
+    }.get(fault)
+    if failed_step is not None:
+        run["conclusion"] = "failure"
+    names = (gate.identity_step, "Install locked quality environment", *gate.required_steps)
     steps = [
         {
             "name": name,
-            "conclusion": "skipped" if fault == "skipped" and name == "Mypy" else "success",
+            "conclusion": (
+                "failure"
+                if name == failed_step
+                else "skipped"
+                if (
+                    (failed_step is not None and index > names.index(failed_step))
+                    or (fault == "skipped" and name == "Mypy")
+                )
+                else "success"
+            ),
         }
-        for name in (gate.identity_step, *gate.required_steps)
+        for index, name in enumerate(names)
     ]
     job = {
         "id": job_id,
@@ -2401,7 +2426,7 @@ def test_native_quality_verdict_qualifies_real_target_and_producer(
         "run_attempt": attempt + 1 if fault == "attempt" else attempt,
         "name": "quality",
         "status": "completed",
-        "conclusion": "success",
+        "conclusion": "failure" if failed_step is not None else "success",
         "steps": steps,
     }
 
@@ -2429,6 +2454,10 @@ def test_native_quality_verdict_qualifies_real_target_and_producer(
             "validation_run_id": str(run_id),
             "validation_run_attempt": str(attempt),
         }
+        if fault == "pytest_fail":
+            values["validation_exit_pytest"] = "1"
+        if fault == "lint_fail":
+            values["validation_exit_ruff_lint"] = "1"
         return "\n".join(f"2026-11-25T00:00:00Z {key}={value}" for key, value in values.items())
 
     observation = resource.observe_native_validation(
