@@ -6030,6 +6030,15 @@ def test_main_exits_at_carrier_boundary_before_formal_continuation(
     )
     monkeypatch.setattr(bridge, "_machine_result_revision", lambda *_args, **_kwargs: _REVISION)
 
+    def observe_prior_comments(
+        repository: str, token: str, path: str
+    ) -> tuple[dict[str, object], ...]:
+        assert (repository, token) == (_REPOSITORY, "token")
+        assert path == "issues/138/comments?sort=created&direction=asc"
+        return ()
+
+    monkeypatch.setattr(bridge, "_paged_github_list", observe_prior_comments)
+
     def carrier_application(
         *_args: object, **_kwargs: object
     ) -> tuple[EffectBatch, bridge.ApplyResult]:
