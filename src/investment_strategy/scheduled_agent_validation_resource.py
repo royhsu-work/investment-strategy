@@ -411,7 +411,9 @@ class NativeValidationObligation:
             read_log=read_log,
         )
 
-    def invocation(self, observed: NativeValidationObservation) -> NativeValidationInvocation | None:
+    def invocation(
+        self, observed: NativeValidationObservation
+    ) -> NativeValidationInvocation | None:
         """A complete absence or terminated attempt permits one fresh read-only CI request."""
 
         if observed.verdict not in {"MISSING", "NO_VERDICT"}:
