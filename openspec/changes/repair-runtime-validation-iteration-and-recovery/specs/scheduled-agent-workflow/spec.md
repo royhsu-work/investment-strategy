@@ -16,6 +16,13 @@ A qualified mechanical validator verdict SHALL identify the affected candidate r
 - WHEN the Runtime checks completion
 - THEN it bounds the wait, preserves the validation identity and outstanding obligations, and allows later fresh observation without inferring a verdict
 
+#### Scenario: A terminated validation attempt supplies no qualified verdict
+
+- GIVEN settled effects and a required check canceled, timed out, or terminated by its execution environment
+- WHEN no current qualified exact-target verdict exists and verification is freshly authorized
+- THEN the existing repository-owned verification path SHALL obtain an eligible validation attempt for that same target without repeating any settled mutation
+- AND completion SHALL require complete evidence for the applicable workflow, checkout, attempt and required steps; a skipped mandatory check or an unrelated success cannot qualify
+
 ### Requirement: Legacy accepted completion preserves evidence and current obligations
 
 The Application SHALL reconcile a legacy acceptance or migrate its completion using immutable source evidence, qualified fresh postconditions, and current authority for remaining effects. It SHALL preserve prior accepted manifests and completed effects, distinguish validation of the current revision from qualification of an older manifest, and prevent unsafe replay or rewind. Recovery across shard rollover SHALL preserve the original causal identity.
@@ -222,19 +229,7 @@ formal result, and derive routing/terminal projection. Failure before ACCEPT
 has zero authoritative repository consequence; failure after ACCEPT resumes
 the same intent and semantic replay count remains zero. For development-only materialization, Phase A SHALL authorize the exact physical effect without requiring a future CI PASS, and Phase B SHALL prove the materialization and observe native CI without persisting a formal completion result or routing mutation. All completion intents remain subject to applicable verification and exact completion postconditions.
 
-When an exact GitHub Actions run terminates before ACCEPT and every relevant
-native `EXECUTION_EXCEPTION` attempt proves `NO_APPLICATION_WRITE_ATTEMPTED`,
-the existing ingress qualifier MAY classify the original request as
-`TERMINAL_NO_ACCEPT` without waiting for application code on `main` to change,
-but only if the exact source/Change/request comment/revision/run/head/attempt/
-exception correlation and the typed pre-accept worker-result validation stage
-are uniquely and completely qualified, no accepted intent exists, and the
-original immutable payload is deterministically invalid under the same
-canonical typed worker-result parser. A valid worker payload with an execution
-defect, unknown or contradictory evidence, another failure stage, a possible
-write, or an accepted intent SHALL NOT receive this terminal-input exception.
-Terminal disposition of the old ingress SHALL never retry, replay, accept, or
-mutate it; only a later independently authorized fresh dispatch may proceed.
+Application admission and Dispatch retirement SHALL use the same complete request judgment for native WORKER_RESULT and legacy EFFECT_REQUEST. Bind immutable input to an independently qualified source, Change, request, revision and run/attempt chain; validate the semantic envelope and every operation-specific payload. If all attempts have terminated, no ACCEPT or possible consequential write remains and the input is deterministically invalid, the ingress owner SHALL retire that request on unchanged main. A later fresh dispatch may authorize corrected input. Incomplete evidence SHALL be reobserved. Once a transient dependency recovers, fresh qualification MAY proceed on unchanged code when termination, absence of ACCEPT, zero writes and absence of competing live work are independently proven. An unresolved source, in-flight write, internal contradiction or reproducible implementation defect SHALL retain its applicable safety boundary. Exception text, stage names, historical digests and a code advance alone SHALL NOT determine retirement, repair or replay.
 
 The repository-defined dispatch and application request formatters SHALL
 round-trip through the actual production request parsers whenever they
@@ -297,8 +292,8 @@ After a lost or ambiguous write response, recovery SHALL observe/reconcile the e
 #### Scenario: Invalid typed worker input terminates a zero-write pre-ACCEPT failure
 
 - GIVEN an exact source-bound native application run terminated before ACCEPT
-- AND bot-authored evidence uniquely proves the same request and every attempt's typed worker-result qualification stage with zero application writes
-- AND the immutable input deterministically fails the canonical worker parser
+- AND bot-authored evidence uniquely proves the same request and all terminated attempts, exact qualified source identity, absence of ACCEPT and zero consequential writes
+- AND the immutable input deterministically fails the shared complete request contract, including the nested operation payload
 - WHEN a later wake reads the same current `main` and the complete original evidence
 - THEN the existing ingress reducer classifies the failed request as `TERMINAL_NO_ACCEPT`
 - AND the next authorized semantic Action is eligible only in a separate fresh wake
@@ -306,11 +301,11 @@ After a lost or ambiguous write response, recovery SHALL observe/reconcile the e
 
 #### Scenario: Ambiguous failure cannot become terminal through parser inference
 
-- GIVEN a failed application request whose native run, source, revision, attempt, correlation, HEAD, stage, zero-write, ACCEPT absence, or complete evidence cannot be positively established
-- OR the original worker input remains valid under the canonical parser
+- GIVEN a failed application request whose native run, source, revision, attempt, correlation, HEAD, zero-write, ACCEPT absence, or complete evidence cannot be positively established
+- OR the original worker input remains valid under the complete request contract
 - WHEN the completion owner evaluates the current frontier
 - THEN it does not infer deterministic malformed-input termination
-- AND it retains existing fail-closed or Lead/code-repair disposition without mutation
+- AND it reobserves missing evidence without mutation and escalates a reproducible internal defect only on qualified evidence
 
 #### Scenario: Request emitter and consumer share the typed wire contract
 
@@ -684,3 +679,42 @@ If execution is interrupted during the current incomplete or unverified slice, t
 - WHEN a later Executor run reconstructs implementation state
 - THEN previously verified slice markers remain durable
 - AND the current slice is reconstructed from repository, test, and task reality without treating missing current-slice markers as proof that no work exists
+
+### Requirement: Exact-R validation is gate-derived and preserves checkout proof
+
+Whenever an approved gate requires strict OpenSpec validation for revision R, accepted evidence SHALL prove target revision R, validator checkout HEAD == R before validation, qualified pinned OpenSpec compatibility, and strict validation PASS. Eligibility SHALL be derived from the governed gate/artifact requirement and MUST NOT be restricted by a Propose-only or source-role/action whitelist. An already-current correct target MUST be validated without a dummy rewrite. Stale CI, run.head_sha without checkout proof, manual approval, connector bypass, or another model wake MUST NOT satisfy the gate.
+
+For a governed active Task artifact, the exact mechanical gate SHALL include repository-specific Task Contract validation alongside native strict OpenSpec validation. Each actual task checkbox SHALL be consumable by the existing runtime slice/checkpoint contract, with a unique stable supported Task ID, membership in a recognized nonempty vertical slice, and no silently skipped malformed, duplicate or unassigned task. CI and runtime SHALL consume one shared executable parser/validation owner; a competing grammar, separate runner or LLM-only check MUST NOT substitute. The repository authoring contract SHALL declare the applicable Task/Slice convention. A legitimate partial authoring stage without tasks.md MAY proceed under its applicable gate, but any present governed tasks artifact SHALL be checked in full and a missing required artifact MUST NOT satisfy final readiness. Archived historical artifacts and terminal results SHALL NOT be retroactively revalidated as active tasks solely by activation of this requirement.
+
+Existing applicable CI and Application-owned exact validation entry points SHALL consume the same mechanical contract against R; applicable archive checks SHALL preserve this contract for active tasks without changing historical archives. A missing or failed applicable component SHALL prevent mechanical completion, READY and successor effects; a native strict PASS alone MUST NOT certify the complete gate. Evidence SHALL identify the exact checkout, qualified validation components, run/attempt and verdict, with actionable failure diagnostics. Qualified ordinary mechanical FAIL SHALL follow the existing same-Action correction contract, not constitute a mutation Recovery obligation by itself. Mechanical PASS SHALL remain distinct from semantic acceptance. Current default-branch authority and independent review SHALL remain intact during rollout.
+
+#### Scenario: Resolve validates its current head
+
+- GIVEN Lead / resolve-question materially revises OpenSpec artifacts on the current PR head R
+- WHEN the exact validation resource is requested
+- THEN it validates R without a dummy mutation
+- AND the evidence proves checkout HEAD == R and strict PASS
+
+#### Scenario: Native Strict PASS does not certify an invalid Task artifact
+
+- GIVEN native strict OpenSpec validation passes at exact R
+- AND an applicable tasks.md contains an unnumbered, duplicate, unassigned or otherwise unconsumable actual task checkbox, including one mixed with valid tasks
+- WHEN the existing mechanical validation gate evaluates R
+- THEN the shared parser rejects the artifact with a diagnostic and the gate fails
+- AND Application does not emit READY or advance routing on that verdict
+- AND the owning Action may correct the candidate under the existing normal failure contract
+
+#### Scenario: Valid task contract is shared across CI and checkpoint
+
+- GIVEN a complete governed tasks.md has uniquely identified tasks in valid nonempty slices at exact R
+- WHEN applicable CI and runtime checkpoint consumers evaluate its task structure
+- THEN they consume the same executable validation owner and agree on the task identities and slices
+- AND a marker-only revision receives its own applicable exact gate without changing the separate semantic review applicability or weakening the exact marker-delta contract
+
+#### Scenario: Partial authoring and historical archive remain distinct
+
+- GIVEN a legal partial authoring boundary before tasks.md is required, or a historical archived Change
+- WHEN the applicable mechanical gate runs
+- THEN it does not invent a required active Task artifact at that boundary or retrospectively validate historical archived tasks as active work
+- AND any present governed active tasks artifact is validated in full
+- AND final readiness cannot pass with a missing required tasks artifact
