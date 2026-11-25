@@ -243,6 +243,47 @@ class GitHubSequence:
             return [{"filename": "src/investment_strategy/scheduled_agent_formal_qualification.py"}]
         if route == "pulls/236/commits":
             return [{"commit": {"message": "Implement qualification"}}]
+        if route == "actions/workflows/quality.yml/runs":
+            assert query.get("head_sha") == [HEAD]
+            return {
+                "total_count": 1,
+                "workflow_runs": [
+                    {
+                        "id": 8120,
+                        "run_attempt": 1,
+                        "event": "push",
+                        "path": ".github/workflows/quality.yml",
+                        "head_sha": HEAD,
+                        "head_branch": BRANCH,
+                        "display_title": f"Python Quality 8120 @ {HEAD}",
+                        "repository": {"full_name": REPO},
+                        "head_repository": {"full_name": REPO},
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                ],
+            }
+        if route == "actions/runs/8120/attempts/1/jobs":
+            return {
+                "total_count": 1,
+                "jobs": [
+                    {
+                        "id": 8121,
+                        "run_id": 8120,
+                        "run_attempt": 1,
+                        "name": "quality",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "steps": [
+                            {"name": name, "conclusion": "success"}
+                            for name in (
+                                resources.QUALITY_GATE.identity_step,
+                                *resources.QUALITY_GATE.required_steps,
+                            )
+                        ],
+                    }
+                ],
+            }
         if route.endswith("/check-runs"):
             return {
                 "total_count": 1,
@@ -348,6 +389,22 @@ class GitHubSequence:
             }
         raise AssertionError(f"unexpected read {path}")
 
+    def quality_log(self, repository: str, _token: str, job_id: int) -> str:
+        assert (repository, job_id) == (REPO, 8121)
+        fields = {
+            "validation_target_repository": REPO,
+            "validation_target_sha": HEAD,
+            "validator_checkout_head": HEAD,
+            "validation_correlation": "8120",
+            "validation_workflow_ref": (
+                f"{REPO}/.github/workflows/quality.yml@refs/heads/{BRANCH}"
+            ),
+            "validation_workflow_sha": HEAD,
+            "validation_run_id": "8120",
+            "validation_run_attempt": "1",
+        }
+        return "\n".join(f"2026-09-16T00:00:00Z {key}={value}" for key, value in fields.items())
+
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for module in (bridge, native, carrier, materialization, effects, acceptance, resources):
             monkeypatch.setattr(module, "_github_json", self.read)
@@ -360,6 +417,7 @@ class GitHubSequence:
                 else pytest.fail("unexpected artifact download")
             ),
         )
+        monkeypatch.setattr(resources, "read_github_job_log", self.quality_log)
         prefix = f"https://api.github.com/repos/{REPO}"
         monkeypatch.setattr(
             runtime,
