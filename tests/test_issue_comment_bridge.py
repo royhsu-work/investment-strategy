@@ -2218,9 +2218,7 @@ def test_native_malformed_worker_preaccept_exception_retires_without_main_advanc
                 **request,
                 "body": candidate.body,
                 "updated_at": (
-                    "2026-11-07T16:51:33Z"
-                    if case == "edited-original"
-                    else candidate.created_at
+                    "2026-11-07T16:51:33Z" if case == "edited-original" else candidate.created_at
                 ),
             }
         raise AssertionError(path)
