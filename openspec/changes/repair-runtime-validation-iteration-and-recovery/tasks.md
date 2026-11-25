@@ -1,7 +1,7 @@
 ## 1. Same-Action mechanical validation iteration
 
-- [ ] RED: Reproduce strict and quality FAIL → repeated FAIL → corrected exact PASS through normal Runtime entry points, including pending CI and interruptions before validation, after FAIL, and after PASS.
-- [ ] GREEN: Qualify the verdict and exact revision, preserve prior acceptance, authorize the fresh correction, and verify Formal Result and successor routing.
+- [ ] RED: Reproduce strict and quality FAIL → repeated FAIL → corrected exact PASS through normal Runtime entry points, including pending CI and interruptions before validation, after FAIL, and after PASS. Exercise both Dispatcher and Application ingress across the ownership boundary. Assert pending/unknown validation and unresolved writes retain ownership, stale or competing candidates cannot write, and exact PASS yields one Formal Result and routing.
+- [ ] GREEN: Qualify the verdict and exact revision, preserve prior acceptance as history after proven settlement, reuse the shared current ownership predicate to authorize only one fresh correction, and verify Formal Result and successor routing.
 - [ ] REFACTOR: Consolidate reused validation qualification and run slice tests, regression suite, type checks, lint, and strict OpenSpec validation.
 
 ## 2. Fresh recovery observation and mutation deduplication
