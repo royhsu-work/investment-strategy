@@ -115,7 +115,32 @@ An explicitly approved required separate follow-up SHALL authorize source-bound 
 
 Required follow-up materialization SHALL complete only after qualified read-back of at least one source-linked routing-complete tracker or lawful descendant and all still-required dependency effects. Before any write, Application SHALL reobserve complete authoritative tracker evidence, exact scope, current authority and source. It SHALL reuse a qualified existing match or repair authorized missing fields before creating. Physical duplicates are permitted after uncertain writes. Multiple verified matches SHALL NOT by themselves block progress or grant authority to choose an arbitrary dependency target. Contradictory provenance and insufficient observations MUST NOT authorize mutation.
 
-#### Scenario: Interrupted create before routing
+#### Scenario: Required follow-up is created and routed as one logical result
+
+- GIVEN an explicit qualified decision with no reusable tracker after complete fresh observation
+- WHEN the Application performs a necessary creation
+- THEN the source linkage, routing-complete Issue and applicable dependency effects must be observed before advancing the affected boundary
+
+#### Scenario: Ambiguous matching trackers fail closed
+
+- GIVEN observed trackers have contradictory or unverifiable source, scope or authority
+- WHEN the Application cannot establish the eligibility of a proposed mutation
+- THEN withhold that mutation and seek qualified evidence or an authorized correction
+- AND several individually verified legitimate trackers alone do not constitute this ambiguity or prevent their independently eligible work
+
+#### Scenario: Optional or ordinary deferred work creates no required tracker
+
+- GIVEN a source mentions optional or uncommitted work without an approved required decision
+- WHEN Application evaluates materialization
+- THEN no new tracker or dependency is authorized
+
+#### Scenario: Lifecycle preparation repairs one uniquely incomplete required tracker
+
+- GIVEN an exact existing tracker is missing only an authorized routing field
+- WHEN lifecycle preparation observes the pending approved decision
+- THEN the owning Application repairs the missing field, preserves unrelated content, and verifies tracking and dependency completeness before handoff
+
+#### Scenario: Interrupted create-before-route is repaired idempotently
 
 - GIVEN an existing exact tracker lacks only authorized routing
 - WHEN Application fresh-reads it
@@ -162,13 +187,13 @@ Required follow-up materialization SHALL complete only after qualified read-back
 
 The exact durable Explore result SHALL preserve its explicit required defer decisions before their effects. The owning Application SHALL observe tracking and dependency completeness before completing the source successor. Propose SHALL dereference that exact result and preserve every still-applicable decision through formalization. Recovery SHALL reconstruct the accepted intent, retain historical uncertainty, skip completed effects and reauthorize only the missing suffix.
 
-#### Scenario: Explore materializes before Propose
+#### Scenario: Explore materializes a newly required separate follow-up before successor routing
 
 - GIVEN a qualified Explore result explicitly defers necessary work
 - WHEN the source result is persisted
 - THEN the successor waits for observed tracker and dependency effects
 
-#### Scenario: Interrupted Explore materialization
+#### Scenario: Interrupted Explore materialization resumes from the same durable decision
 
 - GIVEN one or more independent writes have committed
 - WHEN reentry reconstructs the same accepted source
@@ -180,12 +205,19 @@ The exact durable Explore result SHALL preserve its explicit required defer deci
 - WHEN Propose reads the result
 - THEN no necessary work is inferred from prose
 
-#### Scenario: Propose preserves a required follow-up
+#### Scenario: Propose preserves a required follow-up while keeping it outside current implementation scope
 
 - GIVEN required work falls outside current implementation scope
 - WHEN Lead prepares the proposal
 - THEN preserve source linkage and dependency disposition and verify the postcondition before readiness
 
+
+#### Scenario: Propose repairs only a unique incomplete required tracker
+
+- GIVEN the exact Explore source identifies a tracker whose missing fields are independently authorized
+- WHEN Propose observes incomplete materialization
+- THEN repair only the precisely qualified target and reobserve the postcondition before readiness
+- AND do not infer target-specific repair authority from similarity or require physical uniqueness across independently qualified trackers
 
 ### Requirement: Persisted Change identity defines the single active workflow boundary
 
