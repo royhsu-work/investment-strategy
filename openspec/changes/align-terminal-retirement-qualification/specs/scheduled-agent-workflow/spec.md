@@ -12,7 +12,7 @@ If `LIFECYCLE_COMPLETE` is durable but the Issue close mutation or re-observatio
 
 A closed Issue with valid `LIFECYCLE_COMPLETE` and observed close is terminal history and SHALL NOT consume normal formal-workflow cardinality.
 
-The terminal formal result MUST causally precede the retirement effects attributed to it. A current consumer MUST prove the exact terminal Action and the observed `closed + no workflow routing` postcondition without requiring the close event and the removal of that Action's routing label to appear in either specific relative order. If a routing-removal event is attributed to this terminal retirement, it MUST correspond to the exact terminal Action and occur at most once. A conflicting Action removal, duplicate removal or close, reopening, relabeling, incomplete evidence, or residue of workflow routing MUST NOT qualify. A fresh consumer MUST NOT replay the already observed accepted retirement to manufacture a preferred event order.
+The terminal formal result MUST causally precede the retirement effects attributed to it. A current consumer MUST prove the exact terminal Action and the observed `closed + no workflow routing` postcondition without requiring the close event and the removal of that Action's routing label to appear in either specific relative order. If a routing-removal event is attributed to this terminal retirement, it MUST correspond to the exact terminal Action and occur at most once. A conflicting Action removal, duplicate removal or close, reopening, relabeling, incomplete evidence, or residue of workflow routing MUST NOT qualify. A complete history with no recorded Action-removal event MAY qualify under existing close-only compatibility rules only if it still proves the exact terminal Action, result-before-close, and the fresh closed/no-routing state. A missing event in incomplete history is not close-only evidence. A fresh consumer MUST NOT replay the already observed accepted retirement to manufacture a preferred event order.
 
 #### Scenario: Authorized Archive PR merge completes the Issue natively
 
@@ -77,7 +77,7 @@ The terminal formal result MUST causally precede the retirement effects attribut
 #### Scenario: One qualified retirement can produce two valid event orders
 
 - GIVEN the exact native terminal result was written and the Issue's retirement is observed closed with no workflow routing
-- AND its complete lifecycle evidence has one close and, if present, one removal of the terminal Action route after the result
+- AND its complete lifecycle evidence has one close after the result and, if present, one removal of the terminal Action route after the result
 - WHEN a fresh consumer observes close before route removal, the opposite order, or a same-second event-ID ordering
 - THEN it qualifies the same result and the dependency can release
 - AND it does not replay the retirement or modify the dependency
@@ -87,3 +87,19 @@ The terminal formal result MUST causally precede the retirement effects attribut
 - GIVEN a claimed terminal retirement has a different Action removed, more than one route removal or close, a reopen/relabel, routing residue, or missing or mismatched required source evidence
 - WHEN a fresh consumer reconstructs it
 - THEN the terminal evidence does not qualify and the dependency remains suspended
+
+#### Scenario: A later terminal result cannot legalize an earlier closure
+
+- GIVEN the coordination Issue closed before the claimed terminal result was durably recorded
+- WHEN a fresh consumer observes the Issue is now closed with no workflow routing
+- THEN the later result does not qualify that earlier closure as terminal retirement
+- AND the dependency remains suspended
+
+#### Scenario: Close-only compatibility requires a complete history
+
+- GIVEN a legacy retirement has an exact qualified terminal result, one causally subsequent close, and a fresh closed/no-routing state
+- WHEN complete lifecycle evidence establishes a compatible close-only history
+- THEN the absence of an Action-removal event does not by itself prevent qualification
+- BUT WHEN required lifecycle evidence is incomplete and the Action-removal event is merely unobserved
+- THEN the consumer does not qualify the retirement as close-only
+- AND the dependency remains suspended
