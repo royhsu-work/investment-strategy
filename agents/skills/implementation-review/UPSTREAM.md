@@ -13,6 +13,7 @@ The local Skill preserves the upstream responsibility of verifying implementatio
 ## Added responsibilities
 
 - Independent Reviewer ownership with exact-current-head PASS/findings evidence.
+- Conditional codebase-design composition for interface, seam and test-lifecycle evidence in the existing gate.
 - Explicit classification into implementation findings versus specification findings.
 - Revision-aware handoff to Executor merge or correction owners.
 - Consumption of the repository-owned substantive Human-input freshness/disposition invariant before finalizing the exact-head gate.

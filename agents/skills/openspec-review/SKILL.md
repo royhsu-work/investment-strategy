@@ -19,6 +19,10 @@ alone does not create semantic acceptance, even when strict validation passes.
 
 ## Semantic-proof loop
 
+When reviewing material interface, feasibility, testability, or slice design, load
+`agents/skills/codebase-design/SKILL.md` and apply its OpenSpec Review guidance in CHALLENGE.
+Use the existing requirement and evidence criteria for a finding.
+
 Run one compact proof loop for every material semantic boundary before returning PASS:
 
 1. **DERIVE** — Reconstruct the approved decision boundary independently from Human-approved intent, applicable same-Issue Explore evidence, canonical owners, current default-branch governance/config, and exact baseline `B` plus reviewed target `R`. Record outcomes, invariants, constraints, safety properties, and scope boundaries that the candidate must preserve.

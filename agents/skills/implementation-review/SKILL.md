@@ -21,6 +21,11 @@ differently classified or undeclared Skill change is a finding.
 
 ## Substantiate blocking findings
 
+When the diff affects module responsibilities, test seams, or existing test protections, load
+`agents/skills/codebase-design/SKILL.md` and apply its Implementation Review guidance to the exact head.
+For any test replacement or retirement, verify the affected protection and supporting evidence under
+this review's existing finding and closure criteria.
+
 For each blocking finding, identify the violated approved requirement or invariant, the evidence at
 the reviewed revision, the delivery stage or gate it blocks, and the observable condition that
 would close it. Evaluate an approved stage against its own exit criteria and dependencies. Carry
