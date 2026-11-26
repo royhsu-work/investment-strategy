@@ -269,6 +269,7 @@ def _dependency_fixture(
         },
         {"id": 12, "event": "commented", "created_at": "2026-09-12T00:00:03Z"},
     )
+    repair_timeline: tuple[dict[str, object], ...]
     if phase == "formal":
         repair_formal = formal_comment(
             repair,
@@ -300,6 +301,20 @@ def _dependency_fixture(
             {"id": 20, "event": "commented", "created_at": "2026-09-12T00:00:05Z"},
             {"id": 21, "event": "closed", "created_at": "2026-09-12T00:00:10Z"},
         )
+    if phase == "completed" and fault in {"wrong-terminal-removal", "duplicate-terminal-removal"}:
+        removal: dict[str, object] = {
+            "id": 22,
+            "event": "unlabeled",
+            "created_at": "2026-09-12T00:00:09Z",
+            "label": {
+                "name": "action:implement-change"
+                if fault == "wrong-terminal-removal"
+                else "action:finalize-archive"
+            },
+        }
+        repair_timeline = (*repair_timeline, removal)
+        if fault == "duplicate-terminal-removal":
+            repair_timeline = (*repair_timeline, {**removal, "id": 23})
     urls: list[str] = []
 
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
@@ -353,6 +368,16 @@ def test_comment_dependency_drives_fresh_selection_and_completion(
     assert not any("pyproject.toml" in url for url in urls)
     assert not any("/dependencies/" in url for url in urls)
     assert sum(f"/issues/{blocked}/comments?" in url for url in urls) == 1
+
+
+@pytest.mark.parametrize("fault", ["wrong-terminal-removal", "duplicate-terminal-removal"])
+def test_dependency_rejects_conflicting_terminal_removal(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    _dependency_fixture(monkeypatch, (900, 850), phase="completed", fault=fault)
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.disposition == "NO_WORK"
+    assert decision.reason == "dependencies-unsatisfied"
 
 
 @pytest.mark.parametrize("phase", ["no-go", "bare-close"])

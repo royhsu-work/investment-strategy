@@ -2740,7 +2740,13 @@ def test_terminal_transition_closes_and_clears_routing_atomically(
 
 @pytest.mark.parametrize(
     ("formal_case", "expected"),
-    [("qualified", True), ("missing", False), ("wrong-request", False)],
+    [
+        ("qualified", True),
+        ("missing", False),
+        ("wrong-request", False),
+        ("wrong-removal", False),
+        ("duplicate-removal", False),
+    ],
 )
 def test_accepted_terminal_postcondition_reobserves_after_process_restart(
     monkeypatch: pytest.MonkeyPatch,
@@ -2798,7 +2804,7 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
         "closed_at": "2026-09-03T01:03:00Z",
         "labels": [{"name": "human:notified"}],
     }
-    timeline = [
+    timeline: list[dict[str, object]] = [
         {"id": 992, "event": "commented", "created_at": "2026-09-03T01:00:00Z"},
         {
             "id": 993,
@@ -2808,6 +2814,10 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
         },
         {"id": 994, "event": "closed", "created_at": "2026-09-03T01:03:00Z"},
     ]
+    if formal_case == "wrong-removal":
+        timeline[1]["label"] = {"name": "action:implement-change"}
+    elif formal_case == "duplicate-removal":
+        timeline.append({**timeline[1], "id": 995})
     observed_reads: list[str] = []
 
     def read(
