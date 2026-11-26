@@ -347,6 +347,22 @@ def _dependency_fixture(
         repair_timeline = (*repair_timeline, removal)
         if fault == "duplicate-terminal-removal":
             repair_timeline = (*repair_timeline, {**removal, "id": 23})
+    if fault in {"terminal-empty-event", "terminal-missing-event", "terminal-null-event"}:
+        event_row: dict[str, object] = {}
+        if fault != "terminal-empty-event":
+            event_row = {
+                "id": 22,
+                "created_at": "2026-09-12T00:00:09Z",
+                "label": {"name": "action:implement-change"},
+            }
+        if fault == "terminal-null-event":
+            event_row["event"] = None
+        repair_timeline = (*repair_timeline, event_row)
+    elif fault == "terminal-assigned":
+        repair_timeline = (
+            *repair_timeline,
+            {"id": 22, "event": "assigned", "created_at": "2026-09-12T00:00:09Z"},
+        )
     urls: list[str] = []
 
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
@@ -457,6 +473,27 @@ def test_dependency_rejects_conflicting_terminal_removal(
     decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
     assert decision.disposition == "NO_WORK"
     assert decision.reason == "dependencies-unsatisfied"
+
+
+@pytest.mark.parametrize(
+    ("fault", "expected"),
+    [
+        ("terminal-empty-event", "NO_WORK"),
+        ("terminal-missing-event", "NO_WORK"),
+        ("terminal-null-event", "NO_WORK"),
+        ("terminal-assigned", "AUTHORIZE"),
+    ],
+)
+def test_dependency_requires_valid_timeline_event_discriminator(
+    monkeypatch: pytest.MonkeyPatch, fault: str, expected: str
+) -> None:
+    _dependency_fixture(monkeypatch, (900, 850), phase="completed", fault=fault)
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.disposition == expected
+    if expected == "NO_WORK":
+        assert decision.reason == "dependencies-unsatisfied"
+    else:
+        assert decision.selected_issue_id == 900
 
 
 def test_dependency_cannot_qualify_when_timeline_acquisition_is_incomplete(

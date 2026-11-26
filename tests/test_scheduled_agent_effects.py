@@ -2750,6 +2750,10 @@ def test_terminal_transition_closes_and_clears_routing_atomically(
         ("close-before-result", False),
         ("removal-before-result", False),
         ("close-only", True),
+        ("empty-timeline-event", False),
+        ("missing-timeline-event", False),
+        ("null-timeline-event", False),
+        ("unrelated-timeline-event", True),
         ("malformed-timeline-page", False),
         ("malformed-comments-page", False),
         ("missing-close", False),
@@ -2852,6 +2856,17 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
         timeline.append({**timeline[1], "id": 995})
     elif formal_case == "close-only":
         del timeline[1]
+    elif formal_case == "empty-timeline-event":
+        timeline[1] = {}
+    elif formal_case in {"missing-timeline-event", "null-timeline-event"}:
+        timeline[1]["label"] = {"name": "action:implement-change"}
+        if formal_case == "missing-timeline-event":
+            del timeline[1]["event"]
+        else:
+            timeline[1]["event"] = None
+    elif formal_case == "unrelated-timeline-event":
+        timeline[1] = {**timeline[1], "event": "assigned"}
+        del timeline[1]["label"]
     elif formal_case == "missing-close":
         timeline.pop()
     elif formal_case == "duplicate-close":
