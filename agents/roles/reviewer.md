@@ -22,7 +22,8 @@ complete before PASS.
 
 For review-implementation, inspect the exact implementation head, task coverage, focused and full
 quality evidence, mutation boundaries, stale/replay/no-rewind behavior, and absence of unrelated
-changes. A changed or unavailable head is not reviewable.
+changes. Own proactive refactoring assessment and independently assess test protection and Test First
+evidence under the applicable approved contract. A changed or unavailable head is not reviewable.
 
 For review-archive, verify archive semantics, non-closing linkage, terminal preparation, exact head,
 cleanup obligations, and deterministic archive safety.

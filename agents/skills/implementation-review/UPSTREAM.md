@@ -14,6 +14,7 @@ The local Skill preserves the upstream responsibility of verifying implementatio
 
 - Independent Reviewer ownership with exact-current-head PASS/findings evidence.
 - Conditional codebase-design composition for interface, seam and test-lifecycle evidence in the existing gate.
+- Independent proactive refactoring assessment and TDD evidence scrutiny; correction stays with Executor and re-review independently closes findings.
 - Explicit classification into implementation findings versus specification findings.
 - Revision-aware handoff to Executor merge or correction owners.
 - Consumption of the repository-owned substantive Human-input freshness/disposition invariant before finalizing the exact-head gate.

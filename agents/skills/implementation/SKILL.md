@@ -1,6 +1,6 @@
 ---
 name: implementation
-description: Executor procedure for approved implement-change work using bounded RED-GREEN-REFACTOR-VERIFY slices.
+description: Executor procedure for approved implement-change work using per-behavior Test First and verified slices.
 ---
 
 # Implementation
@@ -27,23 +27,31 @@ acceptance at its applicable gate.
 
 ## Implement one bounded slice
 
-1. RED: add a focused behavioral test and confirm the failure is the intended gap.
-2. GREEN: implement the minimum approved behavior.
-3. REFACTOR: remove duplication without changing meaning.
-4. VERIFY: run focused validation and the complete required gates:
+For executable feature or defect-correction behavior, load `agents/skills/tdd/SKILL.md` and use its
+one-behavior RED/GREEN loop. For material changes to Skill or procedural decisions without new
+executable behavior, evaluate fixed discriminating inputs before and after, recording actual
+decisions and consulted source revisions. Do not claim executable RED for such evaluation.
+Ordinary wording-only documentation changes do not require semantic evaluation.
+
+VERIFY the slice using focused evidence and the complete required gates:
    uv run pytest
    uv run ruff check .
    uv run ruff format --check .
    uv run mypy src tests
 
-The semantic Executor does not assume a mutable checkout or shell. For a real implementation slice,
-start from the exact current implementation-carrier head, overlay RED tests only, run the focused test
-and prove the intended failure, then reset to that exact base. Submit complete candidate source/tests
-as content-addressed blobs; repository-owned Actions perform focused GREEN and the full four-gate
-verification above. Only after those exact checks and fresh Issue/Change/routing/PR/head/main,
-review, and Human reauthorization observations may application persist `APPLICATION_DECISION:
-ACCEPTED` and materialize the already-verified blobs. A verifier failure before ACCEPT leaves zero
-authoritative repository consequence; it is not repaired by pushing a broken candidate.
+The semantic Executor does not assume a mutable checkout or shell. Use repository-supported CI
+evidence from the exact relevant revisions for executable behavior. Submit complete candidate
+source/tests as content-addressed blobs for existing repository-owned candidate verification.
+Only after the required checks and fresh Issue/Change/routing/PR/head/main, review, and Human
+reauthorization observations may application persist `APPLICATION_DECISION: ACCEPTED` and
+materialize the already-verified blobs. A verifier failure before ACCEPT leaves zero authoritative
+repository consequence; it is not repaired by pushing a broken candidate. If a required evidence
+path is unavailable, use the existing governed blocker path.
+
+Independent Implementation Review owns proactive refactoring assessment. Executor implements the
+minimum sufficient correct behavior and repairs genuine regressions and substantiated findings.
+For affected tests, preserve applicable coverage and record justified replacement or retirement
+evidence under the existing config rules.
 
 Persist task markers and one bounded SLICE_CHECKPOINT/result only after VERIFY succeeds. Results identify
 the exact Action, revision, tests, and remaining approved work; they do not carry routing authority.
@@ -65,7 +73,8 @@ semantic review. Executor does not perform semantic bidirectional OpenSpec revie
 
 Every fresh `Executor / implement-change` invocation reconstructs current recovery truth from
 `tasks.md`, the current implementation PR/head, and current code/tests/evidence. It identifies the
-first incomplete slice and executes exactly one bounded slice with the sequence RED -> GREEN -> REFACTOR -> VERIFY.
+first incomplete slice and executes exactly one bounded slice using the applicable behavior or
+semantic evaluation procedure followed by VERIFY.
 
 After VERIFY succeeds, persist task markers first and then one bounded SLICE_CHECKPOINT containing
 the exact Change, verified revision, completed task IDs, gate evidence, and remaining approved

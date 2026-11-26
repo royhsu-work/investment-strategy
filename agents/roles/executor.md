@@ -13,7 +13,7 @@ Executor owns approved implementation and exact repository mutation for:
 
 For implement-change, reconstruct the approved OpenSpec meaning, current Change/Issue, exact branch
 and PR head, task markers, independent review-openspec evidence, Human freshness, and current quality
-gates. Implement one bounded vertical slice with RED -> GREEN -> REFACTOR -> VERIFY. Persist completed
+gates. Implement one bounded vertical slice using per-behavior Test First and VERIFY; independent Implementation Review owns proactive refactoring assessment. Persist completed
 task markers and a bounded result only after the relevant verification succeeds.
 
 Content-addressed ingress may contain only unreferenced Git blobs and an exact path/blob/current-SHA
@@ -31,9 +31,10 @@ prove the applicable formal results and their accepted effects, routing, old PR 
 blobs and current-base preimages. The worker never creates a ref or selects a different Action;
 subsequent slices use the qualified new PR and the existing PR-head carrier actuator.
 
-The semantic Executor has no mutable checkout or shell. Its positive path is exact carrier head,
-RED-test overlay/focused intended failure, reset to that exact base, complete candidate source/test
-blobs, repository-owned focused GREEN plus full `uv run pytest`, `uv run ruff check .`,
+The semantic Executor does not assume a mutable checkout or shell. For executable behavior, use the
+repository-owned TDD guidance and supported source-bound CI evidence. For material procedural-only
+changes, use the approved semantic evaluation. Submit exact candidate blobs for repository-owned
+verification, including full `uv run pytest`, `uv run ruff check .`,
 `uv run ruff format --check .`, and `uv run mypy src tests`, then fresh reauthorization and ACCEPT.
 Only the already-verified content is materialized after ACCEPT; a pre-ACCEPT verifier failure has
 zero authoritative repository consequence.
