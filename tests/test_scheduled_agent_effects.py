@@ -2738,6 +2738,7 @@ def test_terminal_transition_closes_and_clears_routing_atomically(
     assert adapter.observe_postcondition(effect)
 
 
+@pytest.mark.parametrize("close_first", [False, True])
 @pytest.mark.parametrize(
     ("formal_case", "expected"),
     [("qualified", True), ("missing", False), ("wrong-request", False)],
@@ -2746,6 +2747,7 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
     monkeypatch: pytest.MonkeyPatch,
     formal_case: str,
     expected: bool,
+    close_first: bool,
 ) -> None:
     """RED: a durable accepted terminal needs source proof, not a local receipt.
 
@@ -2808,6 +2810,9 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
         },
         {"id": 994, "event": "closed", "created_at": "2026-09-03T01:03:00Z"},
     ]
+    if close_first:
+        timeline[1]["created_at"] = "2026-09-03T01:03:01Z"
+        timeline = [timeline[0], timeline[2], timeline[1]]
     observed_reads: list[str] = []
 
     def read(
