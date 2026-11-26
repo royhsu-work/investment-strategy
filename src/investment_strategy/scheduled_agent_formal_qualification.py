@@ -665,13 +665,11 @@ def _interval_binds_successor(
         if len(closes) != 1 or any(item.event in {"labeled", "reopened"} for item in relevant):
             return False
         removals = tuple(item for item in relevant if item.event == "unlabeled")
-        if removals and (
-            terminal_action is None
-            or len(removals) != 1
-            or removals[0].label != f"{_ACTION_LABEL_PREFIX}{terminal_action}"
-        ):
-            return False
-        return True
+        return not removals or (
+            terminal_action is not None
+            and len(removals) == 1
+            and removals[0].label == f"{_ACTION_LABEL_PREFIX}{terminal_action}"
+        )
     if successor is None:
         return False
     # Only action labels change workflow routing.  Human approval and other
