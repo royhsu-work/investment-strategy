@@ -682,6 +682,7 @@ def _accepted_lead_retirement_comments(
     close_fields: dict[str, str] | None = None,
     decision_at: str = "2026-11-03T02:59:00Z",
     versionless_ingress: bool = False,
+    minimal_raw_ingress: bool = False,
     extra_invocation_effect: bool = False,
     accepted_content_override: str | None = None,
 ) -> tuple[list[dict[str, object]], dict[int, dict[str, object]]]:
@@ -729,18 +730,24 @@ def _accepted_lead_retirement_comments(
     accepted = effects.semantic_intent_payload(
         json.dumps(accepted_result, sort_keys=True, separators=(",", ":"))
     )
-    if versionless_ingress:
-        del result["_semantic_intent_version"]
-    raw = json.dumps(result, sort_keys=True, separators=(",", ":"))
-    request_body = render_application_request(
-        ApplicationRequest(
-            authorization_revision=MAIN,
-            raw_worker_result=raw,
-            dispatch_correlation=dispatch_correlation_for(
-                REPOSITORY, WorkerRequest(229, "lead", "resolve-question"), MAIN
-            ),
+    if minimal_raw_ingress:
+        for field in ("_semantic_intent_version", "issue_number", "role", "action", "change"):
+            result.pop(field)
+        raw = json.dumps(result, sort_keys=True, separators=(",", ":"))
+        request_body = f"WORKER_RESULT\n{raw}"
+    else:
+        if versionless_ingress:
+            del result["_semantic_intent_version"]
+        raw = json.dumps(result, sort_keys=True, separators=(",", ":"))
+        request_body = render_application_request(
+            ApplicationRequest(
+                authorization_revision=MAIN,
+                raw_worker_result=raw,
+                dispatch_correlation=dispatch_correlation_for(
+                    REPOSITORY, WorkerRequest(229, "lead", "resolve-question"), MAIN
+                ),
+            )
         )
-    )
 
     def digest(value: str) -> str:
         return hashlib.sha256(value.encode()).hexdigest()
@@ -864,6 +871,33 @@ def test_versionless_ingress_proves_accepted_lead_retirement(
         branch=f"agent/{CHANGE}-supersedes-236",
         current_revision=MAIN,
     ) is (accepted_content_override is None)
+
+
+def test_minimal_raw_ingress_proves_accepted_lead_retirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh observer qualifies raw provenance without worker-authored identity."""
+
+    retired = _continuation_pr(head_sha="5" * 40)
+    retired.update(state="closed", closed_at="2026-11-03T03:00:00Z")
+    replacement = _continuation_pr(number=237, branch=f"agent/{CHANGE}-supersedes-236")
+    formal, requests = _accepted_lead_retirement_comments("5" * 40, minimal_raw_ingress=True)
+    github = _fake_github(
+        current_pr=replacement,
+        merged_continuations=[retired],
+        open_prs=[replacement],
+        formal_comments=formal,
+        request_comments=requests,
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    assert carrier.qualify_supersession_branch(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        issue_number=229,
+        change=CHANGE,
+        branch=f"agent/{CHANGE}-supersedes-236",
+        current_revision=MAIN,
+    )
 
 
 def test_lead_retirement_preserves_second_generation_supersession(
