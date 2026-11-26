@@ -7118,6 +7118,7 @@ def _terminal_carrier_issue(action: str) -> dict[str, object]:
         "changed-request-body",
         "wrong-dispatch-correlation",
         "missing-dispatch-correlation",
+        "raw-original",
         "different-semantic-result",
         "wrong-accepted-authorization",
         "changed-action",
@@ -7196,6 +7197,24 @@ def test_terminal_merge_effect_reconciles_without_error_semantics(
         ingress_comment["performed_via_github_app"] = {"slug": "untrusted"}
     if alteration == "changed-request-body":
         ingress_comment["body"] = cast(str, ingress_comment["body"]) + "\n"
+    if alteration == "raw-original":
+        request = bridge.parse_application_request(cast(str, ingress_comment["body"]))
+        assert request is not None
+        intent = json.loads(request.raw_worker_result)
+        intent.pop("_semantic_intent_version", None)
+        raw_body = f"WORKER_RESULT\n{json.dumps(intent)}"
+        application.canonicalize_raw_worker_result(
+            body=raw_body,
+            source=bridge.WorkerRequest(322, "executor", action),
+            authorized_change=record.change,
+            repository="royhsu-work/investment-strategy",
+            current_revision=record.authorization_revision,
+        )
+        ingress_comment["body"] = raw_body
+        record = replace(
+            record,
+            request_body_sha256=hashlib.sha256(raw_body.encode("utf-8")).hexdigest(),
+        )
     if alteration in {"wrong-dispatch-correlation", "missing-dispatch-correlation"}:
         request = bridge.parse_application_request(cast(str, ingress_comment["body"]))
         assert request is not None
