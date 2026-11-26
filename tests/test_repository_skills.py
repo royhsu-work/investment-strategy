@@ -120,7 +120,6 @@ def test_implementation_skill_makes_verified_slice_recovery_boundary_explicit() 
     for phrase in (
         "first incomplete slice",
         "exactly one bounded slice",
-        "RED -> GREEN -> REFACTOR -> VERIFY",
         "task markers first",
         "one bounded SLICE_CHECKPOINT",
         "never redo a verified slice",

@@ -12,7 +12,7 @@ The local Skill preserves the upstream Apply responsibility of implementing appr
 
 ## Added responsibilities
 
-- RED→GREEN→REFACTOR→VERIFY vertical-slice execution and verified task/checkpoint persistence.
+- Per-behavior Test First via the TDD Skill and verified vertical-slice task/checkpoint persistence.
 - Exact CI/OpenSpec evidence handling, constrained branch-integration recovery, and Draft-to-Ready ownership.
 - Explicit routing to Lead when implementation would require new specification meaning.
 - Consumption of the repository-owned substantive Human-input freshness/disposition invariant immediately before implementation `READY` and review handoff.
@@ -25,6 +25,7 @@ Maintenance implication: preserve these Executor-owned verification, recovery, a
 
 - Requirement/specification interpretation beyond the approved context is omitted and owned by Lead.
 - Independent implementation acceptance is omitted and owned by `Reviewer / review-implementation`.
+- Proactive refactoring assessment is transferred to independent Implementation Review; minimum implementation and substantiated finding correction remain with Executor.
 - Normal deterministic archive mechanics are omitted and owned by repository automation.
 
 Reason: separation of duties prevents Executor from authoring contract meaning or self-approving implementation/archive transitions.

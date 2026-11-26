@@ -21,6 +21,18 @@ differently classified or undeclared Skill change is a finding.
 
 ## Substantiate blocking findings
 
+Own proactive refactoring assessment of the exact implementation and test evidence. Assess design
+and test quality through the existing approved requirement, evidence and closure criteria. For
+executable behavior, consult `agents/skills/tdd/SKILL.md` to assess the actual source-bound RED/GREEN
+chronology and test seam. For material procedural-only changes, assess the actual before/after
+semantic evaluation and consulted inputs. Reviewer does not modify its own target; Executor corrects
+substantiated findings and independent re-review qualifies the corrected exact revision.
+
+When the diff affects module responsibilities, test seams, or existing test protections, load
+`agents/skills/codebase-design/SKILL.md` and apply its Implementation Review guidance to the exact head.
+For any test replacement or retirement, verify the affected protection and supporting evidence under
+this review's existing finding and closure criteria.
+
 For each blocking finding, identify the violated approved requirement or invariant, the evidence at
 the reviewed revision, the delivery stage or gate it blocks, and the observable condition that
 would close it. Evaluate an approved stage against its own exit criteria and dependencies. Carry
