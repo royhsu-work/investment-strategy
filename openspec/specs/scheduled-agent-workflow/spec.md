@@ -1007,6 +1007,9 @@ If `LIFECYCLE_COMPLETE` is durable but the Issue close mutation or re-observatio
 
 A closed Issue with valid `LIFECYCLE_COMPLETE` and observed close is terminal history and SHALL NOT consume normal formal-workflow cardinality.
 
+A consumer qualifying an existing terminal retirement MUST use the exact bound terminal result, authoritative fresh `closed + no workflow routing` observation, and complete required lifecycle evidence. The result MUST be recorded before the closure and any Action-routing removal attributed to that retirement. Given one closure, either relative order of closure and the removal of the exact terminal Action is valid. A present Action-routing removal MUST match that exact Action and occur at most once in the bound retirement interval. A conflicting Action removal, multiple removals or closes, reopening, Action relabeling, or residual workflow routing MUST NOT qualify.
+
+An otherwise qualified, compatible close-only history MAY qualify when the required evidence was acquired completely and no Action-removal event is recorded. Incomplete or failed evidence acquisition MUST NOT be reinterpreted as close-only history. A consumer MUST NOT replay an accepted retirement to produce a preferred event order.
 #### Scenario: Authorized Archive PR merge completes the Issue natively
 
 - GIVEN an authorized final Archive PR uses the repository-approved non-closing coordination-Issue reference
@@ -1066,6 +1069,41 @@ A closed Issue with valid `LIFECYCLE_COMPLETE` and observed close is terminal hi
 - WHEN a scheduled role reconstructs lifecycle state
 - THEN the closed Issue is treated as premature contradictory/recovery input rather than successful completion
 - AND normal archive completion is not inferred from the premature closure
+
+#### Scenario: Both terminal retirement event orders qualify
+
+- GIVEN a valid exact terminal result is recorded before both retirement events
+- AND one close and one removal of the exact terminal Action are observed in the same bound interval
+- AND a fresh read observes closed with no workflow routing
+- WHEN a consumer receives close before removal, removal before close, or either observable same-second ordering
+- THEN it qualifies the same retirement without replaying any effect
+- AND a dependency on that Issue can release only its own edge
+
+#### Scenario: A later result cannot qualify an earlier retirement effect
+
+- GIVEN the claimed result was recorded after the close or the attributed removal
+- WHEN a fresh consumer observes the Issue is now closed with no workflow routing
+- THEN the retirement does not qualify and the dependency remains suspended
+
+#### Scenario: Contradictory terminal evidence does not release a dependency
+
+- GIVEN claimed retirement evidence contains a different Action removal, multiple Action removals or closes, reopening, Action relabeling, or residual workflow routing
+- WHEN a consumer reconstructs it
+- THEN the evidence does not qualify and the dependency remains suspended
+
+#### Scenario: Compatible legacy close-only retirement remains qualified
+
+- GIVEN complete required evidence establishes a valid exact terminal result followed by one close
+- AND no Action-removal event is recorded and fresh state is closed without workflow routing
+- WHEN existing close-only compatibility rules apply
+- THEN the lack of an Action-removal event alone does not prevent qualification
+
+#### Scenario: Incomplete acquisition cannot stand in for a legacy close-only history
+
+- GIVEN the required lifecycle evidence could not be acquired completely
+- WHEN a consumer has a partial observation without an Action-removal event
+- THEN it does not qualify the retirement as close-only
+- AND the dependency remains suspended
 
 ### Requirement: Repository agent artifacts expose the governance contract
 
