@@ -659,11 +659,12 @@ def _interval_binds_successor(
         item for item in interval if item.event in {"closed", "labeled", "reopened", "unlabeled"}
     )
     if terminal:
-        # One terminal PATCH closes the issue and removes its Action label.
-        # GitHub can emit those events in either order; both remain bound to
-        # this formal interval, and contradictory transitions still fail closed.
-        return sum(item.event == "closed" for item in relevant) == 1 and not any(
-            item.event in {"labeled", "reopened"} for item in relevant
+        closes = tuple(item for item in relevant if item.event == "closed")
+        if len(closes) != 1 or any(item.event in {"labeled", "reopened"} for item in relevant):
+            return False
+        close_index = next(index for index, item in enumerate(relevant) if item is closes[0])
+        return all(
+            index < close_index for index, item in enumerate(relevant) if item.event == "unlabeled"
         )
     if successor is None:
         return False

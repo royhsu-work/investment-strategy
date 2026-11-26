@@ -1,0 +1,5 @@
+## 1. Qualify terminal retirement consistently in each consumer
+
+- [ ] 1.1 Capture native static-first RED at an exact test-only revision through the terminal effect/fresh postcondition and dependency selection interfaces. Cover both event orders and same-second ordering, different or duplicate removal, wrong accepted request at the accepted-intent boundary, missing result or close, wrong Change or provenance, reopening/relabeling, and residual routing. Preserve the existing positive controls and substitute only the GitHub I/O seam.
+- [ ] 1.2 Implement the minimum shared terminal-qualification behavior that accepts either order for the exact retirement and rejects contradictory evidence. Obtain native exact-revision GREEN without changing the writer, dependencies, history, or routing.
+- [ ] 1.3 Run exact-revision full VERIFY, including strict OpenSpec validation, and replay #481/#458 evidence without mutation. Preserve unique still-applicable regression protection; record any retirement rationale and replacement evidence. Record one verified checkpoint for this slice only after the applicable implementation checks pass.

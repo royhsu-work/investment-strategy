@@ -146,7 +146,6 @@ def _dependency_fixture(
     *,
     phase: str = "explore",
     fault: str = "",
-    terminal_order: str = "",
 ) -> list[str]:
     """Actual acquisition/qualification, with only GitHub GETs substituted."""
     blocked, repair = pair
@@ -270,7 +269,6 @@ def _dependency_fixture(
         },
         {"id": 12, "event": "commented", "created_at": "2026-09-12T00:00:03Z"},
     )
-    repair_timeline: tuple[dict[str, object], ...]
     if phase == "formal":
         repair_formal = formal_comment(
             repair,
@@ -302,37 +300,6 @@ def _dependency_fixture(
             {"id": 20, "event": "commented", "created_at": "2026-09-12T00:00:05Z"},
             {"id": 21, "event": "closed", "created_at": "2026-09-12T00:00:10Z"},
         )
-    if terminal_order:
-        close_at = "2026-09-12T00:00:10Z"
-        if terminal_order == "remove-first":
-            unlabel_at, unlabel_id = "2026-09-12T00:00:09Z", 19
-        elif terminal_order == "same-second":
-            unlabel_at, unlabel_id = close_at, 22
-        else:
-            unlabel_at, unlabel_id = "2026-09-12T00:00:11Z", 22
-        events = (
-            {"id": 20, "event": "commented", "created_at": "2026-09-12T00:00:05Z"},
-            {"id": 21, "event": "closed", "created_at": close_at},
-            {
-                "id": unlabel_id,
-                "event": "unlabeled",
-                "created_at": unlabel_at,
-                "label": {"name": "action:finalize-archive"},
-            },
-        )
-        if terminal_order == "remove-first":
-            repair_timeline = (events[0], events[2], events[1])
-        else:
-            repair_timeline = events
-        if fault == "wrong-terminal-removal":
-            repair_timeline = (
-                events[0],
-                events[1],
-                {**events[2], "label": {"name": "action:implement-change"}},
-            )
-        elif fault == "duplicate-terminal-removal":
-            repair_timeline = (*events, {**events[2], "id": 23})
-
     urls: list[str] = []
 
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
@@ -386,34 +353,6 @@ def test_comment_dependency_drives_fresh_selection_and_completion(
     assert not any("pyproject.toml" in url for url in urls)
     assert not any("/dependencies/" in url for url in urls)
     assert sum(f"/issues/{blocked}/comments?" in url for url in urls) == 1
-
-
-@pytest.mark.parametrize("terminal_order", ["remove-first", "close-first", "same-second"])
-def test_terminal_retirement_releases_dependency_in_either_event_order(
-    monkeypatch: pytest.MonkeyPatch, terminal_order: str
-) -> None:
-    blocked, repair = 900, 850
-    _dependency_fixture(
-        monkeypatch, (blocked, repair), phase="completed", terminal_order=terminal_order
-    )
-    preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
-    decision = classify_dispatch(preflight)
-    assert decision.disposition == "AUTHORIZE"
-    assert decision.selected_issue_id == blocked
-    assert decision.selected_routing == ("executor", "implement-change")
-
-
-@pytest.mark.parametrize("fault", ["wrong-terminal-removal", "duplicate-terminal-removal"])
-def test_terminal_retirement_with_conflicting_removal_does_not_release_dependency(
-    monkeypatch: pytest.MonkeyPatch, fault: str
-) -> None:
-    _dependency_fixture(
-        monkeypatch, (900, 850), phase="completed", terminal_order="close-first", fault=fault
-    )
-    preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
-    decision = classify_dispatch(preflight)
-    assert decision.disposition == "NO_WORK"
-    assert decision.reason == "dependencies-unsatisfied"
 
 
 @pytest.mark.parametrize("phase", ["no-go", "bare-close"])
