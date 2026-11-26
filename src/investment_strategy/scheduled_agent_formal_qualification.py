@@ -389,6 +389,9 @@ def _issue_lifecycle_event_from_payload(
     payload: Mapping[str, object],
 ) -> IssueLifecycleEvent | None:
     raw_event = payload.get("event")
+    if not isinstance(raw_event, str) or not raw_event.strip():
+        # A malformed event is evidence of an incomplete history, not an unrelated event.
+        return IssueLifecycleEvent(None, None, None, None, False)
     if raw_event not in _LIFECYCLE_EVENTS:
         return None
     raw_id = payload.get("id")
