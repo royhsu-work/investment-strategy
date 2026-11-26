@@ -923,7 +923,9 @@ def _accepted_formal_result_is_proven(
 
     # Import at call time because the Application effects/bridge modules use
     # this carrier qualifier. No competing parser or new authority is added.
-    from investment_strategy.scheduled_agent_application_bridge import _read_accepted_original_request
+    from investment_strategy.scheduled_agent_application_bridge import (
+        _read_accepted_original_request,
+    )
     from investment_strategy.scheduled_agent_effects import (
         parse_application_decision,
         semantic_intent_payload,
