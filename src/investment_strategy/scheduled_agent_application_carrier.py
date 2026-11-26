@@ -924,13 +924,13 @@ def _accepted_formal_result_is_proven(
     # Import at call time because the Application effects/bridge modules use
     # this carrier qualifier. No competing parser or new authority is added.
     from investment_strategy.scheduled_agent_application_bridge import (
+        _claimed_source,
         _read_accepted_original_request,
     )
     from investment_strategy.scheduled_agent_effects import (
         parse_application_decision,
         semantic_intent_payload,
     )
-    from investment_strategy.scheduled_agent_worker import parse_worker_result
 
     correlation = getattr(event, "application_correlation", None)
     parts = correlation.split(":") if isinstance(correlation, str) else []
@@ -992,20 +992,27 @@ def _accepted_formal_result_is_proven(
         accepted_result = json.loads(decision.raw_worker_result)
         if not isinstance(ingress_result, dict) or not isinstance(accepted_result, dict):
             return False
-        for raw_result, result_payload in (
-            (ingress.raw_worker_result, ingress_result),
-            (decision.raw_worker_result, accepted_result),
-        ):
-            worker = parse_worker_result(raw_result, source, authorized_change=decision.change)
-            # Validate supplied identity before binding omitted machine fields.
-            # Keep all other fields, including complete retained effect values.
-            result_payload.update(
-                issue_number=worker.issue_number,
-                role=worker.role,
-                action=worker.action,
-                change=worker.change,
-            )
-            result_payload.setdefault("evidence_ref", worker.typed_result.result.evidence_ref)
+        expected_identity = {
+            "issue_number": source.issue_number,
+            "role": source.role,
+            "action": source.action,
+            "change": decision.change,
+        }
+        for result_payload in (ingress_result, accepted_result):
+            # Raw input already passed strict preflight in the source reader.
+            # Historical accepted intent needs identity proof, not new content.
+            identity = {
+                field: expected if result_payload.get(field) is None else result_payload[field]
+                for field, expected in expected_identity.items()
+            }
+            if (
+                _claimed_source(json.dumps(identity)) != source
+                or not isinstance(identity["change"], str)
+                or identity["change"] != decision.change
+            ):
+                return False
+            result_payload.update(identity)
+            result_payload.setdefault("evidence_ref", None)
             result_payload.setdefault("requested_effects", [])
         # Only the original needs the Application-owned semantic projection.
         # Neither original bytes nor the immutable accepted intent are changed.
