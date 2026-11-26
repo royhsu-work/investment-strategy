@@ -3146,7 +3146,9 @@ class GitHubEffectAdapter:
             return True
         return False
 
-    def _formal_comments(self) -> tuple[Mapping[str, object], ...]:
+    def _formal_comments(
+        self, *, require_complete: bool = False
+    ) -> tuple[Mapping[str, object], ...]:
         comments: list[Mapping[str, object]] = []
         page = 1
         while True:
@@ -3162,11 +3164,15 @@ class GitHubEffectAdapter:
             for item in payload:
                 if isinstance(item, Mapping):
                     comments.append(cast(Mapping[str, object], item))
+                elif require_complete:
+                    return ()
             if len(payload) < 100:
                 return tuple(comments)
             page += 1
 
-    def _formal_lifecycle_events(self) -> tuple[Mapping[str, object], ...]:
+    def _formal_lifecycle_events(
+        self, *, require_complete: bool = False
+    ) -> tuple[Mapping[str, object], ...]:
         """Read the durable Issue mutation history for ordering and ABA proof."""
 
         events: list[Mapping[str, object]] = []
@@ -3182,6 +3188,8 @@ class GitHubEffectAdapter:
             for item in payload:
                 if isinstance(item, Mapping):
                     events.append(cast(Mapping[str, object], item))
+                elif require_complete:
+                    return ()
             if len(payload) < 100:
                 return tuple(events)
             page += 1
@@ -3227,8 +3235,12 @@ class GitHubEffectAdapter:
                 return False
         elif not at_source_frontier and not at_accepted_successor_frontier:
             return False
-        formal_comments = self._formal_comments()
-        lifecycle_events = self._formal_lifecycle_events() if formal_comments else ()
+        formal_comments = self._formal_comments(require_complete=terminal_postcondition)
+        lifecycle_events = (
+            self._formal_lifecycle_events(require_complete=terminal_postcondition)
+            if formal_comments
+            else ()
+        )
         qualification_input = build_qualification_input(
             issue_number=self.source.issue_number,
             change=self.authorized_change,

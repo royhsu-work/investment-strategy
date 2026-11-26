@@ -389,6 +389,9 @@ def _issue_lifecycle_event_from_payload(
     payload: Mapping[str, object],
 ) -> IssueLifecycleEvent | None:
     raw_event = payload.get("event")
+    if not isinstance(raw_event, str) or not raw_event.strip():
+        # A malformed event is evidence of an incomplete history, not an unrelated event.
+        return IssueLifecycleEvent(None, None, None, None, False)
     if raw_event not in _LIFECYCLE_EVENTS:
         return None
     raw_id = payload.get("id")
@@ -654,6 +657,8 @@ def _interval_binds_successor(
     interval: tuple[IssueLifecycleEvent, ...],
     successor: tuple[str, str] | None,
     terminal: bool,
+    *,
+    terminal_action: str | None = None,
 ) -> bool:
     relevant = tuple(
         item for item in interval if item.event in {"closed", "labeled", "reopened", "unlabeled"}
@@ -662,9 +667,11 @@ def _interval_binds_successor(
         closes = tuple(item for item in relevant if item.event == "closed")
         if len(closes) != 1 or any(item.event in {"labeled", "reopened"} for item in relevant):
             return False
-        close_index = next(index for index, item in enumerate(relevant) if item is closes[0])
-        return all(
-            index < close_index for index, item in enumerate(relevant) if item.event == "unlabeled"
+        removals = tuple(item for item in relevant if item.event == "unlabeled")
+        return not removals or (
+            terminal_action is not None
+            and len(removals) == 1
+            and removals[0].label == f"{_ACTION_LABEL_PREFIX}{terminal_action}"
         )
     if successor is None:
         return False
@@ -981,6 +988,30 @@ def _same_application_intent(
     )
 
 
+def _terminal_result_precedes_effects(
+    result: FormalLifecycleEvent, lifecycle_events: tuple[IssueLifecycleEvent, ...]
+) -> bool:
+    result_order = _comment_order_key(result, lifecycle_events)
+    if result_order is None:
+        return False
+    result_at = result_order[0]
+    terminal_label = f"{_ACTION_LABEL_PREFIX}{result.action}"
+    prior_route_event: str | None = None
+    for item in lifecycle_events:
+        if not item.valid or item.created_at is None:
+            continue
+        if item.created_at > result_at:
+            break
+        # Comment and issue-event IDs cannot order a tied result and effect.
+        if item.created_at == result_at and item.event in {"closed", "unlabeled"}:
+            return False
+        if item.label == terminal_label and item.event in {"labeled", "unlabeled"}:
+            prior_route_event = item.event
+    # A recorded removal before the result is not compatible close-only
+    # evidence unless the Action was admitted again before that result.
+    return prior_route_event != "unlabeled"
+
+
 def _formal_interval_is_bound(
     events: tuple[FormalLifecycleEvent, ...],
     index: int,
@@ -988,8 +1019,13 @@ def _formal_interval_is_bound(
     *,
     initial_source_bound: bool = False,
 ) -> bool:
+    current_event = events[index]
+    if current_event.terminal and not _terminal_result_precedes_effects(
+        current_event, lifecycle_events
+    ):
+        return False
     next_event = None if index + 1 >= len(events) else events[index + 1]
-    interval = _event_interval(events[index], next_event, lifecycle_events)
+    interval = _event_interval(current_event, next_event, lifecycle_events)
     if interval is not None and not any(
         item.event in {"closed", "labeled", "reopened", "unlabeled"} for item in interval
     ):
@@ -1019,6 +1055,7 @@ def _formal_interval_is_bound(
         interval,
         events[index].successor,
         events[index].terminal,
+        terminal_action=events[index].action,
     )
 
 

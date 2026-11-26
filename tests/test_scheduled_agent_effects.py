@@ -2740,7 +2740,34 @@ def test_terminal_transition_closes_and_clears_routing_atomically(
 
 @pytest.mark.parametrize(
     ("formal_case", "expected"),
-    [("qualified", True), ("missing", False), ("wrong-request", False)],
+    [
+        ("qualified", True),
+        ("close-first", True),
+        ("close-first-same-second", True),
+        ("remove-first-same-second", True),
+        ("result-close-same-second", False),
+        ("result-removal-same-second", False),
+        ("close-before-result", False),
+        ("removal-before-result", False),
+        ("close-only", True),
+        ("empty-timeline-event", False),
+        ("missing-timeline-event", False),
+        ("null-timeline-event", False),
+        ("unrelated-timeline-event", True),
+        ("malformed-timeline-page", False),
+        ("malformed-comments-page", False),
+        ("missing-close", False),
+        ("duplicate-close", False),
+        ("reopened", False),
+        ("relabeled", False),
+        ("residual-role-route", False),
+        ("wrong-change", False),
+        ("wrong-provenance", False),
+        ("missing", False),
+        ("wrong-request", False),
+        ("wrong-removal", False),
+        ("duplicate-removal", False),
+    ],
 )
 def test_accepted_terminal_postcondition_reobserves_after_process_restart(
     monkeypatch: pytest.MonkeyPatch,
@@ -2790,7 +2817,7 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
         "user": {"login": "github-actions[bot]"},
         "performed_via_github_app": {"slug": "github-actions"},
     }
-    issue = {
+    issue: dict[str, object] = {
         "number": 138,
         "state": "closed",
         "body": f"Change: {_CHANGE}\n",
@@ -2798,7 +2825,7 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
         "closed_at": "2026-09-03T01:03:00Z",
         "labels": [{"name": "human:notified"}],
     }
-    timeline = [
+    timeline: list[dict[str, object]] = [
         {"id": 992, "event": "commented", "created_at": "2026-09-03T01:00:00Z"},
         {
             "id": 993,
@@ -2808,6 +2835,52 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
         },
         {"id": 994, "event": "closed", "created_at": "2026-09-03T01:03:00Z"},
     ]
+    if formal_case == "close-first":
+        timeline[1]["created_at"] = "2026-09-03T01:04:00Z"
+    elif formal_case == "close-first-same-second":
+        timeline[1]["created_at"] = timeline[2]["created_at"]
+        timeline[1]["id"] = 995
+    elif formal_case == "remove-first-same-second":
+        timeline[1]["created_at"] = timeline[2]["created_at"]
+    elif formal_case == "result-close-same-second":
+        timeline[2]["created_at"] = timeline[0]["created_at"]
+    elif formal_case == "result-removal-same-second":
+        timeline[1]["created_at"] = timeline[0]["created_at"]
+    elif formal_case == "close-before-result":
+        timeline[2]["created_at"] = "2026-09-03T00:59:59Z"
+    elif formal_case == "removal-before-result":
+        timeline[1]["created_at"] = "2026-09-03T00:59:59Z"
+    elif formal_case == "wrong-removal":
+        timeline[1]["label"] = {"name": "action:implement-change"}
+    elif formal_case == "duplicate-removal":
+        timeline.append({**timeline[1], "id": 995})
+    elif formal_case == "close-only":
+        del timeline[1]
+    elif formal_case == "empty-timeline-event":
+        timeline[1] = {}
+    elif formal_case in {"missing-timeline-event", "null-timeline-event"}:
+        timeline[1]["label"] = {"name": "action:implement-change"}
+        if formal_case == "missing-timeline-event":
+            del timeline[1]["event"]
+        else:
+            timeline[1]["event"] = None
+    elif formal_case == "unrelated-timeline-event":
+        timeline[1] = {**timeline[1], "event": "assigned"}
+        del timeline[1]["label"]
+    elif formal_case == "missing-close":
+        timeline.pop()
+    elif formal_case == "duplicate-close":
+        timeline.append({**timeline[2], "id": 995})
+    elif formal_case == "reopened":
+        timeline.append({"id": 995, "event": "reopened", "created_at": "2026-09-03T01:04:00Z"})
+    elif formal_case == "relabeled":
+        timeline.append({**timeline[1], "id": 995, "event": "labeled"})
+    elif formal_case == "residual-role-route":
+        issue["labels"] = [{"name": "agent:lead"}]
+    elif formal_case == "wrong-change":
+        issue["body"] = "Change: unrelated-change\n"
+    elif formal_case == "wrong-provenance":
+        formal_comment["performed_via_github_app"] = {"slug": "chatgpt-codex-connector"}
     observed_reads: list[str] = []
 
     def read(
@@ -2823,8 +2896,12 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
         if api_path == "issues/138":
             return issue
         if api_path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            if formal_case == "malformed-comments-page":
+                return [formal_comment, None]
             return [] if formal_case == "missing" else [formal_comment]
         if api_path == "issues/138/timeline?per_page=100&page=1":
+            if formal_case == "malformed-timeline-page":
+                return [timeline[0], timeline[2], None]
             return timeline
         raise AssertionError(f"unexpected recovery read: {api_path}")
 

@@ -269,6 +269,7 @@ def _dependency_fixture(
         },
         {"id": 12, "event": "commented", "created_at": "2026-09-12T00:00:03Z"},
     )
+    repair_timeline: tuple[dict[str, object], ...]
     if phase == "formal":
         repair_formal = formal_comment(
             repair,
@@ -299,6 +300,68 @@ def _dependency_fixture(
         repair_timeline = (
             {"id": 20, "event": "commented", "created_at": "2026-09-12T00:00:05Z"},
             {"id": 21, "event": "closed", "created_at": "2026-09-12T00:00:10Z"},
+        )
+    if phase == "completed" and fault in {
+        "wrong-terminal-removal",
+        "duplicate-terminal-removal",
+        "terminal-close-first",
+        "terminal-close-first-same-second",
+        "terminal-remove-first",
+        "terminal-remove-first-same-second",
+        "terminal-result-close-same-second",
+        "terminal-result-removal-same-second",
+        "terminal-removal-before-result",
+        "terminal-close-before-result",
+    }:
+        removal_at = "2026-09-12T00:00:09Z"
+        if fault == "terminal-close-first":
+            removal_at = "2026-09-12T00:00:11Z"
+        elif fault in {"terminal-close-first-same-second", "terminal-remove-first-same-second"}:
+            removal_at = "2026-09-12T00:00:10Z"
+            if fault == "terminal-remove-first-same-second":
+                repair_timeline = (repair_timeline[0], {**repair_timeline[1], "id": 24})
+        if fault == "terminal-result-close-same-second":
+            repair_timeline = (
+                repair_timeline[0],
+                {**repair_timeline[1], "created_at": "2026-09-12T00:00:05Z"},
+            )
+        elif fault == "terminal-close-before-result":
+            repair_timeline = (
+                repair_timeline[0],
+                {**repair_timeline[1], "created_at": "2026-09-12T00:00:04Z"},
+            )
+        elif fault == "terminal-result-removal-same-second":
+            removal_at = "2026-09-12T00:00:05Z"
+        elif fault == "terminal-removal-before-result":
+            removal_at = "2026-09-12T00:00:04Z"
+        removal: dict[str, object] = {
+            "id": 22,
+            "event": "unlabeled",
+            "created_at": removal_at,
+            "label": {
+                "name": "action:implement-change"
+                if fault == "wrong-terminal-removal"
+                else "action:finalize-archive"
+            },
+        }
+        repair_timeline = (*repair_timeline, removal)
+        if fault == "duplicate-terminal-removal":
+            repair_timeline = (*repair_timeline, {**removal, "id": 23})
+    if fault in {"terminal-empty-event", "terminal-missing-event", "terminal-null-event"}:
+        event_row: dict[str, object] = {}
+        if fault != "terminal-empty-event":
+            event_row = {
+                "id": 22,
+                "created_at": "2026-09-12T00:00:09Z",
+                "label": {"name": "action:implement-change"},
+            }
+        if fault == "terminal-null-event":
+            event_row["event"] = None
+        repair_timeline = (*repair_timeline, event_row)
+    elif fault == "terminal-assigned":
+        repair_timeline = (
+            *repair_timeline,
+            {"id": 22, "event": "assigned", "created_at": "2026-09-12T00:00:09Z"},
         )
     urls: list[str] = []
 
@@ -331,6 +394,16 @@ def _dependency_fixture(
                 )
             return () if phase in {"explore", "bare-close"} else (repair_formal,)
         if f"/issues/{repair}/timeline?" in url:
+            if fault == "timeline-page-unavailable":
+                if "&page=2" in url:
+                    raise RuntimeError("required terminal timeline page unavailable")
+                return (
+                    *repair_timeline,
+                    *(
+                        {"id": i, "event": "commented", "created_at": "2026-09-12T00:00:08Z"}
+                        for i in range(1000, 1100 - len(repair_timeline))
+                    ),
+                )
             return repair_timeline
         raise AssertionError(url)
 
@@ -353,6 +426,85 @@ def test_comment_dependency_drives_fresh_selection_and_completion(
     assert not any("pyproject.toml" in url for url in urls)
     assert not any("/dependencies/" in url for url in urls)
     assert sum(f"/issues/{blocked}/comments?" in url for url in urls) == 1
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        "terminal-remove-first",
+        "terminal-close-first",
+        "terminal-close-first-same-second",
+        "terminal-remove-first-same-second",
+    ],
+)
+def test_dependency_qualifies_either_retirement_order(
+    monkeypatch: pytest.MonkeyPatch, order: str
+) -> None:
+    blocked = 900
+    _dependency_fixture(monkeypatch, (blocked, 850), phase="completed", fault=order)
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == blocked
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "terminal-result-close-same-second",
+        "terminal-result-removal-same-second",
+        "terminal-removal-before-result",
+        "terminal-close-before-result",
+    ],
+)
+def test_dependency_requires_result_before_terminal_effects(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    _dependency_fixture(monkeypatch, (900, 850), phase="completed", fault=fault)
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.disposition == "NO_WORK"
+    assert decision.reason == "dependencies-unsatisfied"
+
+
+@pytest.mark.parametrize("fault", ["wrong-terminal-removal", "duplicate-terminal-removal"])
+def test_dependency_rejects_conflicting_terminal_removal(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    _dependency_fixture(monkeypatch, (900, 850), phase="completed", fault=fault)
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.disposition == "NO_WORK"
+    assert decision.reason == "dependencies-unsatisfied"
+
+
+@pytest.mark.parametrize(
+    ("fault", "expected"),
+    [
+        ("terminal-empty-event", "NO_WORK"),
+        ("terminal-missing-event", "NO_WORK"),
+        ("terminal-null-event", "NO_WORK"),
+        ("terminal-assigned", "AUTHORIZE"),
+    ],
+)
+def test_dependency_requires_valid_timeline_event_discriminator(
+    monkeypatch: pytest.MonkeyPatch, fault: str, expected: str
+) -> None:
+    _dependency_fixture(monkeypatch, (900, 850), phase="completed", fault=fault)
+    decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
+    assert decision.disposition == expected
+    if expected == "NO_WORK":
+        assert decision.reason == "dependencies-unsatisfied"
+    else:
+        assert decision.selected_issue_id == 900
+
+
+def test_dependency_cannot_qualify_when_timeline_acquisition_is_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    urls = _dependency_fixture(
+        monkeypatch, (900, 850), phase="completed", fault="timeline-page-unavailable"
+    )
+    with pytest.raises(RuntimeError, match="required terminal timeline page unavailable"):
+        runtime.acquire_current_github_preflight("owner/repo", "token")
+    assert any("/issues/850/timeline?" in url and "&page=2" in url for url in urls)
 
 
 @pytest.mark.parametrize("phase", ["no-go", "bare-close"])
