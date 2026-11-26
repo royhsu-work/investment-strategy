@@ -270,6 +270,7 @@ def _dependency_fixture(
         },
         {"id": 12, "event": "commented", "created_at": "2026-09-12T00:00:03Z"},
     )
+    repair_timeline: tuple[dict[str, object], ...]
     if phase == "formal":
         repair_formal = formal_comment(
             repair,
