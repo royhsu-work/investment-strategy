@@ -378,6 +378,16 @@ def _dependency_fixture(
                 )
             return () if phase in {"explore", "bare-close"} else (repair_formal,)
         if f"/issues/{repair}/timeline?" in url:
+            if fault == "timeline-page-unavailable":
+                if "&page=2" in url:
+                    raise RuntimeError("required terminal timeline page unavailable")
+                return (
+                    *repair_timeline,
+                    *(
+                        {"id": i, "event": "commented", "created_at": "2026-09-12T00:00:08Z"}
+                        for i in range(1000, 1100 - len(repair_timeline))
+                    ),
+                )
             return repair_timeline
         raise AssertionError(url)
 
@@ -447,6 +457,17 @@ def test_dependency_rejects_conflicting_terminal_removal(
     decision = classify_dispatch(runtime.acquire_current_github_preflight("owner/repo", "token"))
     assert decision.disposition == "NO_WORK"
     assert decision.reason == "dependencies-unsatisfied"
+
+
+def test_dependency_cannot_qualify_when_timeline_acquisition_is_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    urls = _dependency_fixture(
+        monkeypatch, (900, 850), phase="completed", fault="timeline-page-unavailable"
+    )
+    with pytest.raises(RuntimeError, match="required terminal timeline page unavailable"):
+        runtime.acquire_current_github_preflight("owner/repo", "token")
+    assert any("/issues/850/timeline?" in url and "&page=2" in url for url in urls)
 
 
 @pytest.mark.parametrize("phase", ["no-go", "bare-close"])

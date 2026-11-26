@@ -2749,6 +2749,16 @@ def test_terminal_transition_closes_and_clears_routing_atomically(
         ("result-removal-same-second", False),
         ("close-before-result", False),
         ("removal-before-result", False),
+        ("close-only", True),
+        ("malformed-timeline-page", False),
+        ("malformed-comments-page", False),
+        ("missing-close", False),
+        ("duplicate-close", False),
+        ("reopened", False),
+        ("relabeled", False),
+        ("residual-role-route", False),
+        ("wrong-change", False),
+        ("wrong-provenance", False),
         ("missing", False),
         ("wrong-request", False),
         ("wrong-removal", False),
@@ -2803,7 +2813,7 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
         "user": {"login": "github-actions[bot]"},
         "performed_via_github_app": {"slug": "github-actions"},
     }
-    issue = {
+    issue: dict[str, object] = {
         "number": 138,
         "state": "closed",
         "body": f"Change: {_CHANGE}\n",
@@ -2840,6 +2850,22 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
         timeline[1]["label"] = {"name": "action:implement-change"}
     elif formal_case == "duplicate-removal":
         timeline.append({**timeline[1], "id": 995})
+    elif formal_case == "close-only":
+        del timeline[1]
+    elif formal_case == "missing-close":
+        timeline.pop()
+    elif formal_case == "duplicate-close":
+        timeline.append({**timeline[2], "id": 995})
+    elif formal_case == "reopened":
+        timeline.append({"id": 995, "event": "reopened", "created_at": "2026-09-03T01:04:00Z"})
+    elif formal_case == "relabeled":
+        timeline.append({**timeline[1], "id": 995, "event": "labeled"})
+    elif formal_case == "residual-role-route":
+        issue["labels"] = [{"name": "agent:lead"}]
+    elif formal_case == "wrong-change":
+        issue["body"] = "Change: unrelated-change\n"
+    elif formal_case == "wrong-provenance":
+        formal_comment["performed_via_github_app"] = {"slug": "chatgpt-codex-connector"}
     observed_reads: list[str] = []
 
     def read(
@@ -2855,8 +2881,12 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
         if api_path == "issues/138":
             return issue
         if api_path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            if formal_case == "malformed-comments-page":
+                return [formal_comment, None]
             return [] if formal_case == "missing" else [formal_comment]
         if api_path == "issues/138/timeline?per_page=100&page=1":
+            if formal_case == "malformed-timeline-page":
+                return [timeline[0], timeline[2], None]
             return timeline
         raise AssertionError(f"unexpected recovery read: {api_path}")
 
