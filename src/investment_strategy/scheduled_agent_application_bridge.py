@@ -1225,6 +1225,7 @@ def _read_accepted_original_request(
     token: str,
     read: Callable[[str, str, str], object] | None = None,
     require_dispatch_correlation: bool = False,
+    require_legacy_dispatch_correlation: bool = False,
 ) -> ApplicationRequest | None:
     """Normalize an exact immutable original under its ACCEPTED authority.
 
@@ -1232,6 +1233,9 @@ def _read_accepted_original_request(
     not distinct semantic owners. Reconstruct only after exact body digest,
     actor and accepted identity checks; never use a current dispatch to
     manufacture historical authority.
+
+    Legacy-only correlation preserves strict historical carrier proof without
+    treating a raw result's internal envelope as a persisted source witness.
     """
 
     if record.disposition != "ACCEPTED" or (record.issue_number, record.role, record.action) != (
@@ -1265,7 +1269,11 @@ def _read_accepted_original_request(
     if original is None or original.authorization_revision != record.authorization_revision:
         return None
     if original.dispatch_correlation is None:
-        if require_dispatch_correlation or _claimed_source(original.raw_worker_result) != source:
+        if (
+            require_dispatch_correlation
+            or require_legacy_dispatch_correlation
+            or _claimed_source(original.raw_worker_result) != source
+        ):
             return None
     elif original.dispatch_correlation != dispatch_correlation_for(
         repository, source, original.authorization_revision
