@@ -992,21 +992,21 @@ def _accepted_formal_result_is_proven(
         accepted_result = json.loads(decision.raw_worker_result)
         if not isinstance(ingress_result, dict) or not isinstance(accepted_result, dict):
             return False
-        for raw_result, payload in (
+        for raw_result, result_payload in (
             (ingress.raw_worker_result, ingress_result),
             (decision.raw_worker_result, accepted_result),
         ):
             worker = parse_worker_result(raw_result, source, authorized_change=decision.change)
             # Validate supplied identity before binding omitted machine fields.
             # Keep all other fields, including complete retained effect values.
-            payload.update(
+            result_payload.update(
                 issue_number=worker.issue_number,
                 role=worker.role,
                 action=worker.action,
                 change=worker.change,
             )
-            payload.setdefault("evidence_ref", worker.typed_result.result.evidence_ref)
-            payload.setdefault("requested_effects", [])
+            result_payload.setdefault("evidence_ref", worker.typed_result.result.evidence_ref)
+            result_payload.setdefault("requested_effects", [])
         # Only the original needs the Application-owned semantic projection.
         # Neither original bytes nor the immutable accepted intent are changed.
         ingress_result.setdefault("_semantic_intent_version", 2)
