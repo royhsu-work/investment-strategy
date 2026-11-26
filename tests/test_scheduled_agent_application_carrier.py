@@ -992,14 +992,17 @@ def test_retirement_source_identity_is_qualified_before_binding(
         request_comments=requests,
     )
     monkeypatch.setattr(carrier, "_github_json", github)
-    assert carrier.qualify_supersession_branch(
-        repository=REPOSITORY,
-        token=TEST_VALUE,
-        issue_number=229,
-        change=CHANGE,
-        branch=f"agent/{CHANGE}-supersedes-236",
-        current_revision=MAIN,
-    ) is qualified
+    assert (
+        carrier.qualify_supersession_branch(
+            repository=REPOSITORY,
+            token=TEST_VALUE,
+            issue_number=229,
+            change=CHANGE,
+            branch=f"agent/{CHANGE}-supersedes-236",
+            current_revision=MAIN,
+        )
+        is qualified
+    )
 
 
 @pytest.mark.parametrize("content_shape", ["absent", "null"])
