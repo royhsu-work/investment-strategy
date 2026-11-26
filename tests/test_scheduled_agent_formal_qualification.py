@@ -887,11 +887,16 @@ def test_current_terminal_requires_a_repository_owned_terminal_result() -> None:
         successor=None,
         request_id=66,
     )
+    timeline = _lifecycle_events([terminal])
+    for event in timeline:
+        if event["event"] == "unlabeled":
+            event["label"] = {"name": "action:finalize-change"}
     assert (
         _decision(
             [terminal],
             current_routing=None,
             state="closed",
+            lifecycle_events=timeline,
         ).provenance
         is ObservationProvenance.QUALIFIED
     )
