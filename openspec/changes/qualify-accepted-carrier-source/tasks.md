@@ -2,7 +2,7 @@
 
 ## 1. Reconstruct the same accepted retirement from supported originals
 
-- [ ] 1.1 Complete the accepted-original carrier equivalence Slice through the existing public qualification seam, preserving legacy and shared-reader safety.
+- [x] 1.1 Complete the accepted-original carrier equivalence Slice through the existing public qualification seam, preserving legacy and shared-reader safety.
 
 Implement and VERIFY this single observable vertical Slice according to `design.md`; behavior cycles are smaller than the Slice and may require multiple commits/wakes. Do not batch all tests before all implementation.
 
