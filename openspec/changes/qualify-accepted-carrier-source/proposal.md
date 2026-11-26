@@ -10,7 +10,7 @@ This is a source-observed implementation gap at main `661b58c0148bdcf42a7c29c89a
 
 - Consolidate accepted-original reading in the existing Application source owner, preserving the exact request ID/body digest, connector provenance, ACCEPTED identity and historical authorization revision.
 - Let the carrier consume a qualified raw original while retaining its stricter persisted-correlation requirement for legacy originals. Existing consumers that require a persisted dispatch-correlation witness for every format remain unchanged.
-- Validate the typed original before binding omitted machine identity to the immutable accepted source. Reuse the existing semantic-intent projection and complete retained-effect comparison, including nested JSON equivalence.
+- Preserve strict typed preflight for raw originals at the existing reader boundary. For immutable historical accepted intent, validate every supplied identity through the existing identity owner before binding omitted machine identity, without imposing fresh-result content requirements. Reuse the existing semantic-intent projection and complete retained-effect comparison, including nested JSON equivalence.
 - Add genuine CI Test First coverage through the existing public carrier seam and preserve legacy, physical-original, provenance, identity, exact-head and cardinality regression protection.
 
 ## Capabilities
@@ -41,4 +41,6 @@ Mandatory continuation remains: non-ready withdrawal with a reconstructable no-r
 
 ## Validation Boundary
 
-At proposal creation, no helper implementation, test execution, RED, GREEN, semantic PASS or deployment has occurred. Native exact-revision strict validation establishes mechanical readiness only; independent OpenSpec review must precede implementation. Details and observable closure evidence are in `design.md` and `tasks.md`.
+At initial proposal creation, no helper implementation, test execution, RED, GREEN, semantic PASS or deployment had occurred. The initial semantic revision subsequently received independent review, and the test-only raw case obtained native static PASS and intended RED.
+
+A later implementation attempt at `f5786a318625d1ce434918c9e313097bd2047731` passed static checks but failed eight existing legacy supersession/lineage regressions in native [run 45876814250](https://github.com/royhsu-work/investment-strategy/actions/runs/45876814250/job/140105865603). The full fresh-worker parser incorrectly required `result_content` from historical already-accepted intent whose existing wire contract permits its absence. This amendment corrects that mechanism while preserving the original compatibility outcome and existing fixtures; it does not invent missing content or reduce validation. The revised proposal/design/tasks require a new exact-revision strict PASS and independent semantic PASS before the implementation correction. Details and observable closure evidence are in `design.md` and `tasks.md`.

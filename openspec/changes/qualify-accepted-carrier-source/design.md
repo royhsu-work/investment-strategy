@@ -16,14 +16,16 @@ At base `661b58c0148bdcf42a7c29c89a2d774ebae392d3`:
 - Carrier `_canonical_intent_effect_json` preserves retained intent while normalizing nested `payload_json` serialization. The existing typed/content-only `_worker_semantic_projection` is insufficient to replace the complete retained-effect comparison.
 - `test_versionless_ingress_proves_accepted_lead_retirement` uses a legacy envelope with an omitted projection-version field. It remains useful legacy coverage, but is not raw coverage.
 
-These are source observations. The first native intended RED is still required and must fail on the public qualification result after static checks pass.
+These initial observations preceded the native test-only RED at `3e352ed582ec4fb06e6071d98a1bacf064b4ec04`, [run 45874933505](https://github.com/royhsu-work/investment-strategy/actions/runs/45874933505/job/140099506637): static PASS, one intended raw qualification failure, 2345 passing tests and one expected failure.
+
+The subsequent implementation attempt at `f5786a318625d1ce434918c9e313097bd2047731` passed static checks but produced eight existing legacy supersession/lineage failures, 2338 passes and one expected failure in [run 45876814250](https://github.com/royhsu-work/investment-strategy/actions/runs/45876814250/job/140105865603). Those fixtures intentionally use `_render_accepted_application_wire` and omit `result_content`. That existing owner explicitly reconstructs already-accepted immutable intent without fresh-worker preflight. Applying the complete fresh typed parser to both comparison payloads violated historical compatibility. This later regression evidence motivates the narrow mechanism correction below; it does not change the Human outcome, erase the initial RED or make the older fixtures invalid.
 
 ## Ownership and Proportionality
 
 | Consequence or concern | Existing owner | Treatment |
 | --- | --- | --- |
 | Exact accepted original provenance and format normalization | Application accepted-original reader | CONSOLIDATE carrier duplicate reading/parsing into this owner |
-| Worker typed meaning and optional defaults | Existing typed worker parser and semantic-intent projection | REUSE; validate before binding immutable machine identity |
+| Raw typed meaning, supplied identity and optional defaults | Existing raw canonicalizer/typed worker parser, Application identity parser and semantic-intent projection | REUSE; keep raw preflight strict and validate immutable identity without reclassifying historical accepted intent as fresh input |
 | Complete accepted/source semantic equivalence | Existing carrier equivalence consumer and nested JSON normalization | REUSE; preserve retained effects rather than comparing content alone |
 | Exact closed-unmerged carrier/head, accepted close target, formal correlation, lifecycle, uniqueness and ancestry | Existing carrier qualifier | NO-DELTA |
 | Dispatch, Action/Role/Result selection, Human/review/merge gates and other Issue dependencies | Existing executable owners | NO-DELTA |
@@ -43,7 +45,11 @@ Extend the existing accepted-original reader with `require_legacy_dispatch_corre
 
 The carrier passes the new legacy-only policy; wire-format detection stays inside the existing reader. The carrier builds the source only from its already-coherent formal event and ACCEPTED decision, and the reader verifies that source against the record. Do not call a fresh planner, current Dispatch, current route or new authorization path to reconstruct history. Do not change physical-original consumers' defaults or their effect semantics.
 
-After qualification, use the existing typed parser to reject any supplied contradictory identity before deriving omitted machine fields. In memory, bind Issue/Role/Action/Change to the immutable accepted source and apply only the parser's supported defaults (`evidence_ref=null`, absent effects as `[]`). Use the existing Application-owned semantic-intent projection/version handling on that bound representation. Never edit the original comment, digest, accepted record or saved content, and never accept an external projection-version claim prohibited by the raw parser.
+Raw qualification already runs `canonicalize_raw_worker_result` through the existing strict typed parser. Keep that boundary unchanged: missing or malformed fresh `result_content`, forbidden external projection-version fields and other invalid raw shapes remain rejected. A historical already-accepted legacy payload is not a fresh worker request; do not require it to acquire later mandatory content fields or apply fresh-result preflight to its immutable accepted intent.
+
+Before normalizing either comparison payload, construct a temporary identity-only view. Preserve every supplied non-null Issue/Role/Action/Change value; fill only omitted/null identity in that view from the immutable accepted source, consistently with the existing raw identity rules. Reuse `_claimed_source` to validate the complete Issue/Role/Action view (including positive integer and bool rejection) and require its `WorkerRequest` to equal the accepted source. Require the view's Change to be a string equal to the immutable decision Change. Thus conflicting supplied identity is rejected before the comparison payload is bound; a current Dispatch or current route never supplies historical identity. This view adds no wire format, persisted state or second identity parser.
+
+Only after identity qualification, bind Issue/Role/Action/Change in the in-memory comparison copies and apply the existing supported optional defaults (`evidence_ref=null`, absent effects as `[]`). Never add or default `result_content`, even to an empty string. Preserve whether content was absent as well as every supplied value, so absent content on both qualified legacy sides may match while absent versus supplied/changed content remains different. Use the existing Application-owned semantic-intent projection/version handling on the bound original. Never edit the original comment, digest, accepted record or saved content, and never accept an external projection-version claim prohibited by the raw parser.
 
 Compare the complete retained semantic intent, including result kind, evidence/content and retained effects. Preserve the existing nested-JSON normalization so serialization whitespace is not a semantic difference, while changed targets, heads, payload fields, evidence or content remain differences. Invocation-owned formal projections may be removed only by the existing semantic projection; do not discard arbitrary worker effects or compare only the selected close effect. Do not use typed-result/content equality alone as complete equivalence.
 
@@ -57,12 +63,15 @@ The first behavior cycle uses a qualified exact closed-unmerged old PR/head, acc
 
 After its minimum GREEN, cover remaining behavior differences one at a time as needed:
 
-- Minimal and explicitly matching raw identity have equivalent outcomes; conflicting supplied Issue/Change/Role/Action, bad body digest, actor/app, accepted identity, changed evidence/content or close target/head do not qualify.
+- Minimal, partial matching and fully matching raw identity have equivalent outcomes; conflicting supplied Issue/Change/Role/Action, bool Issue, bad body digest, actor/app, accepted identity, changed evidence/content or close target/head do not qualify. Raw content remains subject to strict typed preflight.
+- Preserve the existing legacy accepted-wire fixtures that omit `result_content`, including supersession and historical lineage positives. Do not edit those fixtures to fabricate new content. Missing versus supplied/changed content must remain a semantic difference; the eight native regression failures are correction counterexamples, not a new manufactured RED.
 - A correct legacy persisted correlation remains accepted; missing or wrong correlation remains rejected. The existing all-format strict policy still rejects raw. No shared-reader default changes for older unfinished work.
 - Nested JSON formatting differences remain accepted; retained effect changes and additional retained mutations remain rejected. Preserve the existing legitimate invocation-effect projection coverage.
 - Preserve unique legacy, physical-original, authorization ancestry, exact-head, closed/merged state, formal-result provenance, duplicate acceptance/carrier and historical compatibility protections in the existing carrier/bridge suites.
 
 Use generic Issue/Change fixtures, not a #478 exception. Explicitly verify cross-Issue/Change substitution rejection so the shared reader cannot attach another unfinished Issue's original to this accepted record. Tests that already pass and protect unchanged behavior are regression evidence, not a manufactured RED. Retain the versionless legacy test and clarify its name/docstring if needed; do not remove or weaken it to make raw coverage green.
+
+The current legacy regression correction requires renewed independent semantic acceptance of this mechanism before code changes. Its existing native failing tests supply the correction counterexamples; retain the original raw test-first lineage rather than replaying or relabeling it.
 
 Every new executable behavior follows native CI-only, static-first Test First: exact test-only revision, Ruff lint, format and Mypy success, intended pytest failure; then the minimum sufficient implementation and native GREEN. A setup/import/static/unrelated failure is not RED. Complete the Slice only after full native regression, lint, format, type and exact-R strict validation pass. Record exact commit ordering, run/attempt/job, checkout and failing/passing test evidence. No local test run or replayed retrospective failure may substitute.
 
