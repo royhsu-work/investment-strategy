@@ -654,6 +654,8 @@ def _interval_binds_successor(
     interval: tuple[IssueLifecycleEvent, ...],
     successor: tuple[str, str] | None,
     terminal: bool,
+    *,
+    terminal_action: str | None = None,
 ) -> bool:
     relevant = tuple(
         item for item in interval if item.event in {"closed", "labeled", "reopened", "unlabeled"}
@@ -661,6 +663,13 @@ def _interval_binds_successor(
     if terminal:
         closes = tuple(item for item in relevant if item.event == "closed")
         if len(closes) != 1 or any(item.event in {"labeled", "reopened"} for item in relevant):
+            return False
+        removals = tuple(item for item in relevant if item.event == "unlabeled")
+        if removals and (
+            terminal_action is None
+            or len(removals) != 1
+            or removals[0].label != f"{_ACTION_LABEL_PREFIX}{terminal_action}"
+        ):
             return False
         close_index = next(index for index, item in enumerate(relevant) if item is closes[0])
         return all(
@@ -1019,6 +1028,7 @@ def _formal_interval_is_bound(
         interval,
         events[index].successor,
         events[index].terminal,
+        terminal_action=events[index].action,
     )
 
 
