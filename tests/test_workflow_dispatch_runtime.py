@@ -324,6 +324,14 @@ def _dependency_fixture(
             repair_timeline = (events[0], events[2], events[1])
         else:
             repair_timeline = events
+        if fault == "wrong-terminal-removal":
+            repair_timeline = (
+                events[0],
+                events[1],
+                {**events[2], "label": {"name": "action:implement-change"}},
+            )
+        elif fault == "duplicate-terminal-removal":
+            repair_timeline = (*events, {**events[2], "id": 23})
 
     urls: list[str] = []
 
@@ -393,6 +401,19 @@ def test_terminal_retirement_releases_dependency_in_either_event_order(
     assert decision.disposition == "AUTHORIZE"
     assert decision.selected_issue_id == blocked
     assert decision.selected_routing == ("executor", "implement-change")
+
+
+@pytest.mark.parametrize("fault", ["wrong-terminal-removal", "duplicate-terminal-removal"])
+def test_terminal_retirement_with_conflicting_removal_does_not_release_dependency(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    _dependency_fixture(
+        monkeypatch, (900, 850), phase="completed", terminal_order="close-first", fault=fault
+    )
+    preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
+    decision = classify_dispatch(preflight)
+    assert decision.disposition == "NO_WORK"
+    assert decision.reason == "dependencies-unsatisfied"
 
 
 @pytest.mark.parametrize("phase", ["no-go", "bare-close"])
