@@ -2704,7 +2704,7 @@ If required approved context is missing, contradictory, or materially ambiguous 
 - GIVEN the approved proposal, specs, design, tasks, applicable canonical specs, and applicable config context/rules are available
 - WHEN Executor implements the Change
 - THEN Executor consumes that complete approved context
-- AND existing RED → GREEN → REFACTOR → VERIFY and verified-slice checkpoint semantics remain applicable
+- AND the applicable repository-governance test-first procedure, independent refactoring-assessment boundary and existing VERIFY and verified-slice checkpoint semantics remain applicable
 - AND Executor gains no authority to redefine the approved contract
 
 ### Requirement: Agent security boundaries have deterministic regression coverage
