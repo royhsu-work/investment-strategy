@@ -8,7 +8,6 @@ instead of reconstructing branch identity independently.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import time
@@ -924,14 +923,12 @@ def _accepted_formal_result_is_proven(
 
     # Import at call time because the Application effects/bridge modules use
     # this carrier qualifier. No competing parser or new authority is added.
-    from investment_strategy.scheduled_agent_application_bridge import (
-        dispatch_correlation_for,
-        parse_application_request,
-    )
+    from investment_strategy.scheduled_agent_application_bridge import _read_accepted_original_request
     from investment_strategy.scheduled_agent_effects import (
         parse_application_decision,
         semantic_intent_payload,
     )
+    from investment_strategy.scheduled_agent_worker import parse_worker_result
 
     correlation = getattr(event, "application_correlation", None)
     parts = correlation.split(":") if isinstance(correlation, str) else []
@@ -977,43 +974,45 @@ def _accepted_formal_result_is_proven(
         )
     ):
         return False
-    request = _as_mapping(read(repository, token, f"issues/comments/{request_id}"))
-    if request is None or request.get("id") != request_id:
-        return False
-    body = request.get("body")
-    if (
-        not github_comment_has_app_provenance(
-            request,
-            actor=repository.split("/", 1)[0],
-            app_slug="chatgpt-codex-connector",
-        )
-        or not isinstance(body, str)
-        or hashlib.sha256(body.encode("utf-8")).hexdigest() != decision.request_body_sha256
-    ):
-        return False
+    source = WorkerRequest(decision.issue_number, decision.role, decision.action)
     try:
-        ingress = parse_application_request(body)
+        ingress = _read_accepted_original_request(
+            record=decision,
+            source=source,
+            repository=repository,
+            token=token,
+            read=read,
+            require_legacy_dispatch_correlation=True,
+        )
         if ingress is None:
             return False
-        source = WorkerRequest(issue_number, cast(str, role), cast(str, action))
         ingress_result = json.loads(ingress.raw_worker_result)
-        if not isinstance(ingress_result, dict):
+        accepted_result = json.loads(decision.raw_worker_result)
+        if not isinstance(ingress_result, dict) or not isinstance(accepted_result, dict):
             return False
-        # The worker's real EFFECT_REQUEST is versionless. The Application
-        # adds this owned projection marker when accepting the same semantic
-        # result; the raw request body/hash above remains untouched.
+        for raw_result, payload in (
+            (ingress.raw_worker_result, ingress_result),
+            (decision.raw_worker_result, accepted_result),
+        ):
+            worker = parse_worker_result(raw_result, source, authorized_change=decision.change)
+            # Validate supplied identity before binding omitted machine fields.
+            # Keep all other fields, including complete retained effect values.
+            payload.update(
+                issue_number=worker.issue_number,
+                role=worker.role,
+                action=worker.action,
+                change=worker.change,
+            )
+            payload.setdefault("evidence_ref", worker.typed_result.result.evidence_ref)
+            payload.setdefault("requested_effects", [])
+        # Only the original needs the Application-owned semantic projection.
+        # Neither original bytes nor the immutable accepted intent are changed.
         ingress_result.setdefault("_semantic_intent_version", 2)
         ingress_intent = _canonical_intent_effect_json(
             semantic_intent_payload(json.dumps(ingress_result))
         )
-        accepted_intent = _canonical_intent_effect_json(decision.raw_worker_result)
-        if (
-            ingress.authorization_revision != decision.authorization_revision
-            or ingress.dispatch_correlation
-            != dispatch_correlation_for(repository, source, decision.authorization_revision)
-            or ingress_intent is None
-            or ingress_intent != accepted_intent
-        ):
+        accepted_intent = _canonical_intent_effect_json(json.dumps(accepted_result))
+        if ingress_intent is None or ingress_intent != accepted_intent:
             return False
         intent = json.loads(decision.raw_worker_result)
     except (TypeError, ValueError):
