@@ -2742,6 +2742,13 @@ def test_terminal_transition_closes_and_clears_routing_atomically(
     ("formal_case", "expected"),
     [
         ("qualified", True),
+        ("close-first", True),
+        ("close-first-same-second", True),
+        ("remove-first-same-second", True),
+        ("result-close-same-second", False),
+        ("result-removal-same-second", False),
+        ("close-before-result", False),
+        ("removal-before-result", False),
         ("missing", False),
         ("wrong-request", False),
         ("wrong-removal", False),
@@ -2814,7 +2821,22 @@ def test_accepted_terminal_postcondition_reobserves_after_process_restart(
         },
         {"id": 994, "event": "closed", "created_at": "2026-09-03T01:03:00Z"},
     ]
-    if formal_case == "wrong-removal":
+    if formal_case == "close-first":
+        timeline[1]["created_at"] = "2026-09-03T01:04:00Z"
+    elif formal_case == "close-first-same-second":
+        timeline[1]["created_at"] = timeline[2]["created_at"]
+        timeline[1]["id"] = 995
+    elif formal_case == "remove-first-same-second":
+        timeline[1]["created_at"] = timeline[2]["created_at"]
+    elif formal_case == "result-close-same-second":
+        timeline[2]["created_at"] = timeline[0]["created_at"]
+    elif formal_case == "result-removal-same-second":
+        timeline[1]["created_at"] = timeline[0]["created_at"]
+    elif formal_case == "close-before-result":
+        timeline[2]["created_at"] = "2026-09-03T00:59:59Z"
+    elif formal_case == "removal-before-result":
+        timeline[1]["created_at"] = "2026-09-03T00:59:59Z"
+    elif formal_case == "wrong-removal":
         timeline[1]["label"] = {"name": "action:implement-change"}
     elif formal_case == "duplicate-removal":
         timeline.append({**timeline[1], "id": 995})
