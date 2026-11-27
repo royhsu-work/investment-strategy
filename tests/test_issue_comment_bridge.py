@@ -11068,15 +11068,13 @@ def test_saved_development_obligation_drives_native_bridge_output(
         "files": [
             {
                 "path": "tests/test_native_quality.py",
-                "expected_blob_sha": "1" * 40,
-                "desired_blob_sha": "2" * 40,
+                "expected_sha": "1" * 40,
+                "blob_sha": "2" * 40,
             }
         ],
         "pr_number": 139,
     }
-    worker["requested_effects"] = [
-        {"kind": "github-mutation", "payload_json": json.dumps(payload)}
-    ]
+    worker["requested_effects"] = [{"kind": "github-mutation", "payload_json": json.dumps(payload)}]
     encoded = base64.b64encode(json.dumps(worker).encode()).decode()
     request["body"] = "\n".join((lines[0], lines[1], f"Worker-Result-B64: {encoded}"))
     accepted = _application_decision_comment(request)
@@ -11260,4 +11258,3 @@ def test_saved_development_obligation_drives_native_bridge_output(
         assert "quality_result=verification-obligation-pending" in output
     else:
         assert receipt == "native_quality_plan=none"
-
