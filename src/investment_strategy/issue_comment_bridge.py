@@ -6171,6 +6171,7 @@ def qualify_application_completion(
     read: GitHubReader = _github_json,
     current_dispatch_request_comment_id: int | None = None,
     current_dispatch_issue_number: int | None = None,
+    phase_a_request_comment_id: int | None = None,
     now: datetime | None = None,
 ) -> ApplicationCompletion:
     """Return one exhaustive consequence disposition from durable evidence."""
@@ -6274,7 +6275,48 @@ def qualify_application_completion(
                     == github_repository_api_url(repository, f"issues/{record.issue_number}"),
                 )
             )
+    # Phase A has independently qualified its native dispatch source. Exclude
+    # only that in-flight ingress, not other live or unqualified transports.
+    if phase_a_request_comment_id is not None:
+        own_id = _positive_int(phase_a_request_comment_id)
+        shard_id = _positive_int(current_dispatch_issue_number)
+        own_shard = [item for item in runtime_comments if item.get("id") == own_id]
+        own_global = [item for item in recent if item.get("id") == own_id]
+        if (
+            own_id is None
+            or shard_id is None
+            or current_dispatch_request_comment_id is None
+            or own_id == current_dispatch_request_comment_id
+            or len(own_shard) != 1
+            or len(own_global) != 1
+            or own_id in observed_decisions
+            or any(record.request_comment_id == own_id for record in decisions)
+        ):
+            return ApplicationCompletion("INVALID", "application-completion-phase-a-source-invalid")
+        own = read(repository, token, f"issues/comments/{own_id}")
+        if (
+            not isinstance(own, Mapping)
+            or own.get("id") != own_id
+            or own.get("issue_url") != github_repository_api_url(repository, f"issues/{shard_id}")
+            or own.get("updated_at") != own.get("created_at")
+            or _quality_time(own.get("created_at")) is None
+            or not isinstance(own.get("body"), str)
+            or cast(str, own["body"]).splitlines()[:1] not in (["WORKER_RESULT"], ["EFFECT_REQUEST"])
+            or not _trusted_connector_comment(own, owner)
+            or any(
+                not _trusted_connector_comment(item, owner)
+                or any(
+                    item.get(key) != own.get(key)
+                    for key in ("id", "body", "issue_url", "created_at", "updated_at")
+                )
+                for item in (*own_shard, *own_global)
+            )
+        ):
+            return ApplicationCompletion("INVALID", "application-completion-phase-a-source-invalid")
+
     for comment in (*recent, *issue_comments):
+        if phase_a_request_comment_id is not None and comment.get("id") == phase_a_request_comment_id:
+            continue
         if not _trusted_connector_comment(comment, owner):
             continue
         body = comment.get("body")

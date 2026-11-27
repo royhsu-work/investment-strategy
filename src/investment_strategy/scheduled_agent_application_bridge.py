@@ -9076,6 +9076,40 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         and _fresh_event_observation(event, body, repository, token)
     ):
         raise ValueError("WORKER_RESULT comment changed before Phase-A ACCEPT")
+    if physical_only and accepted_intent is None:
+        from dataclasses import asdict
+
+        from investment_strategy import issue_comment_bridge as dispatch
+
+        ingress_issue = _as_mapping(event.get("issue"))
+        ingress_shard = _positive_int(None if ingress_issue is None else ingress_issue.get("number"))
+        if ingress_shard is None or plan.request_comment_id != event_comment_id:
+            raise ValueError("development ingress identity is unavailable")
+        receipt = dispatch.qualify_development_dispatch_source(
+            repository,
+            token,
+            source=plan.source,
+            request_comment_id=plan.request_comment_id,
+            current_revision=args.revision,
+            default_branch=args.default_branch,
+        )
+        if receipt is None:
+            raise ValueError("development ingress lacks exact native dispatch authority")
+        frontier = dispatch.qualify_application_completion(
+            repository,
+            token,
+            source=plan.source,
+            current_revision=args.revision,
+            current_dispatch_request_comment_id=receipt.dispatch_request_comment_id,
+            current_dispatch_issue_number=ingress_shard,
+            phase_a_request_comment_id=plan.request_comment_id,
+        )
+        if frontier.state not in ("NONE", "COMPLETE", "ABORTED", "REJECTED"):
+            raise ValueError("development ingress has an unsettled or competing predecessor")
+        document = json.loads(application_worker_result)
+        document["_native_development_dispatch"] = asdict(receipt)
+        application_worker_result = json.dumps(document, sort_keys=True, separators=(",", ":"))
+
     try:
         if missing_pr_only_plan is not None:
             # Native carrier actuator is the mutation boundary and rechecks
