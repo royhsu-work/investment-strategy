@@ -2670,7 +2670,8 @@ def _quality_bridge_attempt(
         or re.fullmatch(r"[0-9a-f]{64}", gate) is None
         or not isinstance(target, str)
         or _SHA.fullmatch(target) is None
-        or plan != _quality_call_fields(repository, target, definition, gate, source, run_id, attempt)
+        or plan
+        != _quality_call_fields(repository, target, definition, gate, source, run_id, attempt)
         or (gate == obligation_id and target != revision)
     ):
         return unknown
