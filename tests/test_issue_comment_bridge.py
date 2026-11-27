@@ -11663,9 +11663,7 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
         raise AssertionError(path)
 
     def observe(*_args: object, **_kwargs: object) -> bridge.NativeQualityObservation:
-        red = bridge.NativeQualityAttempt(
-            87, 1, "PYTEST_STEP_FAILURE", 88, saved, saved, None
-        )
+        red = bridge.NativeQualityAttempt(87, 1, "PYTEST_STEP_FAILURE", 88, saved, saved, None)
         green = bridge.NativeQualityAttempt(90, 1, "PASS", 89, saved, saved, None)
         if case == "red":
             return bridge.NativeQualityObservation("FAIL", (red,))
