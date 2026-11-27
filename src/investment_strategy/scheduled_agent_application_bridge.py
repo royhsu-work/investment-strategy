@@ -9082,7 +9082,9 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         from investment_strategy import issue_comment_bridge as dispatch
 
         ingress_issue = _as_mapping(event.get("issue"))
-        ingress_shard = _positive_int(None if ingress_issue is None else ingress_issue.get("number"))
+        ingress_shard = _positive_int(
+            None if ingress_issue is None else ingress_issue.get("number")
+        )
         if ingress_shard is None or plan.request_comment_id != event_comment_id:
             raise ValueError("development ingress identity is unavailable")
         receipt = dispatch.qualify_development_dispatch_source(

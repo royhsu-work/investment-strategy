@@ -6301,7 +6301,8 @@ def qualify_application_completion(
             or own.get("updated_at") != own.get("created_at")
             or _quality_time(own.get("created_at")) is None
             or not isinstance(own.get("body"), str)
-            or cast(str, own["body"]).splitlines()[:1] not in (["WORKER_RESULT"], ["EFFECT_REQUEST"])
+            or cast(str, own["body"]).splitlines()[:1]
+            not in (["WORKER_RESULT"], ["EFFECT_REQUEST"])
             or not _trusted_connector_comment(own, owner)
             or any(
                 not _trusted_connector_comment(item, owner)
@@ -6315,7 +6316,10 @@ def qualify_application_completion(
             return ApplicationCompletion("INVALID", "application-completion-phase-a-source-invalid")
 
     for comment in (*recent, *issue_comments):
-        if phase_a_request_comment_id is not None and comment.get("id") == phase_a_request_comment_id:
+        if (
+            phase_a_request_comment_id is not None
+            and comment.get("id") == phase_a_request_comment_id
+        ):
             continue
         if not _trusted_connector_comment(comment, owner):
             continue
