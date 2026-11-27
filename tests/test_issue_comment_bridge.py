@@ -580,9 +580,12 @@ def test_native_quality_obligation_plans_only_after_complete_caller_history(
         source = 901 if run_id == 77 else 900
         active = (run_id == 77 and not case.startswith("observe-")) or case == "active"
         active = active or (run_id == 77 and case == "observe-active")
-        result = "failure" if run_id == 77 and case == "observe-failed-dispatch" else conclusion(attempt)
-        if run_id == 77 and case == "observe-fail":
-            result = "success"
+        result = conclusion(attempt)
+        if run_id == 77:
+            if case == "observe-failed-dispatch":
+                result = "failure"
+            elif case == "observe-fail":
+                result = "success"
         return {
             "id": run_id,
             "run_attempt": attempt,
