@@ -1196,6 +1196,7 @@ def _accepted_lead_retirement(
     closed_at: datetime,
     comments: tuple[Mapping[str, object], ...],
     read: GitHubReader,
+    application_correlation: str | None = None,
 ) -> bool:
     """Prove one application-owned closure, independent of older review outcome.
 
@@ -1214,6 +1215,10 @@ def _accepted_lead_retirement(
             or event.role != "lead"
             or event.action is None
             or not candidate_withdrawal_permitted(event.role, event.action, event.result_kind)
+            or (
+                application_correlation is not None
+                and event.application_correlation != application_correlation
+            )
         ):
             continue
         # The shared formal parser has already checked the model-derived
@@ -1573,12 +1578,14 @@ def qualify_candidate_withdrawal(
     require_open: bool,
     request_comment_id: int | None = None,
     authorization_revision: str | None = None,
+    application_correlation: str | None = None,
     read: GitHubReader | None = None,
 ) -> Mapping[str, object] | None:
     """Qualify a fresh open request or its exact accepted close continuation.
 
     A closed target needs durable acceptance, not an invocation-local flag.
-    This phase never requires the formal result that the close must precede.
+    Recovery does not require the formal result that the close must precede.
+    A completed formal observation additionally binds that exact real result.
     """
 
     reader = _github_json if read is None else read
@@ -1598,8 +1605,26 @@ def qualify_candidate_withdrawal(
             )
         )
         or (not require_open and request_comment_id is None)
+        or (require_open and application_correlation is not None)
     ):
         return None
+    if application_correlation is not None:
+        correlation_fields = application_correlation.split(":")
+        if (
+            len(correlation_fields) != 8
+            or correlation_fields[:7]
+            != [
+                "application",
+                str(request_comment_id),
+                str(source.issue_number),
+                change,
+                source.role,
+                source.action,
+                result_kind,
+            ]
+            or not _valid_sha(correlation_fields[7])
+        ):
+            return None
     default_branch, default_revision = _repository_default(repository, token, read=reader)
     if default_branch is None or default_revision != current_revision:
         return None
@@ -1631,6 +1656,7 @@ def qualify_candidate_withdrawal(
         return None
 
     proof = None
+    comments: tuple[Mapping[str, object], ...] = ()
     if request_comment_id is not None:
         comments = _paged_list(
             repository,
@@ -1716,6 +1742,22 @@ def qualify_candidate_withdrawal(
             pr_number=pr_number,
             head_sha=expected_head_sha,
             closed_at=target.closed_at,
+        )
+        or (
+            application_correlation is not None
+            and not _accepted_lead_retirement(
+                repository,
+                token,
+                issue_number=source.issue_number,
+                change=change,
+                retired_number=pr_number,
+                retired_branch=target.branch,
+                retired_head=target.head_sha,
+                closed_at=target.closed_at,
+                comments=comments,
+                read=reader,
+                application_correlation=application_correlation,
+            )
         )
     ):
         return None

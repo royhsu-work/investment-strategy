@@ -2418,6 +2418,7 @@ class GitHubEffectAdapter:
         expected_head_sha: str,
         *,
         require_open: bool,
+        application_correlation: str | None = None,
     ) -> Mapping[str, object] | None:
         """Bind the current source route to carrier-owned withdrawal evidence."""
 
@@ -2449,6 +2450,7 @@ class GitHubEffectAdapter:
             require_open=require_open,
             request_comment_id=request_id,
             authorization_revision=self.authorization_revision,
+            application_correlation=application_correlation,
             read=_github_json,
         )
 
@@ -4459,9 +4461,45 @@ def consequence_postconditions_complete(
                 current_revision=current_revision,
             )
         if spec.evidence_target is EvidenceTarget.DEFAULT_BRANCH:
-            # The canonical formal-result observer and derived routing are
-            # separate callers.  Once the formal event is qualified, the
-            # default branch itself is the affirmative evidence target.
+            # A retained withdrawal adds an exact accepted close obligation.
+            # Unrelated coordination results keep their default-branch target.
+            for effect in batch.effects:
+                payload = _effect_payload(effect)
+                if payload is None:
+                    if effect.kind == GITHUB_MUTATION_KIND:
+                        return False
+                    continue
+                fields = payload.get("fields")
+                if payload.get("operation") != "pull-request-update" or (
+                    isinstance(fields, Mapping) and "state" not in fields
+                ):
+                    continue
+                if len(batch.effects) != 1 or not is_exact_pull_request_close(
+                    effect.kind, payload, issue_number=source.issue_number
+                ):
+                    return False
+                adapter = GitHubEffectAdapter(
+                    repository,
+                    token,
+                    source,
+                    authorized_change=change,
+                    current_revision=current_revision,
+                    authorization_revision=accepted_authorization_revision,
+                    expected_result_kind=batch.typed_result.result.kind.value,
+                    request_comment_id=request_comment_id,
+                    accepted_intent=accepted_intent,
+                )
+                return (
+                    adapter._lead_retirement_target(
+                        cast(int, payload["number"]),
+                        cast(str, payload["expected_head_sha"]),
+                        require_open=False,
+                        application_correlation=(
+                            observed_application_correlation if formal_result_observed else None
+                        ),
+                    )
+                    is not None
+                )
             return _valid_sha(current_revision)
         if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
             return merged_pr_readiness_complete(
