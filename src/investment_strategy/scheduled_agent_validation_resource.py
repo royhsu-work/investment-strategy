@@ -988,6 +988,58 @@ def _native_quality_receipt(log: str) -> list[str] | None:
     return lines[end - 7 : end] if end - 7 > start else None
 
 
+def _native_quality_step_outcomes(job: Mapping[str, object]) -> tuple[str, ...] | None:
+    """Return the complete, ordered native quality step conclusions."""
+    required = _NATIVE_QUALITY_SETUP_STEPS + _NATIVE_QUALITY_STEPS
+    raw_steps = job.get("steps")
+    if not isinstance(raw_steps, list):
+        return None
+    steps: list[Mapping[str, object]] = []
+    for raw in raw_steps:
+        step = _as_mapping(raw)
+        if step is None:
+            return None
+        if step.get("name") in required:
+            steps.append(step)
+    if tuple(step["name"] for step in steps) != required:
+        return None
+    numbers: list[int] = []
+    for step in steps:
+        number = step.get("number")
+        if type(number) is not int or number <= 0 or step.get("status") != "completed":
+            return None
+        numbers.append(number)
+    if numbers != sorted(set(numbers)):
+        return None
+    outcomes: list[str] = []
+    for step in steps:
+        conclusion = step.get("conclusion")
+        if not isinstance(conclusion, str):
+            return None
+        outcomes.append(conclusion)
+    return tuple(outcomes)
+
+
+def _native_quality_witness_matches(
+    log: str,
+    *,
+    repository: str,
+    revision: str,
+    definition_sha: str,
+    run_id: int,
+    run_attempt: int,
+) -> bool:
+    return _native_quality_receipt(log) == [
+        "##[endgroup]",
+        f"quality_repository={repository}",
+        f"quality_target_sha={revision}",
+        f"quality_checkout_sha={revision}",
+        f"quality_definition_sha={definition_sha}",
+        f"quality_run_id={run_id}",
+        f"quality_run_attempt={run_attempt}",
+    ]
+
+
 def qualify_native_quality_job(
     job: Mapping[str, object],
     log: str,
@@ -1025,46 +1077,26 @@ def qualify_native_quality_job(
     ):
         return None
 
-    required = _NATIVE_QUALITY_SETUP_STEPS + _NATIVE_QUALITY_STEPS
-    raw_steps = job.get("steps")
-    if not isinstance(raw_steps, list):
-        return None
-    steps: list[Mapping[str, object]] = []
-    for raw in raw_steps:
-        step = _as_mapping(raw)
-        if step is None:
-            return None
-        if step.get("name") in required:
-            steps.append(step)
-    if tuple(step["name"] for step in steps) != required:
-        return None
-    numbers: list[int] = []
-    for step in steps:
-        number = step.get("number")
-        if type(number) is not int or number <= 0 or step.get("status") != "completed":
-            return None
-        numbers.append(number)
-    if numbers != sorted(set(numbers)):
+    step_outcomes = _native_quality_step_outcomes(job)
+    if step_outcomes is None:
         return None
     setup_count = len(_NATIVE_QUALITY_SETUP_STEPS)
-    if any(step.get("conclusion") != "success" for step in steps[:setup_count]):
+    if any(outcome != "success" for outcome in step_outcomes[:setup_count]):
         return None
 
     # Only consume the witness emitted between the checkout proof's command
     # group and the first tooling setup. Later candidate output cannot supply it.
-    receipt = [
-        "##[endgroup]",
-        f"quality_repository={repository}",
-        f"quality_target_sha={revision}",
-        f"quality_checkout_sha={revision}",
-        f"quality_definition_sha={definition_sha}",
-        f"quality_run_id={run_id}",
-        f"quality_run_attempt={run_attempt}",
-    ]
-    if _native_quality_receipt(log) != receipt:
+    if not _native_quality_witness_matches(
+        log,
+        repository=repository,
+        revision=revision,
+        definition_sha=definition_sha,
+        run_id=run_id,
+        run_attempt=run_attempt,
+    ):
         return None
 
-    outcomes = tuple(step.get("conclusion") for step in steps[setup_count:])
+    outcomes = step_outcomes[setup_count:]
     if job["conclusion"] == "success":
         return "PASS" if outcomes == ("success",) * len(outcomes) else None
     if "failure" not in outcomes:
@@ -1089,13 +1121,46 @@ def read_native_quality_verdict(
     read: Callable[[str, str, str], object],
     log_read: Callable[[str, str, int], str],
 ) -> Literal["PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"] | None:
-    """Read a terminal ordinary quality attempt for an independently selected producer.
+    """Project a qualified attempt onto the existing mechanical verdict interface."""
+    outcome = read_native_quality_attempt(
+        repository,
+        token,
+        revision=revision,
+        branch=branch,
+        workflow_blob=workflow_blob,
+        run_id=run_id,
+        run_attempt=run_attempt,
+        event=event,
+        read=read,
+        log_read=log_read,
+    ).outcome
+    if outcome == "PASS" or outcome == "STATIC_STEP_FAILURE" or outcome == "PYTEST_STEP_FAILURE":
+        return outcome
+    return None
 
-    The required workflow blob is chosen by the gate owner, not by the run or
-    its log. A PR workflow definition may be a synthetic merge revision even
-    though the required checkout is the feature head. This read-only result
-    does not establish authorization, intended RED, or absence of an active job.
+
+def read_native_quality_attempt(
+    repository: str,
+    token: str,
+    *,
+    revision: str,
+    branch: str,
+    workflow_blob: str,
+    run_id: int,
+    run_attempt: int,
+    event: str,
+    read: Callable[[str, str, str], object],
+    log_read: Callable[[str, str, int], str],
+) -> NativeQualityAttempt:
+    """Read an exact ordinary attempt without conflating no verdict and missing evidence.
+
+    The producer blob is selected by the gate owner. Active or incomplete
+    evidence cannot authorize another invocation; a terminal no-verdict
+    requires positively observed native run/job evidence.
     """
+    unknown = NativeQualityAttempt(run_id, run_attempt, "INDETERMINATE")
+    pending = NativeQualityAttempt(run_id, run_attempt, "PENDING")
+    no_verdict = NativeQualityAttempt(run_id, run_attempt, "NO_VERDICT")
     if (
         not repository
         or not _valid_sha(revision)
@@ -1107,12 +1172,12 @@ def read_native_quality_verdict(
         or run_attempt <= 0
         or event not in ("push", "pull_request")
     ):
-        return None
+        return unknown
     workflow_path = ".github/workflows/quality.yml"
     try:
         run = _as_mapping(read(repository, token, f"actions/runs/{run_id}/attempts/{run_attempt}"))
         if run is None:
-            return None
+            return unknown
         run_repo = _as_mapping(run.get("repository"))
         head_repo = _as_mapping(run.get("head_repository"))
         if (
@@ -1128,29 +1193,74 @@ def read_native_quality_verdict(
             or run.get("event") != event
             or run.get("head_sha") != revision
             or run.get("head_branch") != branch
-            or run.get("status") != "completed"
-            or run.get("conclusion") not in ("success", "failure")
         ):
-            return None
+            return unknown
+        status, conclusion = run.get("status"), run.get("conclusion")
+        if status in ("queued", "in_progress", "requested", "waiting", "pending"):
+            return pending if conclusion is None else unknown
+        no_verdict_conclusions = (
+            "cancelled",
+            "skipped",
+            "timed_out",
+            "action_required",
+            "startup_failure",
+            "stale",
+            "neutral",
+        )
+        if status != "completed" or conclusion not in (
+            "success",
+            "failure",
+            *no_verdict_conclusions,
+        ):
+            return unknown
         jobs = github_complete_job_inventory(
             repository, token, run_id=run_id, run_attempt=run_attempt, read=read
         )
-        if jobs is None or len(jobs) != 1:
-            return None
+        if jobs is None:
+            return unknown
+        if not jobs:
+            return no_verdict if conclusion in no_verdict_conclusions else unknown
+        if len(jobs) != 1:
+            return unknown
         job = jobs[0]
         job_id = job.get("id")
         if (
             type(job_id) is not int
             or job_id <= 0
+            or type(job.get("run_id")) is not int
+            or job.get("run_id") != run_id
+            or type(job.get("run_attempt")) is not int
+            or job.get("run_attempt") != run_attempt
             or job.get("head_sha") != revision
             or job.get("name") != "quality"
-            or job.get("conclusion") != run.get("conclusion")
+            or job.get("status") != "completed"
+            or job.get("conclusion") != conclusion
         ):
-            return None
+            return unknown
+        if conclusion in no_verdict_conclusions:
+            return no_verdict
+
+        # A proved fail-fast setup failure is not a mechanical quality verdict.
+        # Failed checkout proof is ambiguous; after a successful proof the
+        # same exact producer/witness qualification remains necessary.
+        outcomes = _native_quality_step_outcomes(job)
+        setup_failure = False
+        if conclusion == "failure" and outcomes is not None and "failure" in outcomes:
+            failed = outcomes.index("failure")
+            if (
+                failed < len(_NATIVE_QUALITY_SETUP_STEPS)
+                and outcomes
+                == ("success",) * failed + ("failure",) + ("skipped",) * (len(outcomes) - failed - 1)
+            ):
+                if failed < 2:
+                    return no_verdict
+                if failed == 2:
+                    return unknown
+                setup_failure = True
         log = log_read(repository, token, job_id)
         receipt = _native_quality_receipt(log)
         if receipt is None or not receipt[4].startswith("quality_definition_sha="):
-            return None
+            return unknown
         definition_sha = receipt[4].removeprefix("quality_definition_sha=")
         verdict = qualify_native_quality_job(
             job,
@@ -1163,21 +1273,32 @@ def read_native_quality_verdict(
             job_id=job_id,
             job_name="quality",
         )
-        if verdict is None:
-            return None
+        if verdict is None and not (
+            setup_failure
+            and _valid_sha(definition_sha)
+            and _native_quality_witness_matches(
+                log,
+                repository=repository,
+                revision=revision,
+                definition_sha=definition_sha,
+                run_id=run_id,
+                run_attempt=run_attempt,
+            )
+        ):
+            return unknown
 
         if event == "push":
             if definition_sha != revision:
-                return None
+                return unknown
         else:
             if definition_sha == revision:
-                return None
+                return unknown
             commit = _as_mapping(read(repository, token, f"git/commits/{definition_sha}"))
             if commit is None or commit.get("sha") != definition_sha:
-                return None
+                return unknown
             parents = commit.get("parents")
             if not isinstance(parents, list) or len(parents) != 2:
-                return None
+                return unknown
             base, head = (_as_mapping(parent) for parent in parents)
             if (
                 base is None
@@ -1186,7 +1307,7 @@ def read_native_quality_verdict(
                 or head is None
                 or head.get("sha") != revision
             ):
-                return None
+                return unknown
 
         # Read immutable Git content at both the selected target and executed
         # definition. Never use the current PR's mutable merge ref as evidence.
@@ -1200,10 +1321,12 @@ def read_native_quality_verdict(
                 or file.get("type") != "file"
                 or file.get("sha") != workflow_blob
             ):
-                return None
-        return verdict
+                return unknown
+        if verdict is None:
+            return no_verdict
+        return NativeQualityAttempt(run_id, run_attempt, verdict)
     except (OSError, RuntimeError, TypeError, ValueError):
-        return None
+        return unknown
 
 
 @dataclass(frozen=True)
