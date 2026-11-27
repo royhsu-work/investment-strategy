@@ -480,6 +480,9 @@ def test_native_quality_history_preserves_every_exact_attempt(
     [
         ("empty", "NO_VERDICT", True),
         ("missing-run", "INDETERMINATE", False),
+        ("deleted-source", "INDETERMINATE", False),
+        ("edited-source", "INDETERMINATE", False),
+        ("unrelated-comment", "NO_VERDICT", True),
         ("active", "PENDING", False),
         ("skipped", "NO_VERDICT", True),
         ("not-invoked", "NO_VERDICT", True),
@@ -487,6 +490,10 @@ def test_native_quality_history_preserves_every_exact_attempt(
         ("pass", "PASS", False),
         ("pytest", "FAIL", False),
         ("static", "FAIL", False),
+        ("setup-checkout", "NO_VERDICT", True),
+        ("setup-uv", "NO_VERDICT", True),
+        ("setup-failed-proof", "INDETERMINATE", False),
+        ("setup-wrong-witness", "INDETERMINATE", False),
         ("rerun-conflict", "CONFLICT", False),
         ("rerun-cancelled", "PASS", False),
         ("missing-plan", "INDETERMINATE", False),
@@ -528,9 +535,17 @@ def test_native_quality_obligation_plans_only_after_complete_caller_history(
     def comment(source: int) -> dict[str, object]:
         return {
             "id": source,
-            "body": REQUEST_BODY,
+            "body": (
+                "Ordinary discussion"
+                if source == 900 and case in {"edited-source", "unrelated-comment"}
+                else REQUEST_BODY
+            ),
             "created_at": "2026-09-03T03:40:00Z" if source == 900 else "2026-09-03T03:45:00Z",
-            "updated_at": "2026-09-03T03:40:00Z" if source == 900 else "2026-09-03T03:45:00Z",
+            "updated_at": (
+                "2026-09-03T03:40:00Z"
+                if source == 900 and case != "edited-source"
+                else "2026-09-03T03:45:00Z"
+            ),
             "issue_url": f"{api}/issues/142",
             "user": {"login": "royhsu-work"},
             "performed_via_github_app": {
@@ -539,7 +554,11 @@ def test_native_quality_obligation_plans_only_after_complete_caller_history(
         }
 
     def conclusion(attempt: int) -> str:
-        if case in {"pytest", "static"} or (case == "rerun-conflict" and attempt == 1):
+        if (
+            case in {"pytest", "static"}
+            or case.startswith("setup-")
+            or (case == "rerun-conflict" and attempt == 1)
+        ):
             return "failure"
         if case == "cancelled" or (case == "rerun-cancelled" and attempt == 2):
             return "cancelled"
@@ -612,6 +631,9 @@ def test_native_quality_obligation_plans_only_after_complete_caller_history(
         outcomes = ["success"] * len(names)
         if case == "static":
             outcomes[-3:] = ["failure", "skipped", "skipped"]
+        elif case.startswith("setup-"):
+            failed = {"setup-checkout": 1, "setup-failed-proof": 2}.get(case, 3)
+            outcomes[failed:] = ["failure"] + ["skipped"] * (len(names) - failed - 1)
         else:
             outcomes[-1] = verdict
         quality = {
@@ -643,9 +665,10 @@ def test_native_quality_obligation_plans_only_after_complete_caller_history(
             assert parse_qs(url.query)["ref"][0] in {definition, target}
             return {"type": "file", "path": url.path.removeprefix("contents/"), "sha": producer}
         if url.path == "issues/comments":
-            return ([comment(900)] if prior else []) + [comment(901)]
+            return ([comment(900)] if prior and case != "deleted-source" else []) + [comment(901)]
         if url.path.startswith("issues/comments/"):
-            return comment(int(url.path.rsplit("/", 1)[1]))
+            source = int(url.path.rsplit("/", 1)[1])
+            return None if source == 900 and case == "deleted-source" else comment(source)
         if path == "issues/142":
             return _event()["issue"]
         if url.path == "actions/workflows/quality.yml/runs":
@@ -684,13 +707,15 @@ def test_native_quality_obligation_plans_only_after_complete_caller_history(
             if case in {"skipped", "not-invoked"}:
                 return "native_quality_plan=none"
             return "native_quality_plan=" + json.dumps(receipt, sort_keys=True)
+        if case in {"setup-checkout", "setup-failed-proof"}:
+            return "No successful checkout proof"
         return "\n".join(
             [
                 "##[group]Run actual_sha=$(git rev-parse HEAD)",
                 "##[endgroup]",
                 f"quality_repository={repository}",
                 f"quality_target_sha={target}",
-                f"quality_checkout_sha={target}",
+                f"quality_checkout_sha={'f' * 40 if case == 'setup-wrong-witness' else target}",
                 f"quality_definition_sha={definition}",
                 "quality_run_id=75",
                 f"quality_run_attempt={attempt}",
