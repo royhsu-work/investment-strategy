@@ -25,7 +25,6 @@ from investment_strategy.scheduled_agent_action_model import (
     BoundedActionResult,
     ResultKind,
     TypedResult,
-    legal_transition_keys,
     role_for,
 )
 from investment_strategy.scheduled_agent_application_materialization import MaterializationProof
@@ -33,6 +32,7 @@ from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_ca
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
     candidate_withdrawal_permitted,
+    legal_transition_keys,
 )
 from investment_strategy.scheduled_agent_effects import (
     EffectBatch,
