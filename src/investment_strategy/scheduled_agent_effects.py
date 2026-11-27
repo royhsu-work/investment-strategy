@@ -478,6 +478,37 @@ def _formal_action_result_body_is_bounded(
     )
 
 
+def _implementation_development_save(batch: EffectBatch) -> bool:
+    """Recognize a physical-only code or test save, not a formal delivery."""
+    typed_result = batch.typed_result
+    if (
+        (batch.source.role, batch.source.action) != ("executor", "implement-change")
+        or typed_result is None
+        or typed_result.result.kind is not ResultKind.MORE_IMPLEMENTATION_REQUIRED
+        or len(batch.effects) != 1
+    ):
+        return False
+    effect = batch.effects[0]
+    if effect.kind != GITHUB_MUTATION_KIND or effect.derived:
+        return False
+    payload = _effect_payload(effect)
+    if payload is None:
+        return False
+    try:
+        request = find_materialization_payload(payload, batch.source)
+    except ValueError:
+        return False
+    return (
+        request is not None
+        and request.expected_change == typed_result.change
+        and request.change == typed_result.change
+        and bool(request.files)
+        and all(
+            PurePosixPath(file.path).parts[:1] != ("openspec",) for file in request.files
+        )
+    )
+
+
 def _implementation_checkpoint_effects_complete(
     batch: EffectBatch,
     decision: ActionApplicationDecision,
@@ -764,15 +795,18 @@ def _typed_application_plan(
             ),
         )
 
-    if not _implementation_checkpoint_effects_complete(
-        batch,
-        decision,
-        validate_implementation_checkpoint,
-        accepted_intent,
-        durable_checkpoint_revision,
-        defer_issue_comments,
-        observe_postcondition,
-        original_322_recovery,
+    if (
+        not _implementation_development_save(batch)
+        and not _implementation_checkpoint_effects_complete(
+            batch,
+            decision,
+            validate_implementation_checkpoint,
+            accepted_intent,
+            durable_checkpoint_revision,
+            defer_issue_comments,
+            observe_postcondition,
+            original_322_recovery,
+        )
     ):
         return (
             decision,
@@ -1354,6 +1388,9 @@ def apply_effect_batch(
         return typed_rejection
     if typed_decision is None or derived_effect is None:
         return ApplyResult(False, "typed application rejected:plan-missing")
+
+    # A development save has no formal consequence or derived routing write.
+    apply_derived = apply_derived and not _implementation_development_save(batch)
 
     # A Lead retirement is one exact, irreversible carrier effect.  Do not
     # normalize away additional requested writes and then claim that only the
