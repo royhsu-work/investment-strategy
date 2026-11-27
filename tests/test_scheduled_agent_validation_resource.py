@@ -217,6 +217,143 @@ def test_native_quality_frontier_uses_complete_distinct_attempts(
     assert observe(evidence) == expected
 
 
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("push", "PASS"),
+        ("pull-request", "PASS"),
+        ("static", "STATIC_STEP_FAILURE"),
+        ("pytest", "PYTEST_STEP_FAILURE"),
+        ("wrong-source", None),
+        ("wrong-attempt", None),
+        ("wrong-branch", None),
+        ("wrong-head", None),
+        ("wrong-job-head", None),
+        ("missing-job", None),
+        ("wrong-parent", None),
+        ("wrong-definition-blob", None),
+        ("wrong-target-blob", None),
+        ("wrong-checkout", None),
+        ("contradictory-run", None),
+    ],
+)
+def test_native_quality_verdict_reads_exact_ordinary_producer(
+    case: str, expected: str | None
+) -> None:
+    event = "push" if case == "push" else "pull_request"
+    definition = _PR_HEAD if event == "push" else "a" * 40
+    workflow_blob = "b" * 40
+    branch = "agent/" + _CHANGE
+    endpoint = "actions/runs/75/attempts/2"
+    names = (
+        "Set up job",
+        "Run actions/checkout@v4",
+        "Prove exact quality checkout",
+        "Run astral-sh/setup-uv@v6",
+        "Run actions/setup-python@v5",
+        "Ruff lint",
+        "Ruff format check",
+        "Mypy",
+        "Run tests",
+    )
+    outcomes = dict.fromkeys(names, "success")
+    if case == "static":
+        outcomes.update({"Mypy": "failure", "Run tests": "skipped"})
+    if case == "pytest":
+        outcomes["Run tests"] = "failure"
+    conclusion = "failure" if "failure" in outcomes.values() else "success"
+    run: dict[str, object] = {
+        "id": 75,
+        "run_attempt": 1 if case == "wrong-attempt" else 2,
+        "repository": {"full_name": _REPOSITORY},
+        "head_repository": {"full_name": _REPOSITORY},
+        "path": (
+            ".github/workflows/other.yml"
+            if case == "wrong-source"
+            else ".github/workflows/quality.yml"
+        ),
+        "event": event,
+        "head_sha": _REVISION if case == "wrong-head" else _PR_HEAD,
+        "head_branch": "other" if case == "wrong-branch" else branch,
+        "status": "completed",
+        "conclusion": "failure" if case == "contradictory-run" else conclusion,
+    }
+    job: dict[str, object] = {
+        "id": 101,
+        "run_id": 75,
+        "run_attempt": 2,
+        "head_sha": _REVISION if case == "wrong-job-head" else _PR_HEAD,
+        "name": "quality",
+        "status": "completed",
+        "conclusion": conclusion,
+        "steps": [
+            {"name": name, "number": number, "status": "completed", "conclusion": outcome}
+            for number, (name, outcome) in enumerate(outcomes.items(), 1)
+        ],
+    }
+
+    def read(repo: str, token: str, path: str) -> object:
+        assert repo == _REPOSITORY and token
+        if path == endpoint:
+            return run
+        if path == f"{endpoint}/jobs":
+            return {"total_count": 1, "jobs": [] if case == "missing-job" else [job]}
+        if path == f"git/commits/{definition}":
+            return {
+                "sha": definition,
+                "parents": [
+                    {"sha": _REVISION},
+                    {"sha": "c" * 40 if case == "wrong-parent" else _PR_HEAD},
+                ],
+            }
+        for revision in (_PR_HEAD, definition):
+            if path == f"contents/.github/workflows/quality.yml?ref={revision}":
+                wrong = (case == "wrong-definition-blob" and revision == definition) or (
+                    case == "wrong-target-blob" and revision == _PR_HEAD
+                )
+                return {
+                    "path": ".github/workflows/quality.yml",
+                    "type": "file",
+                    "sha": "d" * 40 if wrong else workflow_blob,
+                }
+        raise AssertionError(path)
+
+    def log_read(repo: str, token: str, job_id: int) -> str:
+        assert repo == _REPOSITORY and token and job_id == 101
+        checkout = _REVISION if case == "wrong-checkout" else _PR_HEAD
+        return "\n".join(
+            [
+                "##[group]Run actual_sha=$(git rev-parse HEAD)",
+                "##[endgroup]",
+                f"quality_repository={_REPOSITORY}",
+                f"quality_target_sha={_PR_HEAD}",
+                f"quality_checkout_sha={checkout}",
+                f"quality_definition_sha={definition}",
+                "quality_run_id=75",
+                "quality_run_attempt=2",
+                "##[group]Run astral-sh/setup-uv@v6",
+            ]
+        )
+
+    observe = getattr(resource, "read_native_quality_verdict", None)
+    assert callable(observe), "native quality must observe the actual ordinary producer"
+    assert (
+        observe(
+            _REPOSITORY,
+            "token",
+            revision=_PR_HEAD,
+            branch=branch,
+            workflow_blob=workflow_blob,
+            run_id=75,
+            run_attempt=2,
+            event=event,
+            read=read,
+            log_read=log_read,
+        )
+        == expected
+    )
+
+
 def test_candidate_checkout_uses_actions_compatible_basic_auth() -> None:
     environment = resource._candidate_subprocess_environment(_FIXTURE_VALUE)
 
