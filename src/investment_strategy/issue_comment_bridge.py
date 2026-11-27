@@ -6517,24 +6517,51 @@ def _settled_development_prefix(
     seen_dispatch: set[int] = set()
     seen_revisions: set[str] = set()
     try:
-        for stamp, record in ordered:
+        for index, (stamp, record) in enumerate(ordered):
             completion = accepted_state(record, source)
             obligation = completion.quality_obligation
             digest = _accepted_decision_sha256(record, issue_comments)
-            if (
-                obligation is None
-                or digest is None
-                or completion.state != "RESUMABLE"
-                or _quality_time(obligation.accepted_at) != stamp
-                or obligation.revision in seen_revisions
-            ):
+            if digest is None or completion.request_comment_id != record.request_comment_id:
                 return None
+            if obligation is None:
+                # The final accepted owner may still have an incomplete or
+                # unknown effect. Qualify its exact Original and intended
+                # carrier preimage, not an invented completed write.
+                if (
+                    index != len(ordered) - 1
+                    or prior is None
+                    or completion.state not in ("RESUMABLE", "INVALID")
+                ):
+                    return None
+                original = _qualified_physical_original_accepted_effects(
+                    record=record, source=source, repository=repository, token=token, read=read
+                )
+                if original is None or not _implementation_development_save(original):
+                    return None
+                materialization = find_materialization_payload(
+                    json.loads(original.effects[0].payload_json), source
+                )
+                if materialization is None:
+                    return None
+                carrier_branch = materialization.branch
+                carrier_base = materialization.base_sha
+                default_branch = prior[1].default_branch
+            else:
+                if (
+                    completion.state != "RESUMABLE"
+                    or _quality_time(obligation.accepted_at) != stamp
+                    or obligation.revision in seen_revisions
+                ):
+                    return None
+                carrier_branch = obligation.branch
+                carrier_base = obligation.carrier_base
+                default_branch = obligation.default_branch
             receipt = _development_acceptance_source(
                 repository,
                 token,
                 source=source,
                 record=record,
-                default_branch=obligation.default_branch,
+                default_branch=default_branch,
                 read=read,
             )
             ingress = _quality_time(ingress_times.get(record.request_comment_id))
@@ -6546,9 +6573,13 @@ def _settled_development_prefix(
                 previous, old, previous_digest, previous_stamp = prior
                 if (
                     previous.change != record.change
-                    or old.branch != obligation.branch
-                    or old.carrier_revision != obligation.carrier_revision
-                    or obligation.carrier_base != old.revision
+                    or old.branch != carrier_branch
+                    or old.default_branch != default_branch
+                    or (
+                        obligation is not None
+                        and old.carrier_revision != obligation.carrier_revision
+                    )
+                    or carrier_base != old.revision
                 ):
                     return None
                 boundary = _development_planning_boundary(
@@ -6612,6 +6643,8 @@ def _settled_development_prefix(
                     read=read,
                 ):
                     return None
+            if obligation is None:
+                return record, completion
             seen_dispatch.add(receipt.dispatch_request_comment_id)
             seen_revisions.add(obligation.revision)
             prior = record, obligation, digest, stamp
