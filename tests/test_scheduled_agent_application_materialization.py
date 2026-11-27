@@ -5988,6 +5988,65 @@ def test_exact_accepted_preimage_preserves_witness_across_legal_second_commit(
     assert proof_git.mutations == []
 
 
+@pytest.mark.parametrize("changed_input", ["none", "artifact", "dependency", "config", "validator"])
+def test_shared_artifact_witness_retains_original_and_observes_relevant_inputs(
+    proof_git: _ProofGitRepository, changed_input: str
+) -> None:
+    """Exercise the shared seam, not #473 artifact-specific admission or validation."""
+    fixture = proof_git
+    inputs = {
+        "artifact": fixture.path,
+        "dependency": f"openspec/specs/{_CHANGE}/spec.md",
+        "config": "openspec/config.yaml",
+        "validator": ".github/workflows/openspec-validate.yml",
+    }
+    fixture.base = fixture.commit(
+        {path: f"original {kind}" for kind, path in inputs.items()},
+        "Qualified artifact inputs",
+        (fixture.base,),
+    )
+    fixture.authorization = fixture.base
+    fixture.main = fixture.base
+    fixture.prs.clear()
+    fixture.install_pr(324, fixture.branch, fixture.base)
+    fixture.set_head(fixture.base)
+    payload = fixture.payload()
+    saved = fixture.commit(
+        {fixture.path: "accepted content"}, fixture.message, (fixture.base,)
+    )
+    fixture.set_head(saved)
+    first = _prove_payload_git(fixture, payload, accepted_intent=True)
+    assert first.disposition == "COMPLETE", first
+    assert first.witness is not None and first.witness.revision == saved
+    assert first.target is not None and first.target.revision == saved
+
+    # A later qualified carrier changes current inputs, never the saved W.
+    changed_path = "README.md" if changed_input == "none" else inputs[changed_input]
+    current = fixture.commit({changed_path: "new input"}, "Later authorized work", (saved,))
+    fixture.set_head(current)
+    observed = _prove_payload_git(fixture, payload, accepted_intent=True)
+    assert observed.disposition == "COMPLETE", observed
+    assert observed.witness == first.witness
+    assert observed.target is not None and observed.target.revision == current
+
+    def identities(revision: str) -> tuple[str | None, ...]:
+        return tuple(
+            validation_resource._content_sha_at(
+                fixture.repository, _TOKEN, path=path, revision=revision
+            )
+            for path in inputs.values()
+        )
+
+    # The test oracle compares actual content identities; the artifact-local
+    # evidence owner remains #473. Historical persistence alone is not reuse
+    # authority for a changed dependency or validator.
+    historical, applicable = identities(saved), identities(current)
+    assert all(identity is not None for identity in historical + applicable)
+    assert (historical == applicable) is (changed_input == "none")
+    assert _apply_git(fixture, payload=payload, accepted_intent=True) == observed.target
+    assert fixture.mutations == []
+
+
 def test_separate_forward_correction_git_witness_does_not_launder_original_unknown(
     proof_git: _ProofGitRepository,
 ) -> None:

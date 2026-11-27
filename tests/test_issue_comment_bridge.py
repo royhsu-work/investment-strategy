@@ -11340,6 +11340,9 @@ def test_saved_development_obligation_drives_native_bridge_output(
         "missing-job",
         "incomplete-runs",
         "edited-dispatch",
+        "historical-rerun",
+        "historical-wrong-attempt",
+        "historical-wrong-digest",
     ],
 )
 def test_development_ingress_requires_one_exact_native_dispatch_source(
@@ -11440,6 +11443,26 @@ def test_development_ingress_requires_one_exact_native_dispatch_source(
         "created_at": "2026-09-03T03:45:58Z",
     }
 
+    historical = case.startswith("historical-")
+    latest_run = (
+        {**run, "run_attempt": 2, "updated_at": "2026-09-03T03:50:00Z"}
+        if historical
+        else run
+    )
+    expected_source = (
+        {
+            "dispatch_request_comment_id": 987,
+            "run_id": 77,
+            "run_attempt": 2 if case == "historical-wrong-attempt" else 1,
+            "job_id": 78,
+            "artifact_id": 79,
+            "artifact_digest": "sha256:" + "0" * 64 if case == "historical-wrong-digest" else digest,
+            "authorization_revision": REVISION,
+        }
+        if historical
+        else None
+    )
+
     def read(_repo: str, _token: str, path: str) -> object:
         if path == "issues/comments/986":
             return ingress
@@ -11450,9 +11473,18 @@ def test_development_ingress_requires_one_exact_native_dispatch_source(
         if path.startswith("issues/142/comments?"):
             return comments
         if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?"):
-            return {"total_count": 2 if case == "incomplete-runs" else 1, "workflow_runs": [run]}
-        if path in ("actions/runs/77", "actions/runs/77/attempts/1"):
+            return {
+                "total_count": 2 if case == "incomplete-runs" else 1,
+                "workflow_runs": [latest_run],
+            }
+        if path == "actions/runs/77":
+            return latest_run
+        if path == "actions/runs/77/attempts/1":
             return run
+        if path == "actions/runs/77/attempts/2":
+            return latest_run
+        if path == "actions/artifacts/79":
+            return metadata
         if path.startswith("actions/runs/77/attempts/1/jobs"):
             return {"total_count": 1, "jobs": [] if case == "missing-job" else [job]}
         if path.startswith("actions/runs/77/artifacts?"):
@@ -11470,8 +11502,9 @@ def test_development_ingress_requires_one_exact_native_dispatch_source(
         current_revision=REVISION,
         default_branch="main",
         read=read,
+        expected_source=expected_source,
     )
-    if case in {"exact", "closed-shard"}:
+    if case in {"exact", "closed-shard", "historical-rerun"}:
         assert proof is not None
         assert proof.dispatch_request_comment_id == 987
         assert proof.run_id == 77 and proof.run_attempt == 1
@@ -11513,6 +11546,8 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
         ("ambiguous-order", "AMBIGUOUS"),
         ("latest-pending", "RESUMABLE"),
         ("latest-unknown", "INVALID"),
+        ("invalidated-input", "AMBIGUOUS"),
+        ("rollover", "COMPLETE"),
     ],
 )
 def test_development_frontier_retires_only_causal_saved_prefix(
@@ -11595,6 +11630,8 @@ def _assert_saved_development_frontier(
         "created_at": "2026-09-18T00:00:00Z",
         "updated_at": "2026-09-18T00:00:00Z",
     }
+    if history == "rollover":
+        prior_request["issue_url"] = f"https://api.github.com/repos/{repository}/issues/141"
     prior_worker["_native_development_dispatch"] = asdict(prior_receipt)
     prior_worker["_semantic_intent_version"] = 2
     prior_encoded = base64.b64encode(json.dumps(prior_worker).encode()).decode()
@@ -11632,7 +11669,7 @@ def _assert_saved_development_frontier(
             "accepted_decision_sha256": prior_digest,
             "revision": prior_saved,
             "branch": branch,
-            "workflow_blob": producer,
+            "workflow_blob": "d" * 40 if history == "invalidated-input" else producer,
             "obligation_id": prior_obligation.obligation_id,
             "authorization_revision": REVISION,
             "attempts": [asdict(prior_verdict)],
@@ -11681,8 +11718,12 @@ def _assert_saved_development_frontier(
     shard = [request, dispatch, *([own] if phase_a else [])]
     accepted_comments = [accepted]
     if history is not None:
-        shard.insert(0, prior_request)
+        if history != "rollover":
+            shard.insert(0, prior_request)
         accepted_comments.insert(0, prior)
+    global_comments = [*shard, *accepted_comments]
+    if history == "rollover":
+        global_comments.insert(0, prior_request)
     issue = {
         **_current_source_issue(),
         "body": f"Change: {change}",
@@ -11738,14 +11779,14 @@ def _assert_saved_development_frontier(
         if path.startswith("issues/142/comments?"):
             return shard
         if path.startswith("issues/comments?"):
-            return [*shard, *accepted_comments]
+            return global_comments
         if path == "issues/138":
             return issue
         if path.startswith("issues/138/timeline?"):
             return []
         if path.startswith("issues/comments/"):
             return next(
-                item for item in [*shard, *accepted_comments] if path.endswith(f"/{item['id']}")
+                item for item in global_comments if path.endswith(f"/{item['id']}")
             )
         if path == "actions/runs/60/attempts/1/jobs":
             return {

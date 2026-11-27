@@ -8397,7 +8397,17 @@ def test_archive_findings_require_exact_carrier_identity(
     assert bridge._field(formal, "Revision") == head
 
 
-@pytest.mark.parametrize("case", ["exact", "missing-source", "pending-save", "competing-ingress"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "exact",
+        "missing-source",
+        "pending-save",
+        "competing-ingress",
+        "settled-predecessor",
+        "wrong-predecessor-base",
+    ],
+)
 def test_development_phase_a_requalifies_native_source_and_shared_frontier(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: str
 ) -> None:
@@ -8466,6 +8476,28 @@ def test_development_phase_a_requalifies_native_source_and_shared_frontier(
     receipt = dispatch.DevelopmentDispatchSource(
         101, 77, 1, 78, 79, "sha256:" + "1" * 64, _REVISION
     )
+    prior_record = _accepted_record(
+        json.dumps(worker),
+        body,
+        source=source,
+        change=_CHANGE,
+        result_kind="more-implementation-required",
+        request_comment_id=100,
+    )
+    prior_digest = "1" * 64
+    prior_obligation = dispatch.NativeQualityObligation(
+        "a" * 40 if case == "wrong-predecessor-base" else head,
+        f"agent/{_CHANGE}",
+        "2" * 40,
+        "3" * 64,
+        "2026-09-03T00:00:00Z",
+        "main",
+        head,
+        _REVISION,
+    )
+    prior_attempt = dispatch.NativeQualityAttempt(
+        66, 1, "PYTEST_STEP_FAILURE", 67, head, head, None
+    )
     seen: list[str] = []
 
     def native_source(*_args: object, **kwargs: object) -> object:
@@ -8485,21 +8517,45 @@ def test_development_phase_a_requalifies_native_source_and_shared_frontier(
             return dispatch.ApplicationCompletion("RESUMABLE", "verification-obligation-pending")
         if case == "competing-ingress":
             return dispatch.ApplicationCompletion("AMBIGUOUS", "competing-ingress")
+        if case in {"settled-predecessor", "wrong-predecessor-base"}:
+            return dispatch.ApplicationCompletion(
+                "COMPLETE",
+                "settled",
+                100,
+                accepted_record=prior_record,
+                accepted_decision_sha256=prior_digest,
+                quality_observation=dispatch.NativeQualityObservation("FAIL", (prior_attempt,)),
+                settled_quality_obligation=prior_obligation,
+            )
         return dispatch.ApplicationCompletion("NONE", "application-completion-none")
 
     class AcceptBoundaryReached(Exception):
         pass
 
     def accept(raw: str, **_kwargs: object) -> object:
-        assert case == "exact", "unqualified development ingress reached ACCEPT"
-        assert json.loads(raw)["_native_development_dispatch"] == asdict(receipt)
+        assert case in {"exact", "settled-predecessor"}, "unqualified ingress reached ACCEPT"
+        document = json.loads(raw)
+        assert document["_native_development_dispatch"] == asdict(receipt)
+        if case == "settled-predecessor":
+            assert document["_native_development_predecessor"] == {
+                "request_comment_id": 100,
+                "accepted_decision_sha256": prior_digest,
+                "revision": head,
+                "branch": f"agent/{_CHANGE}",
+                "workflow_blob": "2" * 40,
+                "obligation_id": "3" * 64,
+                "authorization_revision": _REVISION,
+                "attempts": [asdict(prior_attempt)],
+            }
+        else:
+            assert "_native_development_predecessor" not in document
         seen.append("accept")
         raise AcceptBoundaryReached
 
     monkeypatch.setattr(dispatch, "qualify_development_dispatch_source", native_source)
     monkeypatch.setattr(dispatch, "qualify_application_completion", shared_frontier)
     monkeypatch.setattr(bridge, "run_guarded_effect_application", accept)
-    if case == "exact":
+    if case in {"exact", "settled-predecessor"}:
         with pytest.raises(AcceptBoundaryReached):
             bridge._main_unprotected(bridge.ApplicationExceptionContext())
         assert seen == ["native-source", "shared-frontier", "accept"]
