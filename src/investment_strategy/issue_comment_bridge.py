@@ -2382,9 +2382,12 @@ def read_native_quality_history(
             observed = read(repository, token, endpoint)
         except (OSError, RuntimeError, TypeError, ValueError):
             observed = None
-        if number == latest and isinstance(observed, Mapping):
-            if (observed.get("status"), observed.get("conclusion")) != (status, conclusion):
-                return None
+        if (
+            number == latest
+            and isinstance(observed, Mapping)
+            and (observed.get("status"), observed.get("conclusion")) != (status, conclusion)
+        ):
+            return None
 
         def exact_read(repo: str, credential: str, path: str) -> object:
             # Bind the classifier to the same exact source used for comparison,
