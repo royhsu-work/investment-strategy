@@ -84,6 +84,7 @@ def test_quality_proves_checkout_before_running_quality_commands(matching: bool)
         assert witness.returncode != 0
         assert "quality_checkout_sha=" not in witness.stdout
 
+
 @pytest.mark.parametrize(
     "case",
     [
