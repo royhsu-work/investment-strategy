@@ -11014,3 +11014,250 @@ def test_native_r9_handoff_cannot_substitute_for_real_application_qualifier() ->
     assert "issues/comments/9001" in read_paths
     assert "git/ref/heads/main" in read_paths
     assert all(not path.startswith(("POST ", "PATCH ", "DELETE ")) for path in read_paths)
+
+
+@pytest.mark.parametrize(
+    ("case", "expected", "will_call"),
+    [
+        ("valid", "NO_WORK", True),
+        ("pending", "NO_WORK", False),
+        ("unknown", "NO_WORK", False),
+        ("stale-definition", "NO_WORK", False),
+        ("incomplete-write", "FAIL_CLOSED", False),
+        ("active-application", "FAIL_CLOSED", False),
+    ],
+)
+def test_saved_development_obligation_drives_native_bridge_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    case: str,
+    expected: str,
+    will_call: bool,
+) -> None:
+    from investment_strategy.scheduled_agent_application_materialization import (
+        MaterializationProof,
+        MaterializationRevisions,
+        MaterializationWitness,
+    )
+    from investment_strategy.scheduled_agent_validation_resource import ValidationResourceTarget
+
+    repository = "owner/repo"
+    saved, producer = "a" * 40, "b" * 40
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    change = "native-quality"
+    branch = "agent/native-quality"
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+        action=source.action,
+        role=source.role,
+        result_kind="more-implementation-required",
+        change=change,
+    )
+    lines = cast(str, request["body"]).splitlines()
+    worker = json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: ")))
+    payload = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": change,
+        "change": change,
+        "branch": branch,
+        "base_sha": REVISION,
+        "message": "Save test work",
+        "files": [
+            {
+                "path": "tests/test_native_quality.py",
+                "expected_blob_sha": "1" * 40,
+                "desired_blob_sha": "2" * 40,
+            }
+        ],
+        "pr_number": 139,
+    }
+    worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(payload)}
+    ]
+    encoded = base64.b64encode(json.dumps(worker).encode()).decode()
+    request["body"] = "\n".join((lines[0], lines[1], f"Worker-Result-B64: {encoded}"))
+    accepted = _application_decision_comment(request)
+    accepted["updated_at"] = accepted["created_at"]
+    accepted["issue_url"] = f"https://api.github.com/repos/{repository}/issues/138"
+    record = bridge.parse_application_decision(cast(str, accepted["body"]))
+    assert record is not None
+    issue = {
+        **_current_source_issue(),
+        "title": "Implement native quality",
+        "body": f"Change: {change}",
+        "labels": [{"name": "action:implement-change"}],
+    }
+    run = {
+        "id": 75,
+        "run_attempt": 1,
+        "status": "in_progress" if case == "active-application" else "completed",
+        "conclusion": None if case == "active-application" else "success",
+        "head_sha": REVISION,
+        "head_branch": "main",
+        "repository": {"full_name": repository},
+        "head_repository": {"full_name": repository},
+        "path": ".github/workflows/scheduled-agent-application.yml",
+        "event": "issue_comment",
+        "display_title": bridge.render_application_run_name(654),
+    }
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path == "":
+            return {"full_name": repository, "default_branch": "main"}
+        if path == "issues/comments/654":
+            return request
+        if path == "issues/comments/700":
+            return accepted
+        if path.startswith("contents/.github/workflows/quality.yml?"):
+            return {
+                "type": "file",
+                "path": ".github/workflows/quality.yml",
+                "sha": producer,
+            }
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": REVISION}}
+        if path.startswith("actions/runs/75/attempts/1/jobs"):
+            return {
+                "total_count": 1,
+                "jobs": [
+                    {
+                        "id": 76,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "steps": [
+                            {
+                                "name": "Freshly authorize and apply repository-owned effects",
+                                "conclusion": "success",
+                            }
+                        ],
+                    }
+                ],
+            }
+        if path.startswith("actions/runs/75/artifacts"):
+            return {"total_count": 0, "artifacts": []}
+        return None
+
+    def prove(
+        materialization: Mapping[str, object], observed: bridge.WorkerRequest, **kw: object
+    ) -> MaterializationProof:
+        assert materialization == payload
+        assert observed == source and kw["accepted_intent"] is True
+        if case == "incomplete-write":
+            return MaterializationProof("INCOMPLETE")
+        return MaterializationProof(
+            "COMPLETE",
+            target=ValidationResourceTarget(
+                repository, saved, "correlation", 139, change, branch=branch
+            ),
+            witness=MaterializationWitness(
+                saved,
+                (("tests/test_native_quality.py", "2" * 40),),
+                MaterializationRevisions(REVISION, REVISION, REVISION, REVISION),
+            ),
+        )
+
+    def qualify(*_args: object, **_kw: object) -> bridge.ApplicationCompletion:
+        return bridge._accepted_application_state(
+            repository=repository,
+            token="token",
+            source=source,
+            record=record,
+            issue_comments=(accepted,),
+            lifecycle_events=(),
+            current_issue=issue,
+            current_revision=REVISION,
+            read=read,
+            current_dispatch_request_comment_id=987,
+        )
+
+    planned: list[str] = []
+
+    def plan(_repo: str, _token: str, **kw: object) -> bridge.NativeQualityObservation:
+        assert kw["revision"] == saved
+        assert kw["workflow_blob"] == producer
+        assert kw["branch"] == branch
+        assert kw["accepted_at"] == accepted["created_at"]
+        assert kw["request_comment_id"] == 987
+        assert kw["run_id"] == 77 and kw["run_attempt"] == 1
+        obligation = cast(str, kw["obligation_id"])
+        assert len(obligation) == 64
+        planned.append(obligation)
+        if case == "pending":
+            return bridge.NativeQualityObservation("PENDING")
+        if case == "unknown":
+            return bridge.NativeQualityObservation("INDETERMINATE")
+        return bridge.NativeQualityObservation(
+            "NO_VERDICT",
+            call=bridge._quality_call_fields(
+                repository, saved, REVISION, obligation, 987, 77, 1
+            ),
+        )
+
+    monkeypatch.setattr(bridge, "prove_materialization", prove, raising=False)
+    monkeypatch.setattr(bridge, "_application_runs", lambda *_a, **_kw: (run,))
+    monkeypatch.setattr(bridge, "_formal_consequence", lambda **_kw: False)
+    monkeypatch.setattr(bridge, "_successor_consequence_supersedes", lambda **_kw: False)
+    monkeypatch.setattr(bridge, "qualify_application_completion", qualify)
+    monkeypatch.setattr(bridge, "plan_native_quality_verification", plan)
+    monkeypatch.setattr(bridge, "acquire_current_github_preflight", lambda *_a: None)
+    monkeypatch.setattr(
+        bridge,
+        "classify_dispatch",
+        lambda _p: _decision(
+            "AUTHORIZE", issue_number=138, routing=("executor", "implement-change")
+        ),
+    )
+    monkeypatch.setenv("GITHUB_REPOSITORY", repository)
+    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "issue_comment")
+    monkeypatch.setenv("GITHUB_RUN_ID", "77")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("GITHUB_WORKFLOW_SHA", "f" * 40 if case == "stale-definition" else REVISION)
+    event_path, outputs, result_path = (
+        tmp_path / "event.json",
+        tmp_path / "outputs",
+        tmp_path / "dispatch-result.json",
+    )
+    event_path.write_text(json.dumps(_event()), encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            REVISION,
+            "--github-output",
+            str(outputs),
+            "--result-payload",
+            str(result_path),
+        ],
+    )
+    assert bridge.main() == 0
+    result = bridge.parse_dispatch_result_document(result_path.read_bytes())
+    assert result.disposition == expected
+    assert result.issue_number is None and result.action is None
+    assert result.application_continuation is None and result.qualified_carrier is None
+    output = outputs.read_text(encoding="utf-8")
+    if expected == "NO_WORK":
+        assert result.reason == "verification-obligation-pending"
+    assert ("quality_call=true" in output) == will_call
+    receipt = next(
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("native_quality_plan=")
+    )
+    if will_call:
+        assert len(planned) == 1
+        fields = json.loads(receipt.split("=", 1)[1])
+        assert fields["quality_obligation"] == planned[0]
+        assert f"quality_target_revision={saved}" in output
+        assert "quality_result=verification-obligation-pending" in output
+    else:
+        assert receipt == "native_quality_plan=none"
+
