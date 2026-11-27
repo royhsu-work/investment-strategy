@@ -139,6 +139,35 @@ def test_native_quality_verdict_requires_exact_job_and_ordered_steps(
         == expected
     )
 
+@pytest.mark.parametrize(
+    ("attempts", "expected"),
+    [
+        (None, "INDETERMINATE"),
+        ((), "NO_VERDICT"),
+        (((31, 1, "NO_VERDICT"),), "NO_VERDICT"),
+        (((31, 1, "PENDING"),), "PENDING"),
+        (((31, 1, "PASS"), (32, 1, "PASS")), "PASS"),
+        (((31, 1, "PASS"), (32, 1, "NO_VERDICT")), "PASS"),
+        (((31, 1, "PASS"), (32, 1, "INDETERMINATE")), "INDETERMINATE"),
+        (((31, 1, "PASS"), (32, 1, "PENDING")), "PENDING"),
+        (((31, 1, "PASS"), (31, 1, "PASS")), "INDETERMINATE"),
+        (((31, 1, "PASS"), (31, 1, "PYTEST_STEP_FAILURE")), "INDETERMINATE"),
+        (((31, 1, "PASS"), (32, 1, "PYTEST_STEP_FAILURE")), "CONFLICT"),
+        (((31, 1, "PYTEST_STEP_FAILURE"), (32, 1, "PASS")), "CONFLICT"),
+        (((31, 1, "PYTEST_STEP_FAILURE"), (31, 2, "PASS")), "CONFLICT"),
+        (((31, 1, "STATIC_STEP_FAILURE"), (32, 1, "PYTEST_STEP_FAILURE")), "FAIL"),
+    ],
+)
+def test_native_quality_frontier_uses_complete_distinct_attempts(
+    attempts: tuple[tuple[int, int, str], ...] | None, expected: str
+) -> None:
+    observe = getattr(resource, "reduce_native_quality_attempts", None)
+    attempt = getattr(resource, "NativeQualityAttempt", None)
+    assert callable(observe) and callable(attempt), "native quality needs an attempt reducer"
+
+    evidence = None if attempts is None else tuple(attempt(*item) for item in attempts)
+    assert observe(evidence) == expected
+
 
 def test_candidate_checkout_uses_actions_compatible_basic_auth() -> None:
     environment = resource._candidate_subprocess_environment(_FIXTURE_VALUE)
