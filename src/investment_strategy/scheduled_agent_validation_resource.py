@@ -1356,7 +1356,14 @@ def read_native_quality_attempt(
                 return unknown
         if verdict is None:
             return no_verdict
-        return NativeQualityAttempt(run_id, run_attempt, verdict)
+        return NativeQualityAttempt(
+            run_id,
+            run_attempt,
+            verdict,
+            job_id=job_id,
+            checkout_revision=revision,
+            definition_revision=definition_sha,
+        )
     except (OSError, RuntimeError, TypeError, ValueError):
         return unknown
 
@@ -1375,6 +1382,10 @@ class NativeQualityAttempt:
         "PENDING",
         "INDETERMINATE",
     ]
+    job_id: int | None = None
+    checkout_revision: str | None = None
+    definition_revision: str | None = None
+    source_comment_id: int | None = None
 
 
 def reduce_native_quality_attempts(

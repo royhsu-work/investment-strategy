@@ -2756,7 +2756,15 @@ def _quality_bridge_attempt(
     if verdict is None:
         return unknown
     if obligation_id is None or gate == obligation_id:
-        return NativeQualityAttempt(run_id, attempt, verdict)
+        return NativeQualityAttempt(
+            run_id,
+            attempt,
+            verdict,
+            job_id=cast(int, quality["id"]),
+            checkout_revision=target,
+            definition_revision=definition,
+            source_comment_id=source,
+        )
     return absent
 
 
