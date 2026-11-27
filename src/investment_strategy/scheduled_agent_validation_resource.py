@@ -1069,6 +1069,51 @@ def qualify_native_quality_job(
     return "PYTEST_STEP_FAILURE" if failed == len(outcomes) - 1 else "STATIC_STEP_FAILURE"
 
 
+@dataclass(frozen=True)
+class NativeQualityAttempt:
+    """One attempt observation for an already selected exact quality gate."""
+
+    run_id: int
+    run_attempt: int
+    outcome: Literal[
+        "PASS",
+        "STATIC_STEP_FAILURE",
+        "PYTEST_STEP_FAILURE",
+        "NO_VERDICT",
+        "PENDING",
+        "INDETERMINATE",
+    ]
+
+
+def reduce_native_quality_attempts(
+    attempts: tuple[NativeQualityAttempt, ...] | None,
+) -> Literal["PASS", "FAIL", "CONFLICT", "NO_VERDICT", "PENDING", "INDETERMINATE"]:
+    """Reduce every attempt for one exact gate without granting dispatch authority.
+
+    The caller supplies a complete inventory or None. NO_VERDICT on an attempt
+    requires positively observed terminal evidence, including a qualified absence
+    of a usable job. Attempts used for historical settlement remain available
+    independently of this current aggregate.
+    """
+    if attempts is None:
+        return "INDETERMINATE"
+    identities = {(item.run_id, item.run_attempt) for item in attempts}
+    if len(identities) != len(attempts) or any(
+        type(value) is not int or value <= 0 for identity in identities for value in identity
+    ):
+        return "INDETERMINATE"
+
+    failures = {"STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"}
+    outcomes = {item.outcome for item in attempts}
+    if not outcomes <= {"PASS", "NO_VERDICT", "PENDING", *failures}:
+        return "INDETERMINATE"
+    if "PENDING" in outcomes:
+        return "PENDING"
+    if outcomes & failures:
+        return "CONFLICT" if "PASS" in outcomes else "FAIL"
+    return "PASS" if "PASS" in outcomes else "NO_VERDICT"
+
+
 _IMPLEMENTATION_VERIFICATION_COMMANDS: tuple[tuple[str, ...], ...] = (
     ("uv", "run", "pytest"),
     ("uv", "run", "ruff", "check", "."),
