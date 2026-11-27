@@ -354,6 +354,144 @@ def test_native_quality_verdict_reads_exact_ordinary_producer(
     )
 
 
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("active", "PENDING"),
+        ("missing-attempt", "INDETERMINATE"),
+        ("skipped", "NO_VERDICT"),
+        ("canceled", "NO_VERDICT"),
+        ("setup-failure", "NO_VERDICT"),
+        ("proof-failure", "INDETERMINATE"),
+        ("success-no-job", "INDETERMINATE"),
+        ("incomplete-jobs", "INDETERMINATE"),
+        ("active-job-terminal-run", "INDETERMINATE"),
+        ("missing-witness", "INDETERMINATE"),
+        ("contradictory-run", "INDETERMINATE"),
+        ("wrong-attempt", "INDETERMINATE"),
+        ("unknown-status", "INDETERMINATE"),
+        ("pass", "PASS"),
+    ],
+)
+def test_native_quality_attempt_distinguishes_no_verdict_from_unknown(
+    case: str, expected: str
+) -> None:
+    branch = "agent/" + _CHANGE
+    endpoint = "actions/runs/75/attempts/2"
+    workflow_blob = "b" * 40
+    workflow_path = ".github/workflows/quality.yml"
+    names = (
+        "Set up job",
+        "Run actions/checkout@v4",
+        "Prove exact quality checkout",
+        "Run astral-sh/setup-uv@v6",
+        "Run actions/setup-python@v5",
+        "Ruff lint",
+        "Ruff format check",
+        "Mypy",
+        "Run tests",
+    )
+    outcomes = ["success"] * len(names)
+    conclusion = "success"
+    if case in {"setup-failure", "proof-failure", "canceled"}:
+        failure = {"setup-failure": 3, "proof-failure": 2, "canceled": 8}[case]
+        conclusion = "cancelled" if case == "canceled" else "failure"
+        outcomes[failure:] = [conclusion] + ["skipped"] * (len(names) - failure - 1)
+    if case == "skipped":
+        conclusion = "skipped"
+    run: dict[str, object] = {
+        "id": 75,
+        "run_attempt": 1 if case == "wrong-attempt" else 2,
+        "repository": {"full_name": _REPOSITORY},
+        "head_repository": {"full_name": _REPOSITORY},
+        "head_sha": _PR_HEAD,
+        "head_branch": branch,
+        "path": workflow_path,
+        "event": "push",
+        "status": "completed",
+        "conclusion": conclusion,
+    }
+    if case in {"active", "unknown-status"}:
+        run.update(
+            {
+                "status": "in_progress" if case == "active" else "unknown",
+                "conclusion": None,
+            }
+        )
+    if case == "contradictory-run":
+        run["conclusion"] = "failure"
+    job: dict[str, object] = {
+        "id": 101,
+        "run_id": 75,
+        "run_attempt": 2,
+        "head_sha": _PR_HEAD,
+        "name": "quality",
+        "status": "completed",
+        "conclusion": conclusion,
+        "steps": [
+            {
+                "name": name,
+                "number": number,
+                "status": "completed",
+                "conclusion": outcome,
+            }
+            for number, (name, outcome) in enumerate(zip(names, outcomes, strict=True), 1)
+        ],
+    }
+    if case == "active-job-terminal-run":
+        job.update({"status": "in_progress", "conclusion": None})
+
+    def read(repository: str, token: str, path: str) -> object:
+        assert repository == _REPOSITORY and token
+        if path == endpoint:
+            return None if case == "missing-attempt" else run
+        if path in (f"{endpoint}/jobs", f"{endpoint}/jobs?per_page=100&page=1"):
+            if case in {"skipped", "success-no-job"}:
+                return {"total_count": 0, "jobs": []}
+            if case == "incomplete-jobs":
+                return {"total_count": 1, "jobs": []}
+            if case == "active":
+                return None
+            return {"total_count": 1, "jobs": [job]}
+        if path == f"contents/{workflow_path}?ref={_PR_HEAD}":
+            return {"path": workflow_path, "type": "file", "sha": workflow_blob}
+        raise AssertionError(path)
+
+    def log_read(repository: str, token: str, job_id: int) -> str:
+        assert repository == _REPOSITORY and token and job_id == 101
+        if case in {"missing-witness", "proof-failure"}:
+            return ""
+        return "\n".join(
+            [
+                "##[group]Run actual_sha=$(git rev-parse HEAD)",
+                "##[endgroup]",
+                f"quality_repository={_REPOSITORY}",
+                f"quality_target_sha={_PR_HEAD}",
+                f"quality_checkout_sha={_PR_HEAD}",
+                f"quality_definition_sha={_PR_HEAD}",
+                "quality_run_id=75",
+                "quality_run_attempt=2",
+                "##[group]Run astral-sh/setup-uv@v6",
+            ]
+        )
+
+    observe = getattr(resource, "read_native_quality_attempt", None)
+    assert callable(observe), "native quality must distinguish terminal no-verdict from unknown"
+    attempt = observe(
+        _REPOSITORY,
+        "token",
+        revision=_PR_HEAD,
+        branch=branch,
+        workflow_blob=workflow_blob,
+        run_id=75,
+        run_attempt=2,
+        event="push",
+        read=read,
+        log_read=log_read,
+    )
+    assert (attempt.run_id, attempt.run_attempt, attempt.outcome) == (75, 2, expected)
+
+
 def test_candidate_checkout_uses_actions_compatible_basic_auth() -> None:
     environment = resource._candidate_subprocess_environment(_FIXTURE_VALUE)
 
