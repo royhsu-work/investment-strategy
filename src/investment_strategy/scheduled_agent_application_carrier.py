@@ -911,6 +911,7 @@ def _accepted_formal_result_is_proven(
     retired_number: int,
     retired_branch: str,
     retired_head: str | None = None,
+    retired_closed_at: datetime | None = None,
     event: object,
     comments: tuple[Mapping[str, object], ...],
     read: GitHubReader,
@@ -957,10 +958,10 @@ def _accepted_formal_result_is_proven(
             continue
         decision = parse_application_decision(comment.get("body"))
         if decision is not None and decision.request_comment_id == request_id:
-            decisions.append(decision)
+            decisions.append((decision, _timestamp(comment.get("created_at"))))
     if len(decisions) != 1:
         return False
-    decision = decisions[0]
+    decision, accepted_at = decisions[0]
     if (
         decision.disposition != "ACCEPTED"
         or (decision.issue_number, decision.change) != (issue_number, change)
@@ -1066,6 +1067,8 @@ def _accepted_formal_result_is_proven(
         # Every eligible Lead result retains the same exact close obligation.
         # The intent, not PR closure or replacement readiness, must name one
         # existing PR/head and request only its closure.
+        if retired_closed_at is None or accepted_at is None or accepted_at > retired_closed_at:
+            return False
         effects = intent.get("requested_effects")
         if not isinstance(effects, list) or len(effects) != 1 or retired_head is None:
             return False
@@ -1139,6 +1142,7 @@ def _accepted_lead_retirement(
             retired_number=retired_number,
             retired_branch=retired_branch,
             retired_head=retired_head,
+            retired_closed_at=closed_at,
             event=event,
             comments=comments,
             read=read,
