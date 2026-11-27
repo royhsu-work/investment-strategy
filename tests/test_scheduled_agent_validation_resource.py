@@ -36,6 +36,110 @@ _CHANGE = "simplify-scheduled-agent-control-plane"
 _FIXTURE_VALUE = "fixture-value"
 
 
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("pass", "PASS"),
+        ("static", "STATIC_STEP_FAILURE"),
+        ("pytest", "PYTEST_STEP_FAILURE"),
+        ("setup", None),
+        ("canceled", None),
+        ("active", None),
+        ("wrong-attempt", None),
+        ("wrong-job", None),
+        ("wrong-definition", None),
+        ("wrong-checkout", None),
+        ("missing-witness", None),
+        ("late-witness", None),
+        ("duplicate-witness", None),
+        ("missing-step", None),
+        ("continued-after-failure", None),
+        ("contradictory-conclusion", None),
+    ],
+)
+def test_native_quality_verdict_requires_exact_job_and_ordered_steps(
+    case: str, expected: str | None
+) -> None:
+    names = (
+        "Set up job",
+        "Run actions/checkout@v4",
+        "Prove exact quality checkout",
+        "Run astral-sh/setup-uv@v6",
+        "Run actions/setup-python@v5",
+        "Ruff lint",
+        "Ruff format check",
+        "Mypy",
+        "Run tests",
+    )
+    outcomes = dict.fromkeys(names, "success")
+    if case in {"static", "continued-after-failure"}:
+        outcomes["Ruff format check"] = "failure"
+        if case == "static":
+            outcomes.update({"Mypy": "skipped", "Run tests": "skipped"})
+    elif case == "pytest":
+        outcomes["Run tests"] = "failure"
+    elif case == "setup":
+        outcomes["Run actions/setup-python@v5"] = "failure"
+        outcomes.update(dict.fromkeys(names[5:], "skipped"))
+    elif case == "missing-step":
+        del outcomes["Mypy"]
+
+    job: dict[str, object] = {
+        "id": 101 if case != "wrong-job" else 102,
+        "name": "quality",
+        "run_id": 75,
+        "run_attempt": 2 if case != "wrong-attempt" else 1,
+        "status": "completed" if case != "active" else "in_progress",
+        "conclusion": (
+            "cancelled"
+            if case == "canceled"
+            else "failure"
+            if "failure" in outcomes.values() or case == "contradictory-conclusion"
+            else "success"
+        ),
+        "steps": [
+            {"name": name, "number": index, "status": "completed", "conclusion": outcome}
+            for index, (name, outcome) in enumerate(outcomes.items(), 1)
+        ],
+    }
+    checkout = _PR_HEAD if case != "wrong-checkout" else _REVISION
+    definition = _REVISION if case != "wrong-definition" else _PR_HEAD
+    witness = [
+        f"quality_repository={_REPOSITORY}",
+        f"quality_target_sha={_PR_HEAD}",
+        f"quality_checkout_sha={checkout}",
+        f"quality_definition_sha={definition}",
+        "quality_run_id=75",
+        "quality_run_attempt=2",
+    ]
+    lines = ["##[group]Run actual_sha=$(git rev-parse HEAD)", "##[endgroup]"]
+    if case not in {"missing-witness", "late-witness"}:
+        lines.extend(witness)
+    if case == "duplicate-witness":
+        lines.extend(witness)
+    lines.append("##[group]Run astral-sh/setup-uv@v6")
+    if case == "late-witness":
+        lines.extend(witness)
+    log = "\n".join(f"2026-11-27T14:23:11.7489587Z {line}" for line in lines)
+
+    qualify = getattr(resource, "qualify_native_quality_job", None)
+    assert callable(qualify), "Validation Resource must qualify the exact native quality job"
+    assert (
+        qualify(
+            job,
+            log,
+            repository=_REPOSITORY,
+            revision=_PR_HEAD,
+            definition_sha=_REVISION,
+            run_id=75,
+            run_attempt=2,
+            job_id=101,
+            job_name="quality",
+        )
+        == expected
+    )
+
+
 def test_candidate_checkout_uses_actions_compatible_basic_auth() -> None:
     environment = resource._candidate_subprocess_environment(_FIXTURE_VALUE)
 
