@@ -7664,16 +7664,17 @@ def test_accepted_checkpoint_and_formal_projection_rebind_only_after_proven_targ
 
 
 @pytest.mark.parametrize("materialized", [False, True])
-@pytest.mark.parametrize("result_kind", ["ready", "blocked"])
-def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proof(
+@pytest.mark.parametrize("result_kind", ["ready", "blocked", "more-implementation-required"])
+def test_accepted_implementation_uses_fresh_carrier_proof_for_its_effects(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     materialized: bool,
     result_kind: str,
 ) -> None:
-    """Phase B first creates its carrier, then binds a checkpoint on a fresh wake."""
+    """A physical-only save re-observes its carrier without formal result evidence."""
     source = WorkerRequest(138, "executor", "implement-change")
     revision = "b" * 40
+    physical_only = result_kind == "more-implementation-required"
     materialization = {
         "issue_number": 138,
         "operation": "application-materialize",
@@ -7685,7 +7686,11 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
         "pr_number": 178,
         "files": [
             {
-                "path": f"openspec/changes/{_CHANGE}/tasks.md",
+                "path": (
+                    "tests/test_scheduled_agent_application_bridge.py"
+                    if physical_only
+                    else f"openspec/changes/{_CHANGE}/tasks.md"
+                ),
                 "blob_sha": "c" * 40,
                 "expected_sha": "a" * 40,
             }
@@ -7792,9 +7797,18 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
             },
         )(),
     )
-    monkeypatch.setattr(bridge, "_accepted_checkpoint_already_durable", lambda *_a, **_k: False)
-    # This scenario is explicitly precommit; no authoritative formal result exists.
-    monkeypatch.setattr(bridge, "_qualified_committed_implementation_result", lambda **_kw: None)
+
+    def formal_result(**_kwargs: object) -> None:
+        if physical_only:
+            pytest.fail("Physical save depends on an unavailable formal result lookup")
+
+    def checkpoint_status(*_args: object, **_kwargs: object) -> bool:
+        if physical_only:
+            pytest.fail("Physical save depends on legacy checkpoint evidence")
+        return False
+
+    monkeypatch.setattr(bridge, "_accepted_checkpoint_already_durable", checkpoint_status)
+    monkeypatch.setattr(bridge, "_qualified_committed_implementation_result", formal_result)
     calls: list[dict[str, object]] = []
 
     def fake_apply(raw_result: str, **kwargs: object) -> tuple[EffectBatch, bridge.ApplyResult]:
@@ -7806,8 +7820,8 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
     assert len(calls) == 1
     call = calls[0]
     assert call["accepted_intent"] is True
-    assert call["apply_derived"] is materialized
-    assert call["defer_issue_comments"] is (not materialized)
+    assert call["apply_derived"] is (materialized and not physical_only)
+    assert call["defer_issue_comments"] is (not materialized and not physical_only)
     assert call["validated_materialization_revision"] == (revision if materialized else None)
     projected = cast(dict[str, object], call["raw"])
     projected_effects = cast(list[dict[str, str]], projected["requested_effects"])
@@ -7819,7 +7833,7 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
     if result_kind == "ready":
         assert (f"Revision: {revision}" in bodies[0].splitlines()) is materialized
     else:
-        # Accepted BLOCKED materialization does not require SLICE_CHECKPOINT.
+        # Neither of these fixtures carries a checkpoint comment.
         assert bodies == []
         assert len(projected_effects) == 1
         assert projected_effects[0]["kind"] == "github-mutation"
