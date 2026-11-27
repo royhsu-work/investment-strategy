@@ -139,6 +139,7 @@ def test_native_quality_verdict_requires_exact_job_and_ordered_steps(
         == expected
     )
 
+
 @pytest.mark.parametrize(
     ("attempts", "expected"),
     [
