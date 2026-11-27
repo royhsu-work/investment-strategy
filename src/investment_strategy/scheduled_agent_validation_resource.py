@@ -1247,10 +1247,10 @@ def read_native_quality_attempt(
         setup_failure = False
         if conclusion == "failure" and outcomes is not None and "failure" in outcomes:
             failed = outcomes.index("failure")
+            skipped = ("skipped",) * (len(outcomes) - failed - 1)
             if (
                 failed < len(_NATIVE_QUALITY_SETUP_STEPS)
-                and outcomes
-                == ("success",) * failed + ("failure",) + ("skipped",) * (len(outcomes) - failed - 1)
+                and outcomes == ("success",) * failed + ("failure",) + skipped
             ):
                 if failed < 2:
                     return no_verdict
