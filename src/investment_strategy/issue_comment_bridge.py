@@ -2576,7 +2576,13 @@ def _quality_bridge_run(
 
 _QUALITY_ACTIVE = ("queued", "in_progress", "requested", "waiting", "pending")
 _QUALITY_NO_VERDICT = (
-    "cancelled", "skipped", "timed_out", "action_required", "startup_failure", "stale", "neutral"
+    "cancelled",
+    "skipped",
+    "timed_out",
+    "action_required",
+    "startup_failure",
+    "stale",
+    "neutral",
 )
 
 
@@ -2664,19 +2670,16 @@ def _quality_bridge_attempt(
         or re.fullmatch(r"[0-9a-f]{64}", gate) is None
         or not isinstance(target, str)
         or _SHA.fullmatch(target) is None
-        or plan != _quality_call_fields(
-            repository, target, definition, gate, source, run_id, attempt
-        )
+        or plan != _quality_call_fields(repository, target, definition, gate, source, run_id, attempt)
         or (gate == obligation_id and target != revision)
     ):
         return unknown
     blob = _quality_workflow_blob(repository, token, definition, read=read)
     if blob is None or (gate == obligation_id and blob != workflow_blob):
         return unknown
-    if not_called:
+    if quality is None or quality.get("conclusion") == "skipped":
         # A recorded plan may be skipped by the native dependency/identity guard.
         return absent if conclusion in ("success", *_QUALITY_NO_VERDICT) else unknown
-    assert quality is not None
     job_conclusion = quality.get("conclusion")
     if job_conclusion in _QUALITY_NO_VERDICT:
         return absent if conclusion == job_conclusion else unknown
@@ -2762,7 +2765,8 @@ def plan_native_quality_verification(
             if source is None or source not in requests:
                 continue
             row = _quality_bridge_run(run, repository, default_branch, source)
-            created, requested = _quality_time(run.get("created_at")), _quality_time(requests[source])
+            created = _quality_time(run.get("created_at"))
+            requested = _quality_time(requests[source])
             if row is None or source in found or created is None or requested is None:
                 return None
             if created < requested:
@@ -2772,7 +2776,12 @@ def plan_native_quality_verification(
 
     def ordinary_history(blob: str) -> tuple[NativeQualityAttempt, ...] | None:
         return read_native_quality_history(
-            repository, token, revision, branch=branch, workflow_blob=blob, read=read,
+            repository,
+            token,
+            revision,
+            branch=branch,
+            workflow_blob=blob,
+            read=read,
             log_read=log_read,
         )
 
@@ -2798,10 +2807,14 @@ def plan_native_quality_verification(
         called: list[NativeQualityAttempt] = []
         for source, latest in first.items():
             observed_run, last, definition, _, _ = latest
-            if _authorization_ancestry(
-                repository, token, authorization_revision=definition,
-                current_revision=current_revision, read=read,
-            ) is None:
+            ancestry = _authorization_ancestry(
+                repository,
+                token,
+                authorization_revision=definition,
+                current_revision=current_revision,
+                read=read,
+            )
+            if ancestry is None:
                 return unknown
             for attempt in range(1, last + 1):
                 raw = read(repository, token, f"actions/runs/{observed_run}/attempts/{attempt}")
@@ -2817,13 +2830,24 @@ def plan_native_quality_verification(
                 if source == request_comment_id and attempt == run_attempt:
                     continue
                 result = _quality_bridge_attempt(
-                    repository, token, source=source, row=row, obligation_id=obligation_id,
-                    revision=revision, workflow_blob=workflow_blob, read=read, log_read=log_read,
+                    repository,
+                    token,
+                    source=source,
+                    row=row,
+                    obligation_id=obligation_id,
+                    revision=revision,
+                    workflow_blob=workflow_blob,
+                    read=read,
+                    log_read=log_read,
                 )
                 if attempt < last and result.outcome == "PENDING":
                     return unknown
                 called.append(result)
-        if snapshot() != first or ordinary_history(target_blob) != ordinary or not main_is_current():
+        if (
+            snapshot() != first
+            or ordinary_history(target_blob) != ordinary
+            or not main_is_current()
+        ):
             return unknown
         if target_blob == workflow_blob:
             history = (*ordinary, *called)
@@ -2837,14 +2861,20 @@ def plan_native_quality_verification(
                 return NativeQualityObservation(candidate, ordinary)
             if outcome == "PASS" and candidate != "PASS":
                 return unknown
-        return NativeQualityObservation(
-            outcome,
-            history,
+        call = (
             _quality_call_fields(
-                repository, revision, current_revision, obligation_id,
-                request_comment_id, run_id, run_attempt,
-            ) if outcome == "NO_VERDICT" else None,
+                repository,
+                revision,
+                current_revision,
+                obligation_id,
+                request_comment_id,
+                run_id,
+                run_attempt,
+            )
+            if outcome == "NO_VERDICT"
+            else None
         )
+        return NativeQualityObservation(outcome, history, call)
     except (OSError, RuntimeError, TypeError, ValueError):
         return unknown
 
