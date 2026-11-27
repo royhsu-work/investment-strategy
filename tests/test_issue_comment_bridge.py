@@ -304,6 +304,177 @@ def test_native_quality_inventory_requires_complete_exact_source_runs(case: str)
         assert runs is None
 
 
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("empty", ()),
+        ("pass", ((75, 1, "PASS"),)),
+        ("retry-conflict", ((75, 1, "PYTEST_STEP_FAILURE"), (75, 2, "PASS"))),
+        ("cancel-retry", ((75, 1, "NO_VERDICT"), (75, 2, "PASS"))),
+        ("pending-retry", ((75, 1, "PASS"), (75, 2, "PENDING"))),
+        ("missing-attempt", ((75, 1, "INDETERMINATE"), (75, 2, "PASS"))),
+        ("prior-active", None),
+        ("late-pr", None),
+        ("attempt-changed", None),
+        ("wrong-ref", ()),
+        ("unknown-ref", None),
+        ("contradictory-summary", None),
+        ("short-list", None),
+        ("two-producers", ((75, 1, "PASS"), (76, 1, "PASS"))),
+    ],
+)
+def test_native_quality_history_preserves_every_exact_attempt(
+    case: str, expected: tuple[tuple[int, int, str], ...] | None
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    branch = "agent/example"
+    workflow_path = ".github/workflows/quality.yml"
+    workflow_blob = "a" * 40
+    merge_definition = "b" * 40
+    retries = {"retry-conflict", "cancel-retry", "pending-retry", "missing-attempt", "prior-active"}
+    latest = 2 if case in retries else 1
+    names = (
+        "Set up job",
+        "Run actions/checkout@v4",
+        "Prove exact quality checkout",
+        "Run astral-sh/setup-uv@v6",
+        "Run actions/setup-python@v5",
+        "Ruff lint",
+        "Ruff format check",
+        "Mypy",
+        "Run tests",
+    )
+    reads = {"push": 0, "pull_request": 0}
+
+    def source(run_id: int, attempt: int) -> dict[str, object]:
+        status, conclusion = "completed", "success"
+        conclusion_value: str | None = conclusion
+        if case in {"retry-conflict", "contradictory-summary"} and attempt == 1:
+            conclusion = "failure"
+        if case == "cancel-retry" and attempt == 1:
+            conclusion = "cancelled"
+        if (case == "pending-retry" and attempt == 2) or (case == "prior-active" and attempt == 1):
+            status, conclusion_value = "in_progress", None
+        if status == "completed":
+            conclusion_value = conclusion
+        return {
+            "id": run_id,
+            "run_attempt": attempt,
+            "event": "push" if run_id == 75 else "pull_request",
+            "path": workflow_path,
+            "repository": {"full_name": repository},
+            "head_repository": {"full_name": repository},
+            "head_sha": REVISION,
+            "head_branch": branch,
+            "status": status,
+            "conclusion": conclusion_value,
+        }
+
+    def read(repo: str, token: str, path: str) -> object:
+        assert repo == repository and token
+        url = urlsplit(path)
+        if url.path == "actions/workflows/quality.yml/runs":
+            query = parse_qs(url.query)
+            event = query["event"][0]
+            assert event in reads and query["head_sha"] == [REVISION]
+            reads[event] += 1
+            runs: list[dict[str, object]] = []
+            if event == "push" and case != "empty":
+                attempt = latest + 1 if case == "attempt-changed" and reads[event] > 1 else latest
+                row = source(75, attempt)
+                if case == "wrong-ref":
+                    row["head_branch"] = "other"
+                if case == "unknown-ref":
+                    del row["head_branch"]
+                if case == "contradictory-summary":
+                    row["conclusion"] = "success"
+                runs.append(row)
+            if event == "pull_request" and (
+                case == "two-producers" or (case == "late-pr" and reads[event] > 1)
+            ):
+                runs.append(source(76, 1))
+            return {
+                "total_count": len(runs) + (case == "short-list"),
+                "workflow_runs": runs,
+            }
+        if path == f"git/commits/{merge_definition}":
+            return {
+                "sha": merge_definition,
+                "parents": [{"sha": "c" * 40}, {"sha": REVISION}],
+            }
+        if url.path == f"contents/{workflow_path}":
+            assert parse_qs(url.query)["ref"][0] in {REVISION, merge_definition}
+            return {"path": workflow_path, "type": "file", "sha": workflow_blob}
+        if url.path.startswith("actions/runs/"):
+            parts = url.path.split("/")
+            run_id, attempt = int(parts[2]), int(parts[4])
+            assert run_id in {75, 76}
+            row = source(run_id, attempt)
+            if len(parts) == 5:
+                return None if case == "missing-attempt" and attempt == 1 else row
+            assert parts[5:] == ["jobs"]
+            conclusion = row["conclusion"]
+            assert conclusion in {"success", "failure", "cancelled"}
+            outcomes = ["success"] * len(names)
+            outcomes[-1] = cast(str, conclusion)
+            job = {
+                "id": run_id * 10 + attempt,
+                "run_id": run_id,
+                "run_attempt": attempt,
+                "head_sha": REVISION,
+                "name": "quality",
+                "status": "completed",
+                "conclusion": conclusion,
+                "steps": [
+                    {
+                        "name": name,
+                        "number": number,
+                        "status": "completed",
+                        "conclusion": outcome,
+                    }
+                    for number, (name, outcome) in enumerate(zip(names, outcomes, strict=True), 1)
+                ],
+            }
+            return {"total_count": 1, "jobs": [job]}
+        raise AssertionError(path)
+
+    def log_read(repo: str, token: str, job_id: int) -> str:
+        assert repo == repository and token
+        run_id, attempt = divmod(job_id, 10)
+        definition = REVISION if run_id == 75 else merge_definition
+        return "\n".join(
+            [
+                "##[group]Run actual_sha=$(git rev-parse HEAD)",
+                "##[endgroup]",
+                f"quality_repository={repository}",
+                f"quality_target_sha={REVISION}",
+                f"quality_checkout_sha={REVISION}",
+                f"quality_definition_sha={definition}",
+                f"quality_run_id={run_id}",
+                f"quality_run_attempt={attempt}",
+                "##[group]Run astral-sh/setup-uv@v6",
+            ]
+        )
+
+    observe = getattr(bridge, "read_native_quality_history", None)
+    assert callable(observe), "Bridge must reconstruct every exact native quality attempt"
+    history = observe(
+        repository,
+        "token",
+        REVISION,
+        branch=branch,
+        workflow_blob=workflow_blob,
+        read=read,
+        log_read=log_read,
+    )
+    actual = (
+        None
+        if history is None
+        else tuple((item.run_id, item.run_attempt, item.outcome) for item in history)
+    )
+    assert actual == expected
+
+
 def test_prior_dispatch_handoff_indexes_run_history_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
