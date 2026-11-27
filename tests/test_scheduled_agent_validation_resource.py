@@ -40,7 +40,12 @@ _FIXTURE_VALUE = "fixture-value"
 @pytest.mark.parametrize("case", ["complete", "missing", "duplicate", "wrong-attempt"])
 def test_exact_job_inventory_preserves_all_native_job_evidence(case: str) -> None:
     jobs: list[dict[str, object]] = [
-        {"id": index, "name": "other", "run_id": 75, "run_attempt": 2}
+        {
+            "id": index,
+            "name": "other",
+            "run_id": 75,
+            "run_attempt": 2,
+        }
         for index in range(1, 101)
     ]
     quality: dict[str, object] = {
