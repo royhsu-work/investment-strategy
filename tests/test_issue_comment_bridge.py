@@ -11063,6 +11063,7 @@ def test_native_r9_handoff_cannot_substitute_for_real_application_qualifier() ->
         ("unknown", "NO_WORK", False),
         ("stale-definition", "NO_WORK", False),
         ("incomplete-write", "FAIL_CLOSED", False),
+        ("historical-save", "FAIL_CLOSED", False),
         ("active-application", "FAIL_CLOSED", False),
     ],
 )
@@ -11084,6 +11085,7 @@ def test_saved_development_obligation_drives_native_bridge_output(
     repository = "owner/repo"
     test_token = "test-token"  # noqa: S105
     saved, producer = "a" * 40, "b" * 40
+    current_carrier = "c" * 40 if case == "historical-save" else saved
     source = bridge.WorkerRequest(138, "executor", "implement-change")
     change = "native-quality"
     branch = "agent/native-quality"
@@ -11189,7 +11191,7 @@ def test_saved_development_obligation_drives_native_bridge_output(
         return MaterializationProof(
             "COMPLETE",
             target=ValidationResourceTarget(
-                repository, saved, "correlation", 139, change, branch=branch
+                repository, current_carrier, "correlation", 139, change, branch=branch
             ),
             witness=MaterializationWitness(
                 saved,
@@ -11199,7 +11201,7 @@ def test_saved_development_obligation_drives_native_bridge_output(
         )
 
     def qualify(*_args: object, **_kw: object) -> bridge.ApplicationCompletion:
-        return bridge._accepted_application_state(
+        completion = bridge._accepted_application_state(
             repository=repository,
             token=test_token,
             source=source,
@@ -11211,6 +11213,13 @@ def test_saved_development_obligation_drives_native_bridge_output(
             read=read,
             current_dispatch_request_comment_id=987,
         )
+        if case == "historical-save":
+            obligation = completion.quality_obligation
+            assert obligation is not None
+            assert obligation.revision == saved
+            assert getattr(obligation, "carrier_revision", None) == current_carrier
+            assert getattr(obligation, "carrier_base", None) == REVISION
+        return completion
 
     planned: list[str] = []
 
@@ -11296,3 +11305,5 @@ def test_saved_development_obligation_drives_native_bridge_output(
         assert "quality_result=verification-obligation-pending" in output
     else:
         assert receipt == "native_quality_plan=none"
+        if case == "historical-save":
+            assert not planned
