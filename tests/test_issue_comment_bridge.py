@@ -11456,7 +11456,9 @@ def test_development_ingress_requires_one_exact_native_dispatch_source(
             "run_attempt": 2 if case == "historical-wrong-attempt" else 1,
             "job_id": 78,
             "artifact_id": 79,
-            "artifact_digest": "sha256:" + "0" * 64 if case == "historical-wrong-digest" else digest,
+            "artifact_digest": (
+                "sha256:" + "0" * 64 if case == "historical-wrong-digest" else digest
+            ),
             "authorization_revision": REVISION,
         }
         if historical
