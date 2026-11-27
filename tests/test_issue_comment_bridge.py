@@ -11200,6 +11200,8 @@ def test_saved_development_obligation_drives_native_bridge_output(
             ),
         )
 
+    observed_completions: list[bridge.ApplicationCompletion] = []
+
     def qualify(*_args: object, **_kw: object) -> bridge.ApplicationCompletion:
         completion = bridge._accepted_application_state(
             repository=repository,
@@ -11213,12 +11215,7 @@ def test_saved_development_obligation_drives_native_bridge_output(
             read=read,
             current_dispatch_request_comment_id=987,
         )
-        if case == "historical-save":
-            obligation = completion.quality_obligation
-            assert obligation is not None
-            assert obligation.revision == saved
-            assert getattr(obligation, "carrier_revision", None) == current_carrier
-            assert getattr(obligation, "carrier_base", None) == REVISION
+        observed_completions.append(completion)
         return completion
 
     planned: list[str] = []
@@ -11307,3 +11304,9 @@ def test_saved_development_obligation_drives_native_bridge_output(
         assert receipt == "native_quality_plan=none"
         if case == "historical-save":
             assert not planned
+            assert len(observed_completions) == 1
+            obligation = observed_completions[0].quality_obligation
+            assert obligation is not None
+            assert obligation.revision == saved
+            assert getattr(obligation, "carrier_revision", None) == current_carrier
+            assert getattr(obligation, "carrier_base", None) == REVISION
