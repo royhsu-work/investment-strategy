@@ -11534,6 +11534,7 @@ def _assert_saved_development_frontier(
     source = bridge.WorkerRequest(138, "executor", "implement-change")
     change = "native-quality"
     saved, producer = "a" * 40, "b" * 40
+    prior_saved = "c" * 40
     branch = "agent/native-quality"
     shard_url = f"https://api.github.com/repos/{repository}/issues/142"
     request = _effect_request_comment(
@@ -11554,7 +11555,7 @@ def _assert_saved_development_frontier(
         "expected_change": change,
         "change": change,
         "branch": branch,
-        "base_sha": REVISION,
+        "base_sha": prior_saved if history is not None and history != "wrong-base" else REVISION,
         "message": "Save test work",
         "files": [
             {
@@ -11573,18 +11574,27 @@ def _assert_saved_development_frontier(
     )
     worker["_native_development_dispatch"] = asdict(original_receipt)
     worker["_semantic_intent_version"] = 2
-    prior_saved = "c" * 40
     prior_receipt = bridge.DevelopmentDispatchSource(
         501, 50, 1, 51, 52, "sha256:" + "2" * 64, REVISION
     )
     prior_worker = dict(worker)
-    prior_worker["_native_development_dispatch"] = asdict(prior_receipt)
+    prior_worker.pop("_native_development_dispatch")
+    prior_worker.pop("_semantic_intent_version")
+    prior_effect = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps({**payload, "base_sha": REVISION}),
+    }
+    prior_worker["requested_effects"] = [prior_effect]
+    prior_raw = base64.b64encode(json.dumps(prior_worker).encode()).decode()
     prior_request = {
         **request,
         "id": 554,
+        "body": "\n".join((lines[0], lines[1], f"Worker-Result-B64: {prior_raw}")),
         "created_at": "2026-09-18T00:00:00Z",
         "updated_at": "2026-09-18T00:00:00Z",
     }
+    prior_worker["_native_development_dispatch"] = asdict(prior_receipt)
+    prior_worker["_semantic_intent_version"] = 2
     prior_encoded = base64.b64encode(json.dumps(prior_worker).encode()).decode()
     prior_projection = {
         **prior_request,
@@ -11733,9 +11743,7 @@ def _assert_saved_development_frontier(
             return []
         if path.startswith("issues/comments/"):
             return next(
-                item
-                for item in [*shard, *accepted_comments]
-                if path.endswith(f"/{item['id']}")
+                item for item in [*shard, *accepted_comments] if path.endswith(f"/{item['id']}")
             )
         if path == "actions/runs/60/attempts/1/jobs":
             return {
@@ -11795,7 +11803,7 @@ def _assert_saved_development_frontier(
         if path == "git/ref/heads/main":
             return {"object": {"sha": REVISION}}
         if path.startswith("contents/"):
-            return {"sha": producer}
+            return {"sha": producer, "type": "file", "path": ".github/workflows/quality.yml"}
         raise AssertionError(path)
 
     def observe(*_args: object, **_kwargs: object) -> bridge.NativeQualityObservation:
