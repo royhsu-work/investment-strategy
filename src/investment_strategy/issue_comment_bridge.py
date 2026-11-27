@@ -187,6 +187,19 @@ class BridgePlan:
 
 
 @dataclass(frozen=True)
+class DevelopmentDispatchSource:
+    """One native authorization bound to its actual ingress boundary."""
+
+    dispatch_request_comment_id: int
+    run_id: int
+    run_attempt: int
+    job_id: int
+    artifact_id: int
+    artifact_digest: str
+    authorization_revision: str
+
+
+@dataclass(frozen=True)
 class NativeQualityObligation:
     """Exact saved-work gate; never a new durable lifecycle state."""
 
@@ -3077,6 +3090,225 @@ def plan_native_quality_verification(
         return NativeQualityObservation(outcome, history, call)
     except (OSError, RuntimeError, TypeError, ValueError):
         return unknown
+
+
+def qualify_development_dispatch_source(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    request_comment_id: int,
+    current_revision: str,
+    default_branch: str,
+    read: GitHubReader = _github_json,
+) -> DevelopmentDispatchSource | None:
+    """Qualify the original native dispatch for one physical development ingress.
+
+    Comment IDs are identities, not timestamps. A second ingress cannot reuse
+    the same dispatch. The original shard can be closed after its ingress.
+    """
+    owner = repository.split("/", 1)[0]
+    prefix = github_repository_api_url(repository, "issues/")
+    if (
+        _positive_int(request_comment_id) is None
+        or _SHA.fullmatch(current_revision) is None
+        or not default_branch
+        or (source.role, source.action) != ("executor", "implement-change")
+    ):
+        return None
+
+    def same_comment(left: Mapping[str, object], right: Mapping[str, object]) -> bool:
+        return _trusted_connector_comment(right, owner) and all(
+            left.get(key) == right.get(key)
+            for key in ("id", "body", "issue_url", "created_at", "updated_at")
+        )
+
+    try:
+        ingress = read(repository, token, f"issues/comments/{request_comment_id}")
+        if (
+            not isinstance(ingress, Mapping)
+            or ingress.get("id") != request_comment_id
+            or not _trusted_connector_comment(ingress, owner)
+            or ingress.get("updated_at") != ingress.get("created_at")
+        ):
+            return None
+        body, issue_url = ingress.get("body"), ingress.get("issue_url")
+        ingress_at = _quality_time(ingress.get("created_at"))
+        if (
+            ingress_at is None
+            or not isinstance(body, str)
+            or body.splitlines()[:1] not in (["WORKER_RESULT"], ["EFFECT_REQUEST"])
+            or not isinstance(issue_url, str)
+            or not issue_url.startswith(prefix)
+        ):
+            return None
+        shard = _positive_int_string(issue_url.removeprefix(prefix))
+        if shard is None:
+            return None
+        issue = read(repository, token, f"issues/{shard}")
+        if (
+            not isinstance(issue, Mapping)
+            or issue.get("number") != shard
+            or not is_runtime_checkin_issue(issue)
+        ):
+            return None
+        comments = _paged_list(
+            repository,
+            token,
+            f"issues/{shard}/comments?sort=created&direction=asc",
+            read=read,
+        )
+        own = [item for item in comments if item.get("id") == request_comment_id]
+        if len(own) != 1 or not same_comment(ingress, own[0]):
+            return None
+        prior: list[tuple[datetime, Mapping[str, object]]] = []
+        for item in comments:
+            candidate_body = item.get("body")
+            if (
+                item.get("id") == request_comment_id
+                or not _trusted_connector_comment(item, owner)
+                or not isinstance(candidate_body, str)
+                or candidate_body.splitlines()[:1]
+                not in ([REQUEST_MARKER], ["WORKER_RESULT"], ["EFFECT_REQUEST"])
+            ):
+                continue
+            stamp = _quality_time(item.get("created_at"))
+            if stamp is None or stamp == ingress_at:
+                return None
+            if stamp < ingress_at:
+                prior.append((stamp, item))
+        if not prior:
+            return None
+        requested_at = max(stamp for stamp, _ in prior)
+        latest = [item for stamp, item in prior if stamp == requested_at]
+        if len(latest) != 1:
+            return None
+        dispatch = latest[0]
+        dispatch_id = _positive_int(dispatch.get("id"))
+        dispatch_body = dispatch.get("body")
+        if (
+            dispatch_id is None
+            or dispatch.get("issue_url") != issue_url
+            or dispatch.get("updated_at") != dispatch.get("created_at")
+            or not isinstance(dispatch_body, str)
+            or parse_dispatch_request(dispatch_body) is None
+        ):
+            return None
+        observed = read(repository, token, f"issues/comments/{dispatch_id}")
+        if not isinstance(observed, Mapping) or not same_comment(dispatch, observed):
+            return None
+        runs = _complete_workflow_runs(
+            repository, token, _DISPATCH_WORKFLOW, read=read, require_count=True
+        )
+        if runs is None:
+            return None
+        matching = [
+            item
+            for item in runs
+            if item.get("display_title") == render_dispatch_run_name(dispatch_id)
+        ]
+        if len(matching) != 1:
+            return None
+        run = matching[0]
+        row = _quality_bridge_run(run, repository, default_branch, dispatch_id)
+        if row is None or row[2:] != (current_revision, "completed", "success"):
+            return None
+        run_id, attempt = row[:2]
+        attempt_run = read(repository, token, f"actions/runs/{run_id}/attempts/{attempt}")
+        if (
+            not isinstance(attempt_run, Mapping)
+            or _quality_bridge_run(attempt_run, repository, default_branch, dispatch_id) != row
+            or any(
+                attempt_run.get(key) != run.get(key) for key in ("created_at", "updated_at")
+            )
+        ):
+            return None
+        created = _quality_time(attempt_run.get("created_at"))
+        completed = _quality_time(attempt_run.get("updated_at"))
+        if (
+            created is None
+            or completed is None
+            or not requested_at <= created < completed < ingress_at
+        ):
+            return None
+        jobs = github_complete_job_inventory(
+            repository, token, run_id=run_id, run_attempt=attempt, read=read
+        )
+        if jobs is None:
+            return None
+        planners = [item for item in jobs if item.get("name") == "bridge"]
+        if len(planners) != 1:
+            return None
+        job = planners[0]
+        job_id = _positive_int(job.get("id"))
+        started = _quality_time(job.get("started_at"))
+        finished = _quality_time(job.get("completed_at"))
+        if (
+            job_id is None
+            or job.get("run_id") != run_id
+            or job.get("run_attempt") != attempt
+            or job.get("head_sha") != current_revision
+            or job.get("status") != "completed"
+            or job.get("conclusion") != "success"
+            or started is None
+            or finished is None
+            or not created <= started <= finished <= completed
+        ):
+            return None
+        steps = job.get("steps")
+        required = (
+            "Check out authoritative default branch",
+            "Record exact checked-out default-branch revision",
+            "Plan exact correlated machine dispatch decision",
+            "Upload exact run-scoped machine dispatch result",
+        )
+        if not isinstance(steps, list):
+            return None
+        witnessed = [
+            step for step in steps if isinstance(step, Mapping) and step.get("name") in required
+        ]
+        if tuple(step.get("name") for step in witnessed) != required or any(
+            step.get("status") != "completed" or step.get("conclusion") != "success"
+            for step in witnessed
+        ):
+            return None
+        artifact = _single_run_artifact(
+            read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100"),
+            name="dispatch-result.json",
+        )
+        if artifact is None:
+            return None
+        identity = github_run_artifact_identity(
+            artifact, run_id=run_id, run_head_sha=current_revision
+        )
+        uploaded = _quality_time(artifact.get("created_at"))
+        if identity is None or uploaded is None or not started <= uploaded <= finished:
+            return None
+        artifact_id, digest = identity
+        raw = read_github_artifact_bytes(repository, token, f"actions/artifacts/{artifact_id}/zip")
+        if "sha256:" + hashlib.sha256(raw).hexdigest() != digest:
+            return None
+        result = parse_dispatch_result_document(raw)
+        if (
+            result.request_comment_id != dispatch_id
+            or result.default_branch_revision != current_revision
+            or result.disposition != "AUTHORIZE"
+            or (result.issue_number, result.role, result.action)
+            != (source.issue_number, source.role, source.action)
+        ):
+            return None
+        current_run = read(repository, token, f"actions/runs/{run_id}")
+        if (
+            not isinstance(current_run, Mapping)
+            or _quality_bridge_run(current_run, repository, default_branch, dispatch_id) != row
+            or current_run.get("updated_at") != attempt_run.get("updated_at")
+        ):
+            return None
+        return DevelopmentDispatchSource(
+            dispatch_id, run_id, attempt, job_id, artifact_id, digest, current_revision
+        )
+    except (OSError, RuntimeError, TypeError, ValueError, LookupError):
+        return None
 
 
 def _prior_dispatch_handoff_reason(
