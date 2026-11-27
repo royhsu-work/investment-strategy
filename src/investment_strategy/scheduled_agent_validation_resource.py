@@ -974,7 +974,7 @@ _NATIVE_QUALITY_SETUP_LOG = "##[group]Run astral-sh/setup-uv@v6"
 _ACTIONS_LOG_TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT\S+Z ")
 
 
-def _native_quality_receipt(log: str) -> list[str] | None:
+def _native_quality_receipt(log: str, *, called: bool = False) -> list[str] | None:
     """Read the checkout witness only within the trusted pre-test step boundary."""
 
     lines = [_ACTIONS_LOG_TIMESTAMP.sub("", line) for line in log.splitlines()]
@@ -985,7 +985,8 @@ def _native_quality_receipt(log: str) -> list[str] | None:
         return None
     start = lines.index(_NATIVE_QUALITY_CHECKOUT_LOG)
     end = lines.index(_NATIVE_QUALITY_SETUP_LOG)
-    return lines[end - 7 : end] if end - 7 > start else None
+    size = 9 if called else 7
+    return lines[end - size : end] if end - size > start else None
 
 
 def _native_quality_step_outcomes(job: Mapping[str, object]) -> tuple[str, ...] | None:
@@ -1028,8 +1029,12 @@ def _native_quality_witness_matches(
     definition_sha: str,
     run_id: int,
     run_attempt: int,
+    source_comment_id: int | None = None,
+    verification_correlation: str | None = None,
 ) -> bool:
-    return _native_quality_receipt(log) == [
+    if (source_comment_id is None) != (verification_correlation is None):
+        return False
+    expected = [
         "##[endgroup]",
         f"quality_repository={repository}",
         f"quality_target_sha={revision}",
@@ -1038,6 +1043,21 @@ def _native_quality_witness_matches(
         f"quality_run_id={run_id}",
         f"quality_run_attempt={run_attempt}",
     ]
+    if source_comment_id is not None:
+        if (
+            type(source_comment_id) is not int
+            or source_comment_id <= 0
+            or verification_correlation is None
+            or re.fullmatch(r"[0-9a-f]{64}", verification_correlation) is None
+        ):
+            return False
+        expected.extend(
+            [
+                f"quality_source_comment_id={source_comment_id}",
+                f"quality_verification_correlation={verification_correlation}",
+            ]
+        )
+    return _native_quality_receipt(log, called=source_comment_id is not None) == expected
 
 
 def qualify_native_quality_job(
@@ -1051,6 +1071,8 @@ def qualify_native_quality_job(
     run_attempt: int,
     job_id: int,
     job_name: str,
+    source_comment_id: int | None = None,
+    verification_correlation: str | None = None,
 ) -> Literal["PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"] | None:
     """Interpret one exact job from a qualified producer and attempt.
 
@@ -1093,6 +1115,8 @@ def qualify_native_quality_job(
         definition_sha=definition_sha,
         run_id=run_id,
         run_attempt=run_attempt,
+        source_comment_id=source_comment_id,
+        verification_correlation=verification_correlation,
     ):
         return None
 
