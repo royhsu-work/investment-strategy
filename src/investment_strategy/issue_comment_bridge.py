@@ -2684,9 +2684,7 @@ def _quality_bridge_attempt(
     if audit_result_sha256 is not None:
         result_prefix = "native_quality_result_sha256="
         result_receipts = [
-            line.removeprefix(result_prefix)
-            for line in lines
-            if line.startswith(result_prefix)
+            line.removeprefix(result_prefix) for line in lines if line.startswith(result_prefix)
         ]
         if result_receipts != [audit_result_sha256]:
             return unknown
