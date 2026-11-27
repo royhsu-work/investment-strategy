@@ -1021,7 +1021,22 @@ def _native_quality_step_outcomes(job: Mapping[str, object]) -> tuple[str, ...] 
     return tuple(outcomes)
 
 
-def _native_quality_witness_matches(
+def native_quality_setup_failure_index(job: Mapping[str, object]) -> int | None:
+    """Locate a positively observed fail-fast setup failure, not a verdict."""
+    outcomes = _native_quality_step_outcomes(job)
+    if job.get("conclusion") != "failure" or outcomes is None or "failure" not in outcomes:
+        return None
+    failed = outcomes.index("failure")
+    skipped = ("skipped",) * (len(outcomes) - failed - 1)
+    if (
+        failed < len(_NATIVE_QUALITY_SETUP_STEPS)
+        and outcomes == ("success",) * failed + ("failure",) + skipped
+    ):
+        return failed
+    return None
+
+
+def native_quality_witness_matches(
     log: str,
     *,
     repository: str,
@@ -1108,7 +1123,7 @@ def qualify_native_quality_job(
 
     # Only consume the witness emitted between the checkout proof's command
     # group and the first tooling setup. Later candidate output cannot supply it.
-    if not _native_quality_witness_matches(
+    if not native_quality_witness_matches(
         log,
         repository=repository,
         revision=revision,
@@ -1267,20 +1282,12 @@ def read_native_quality_attempt(
         # A proved fail-fast setup failure is not a mechanical quality verdict.
         # Failed checkout proof is ambiguous; after a successful proof the
         # same exact producer/witness qualification remains necessary.
-        outcomes = _native_quality_step_outcomes(job)
-        setup_failure = False
-        if conclusion == "failure" and outcomes is not None and "failure" in outcomes:
-            failed = outcomes.index("failure")
-            skipped = ("skipped",) * (len(outcomes) - failed - 1)
-            if (
-                failed < len(_NATIVE_QUALITY_SETUP_STEPS)
-                and outcomes == ("success",) * failed + ("failure",) + skipped
-            ):
-                if failed < 2:
-                    return no_verdict
-                if failed == 2:
-                    return unknown
-                setup_failure = True
+        failed = native_quality_setup_failure_index(job)
+        if failed is not None:
+            if failed < 2:
+                return no_verdict
+            if failed == 2:
+                return unknown
         log = log_read(repository, token, job_id)
         receipt = _native_quality_receipt(log)
         if receipt is None or not receipt[4].startswith("quality_definition_sha="):
@@ -1298,9 +1305,10 @@ def read_native_quality_attempt(
             job_name="quality",
         )
         if verdict is None and not (
-            setup_failure
+            failed is not None
+            and failed > 2
             and _valid_sha(definition_sha)
-            and _native_quality_witness_matches(
+            and native_quality_witness_matches(
                 log,
                 repository=repository,
                 revision=revision,

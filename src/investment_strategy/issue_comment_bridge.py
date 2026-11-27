@@ -120,6 +120,8 @@ from investment_strategy.scheduled_agent_runtime import (
 )
 from investment_strategy.scheduled_agent_validation_resource import (
     NativeQualityAttempt,
+    native_quality_setup_failure_index,
+    native_quality_witness_matches,
     qualify_native_quality_job,
     read_native_quality_attempt,
     reduce_native_quality_attempts,
@@ -2719,9 +2721,28 @@ def _quality_bridge_attempt(
         return absent if conclusion == job_conclusion else unknown
     if job_conclusion not in ("success", "failure") or conclusion != job_conclusion:
         return unknown
+    if quality.get("name") != "verify_quality / quality":
+        return unknown
+    failed = native_quality_setup_failure_index(quality)
+    if failed is not None and failed < 2:
+        return absent
+    log = log_read(repository, token, cast(int, quality["id"]))
+    if failed is not None:
+        if failed > 2 and native_quality_witness_matches(
+            log,
+            repository=repository,
+            revision=target,
+            definition_sha=definition,
+            run_id=run_id,
+            run_attempt=attempt,
+            source_comment_id=source,
+            verification_correlation=plan["quality_verification_correlation"],
+        ):
+            return absent
+        return unknown
     verdict = qualify_native_quality_job(
         quality,
-        log_read(repository, token, cast(int, quality["id"])),
+        log,
         repository=repository,
         revision=target,
         definition_sha=definition,
@@ -2885,8 +2906,9 @@ def plan_native_quality_verification(
         )
 
     def snapshot() -> dict[int, tuple[int, int, str, str, str | None]] | None:
+        boundary = _quality_time(accepted_at)
         requests = _quality_dispatch_requests(repository, token, accepted_at, read=read)
-        if requests is None or request_comment_id not in requests:
+        if boundary is None or requests is None or request_comment_id not in requests:
             return None
         runs = _complete_workflow_runs(
             repository, token, _DISPATCH_WORKFLOW, read=read, require_count=True
@@ -2897,10 +2919,39 @@ def plan_native_quality_verification(
         for run in runs:
             title = run.get("display_title")
             source = parse_dispatch_run_name(title) if isinstance(title, str) else None
-            if source is None or source not in requests:
+            if source is None:
                 continue
             row = _quality_bridge_run(run, repository, default_branch, source)
             created = _quality_time(run.get("created_at"))
+            if source not in requests:
+                if row is None or created is None:
+                    return None
+                if created < boundary:
+                    continue
+                # A run that outlived its source must not disappear from the
+                # inventory merely because the current request list omits it.
+                comment = read(repository, token, f"issues/comments/{source}")
+                if not isinstance(comment, Mapping):
+                    return None
+                requested = _quality_time(comment.get("created_at"))
+                body, issue_url = comment.get("body"), comment.get("issue_url")
+                prefix = github_repository_api_url(repository, "issues/")
+                if (
+                    _positive_int(comment.get("id")) != source
+                    or requested is None
+                    or requested > created
+                    or comment.get("updated_at") != comment.get("created_at")
+                    or not isinstance(issue_url, str)
+                    or not issue_url.startswith(prefix)
+                    or _positive_int_string(issue_url.removeprefix(prefix)) is None
+                    or not isinstance(body, str)
+                ):
+                    return None
+                if requested < boundary:
+                    continue
+                if requested == boundary or body.splitlines()[:1] == [REQUEST_MARKER]:
+                    return None
+                continue
             requested = _quality_time(requests[source])
             if row is None or source in found or created is None or requested is None:
                 return None
