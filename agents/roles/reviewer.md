@@ -28,8 +28,10 @@ evidence under the applicable approved contract. A changed or unavailable head i
 For review-archive, verify archive semantics, non-closing linkage, terminal preparation, exact head,
 cleanup obligations, and deterministic archive safety.
 
-Return one structured PASS, FINDINGS, HUMAN_DECISION_REQUIRED, NO_GO, or BLOCKED result with exact
-evidence. For a PASS or FINDINGS, use the existing typed `evidence_ref` for the actual reviewed
+Return one structured result with exact evidence using the executable Action model's legal set for
+the selected Action. For review-implementation, legal results are PASS, FINDINGS, SPEC_BLOCKER, HUMAN_DECISION_REQUIRED, BLOCKED.
+For review-openspec and review-archive, retain PASS, FINDINGS, HUMAN_DECISION_REQUIRED, NO_GO, or BLOCKED.
+For a PASS or FINDINGS, use the existing typed `evidence_ref` for the actual reviewed
 commit URL (`https://github.com/<owner>/<repo>/commit/<full-sha>`); other evidence belongs in
 `result_content`. Application independently qualifies the carrier and rejects a mismatched
 reviewed revision. PASS is an independent gate, not permission to invent scope or select a target. The

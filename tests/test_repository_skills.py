@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+from investment_strategy.scheduled_agent_action_model import TRANSITIONS, Action
+
 MAPPED_REPOSITORY_SKILLS = (
     "archive-review",
     "implementation-review",
@@ -207,3 +209,13 @@ def test_executor_retains_reviewer_and_lead_boundaries() -> None:
     )
     for requirement in requirements:
         assert requirement in body
+
+
+def test_implementation_review_result_vocabulary_matches_model() -> None:
+    expected = {result.name for result in TRANSITIONS[Action.REVIEW_IMPLEMENTATION]}
+    prefix = "For review-implementation, legal results are "
+    for path in ("agents/roles/reviewer.md", "agents/skills/implementation-review/SKILL.md"):
+        body = Path(path).read_text(encoding="utf-8")
+        assert body.count(prefix) == 1
+        declared = body.split(prefix, 1)[1].split(".", 1)[0]
+        assert set(declared.split(", ")) == expected
