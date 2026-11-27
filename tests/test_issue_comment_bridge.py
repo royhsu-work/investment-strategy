@@ -11480,3 +11480,241 @@ def test_development_ingress_requires_one_exact_native_dispatch_source(
         assert proof.authorization_revision == REVISION
     else:
         assert proof is None
+
+
+@pytest.mark.parametrize("phase_a", [False, True])
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("pass", "COMPLETE"),
+        ("red", "COMPLETE"),
+        ("conflict", "COMPLETE"),
+        ("pending", "RESUMABLE"),
+        ("no-verdict", "RESUMABLE"),
+        ("unknown", "RESUMABLE"),
+    ],
+)
+def test_current_saved_development_verdict_qualifies_shared_frontier(
+    monkeypatch: pytest.MonkeyPatch, phase_a: bool, case: str, expected: str
+) -> None:
+    """Both ingress and dispatch consume the same saved-work qualification."""
+    from dataclasses import asdict
+
+    repository = "owner/repo"
+    token = "test-token"  # noqa: S105
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    change = "native-quality"
+    saved, producer = "a" * 40, "b" * 40
+    branch = "agent/native-quality"
+    shard_url = f"https://api.github.com/repos/{repository}/issues/142"
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+        action=source.action,
+        role=source.role,
+        change=change,
+        result_kind="more-implementation-required",
+    )
+    request["updated_at"] = request["created_at"]
+    request["issue_url"] = shard_url
+    lines = cast(str, request["body"]).splitlines()
+    worker = json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: ")))
+    payload = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": change,
+        "change": change,
+        "branch": branch,
+        "base_sha": REVISION,
+        "message": "Save test work",
+        "files": [
+            {
+                "path": "tests/test_native_quality.py",
+                "expected_sha": "1" * 40,
+                "blob_sha": "2" * 40,
+            }
+        ],
+        "pr_number": 139,
+    }
+    worker["requested_effects"] = [{"kind": "github-mutation", "payload_json": json.dumps(payload)}]
+    encoded = base64.b64encode(json.dumps(worker).encode()).decode()
+    request["body"] = "\n".join((lines[0], lines[1], f"Worker-Result-B64: {encoded}"))
+    original_receipt = bridge.DevelopmentDispatchSource(
+        601, 60, 1, 61, 62, "sha256:" + "1" * 64, REVISION
+    )
+    worker["_native_development_dispatch"] = asdict(original_receipt)
+    worker["_semantic_intent_version"] = 2
+    accepted_encoded = base64.b64encode(json.dumps(worker).encode()).decode()
+    projected_request = {
+        **request,
+        "body": "\n".join((lines[0], lines[1], f"Worker-Result-B64: {accepted_encoded}")),
+    }
+    accepted = _application_decision_comment(projected_request)
+    projected_body = cast(str, projected_request["body"])
+    original_body = cast(str, request["body"])
+    accepted["body"] = cast(str, accepted["body"]).replace(
+        hashlib.sha256(projected_body.encode()).hexdigest(),
+        hashlib.sha256(original_body.encode()).hexdigest(),
+    )
+    accepted["updated_at"] = accepted["created_at"]
+    accepted["issue_url"] = f"https://api.github.com/repos/{repository}/issues/138"
+    decision = bridge.parse_application_decision(accepted["body"])
+    assert decision is not None
+    obligation = bridge.NativeQualityObligation(
+        saved,
+        branch,
+        producer,
+        "3" * 64,
+        cast(str, accepted["created_at"]),
+        "main",
+        saved,
+        REVISION,
+    )
+    dispatch = {
+        **request,
+        "id": 987,
+        "body": "DISPATCH_REQUEST\nRequested-At: 2026-09-18T02:00:00Z",
+        "created_at": "2026-09-18T02:00:00Z",
+        "updated_at": "2026-09-18T02:00:00Z",
+    }
+    own = {
+        **request,
+        "id": 989,
+        "created_at": "2026-09-18T02:05:00Z",
+        "updated_at": "2026-09-18T02:05:00Z",
+    }
+    shard = [request, dispatch, *([own] if phase_a else [])]
+    issue = {
+        **_current_source_issue(),
+        "body": f"Change: {change}",
+        "labels": [{"name": "action:implement-change"}],
+    }
+    run = {
+        "id": 77,
+        "run_attempt": 1,
+        "status": "completed" if phase_a else "in_progress",
+        "conclusion": "success" if phase_a else None,
+        "head_sha": REVISION,
+        "head_branch": "main",
+        "repository": {"full_name": repository},
+        "head_repository": {"full_name": repository},
+        "path": ".github/workflows/scheduled-agent-bridge.yml",
+        "event": "issue_comment",
+        "display_title": bridge.render_dispatch_run_name(987),
+        "created_at": "2026-09-18T02:00:00Z",
+        "updated_at": "2026-09-18T02:02:00Z",
+    }
+    planner = {
+        "id": 78,
+        "run_id": 77,
+        "run_attempt": 1,
+        "head_sha": REVISION,
+        "name": "bridge",
+        "status": run["status"],
+        "conclusion": run["conclusion"],
+        "started_at": "2026-09-18T02:00:01Z",
+        "completed_at": "2026-09-18T02:02:00Z" if phase_a else None,
+        "steps": [
+            {
+                "name": "Plan exact correlated machine dispatch decision",
+                "started_at": "2026-09-18T02:00:10Z",
+            }
+        ],
+    }
+    quality_job = {
+        "id": 88,
+        "run_id": 87,
+        "run_attempt": 1,
+        "head_sha": saved,
+        "name": "quality",
+        "status": "completed",
+        "conclusion": "success" if case == "pass" else "failure",
+        "started_at": "2026-09-18T01:40:00Z",
+        "completed_at": "2026-09-18T01:50:00Z",
+    }
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path.startswith("issues/138/comments?"):
+            return [accepted]
+        if path.startswith("issues/142/comments?"):
+            return shard
+        if path.startswith("issues/comments?"):
+            return [*shard, accepted]
+        if path == "issues/138":
+            return issue
+        if path.startswith("issues/138/timeline?"):
+            return []
+        if path.startswith("issues/comments/"):
+            return next(item for item in [*shard, accepted] if path.endswith(f"/{item['id']}"))
+        if path == "actions/runs/77/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [planner]}
+        if path in ("actions/runs/77", "actions/runs/77/attempts/1"):
+            return run
+        if path == "actions/jobs/78":
+            return planner
+        if path == "actions/jobs/88":
+            return quality_job
+        if path == "actions/jobs/89":
+            return {**quality_job, "id": 89, "run_id": 90, "conclusion": "success"}
+        if path == "":
+            return {"full_name": repository, "default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": REVISION}}
+        raise AssertionError(path)
+
+    def observe(*_args: object, **_kwargs: object) -> bridge.NativeQualityObservation:
+        red = bridge.NativeQualityAttempt(
+            87, 1, "PYTEST_STEP_FAILURE", 88, saved, saved, None
+        )
+        green = bridge.NativeQualityAttempt(90, 1, "PASS", 89, saved, saved, None)
+        if case == "red":
+            return bridge.NativeQualityObservation("FAIL", (red,))
+        if case == "pass":
+            return bridge.NativeQualityObservation("PASS", (green,))
+        if case == "conflict":
+            return bridge.NativeQualityObservation("CONFLICT", (red, green))
+        if case == "pending":
+            return bridge.NativeQualityObservation("PENDING")
+        if case == "no-verdict":
+            return bridge.NativeQualityObservation("NO_VERDICT")
+        return bridge.NativeQualityObservation("INDETERMINATE")
+
+    monkeypatch.setattr(
+        bridge,
+        "_derive_frontier",
+        lambda **_kw: (
+            SimpleNamespace(event=SimpleNamespace(comment_id=500, application_correlation=None)),
+            True,
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_accepted_application_state",
+        lambda **_kw: bridge.ApplicationCompletion(
+            "RESUMABLE", "verification-obligation-pending", 654, quality_obligation=obligation
+        ),
+    )
+    monkeypatch.setattr(bridge, "_complete_workflow_runs", lambda *_a, **_kw: (run,))
+    monkeypatch.setattr(
+        bridge,
+        "qualify_development_dispatch_source",
+        lambda *_a, **_kw: original_receipt,
+    )
+    monkeypatch.setattr(bridge, "plan_native_quality_verification", observe)
+    completion = bridge.qualify_application_completion(
+        repository,
+        token,
+        source=source,
+        current_revision=REVISION,
+        current_dispatch_request_comment_id=987,
+        current_dispatch_issue_number=142,
+        phase_a_request_comment_id=989 if phase_a else None,
+        read=read,
+        now=datetime(2026, 9, 18, 2, 6, tzinfo=UTC),
+    )
+    assert completion.state == expected
+    if expected == "COMPLETE":
+        assert completion.quality_obligation is None
+        assert completion.request_comment_id == 654
+    else:
+        assert completion.quality_obligation == obligation
