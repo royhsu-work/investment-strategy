@@ -296,7 +296,7 @@ def test_native_quality_verdict_reads_exact_ordinary_producer(
         assert repo == _REPOSITORY and token
         if path == endpoint:
             return run
-        if path == f"{endpoint}/jobs":
+        if path in (f"{endpoint}/jobs", f"{endpoint}/jobs?per_page=100&page=1"):
             return {"total_count": 1, "jobs": [] if case == "missing-job" else [job]}
         if path == f"git/commits/{definition}":
             return {
