@@ -102,6 +102,15 @@ def test_exact_job_inventory_preserves_all_native_job_evidence(case: str) -> Non
         ("missing-step", None),
         ("continued-after-failure", None),
         ("contradictory-conclusion", None),
+        ("called-pass", "PASS"),
+        ("called-static", "STATIC_STEP_FAILURE"),
+        ("called-pytest", "PYTEST_STEP_FAILURE"),
+        ("called-wrong-source", None),
+        ("called-wrong-correlation", None),
+        ("called-missing-correlation", None),
+        ("called-late-correlation", None),
+        ("called-ordinary-witness", None),
+        ("ordinary-called-witness", None),
     ],
 )
 def test_native_quality_verdict_requires_exact_job_and_ordered_steps(
@@ -119,11 +128,11 @@ def test_native_quality_verdict_requires_exact_job_and_ordered_steps(
         "Run tests",
     )
     outcomes = dict.fromkeys(names, "success")
-    if case in {"static", "continued-after-failure"}:
+    if case in {"static", "called-static", "continued-after-failure"}:
         outcomes["Ruff format check"] = "failure"
-        if case == "static":
+        if case in {"static", "called-static"}:
             outcomes.update({"Mypy": "skipped", "Run tests": "skipped"})
-    elif case == "pytest":
+    elif case in {"pytest", "called-pytest"}:
         outcomes["Run tests"] = "failure"
     elif case == "setup":
         outcomes["Run actions/setup-python@v5"] = "failure"
@@ -131,9 +140,11 @@ def test_native_quality_verdict_requires_exact_job_and_ordered_steps(
     elif case == "missing-step":
         del outcomes["Mypy"]
 
+    called = case.startswith("called-")
+    job_name = "verify_quality / quality" if called else "quality"
     job: dict[str, object] = {
         "id": 101 if case != "wrong-job" else 102,
-        "name": "quality",
+        "name": job_name,
         "run_id": 75,
         "run_attempt": 2 if case != "wrong-attempt" else 1,
         "status": "completed" if case != "active" else "in_progress",
@@ -159,6 +170,18 @@ def test_native_quality_verdict_requires_exact_job_and_ordered_steps(
         "quality_run_id=75",
         "quality_run_attempt=2",
     ]
+    correlation = "b" * 64 if case == "called-wrong-correlation" else "a" * 64
+    call_witness = [
+        f"quality_source_comment_id={902 if case == 'called-wrong-source' else 901}",
+        f"quality_verification_correlation={correlation}",
+    ]
+    if case == "called-missing-correlation":
+        call_witness.pop()
+    if (called or case == "ordinary-called-witness") and case not in {
+        "called-late-correlation",
+        "called-ordinary-witness",
+    }:
+        witness.extend(call_witness)
     lines = ["##[group]Run actual_sha=$(git rev-parse HEAD)", "##[endgroup]"]
     if case not in {"missing-witness", "late-witness"}:
         lines.extend(witness)
@@ -167,6 +190,8 @@ def test_native_quality_verdict_requires_exact_job_and_ordered_steps(
     lines.append("##[group]Run astral-sh/setup-uv@v6")
     if case == "late-witness":
         lines.extend(witness)
+    if case == "called-late-correlation":
+        lines.extend(call_witness)
     log = "\n".join(f"2026-11-27T14:23:11.7489587Z {line}" for line in lines)
 
     qualify = getattr(resource, "qualify_native_quality_job", None)
@@ -181,7 +206,8 @@ def test_native_quality_verdict_requires_exact_job_and_ordered_steps(
             run_id=75,
             run_attempt=2,
             job_id=101,
-            job_name="quality",
+            job_name=job_name,
+            **({"source_comment_id": 901, "verification_correlation": "a" * 64} if called else {}),
         )
         == expected
     )
