@@ -473,6 +473,13 @@ def test_native_quality_history_preserves_every_exact_attempt(
         else tuple((item.run_id, item.run_attempt, item.outcome) for item in history)
     )
     assert actual == expected
+    if history is not None:
+        for item in history:
+            if item.outcome in ("PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"):
+                assert getattr(item, "job_id", None) == item.run_id * 10 + item.run_attempt
+                assert getattr(item, "checkout_revision", None) == REVISION
+                expected_definition = REVISION if item.run_id == 75 else merge_definition
+                assert getattr(item, "definition_revision", None) == expected_definition
 
 
 @pytest.mark.parametrize(
@@ -745,6 +752,13 @@ def test_native_quality_obligation_plans_only_after_complete_caller_history(
     )
     assert result.outcome == expected
     assert result.call == (call(901, 77, 1) if will_call else None)
+    if result.attempts is not None:
+        for item in result.attempts:
+            if item.outcome in ("PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"):
+                assert getattr(item, "job_id", None) == 751 + item.run_attempt * 2
+                assert getattr(item, "checkout_revision", None) == target
+                assert getattr(item, "definition_revision", None) == definition
+                assert getattr(item, "source_comment_id", None) == 900
 
 
 def test_prior_dispatch_handoff_indexes_run_history_once(
