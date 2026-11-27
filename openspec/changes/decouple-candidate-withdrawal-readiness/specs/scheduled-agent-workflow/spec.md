@@ -238,7 +238,7 @@ An independently authorized exact candidate withdrawal MAY accompany an eligible
 - AND a worker-supplied different Issue or successor Action is rejected
 - AND the original Issue and queue identity are preserved
 
-#### Scenario: Human-decision result derives clarification ownership
+#### Scenario: Human-decision result retains Explore ownership
 
 - GIVEN current machine dispatch authorizes Lead / explore-change
 - AND Lead returns structured HUMAN_DECISION_REQUIRED
