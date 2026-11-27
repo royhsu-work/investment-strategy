@@ -3290,8 +3290,7 @@ def qualify_development_dispatch_source(
                 and (
                     latest_row != row
                     or any(
-                        attempt_run.get(key) != run.get(key)
-                        for key in ("created_at", "updated_at")
+                        attempt_run.get(key) != run.get(key) for key in ("created_at", "updated_at")
                     )
                 )
             )
@@ -6450,7 +6449,8 @@ def _historical_development_verdict(
                     authorization_revision=row[2],
                     current_revision=authorization,
                     read=read,
-                ) is None
+                )
+                is None
             ):
                 return False
             attempt = _quality_bridge_attempt(
@@ -6465,9 +6465,10 @@ def _historical_development_verdict(
                 log_read=_github_job_log,
             )
             called.append(attempt)
-        if (
-            asdict(attempt) != reference
-            or attempt.outcome not in ("PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE")
+        if asdict(attempt) != reference or attempt.outcome not in (
+            "PASS",
+            "STATIC_STEP_FAILURE",
+            "PYTEST_STEP_FAILURE",
         ):
             return False
         attempts.append(attempt)
@@ -6562,13 +6563,17 @@ def _settled_development_prefix(
                 blob = _quality_workflow_blob(
                     repository, token, record.authorization_revision, read=read
                 )
-                if blob is None or _authorization_ancestry(
-                    repository,
-                    token,
-                    authorization_revision=record.authorization_revision,
-                    current_revision=current_revision,
-                    read=read,
-                ) is None:
+                if (
+                    blob is None
+                    or _authorization_ancestry(
+                        repository,
+                        token,
+                        authorization_revision=record.authorization_revision,
+                        current_revision=current_revision,
+                        read=read,
+                    )
+                    is None
+                ):
                     return None
                 # The historical producer, not a later main's producer,
                 # determines the gate actually used for successor admission.
