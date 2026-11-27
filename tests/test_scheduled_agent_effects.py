@@ -25,12 +25,14 @@ from investment_strategy.scheduled_agent_action_model import (
     BoundedActionResult,
     ResultKind,
     TypedResult,
+    legal_transition_keys,
     role_for,
 )
 from investment_strategy.scheduled_agent_application_materialization import MaterializationProof
 from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_carrier_plan
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
+    candidate_withdrawal_permitted,
 )
 from investment_strategy.scheduled_agent_effects import (
     EffectBatch,
@@ -5253,6 +5255,51 @@ def test_other_actions_do_not_retain_implementation_checkpoint(role: str, action
     raw["_semantic_intent_version"] = 2
     retained = json.loads(effects.semantic_intent_payload(json.dumps(raw)))
     assert retained["requested_effects"] == []
+
+
+def test_candidate_withdrawal_capability_has_exact_finite_action_result_boundary() -> None:
+    expected = {
+        ("explore-change", "proposal-ready"),
+        ("explore-change", "research-required"),
+        ("explore-change", "human-decision-required"),
+        ("explore-change", "blocked"),
+        ("propose-change", "research-required"),
+        ("propose-change", "human-decision-required"),
+        ("propose-change", "blocked"),
+        ("resolve-question", "research-required"),
+        ("resolve-question", "human-decision-required"),
+        ("resolve-question", "blocked"),
+        ("resolve-question", "ready"),
+    }
+    admitted = {
+        (action.value, result.value)
+        for action, result in legal_transition_keys()
+        if candidate_withdrawal_permitted(role_for(action).value, action, result)
+    }
+
+    assert admitted == expected
+
+
+@pytest.mark.parametrize(
+    ("role", "action", "result_kind"),
+    [
+        ("lead", "resolve-question", None),
+        ("lead", "unknown-action", "research-required"),
+        ("lead", "resolve-question", "unknown-result"),
+        ("executor", "resolve-question", "research-required"),
+        ("lead", "explore-change", "ready"),
+        (None, "resolve-question", "research-required"),
+        ("lead", None, "research-required"),
+        ("lead", True, "research-required"),
+        ("lead", "resolve-question", True),
+    ],
+)
+def test_candidate_withdrawal_capability_rejects_malformed_or_incoherent_source(
+    role: object, action: object, result_kind: object
+) -> None:
+    assert not candidate_withdrawal_permitted(
+        cast(str, role), cast(str, action), cast(str | None, result_kind)
+    )
 
 
 @pytest.mark.parametrize(

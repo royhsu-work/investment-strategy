@@ -447,12 +447,7 @@ def test_code_only_continuation_is_qualified_from_historical_evidence(
     assert decision.historical_pr_number == 232
 
 
-@pytest.mark.parametrize("result_kind", ["ready", "research-required"])
-def test_candidate_withdrawal_guard_and_plan_do_not_require_replacement_readiness(
-    monkeypatch: pytest.MonkeyPatch, result_kind: str
-) -> None:
-    """A complete READY control distinguishes non-ready refusal from fixture failure."""
-
+def _open_candidate_withdrawal_read(action: str) -> Callable[..., object | None]:
     current = _continuation_pr(branch=f"agent/{CHANGE}")
     fake = _fake_github(
         current_pr=current,
@@ -475,17 +470,42 @@ def test_candidate_withdrawal_guard_and_plan_do_not_require_replacement_readines
                 "number": 229,
                 "state": "open",
                 "body": f"Change: {CHANGE}\n",
-                "labels": [{"name": "action:resolve-question"}],
+                "labels": [{"name": f"action:{action}"}],
                 "created_at": "2026-09-01T00:00:00Z",
                 "closed_at": None,
             }
         return fake(repository, token, api_path, allow_not_found=allow_not_found)
 
+    return read
+
+
+@pytest.mark.parametrize(
+    ("action", "result_kind"),
+    [
+        ("explore-change", "proposal-ready"),
+        ("explore-change", "research-required"),
+        ("explore-change", "human-decision-required"),
+        ("explore-change", "blocked"),
+        ("propose-change", "research-required"),
+        ("propose-change", "human-decision-required"),
+        ("propose-change", "blocked"),
+        ("resolve-question", "research-required"),
+        ("resolve-question", "human-decision-required"),
+        ("resolve-question", "blocked"),
+        ("resolve-question", "ready"),
+    ],
+)
+def test_candidate_withdrawal_guard_and_plan_do_not_require_replacement_readiness(
+    monkeypatch: pytest.MonkeyPatch, action: str, result_kind: str
+) -> None:
+    """Every eligible candidate source uses the same exact open carrier and close plan."""
+
+    read = _open_candidate_withdrawal_read(action)
     monkeypatch.setattr(effects, "_github_json", read)
     adapter = effects.GitHubEffectAdapter(
         REPOSITORY,
         TEST_VALUE,
-        WorkerRequest(229, "lead", "resolve-question"),
+        WorkerRequest(229, "lead", action),
         authorized_change=CHANGE,
         current_revision=MAIN,
         expected_result_kind=result_kind,
@@ -517,6 +537,104 @@ def test_candidate_withdrawal_guard_and_plan_do_not_require_replacement_readines
         "head_sha": HEAD,
         "fields": {"state": "closed"},
     }
+
+
+@pytest.mark.parametrize(
+    ("role", "action", "result_kind"),
+    [
+        ("lead", "explore-change", "no-go"),
+        ("lead", "propose-change", "ready-for-openspec-review"),
+        ("lead", "resolve-question", "lifecycle-ready"),
+        ("lead", "finalize-change", "blocked"),
+        ("reviewer", "review-implementation", "pass"),
+        ("executor", "implement-change", "ready"),
+    ],
+)
+def test_withdrawal_guard_rejects_sources_outside_candidate_capability(
+    monkeypatch: pytest.MonkeyPatch, role: str, action: str, result_kind: str
+) -> None:
+    read = _open_candidate_withdrawal_read(action)
+    monkeypatch.setattr(effects, "_github_json", read)
+    adapter = effects.GitHubEffectAdapter(
+        REPOSITORY,
+        TEST_VALUE,
+        WorkerRequest(229, role, action),
+        authorized_change=CHANGE,
+        current_revision=MAIN,
+        expected_result_kind=result_kind,
+    )
+    close = effects.StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 229,
+                "operation": "pull-request-update",
+                "number": 236,
+                "expected_head_sha": HEAD,
+                "fields": {"state": "closed"},
+            }
+        ),
+    )
+
+    assert not adapter.guard(close)
+
+
+@pytest.mark.parametrize("action", ["explore-change", "propose-change"])
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"fields": {"title": "changed"}},
+        {"fields": {"body": "changed"}},
+        {"fields": {"base": "release"}},
+        {"fields": {"state": "open"}},
+        {"fields": {"state": "closed", "title": "changed"}},
+        {"fields": {"state": "closed", "body": "changed"}},
+        {"fields": {"state": "closed", "base": "release"}},
+        {"expected_head_sha": "5" * 40},
+        {"expected_head_sha": "not-a-sha"},
+        {"issue_number": 230},
+        {"number": True},
+        {"number": 0},
+    ],
+)
+def test_new_candidate_sources_gain_only_result_bound_exact_close(
+    monkeypatch: pytest.MonkeyPatch, action: str, overrides: dict[str, object]
+) -> None:
+    read = _open_candidate_withdrawal_read(action)
+    monkeypatch.setattr(effects, "_github_json", read)
+    source = WorkerRequest(229, "lead", action)
+    adapter = effects.GitHubEffectAdapter(
+        REPOSITORY,
+        TEST_VALUE,
+        source,
+        authorized_change=CHANGE,
+        current_revision=MAIN,
+        expected_result_kind="research-required",
+    )
+    payload: dict[str, object] = {
+        "issue_number": 229,
+        "operation": "pull-request-update",
+        "number": 236,
+        "expected_head_sha": HEAD,
+        "fields": {"state": "closed"},
+    }
+    close = effects.StagedEffect(kind="github-mutation", payload_json=json.dumps(payload))
+    assert "pull-request-update" not in effects.allowed_github_mutation_operations("lead", action)
+    assert not effects.supported_effect_guard(source, close)
+    ordinary = carrier.qualify_change_carrier(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        source=source,
+        change=CHANGE,
+        pr_number=236,
+        current_revision=MAIN,
+        read=read,
+    )
+    assert ordinary.disposition == ("INDETERMINATE" if action == "explore-change" else "QUALIFIED")
+    payload.update(overrides)
+    effect = effects.StagedEffect(kind="github-mutation", payload_json=json.dumps(payload))
+
+    assert not adapter.guard(effect)
 
 
 def test_lead_retirement_guard_uses_real_code_only_implementation_qualification(
