@@ -751,6 +751,8 @@ def _accepted_lead_retirement_comments(
     *,
     retired_number: int = 236,
     request_id: int = 1060,
+    result_kind: str = "ready",
+    successor: str = "Executor / implement-change",
     close_fields: dict[str, str] | None = None,
     decision_at: str = "2026-11-03T02:59:00Z",
     versionless_ingress: bool = False,
@@ -758,7 +760,7 @@ def _accepted_lead_retirement_comments(
     extra_invocation_effect: bool = False,
     accepted_content_override: str | None = None,
 ) -> tuple[list[dict[str, object]], dict[int, dict[str, object]]]:
-    """One exact accepted Lead READY close, without inventing Reviewer FINDINGS."""
+    """One exact accepted Lead close, without inventing Reviewer FINDINGS."""
 
     from investment_strategy.scheduled_agent_application_bridge import (
         ApplicationRequest,
@@ -772,8 +774,12 @@ def _accepted_lead_retirement_comments(
         "role": "lead",
         "action": "resolve-question",
         "change": CHANGE,
-        "result_kind": "ready",
-        "result_content": "Human-resolved implementation readiness",
+        "result_kind": result_kind,
+        "result_content": (
+            "Human-resolved implementation readiness"
+            if result_kind == "ready"
+            else "Human-resolved withdrawal; replacement research remains incomplete"
+        ),
         "requested_effects": [
             {
                 "kind": "github-mutation",
@@ -839,7 +845,7 @@ def _accepted_lead_retirement_comments(
                 "Role: lead",
                 "Action: resolve-question",
                 f"Change: {CHANGE}",
-                "Result-Kind: ready",
+                f"Result-Kind: {result_kind}",
                 "Disposition: ACCEPTED",
                 f"Worker-Result-SHA256: {digest(accepted)}",
                 f"Application-Intent-B64: {base64.b64encode(accepted.encode()).decode()}",
@@ -859,12 +865,12 @@ def _accepted_lead_retirement_comments(
                 f"Change: {CHANGE}",
                 "Role: lead",
                 "Action: resolve-question",
-                "Result: READY",
+                f"Result: {result_kind.upper().replace('-', '_')}",
                 f"Revision: {MAIN}",
                 f"Default-Branch-Revision: {MAIN}",
                 "Application-Correlation: "
-                f"application:{request_id}:229:{CHANGE}:lead:resolve-question:ready:{MAIN}",
-                "Repository-derived successor: Executor / implement-change",
+                f"application:{request_id}:229:{CHANGE}:lead:resolve-question:{result_kind}:{MAIN}",
+                f"Repository-derived successor: {successor}",
             )
         ),
     }
@@ -996,6 +1002,44 @@ def test_minimal_raw_ingress_proves_accepted_lead_retirement(
         change=CHANGE,
         branch=f"agent/{CHANGE}-supersedes-236",
         current_revision=MAIN,
+    )
+
+
+@pytest.mark.parametrize(
+    ("result_kind", "successor"),
+    [("ready", "Executor / implement-change"), ("research-required", "Lead / explore-change")],
+)
+def test_completed_candidate_withdrawal_is_proven_without_replacement_readiness(
+    result_kind: str, successor: str
+) -> None:
+    """The same exact accepted close qualifies while replacement research is unfinished."""
+
+    retired = _continuation_pr(branch=f"agent/{CHANGE}", head_sha="5" * 40)
+    retired.update(state="closed", closed_at="2026-11-03T03:00:00Z")
+    formal, requests = _accepted_lead_retirement_comments(
+        "5" * 40,
+        result_kind=result_kind,
+        successor=successor,
+        minimal_raw_ingress=True,
+    )
+    read = _fake_github(
+        current_pr=retired,
+        historical_pr=None,
+        merged_continuations=[retired],
+        open_prs=[],
+        pr_files=[{"filename": f"openspec/changes/{CHANGE}/proposal.md"}],
+        formal_comments=formal,
+        request_comments=requests,
+    )
+
+    assert carrier.qualify_supersession_branch(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        issue_number=229,
+        change=CHANGE,
+        branch=f"agent/{CHANGE}-supersedes-236",
+        current_revision=MAIN,
+        read=read,
     )
 
 
