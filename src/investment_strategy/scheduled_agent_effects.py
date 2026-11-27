@@ -503,9 +503,7 @@ def _implementation_development_save(batch: EffectBatch) -> bool:
         and request.expected_change == typed_result.change
         and request.change == typed_result.change
         and bool(request.files)
-        and all(
-            PurePosixPath(file.path).parts[:1] != ("openspec",) for file in request.files
-        )
+        and all(PurePosixPath(file.path).parts[:1] != ("openspec",) for file in request.files)
     )
 
 
