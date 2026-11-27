@@ -10,6 +10,9 @@ on:
       - ".github/scripts/openspec_archive.py"
       - ".github/workflows/openspec-archive.yml"
       - ".github/workflows/quality.yml"
+      - ".github/workflows/scheduled-agent-bridge.yml"
+      - ".github/workflows/scheduled-agent-application.yml"
+      - "openspec/changes/*/tasks.md"
       - "README.md"
       - "agents/**"
   pull_request:
@@ -21,6 +24,9 @@ on:
       - ".github/scripts/openspec_archive.py"
       - ".github/workflows/openspec-archive.yml"
       - ".github/workflows/quality.yml"
+      - ".github/workflows/scheduled-agent-bridge.yml"
+      - ".github/workflows/scheduled-agent-application.yml"
+      - "openspec/changes/*/tasks.md"
       - "README.md"
       - "agents/**"
 
