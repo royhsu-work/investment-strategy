@@ -205,6 +205,105 @@ def test_small_workflow_run_history_requires_complete_stable_pages(fault: str) -
     )
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        "complete",
+        "no-runs",
+        "fork",
+        "no-count",
+        "short",
+        "wrong-event",
+        "wrong-head",
+        "wrong-repo",
+        "missing-head-repo",
+        "duplicate",
+        "capped",
+    ],
+)
+def test_native_quality_inventory_requires_complete_exact_source_runs(case: str) -> None:
+    repository = "royhsu-work/investment-strategy"
+
+    def run(run_id: int, event: str) -> dict[str, object]:
+        return {
+            "id": run_id,
+            "event": event,
+            "head_sha": REVISION,
+            "run_attempt": 1,
+            "path": ".github/workflows/quality.yml",
+            "repository": {"full_name": repository},
+            "head_repository": {"full_name": repository},
+        }
+
+    def read(repo: str, token: str, path: str) -> object:
+        assert repo == repository and token
+        url = urlsplit(path)
+        assert url.path == "actions/workflows/quality.yml/runs"
+        query = parse_qs(url.query)
+        assert query["per_page"] == ["100"]
+        page = int(query["page"][0])
+        event = query.get("event", [None])[0]
+        if case == "capped":
+            if event == "push":
+                assert query["head_sha"] == [REVISION]
+                return {
+                    "total_count": 1000,
+                    "workflow_runs": [run(i, "push") for i in range(1, 101)],
+                }
+            if event is None:
+                assert "head_sha" not in query
+                history = [run(i, "push") for i in range(1, 1002)] + [run(1002, "pull_request")]
+                history[0]["head_sha"] = "a" * 40
+                history.append(run(1003, "push"))
+                return {
+                    "total_count": len(history),
+                    "workflow_runs": history[(page - 1) * 100 : page * 100],
+                }
+        assert query["head_sha"] == [REVISION]
+        assert event == "push" or event == "pull_request", query
+        selected = run(1 if event == "push" else 2, event)
+        if case == "capped":
+            selected["id"] = 1002
+        if case == "no-runs":
+            return {"total_count": 0, "workflow_runs": []}
+        if event == "pull_request":
+            return {"total_count": 1, "workflow_runs": [selected]}
+
+        if case == "no-count":
+            return {"workflow_runs": [selected]}
+        if case == "short":
+            return {"total_count": 2, "workflow_runs": [selected]}
+        if case == "wrong-event":
+            selected["event"] = "pull_request"
+        if case == "wrong-head":
+            selected["head_sha"] = "a" * 40
+        if case == "wrong-repo":
+            selected["repository"] = {"full_name": "other/repository"}
+        if case == "missing-head-repo":
+            del selected["head_repository"]
+        if case == "fork":
+            selected["head_repository"] = {"full_name": "other/repository"}
+        if case == "duplicate":
+            selected["id"] = 2
+        return {"total_count": 1, "workflow_runs": [selected]}
+
+    collect = getattr(bridge, "read_native_quality_runs", None)
+    assert callable(collect), "Bridge must collect the exact native quality run inventory"
+    runs = collect(repository, "token", REVISION, read=read)
+    if case in {"complete", "no-runs", "fork", "capped"}:
+        assert runs is not None
+        ids = {item["id"] for item in runs}
+        expected = {
+            "complete": {1, 2},
+            "no-runs": set(),
+            "fork": {2},
+            "capped": set(range(2, 1004)),
+        }
+        assert ids == expected[case]
+    else:
+        assert runs is None
+
+
 def test_prior_dispatch_handoff_indexes_run_history_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
