@@ -6089,7 +6089,7 @@ def test_fresh_ingress_keeps_development_save_physical_only(
         {"kind": "github-mutation", "payload_json": json.dumps(materialization)}
     ]
     request = bridge.canonicalize_raw_worker_result(
-        "WORKER_RESULT\n" + json.dumps(worker) + "\n",
+        body="WORKER_RESULT\n" + json.dumps(worker) + "\n",
         source=source,
         authorized_change=_CHANGE,
         repository=_REPOSITORY,
