@@ -24,6 +24,7 @@ from investment_strategy.scheduled_agent_carrier import (
     github_paginated_mappings,
     github_read_bytes_with_retry,
 )
+from investment_strategy.scheduled_agent_effect_contract import candidate_withdrawal_permitted
 from investment_strategy.scheduled_agent_formal_result import parse_formal_result
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
@@ -1056,10 +1057,15 @@ def _accepted_formal_result_is_proven(
             retired_branch,
         ):
             return False
-    if (role, action, result) == ("lead", "resolve-question", "ready"):
-        # A Lead resolution can retire an already-reviewed carrier without
-        # manufacturing a Reviewer FINDINGS.  The intent, not PR closure alone,
-        # must name one exact existing PR/head and request only its closure.
+    if (
+        isinstance(role, str)
+        and isinstance(action, str)
+        and isinstance(result, str)
+        and candidate_withdrawal_permitted(role, action, result)
+    ):
+        # Every eligible Lead result retains the same exact close obligation.
+        # The intent, not PR closure or replacement readiness, must name one
+        # existing PR/head and request only its closure.
         effects = intent.get("requested_effects")
         if not isinstance(effects, list) or len(effects) != 1 or retired_head is None:
             return False
@@ -1103,7 +1109,7 @@ def _accepted_lead_retirement(
 ) -> bool:
     """Prove one application-owned closure, independent of older review outcome.
 
-    Exact PR/head, typed Lead READY, accepted close intent, and observed
+    Exact PR/head, an eligible Lead result, accepted close intent, and observed
     closed-unmerged state establish retirement.  No old PASS or FINDINGS is
     transferred to the successor; its fresh gates remain mandatory.
     """
@@ -1114,12 +1120,14 @@ def _accepted_lead_retirement(
         if (
             event is None
             or not event.valid
-            or (event.issue_number, event.change, event.role, event.action)
-            != (issue_number, change, "lead", "resolve-question")
-            or event.result_kind != "ready"
-            or event.successor != ("executor", "implement-change")
+            or (event.issue_number, event.change) != (issue_number, change)
+            or event.role != "lead"
+            or event.action is None
+            or not candidate_withdrawal_permitted(event.role, event.action, event.result_kind)
         ):
             continue
+        # The shared formal parser has already checked the model-derived
+        # successor for this Action/Result; no second transition table is used.
         occurred = _timestamp(comment.get("created_at"))
         if occurred is None or occurred < closed_at:
             continue
@@ -1154,7 +1162,7 @@ def _formally_superseded_closed_carrier(
     """Prove retirement without giving a closed PR or prose any routing authority.
 
     Either the existing accepted READY -> Reviewer FINDINGS transition or one
-    accepted Lead READY exact-head closure effect must justify retirement.
+    accepted eligible Lead exact-head closure effect must justify retirement.
     No past READY, PASS, CI, or old branch head is transferred to replacement.
     """
 
