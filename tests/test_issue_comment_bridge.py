@@ -11191,9 +11191,7 @@ def test_saved_development_obligation_drives_native_bridge_output(
             return bridge.NativeQualityObservation("INDETERMINATE")
         return bridge.NativeQualityObservation(
             "NO_VERDICT",
-            call=bridge._quality_call_fields(
-                repository, saved, REVISION, obligation, 987, 77, 1
-            ),
+            call=bridge._quality_call_fields(repository, saved, REVISION, obligation, 987, 77, 1),
         )
 
     monkeypatch.setattr(bridge, "prove_materialization", prove, raising=False)
