@@ -5315,7 +5315,8 @@ def test_actual_implementation_constructor_is_proved_by_fresh_consumers(
 
 
 @pytest.mark.parametrize(
-    "case", ["current", "stale-preimage", "review-required", "mixed", "comment"]
+    "case",
+    ["current", "stale-preimage", "review-required", "unqualified-review", "mixed", "comment"],
 )
 def test_development_save_uses_actual_ingress_application_and_git_carrier(
     proof_git: _ProofGitRepository,
@@ -5328,6 +5329,7 @@ def test_development_save_uses_actual_ingress_application_and_git_carrier(
     import investment_strategy.scheduled_agent_merge_acceptance as acceptance
     from investment_strategy.scheduled_agent_runtime import (
         GitHubIssueObservation,
+        _qualify_current_observation,
         acquire_dispatch_preflight,
     )
     from investment_strategy.workflow_dispatch import DispatchPreflight
@@ -5410,21 +5412,22 @@ def test_development_save_uses_actual_ingress_application_and_git_carrier(
     monkeypatch.setattr(application_bridge, "_github_json", read)
 
     def preflight() -> DispatchPreflight:
-        return acquire_dispatch_preflight(
-            observations=(
-                GitHubIssueObservation(
-                    issue_number=322,
-                    change=_CHANGE,
-                    routing=(
-                        ("reviewer", "review-openspec")
-                        if proof_git.routing == "review-openspec"
-                        else ("executor", "implement-change")
-                    ),
-                    state="open",
-                    created_order=1,
-                    authoritative=True,
-                ),
+        observation = GitHubIssueObservation(
+            issue_number=322,
+            change=_CHANGE,
+            routing=(
+                ("reviewer", "review-openspec")
+                if proof_git.routing == "review-openspec"
+                else ("executor", "implement-change")
             ),
+            state="open",
+            created_order=1,
+            authoritative=True,
+        )
+        if case == "unqualified-review":
+            observation = _qualify_current_observation(observation, (), (), proof_git.main)
+        return acquire_dispatch_preflight(
+            observations=(observation,),
             source_total_count=1,
             incomplete_results=False,
             exhausted=True,
@@ -5485,11 +5488,18 @@ def test_development_save_uses_actual_ingress_application_and_git_carrier(
         reason = {
             "stale-preimage": "effect precondition rejected",
             "review-required": "typed application rejected:model-selection",
+            "unqualified-review": "typed application rejected:model-selection",
             "mixed": "typed application rejected:implementation-checkpoint-incomplete",
             "comment": "typed application rejected:implementation-checkpoint-incomplete",
         }
         assert result.reason == reason[case], result
-        assert comments == []
+        if case in {"mixed", "comment"}:
+            assert len(comments) == 1
+            rejection = effects.parse_application_decision(comments[0]["body"])
+            assert rejection is not None and rejection.disposition == "REJECTED"
+            assert rejection.request_comment_id == 901
+        else:
+            assert comments == []
         assert proof_git.mutations == []
         assert proof_git.git("rev-parse", f"refs/heads/{proof_git.branch}") == initial_head
         return
