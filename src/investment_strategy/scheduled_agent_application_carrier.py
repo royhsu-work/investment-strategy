@@ -1130,10 +1130,25 @@ def _accepted_formal_result_is_proven(
         or not isinstance(action, str)
         or not isinstance(result, str)
         or parts[2:7] != [str(issue_number), change, role, action, result]
-        or parts[7] != default_revision
         or not _valid_sha(default_revision)
+        or not _valid_sha(parts[7])
     ):
         return False
+    # Formal evidence and the Application observation can survive independent
+    # default-branch advances. Both must belong to the fresh default history;
+    # the accepted original remains bound to the actual observation revision.
+    _, current_revision = _repository_default(repository, token, read=read)
+    if current_revision is None:
+        return False
+    for revision in (cast(str, default_revision), parts[7]):
+        if revision != current_revision and not _compare_is_ancestor(
+            repository,
+            token,
+            ancestor=revision,
+            descendant=current_revision,
+            read=read,
+        ):
+            return False
     proof = _accepted_intent_from_sources(
         repository,
         token,
@@ -1141,7 +1156,7 @@ def _accepted_formal_result_is_proven(
         change=change,
         result_kind=result,
         request_comment_id=int(parts[1]),
-        current_revision=cast(str, default_revision),
+        current_revision=parts[7],
         comments=comments,
         read=read,
     )
