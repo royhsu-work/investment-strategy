@@ -1044,6 +1044,61 @@ def test_completed_candidate_withdrawal_is_proven_without_replacement_readiness(
 
 
 @pytest.mark.parametrize(
+    ("result_kind", "successor"),
+    [("ready", "Executor / implement-change"), ("research-required", "Lead / explore-change")],
+)
+@pytest.mark.parametrize(
+    ("decision_at", "qualified"),
+    [
+        ("2026-11-03T02:59:00Z", True),
+        ("2026-11-03T03:00:00Z", True),
+        ("2026-11-03T03:01:00Z", False),
+        (None, False),
+        ("not-a-timestamp", False),
+    ],
+)
+def test_completed_withdrawal_requires_acceptance_no_later_than_close(
+    result_kind: str, successor: str, decision_at: str | None, qualified: bool
+) -> None:
+    """Matching values cannot make a later or undated ACCEPT the cause of an old close."""
+
+    retired = _continuation_pr(branch=f"agent/{CHANGE}", head_sha="5" * 40)
+    retired.update(state="closed", closed_at="2026-11-03T03:00:00Z")
+    formal, requests = _accepted_lead_retirement_comments(
+        "5" * 40,
+        result_kind=result_kind,
+        successor=successor,
+        minimal_raw_ingress=True,
+    )
+    if decision_at is None:
+        formal[0].pop("created_at")
+    else:
+        formal[0]["created_at"] = decision_at
+    read = _fake_github(
+        current_pr=retired,
+        historical_pr=None,
+        merged_continuations=[retired],
+        open_prs=[],
+        pr_files=[{"filename": f"openspec/changes/{CHANGE}/proposal.md"}],
+        formal_comments=formal,
+        request_comments=requests,
+    )
+
+    assert (
+        carrier.qualify_supersession_branch(
+            repository=REPOSITORY,
+            token=TEST_VALUE,
+            issue_number=229,
+            change=CHANGE,
+            branch=f"agent/{CHANGE}-supersedes-236",
+            current_revision=MAIN,
+            read=read,
+        )
+        is qualified
+    )
+
+
+@pytest.mark.parametrize(
     ("wire", "identity", "qualified"),
     [
         (
