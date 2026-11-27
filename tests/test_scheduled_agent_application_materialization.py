@@ -5409,8 +5409,10 @@ def test_development_save_uses_actual_ingress_application_and_git_carrier(
         default_branch="main",
         request_comment_id=901,
     )
-    with pytest.raises(CarrierRequired) as raised:
-        acceptance.run_guarded_effect_application(
+    before_write = _prove_payload_git(proof_git, payload)
+    assert before_write.disposition == "INCOMPLETE", before_write
+    try:
+        _, result = acceptance.run_guarded_effect_application(
             projected,
             source=proof_git.source,
             repository=proof_git.repository,
@@ -5422,7 +5424,11 @@ def test_development_save_uses_actual_ingress_application_and_git_carrier(
             authorized_change=_CHANGE,
         )
 
-    plan = raised.value.plan
+    except CarrierRequired as required:
+        plan = required.plan
+    else:
+        pytest.fail(f"Expected exact Carrier plan; Application returned {result!r}")
+
     assert plan.force is False
     assert plan.expected["ref_sha"] == proof_git.base
     assert plan.requested["commit_parents"] == [proof_git.base]
