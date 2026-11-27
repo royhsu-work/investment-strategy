@@ -67,6 +67,7 @@ from investment_strategy.scheduled_agent_effect_contract import (
     GITHUB_MUTATION_KIND,
     EvidenceTarget,
     allowed_github_mutation_operations,
+    candidate_withdrawal_permitted,
     consequence_spec_for,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
@@ -2420,9 +2421,13 @@ class GitHubEffectAdapter:
         closure, only its same immutable closed/unmerged postcondition counts.
         """
 
+        # Newly permitted outcomes admit an open target. Closed reconciliation
+        # retains the existing READY contract.
         if (
-            (self.source.role, self.source.action) != ("lead", "resolve-question")
-            or self.expected_result_kind != "ready"
+            not candidate_withdrawal_permitted(
+                self.source.role, self.source.action, self.expected_result_kind
+            )
+            or (not require_open and self.expected_result_kind != "ready")
             or not _valid_sha(expected_head_sha)
         ):
             return None

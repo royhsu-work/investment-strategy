@@ -19,10 +19,17 @@ from investment_strategy.scheduled_agent_action_model import (
     TRANSITIONS,
     Action,
     ResultKind,
+    Role,
+    TypedResult,
+    next_action,
+    role_for,
 )
 
 RoleAction = tuple[str, str]
 GITHUB_MUTATION_KIND: Final = "github-mutation"
+_CANDIDATE_ACTIONS: Final = frozenset(
+    {Action.EXPLORE_CHANGE, Action.PROPOSE_CHANGE, Action.RESOLVE_QUESTION}
+)
 
 
 class EvidenceTarget(StrEnum):
@@ -291,6 +298,31 @@ def consequence_spec_for(
         raise ValueError(
             f"illegal Action/Result consequence: {key[0].value}/{key[1].value}"
         ) from exc
+
+
+def candidate_withdrawal_permitted(
+    role: str,
+    action: Action | str,
+    result: ResultKind | str | None,
+) -> bool:
+    """Derive the bounded candidate withdrawal capability from the topology."""
+
+    if result is None:
+        return False
+    try:
+        spec = consequence_spec_for(action, result)
+    except ValueError:
+        return False
+    if (
+        spec.action not in _CANDIDATE_ACTIONS
+        or role != Role.LEAD.value
+        or role_for(spec.action) is not Role.LEAD
+        or spec.evidence_target is not EvidenceTarget.DEFAULT_BRANCH
+    ):
+        return False
+    return (
+        spec.action is Action.RESOLVE_QUESTION and spec.result is ResultKind.READY
+    ) or next_action(spec.action, TypedResult(spec.result)) in _CANDIDATE_ACTIONS
 
 
 def assert_consequence_specs_complete() -> None:
