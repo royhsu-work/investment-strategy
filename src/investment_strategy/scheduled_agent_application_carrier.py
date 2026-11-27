@@ -979,13 +979,22 @@ def _accepted_formal_result_is_proven(
     ):
         return False
     source = WorkerRequest(decision.issue_number, decision.role, decision.action)
+    original_body: object = None
+
+    def read_original(repo: str, credential: str, path: str) -> object | None:
+        nonlocal original_body
+        observed = read(repo, credential, path)
+        if path == f"issues/comments/{request_id}" and isinstance(observed, Mapping):
+            original_body = observed.get("body")
+        return observed
+
     try:
         ingress = _read_accepted_original_request(
             record=decision,
             source=source,
             repository=repository,
             token=token,
-            read=read,
+            read=read_original,
             require_legacy_dispatch_correlation=True,
         )
         if ingress is None:
@@ -1067,6 +1076,33 @@ def _accepted_formal_result_is_proven(
         # Every eligible Lead result retains the same exact close obligation.
         # The intent, not PR closure or replacement readiness, must name one
         # existing PR/head and request only its closure.
+        original_effects = ingress_result.get("requested_effects")
+        if not isinstance(original_effects, list) or len(original_effects) not in {1, 2}:
+            return False
+        if len(original_effects) == 2:
+            # Only a supported historical Application envelope may contain
+            # its derived formal projection. A new raw request owns no such
+            # control, and normalization must not erase an extra worker write.
+            control = original_effects[1]
+            if (
+                not isinstance(original_body, str)
+                or not original_body.startswith("EFFECT_REQUEST\n")
+                or not isinstance(control, Mapping)
+                or control.get("kind") != "issue-comment"
+                or not isinstance(control.get("payload_json"), str)
+            ):
+                return False
+            try:
+                control_payload = json.loads(control["payload_json"])
+            except ValueError:
+                return False
+            if (
+                not isinstance(control_payload, Mapping)
+                or control_payload.get("issue_number") != issue_number
+                or not isinstance(control_payload.get("body"), str)
+                or control_payload["body"].splitlines()[:1] != ["ACTION_RESULT"]
+            ):
+                return False
         if retired_closed_at is None or accepted_at is None or accepted_at > retired_closed_at:
             return False
         effects = intent.get("requested_effects")
