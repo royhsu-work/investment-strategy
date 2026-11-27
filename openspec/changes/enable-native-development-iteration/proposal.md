@@ -7,7 +7,8 @@ Human authorized the bounded independent maintenance bootstrap in [#496](https:/
 ## What Changes
 
 - Separate authorized development materialization from verified slice completion on the existing implementation carrier, including genuine test-only RED.
-- Reuse existing static-first native quality, exact checkout evidence and same-frontier qualification. Release only settled writes with qualified terminal verdicts. Reacquire a missing/no-verdict exact quality run using the same native workflow and existing verification owner.
+- Replace the separate executable pre-ACCEPT implementation overlay with the existing static-first native quality gate for both development and verified completion, preserving all non-executable authorization, manifest, task and checkpoint checks. Require exact native evidence on the implementation revision and the subsequent marker revision.
+- Settle each development attempt against its own immutable materialization witness and qualified CI; reconstruct lawful same-frontier continuation without hiding competing acceptance. Obtain an outstanding exact verification through the same native quality job and existing source-bound dispatch run, without a second asynchronous workflow-dispatch request.
 - Preserve exact-head review, task criteria, one verified checkpoint/formal result, full quality/strict and merge gates. No second runner, special test mode, token, new Action/ResultKind, persisted phase, worker-selected target, or incident-specific Runtime exception.
 
 ## Capabilities

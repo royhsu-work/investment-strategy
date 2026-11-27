@@ -6,9 +6,11 @@ For an approved executable behavior inside the first incomplete vertical slice, 
 
 The existing native Python Quality job SHALL execute Ruff lint, Ruff format check, Mypy, then pytest, stopping at the first failed step. It SHALL verify and report actual checkout HEAD, target and qualified producer identity; run head association alone is insufficient. Source-bound actual test-only CI before target implementation SHALL qualify intended behavioral RED only after all static steps PASS and the target test fails for the missing or incorrect approved behavior. Static, syntax, format, type, import, fixture/setup, environment, unrelated, skipped, missing or canceled verification MUST NOT qualify as intended RED or GREEN. Minimum corrected behavior and exact required gates SHALL establish GREEN; changed revisions require revalidation. No local toolchain assumption, new CI runner, TEST/VERIFY mode, direct Actions execution, separate persisted TDD phase or semantic Action is permitted.
 
-The current-frontier owner SHALL distinguish qualified terminal exact native CI PASS or mechanical FAIL from missing, active, unavailable, no-verdict or contradictory evidence. When physical development effects are proven complete and required exact native CI has a qualified terminal verdict, a later fresh Dispatch MAY authorize same-Action development or verified completion of the same incomplete slice, with zero replay and no interim formal result. A qualified ordinary mechanical FAIL is correction input, not by itself mutation Recovery. Unsettled or conflicting writes retain ownership protection. For a proven current development head with missing or unusable verdict, only the existing repository-owned verification owner MAY derive and request the same existing native quality workflow for that exact repository and head when complete source and run inventory establish no usable verdict or eligible active attempt. Missing evidence is not absence; do not replay materialization or blindly retry. CI never grants mutation authority.
+The current-frontier owner SHALL settle each accepted development attempt against its own immutable physical materialization witness W and its qualified terminal native CI verdict at W, not a later qualified consumer head T. Before excluding any accepted candidate, the shared owner SHALL independently establish immutable source request/dispatch/ACCEPT binding, physical witness, exact run/attempt and verdict, and the lawful causal sequence of fresh authorizations: a successor dispatch MUST have been independently authorized after its predecessor's qualifying settlement evidence was available, with an exact then-current carrier base and no competing live or unknown ingress. Existing source identities, causal timestamps, qualified dispatch and acceptance evidence, and Git lineage SHALL establish this sequence; missing or ambiguous ordering, conflicting/replayed acceptance, or missing W verdict MUST NOT be erased by filtering. Only a uniquely qualified settled prefix may leave the existing current-frontier reduction. A later T PASS cannot settle W. One unresolved accepted tail retains existing ownership protection; after qualified settled PASS or mechanical FAIL the next fresh Dispatch MAY authorize same-Action correction or completion without physical replay or intermediate formal result. Ordinary qualified mechanical FAIL is correction input, not itself mutation Recovery.
 
-Verified slice completion SHALL remain a distinct affirmative consequence: first incomplete slice criteria, applicable exact-current Python Quality and strict OpenSpec gates, task-marker postconditions, and one effective verified checkpoint and formal result. A marker-only revision SHALL receive its applicable exact-head gates and MUST NOT borrow an earlier head PASS. Independent reviews, exact-head merge, material semantic correction, no replay/no rewind, fresh authority, and dependencies remain unchanged. A development commit or CI failure never completes a slice or parent Issue.
+The existing verification owner SHALL derive an outstanding exact quality obligation from current qualified source, complete run/attempt/job evidence and physical proof. It SHALL use the same native read-only quality job through an existing source-bound native caller run when no usable verdict or eligible active attempt exists, without a second asynchronous workflow-dispatch API request. A missing/not-yet-visible caller or job is not proof of non-invocation. A fresh later source run MAY invoke only after a qualified earlier caller/attempt is terminal, complete native job/plan evidence proves no usable verdict and no eligible active attempt, and source/head/producer authority is rechecked. Qualify ordinary push/PR runs and caller-bound native jobs by exact repository, target checkout, required producer definition, native run/attempt/job, source correlation where applicable and required steps. Equivalent qualified verdicts may be consumed without creating competing mutation authority. Separate genuine qualified mechanical FAIL and PASS outcomes for the same required gate MUST NOT establish affirmative PASS merely by selection; they permit normal correction when the physical effect is settled. Contradictory source/attempt facts and incomplete evidence MUST NOT be resolved by guessing the latest run. A later attempt cannot erase qualified historical evidence used by a proven successor. No native CI job or non-authorizing observation may publish completion or select a semantic successor. Missing or failed CI never authorizes physical effect replay.
+
+Verified slice completion SHALL remain a distinct affirmative consequence. Fresh implementation completion SHALL consume exact native quality PASS on the current implementation head H and applicable semantic/strict evidence instead of an additional executable pre-ACCEPT candidate overlay gate. It MUST retain all non-executable source, carrier, manifest/path/blob, preimage, task-marker monotonicity, first incomplete slice, checkpoint, review and Human authorization checks. Fresh completion materialization SHALL change only the authorized task marker delta after source/test changes are separately materialized and verified; mixed content and completion requests MUST NOT acquire completion authority. Application SHALL observe the actual marker revision H' and applicable exact native quality and strict PASS before one effective checkpoint, formal result and routing; H PASS cannot satisfy H'. A settled marker-only write whose exact gate has qualified ordinary FAIL MUST NOT create a checkpoint or formal completion; preserve the accepted witness and logical incomplete slice, allow qualified normal same-slice correction without clearing markers or replaying completed effects, and require current exact gates before completion. Unknown/unsettled effects retain ownership protection. If the authorized marker bytes are already durable and unchanged, the existing marker proof MAY satisfy that physical obligation without another write, only for the same logically incomplete slice with current exact required gate PASS. Checked markers alone are insufficient completion evidence. Historical accepted intents retain their original immutable meaning. Independent reviews, exact-head merge, material semantic correction, no replay/no rewind, fresh authority and dependency rules remain unchanged.
 
 #### Scenario: A test-only candidate reaches intended RED
 
@@ -34,11 +36,58 @@ Verified slice completion SHALL remain a distinct affirmative consequence: first
 
 #### Scenario: Exact verification is reacquired without physical replay
 
-- GIVEN the exact current development head is proven and complete native run evidence establishes no usable verdict or eligible active attempt
+- GIVEN the exact current development or marker head is proven and complete native source/run/attempt/job evidence establishes no usable verdict or eligible active attempt
 - WHEN the existing verification owner derives the required quality obligation
-- THEN the existing Python Quality workflow can be invoked for that exact repository and head
+- THEN the same native Python Quality job can be called within a fresh source-bound dispatch run for that exact repository and head without a second asynchronous dispatch request
 - AND no materialization, checkpoint, formal result or routing is repeated
 - AND incomplete inventory or unqualified target fails closed
+
+#### Scenario: Exact settlement retains its own witness across legal descendants
+
+- GIVEN I1 has immutable witness W1 with a qualified native RED and a later independently authorized I2 has W2 with exact GREEN
+- AND the source evidence proves the later dispatch followed I1 settlement
+- WHEN the physical proof now returns COMPLETE(T, W1) for I1 at T=W2
+- THEN I1 is settled using W1 RED, not W2 GREEN
+- AND I2 qualifies independently and the proven ordered prefix may leave current ownership reduction
+
+#### Scenario: A later head cannot hide competing or unresolved acceptance
+
+- GIVEN the same apparent route and T=W2 but W1 verdict is missing or the later dispatch did not follow qualified I1 settlement
+- WHEN the shared owner reconstructs the accepted candidates
+- THEN W2 PASS MUST NOT settle I1
+- AND an unqualified, competing or replayed acceptance MUST NOT be excluded before reduction
+- AND no competing physical write or completion is authorized
+
+#### Scenario: A pending native call is not absent
+
+- GIVEN the source-bound native caller or exact attempt/job is active or not fully observable
+- WHEN a later dispatch observes no usable quality verdict
+- THEN it only observes the outstanding exact obligation without a second call
+- AND after the exact earlier attempt is terminal with complete evidence of skipped/not-invoked or no-verdict execution, a newly authorized caller can run the same read-only gate
+- AND a qualified ordinary FAIL is not retried merely to obtain PASS
+
+#### Scenario: Duplicate native verification is evidence not authority
+
+- GIVEN push and pull-request quality runs or a caller-bound job target the same exact revision
+- WHEN the verification owner qualifies the required gate
+- THEN only source-, producer-, checkout-, run-, attempt- and step-qualified evidence can satisfy it
+- AND equivalent verdicts grant no duplicate completion authority while contradictory or incomplete evidence cannot establish PASS
+
+#### Scenario: Native GREEN replaces the overlay but not structural guards
+
+- GIVEN current implementation H has qualified exact native GREEN and an otherwise lawful marker-only completion manifest
+- WHEN fresh Application qualifies the completion
+- THEN an unavailable or failing hypothetical executable overlay cannot veto the exact native gate
+- AND wrong task identity, stale preimage, unauthorized path, mixed manifest or absent H PASS prevents completion authority
+- AND actual H' must pass its own required gates before checkpoint and formal result
+
+#### Scenario: Settled marker failure permits correction without premature completion
+
+- GIVEN the accepted marker-only materialization has been proven complete but its exact required quality gate has a qualified ordinary FAIL
+- WHEN the current frontier is freshly reconstructed
+- THEN no effective checkpoint, formal result or routing is committed
+- AND the same logical slice may receive qualified normal correction without reverting markers or replaying the accepted write
+- AND missing or conflicting physical or CI evidence does not grant competing authority
 
 #### Scenario: Development cannot manufacture completion
 
@@ -64,7 +113,7 @@ classified independently as exactly one of `ACCEPTED`, `LIVE_PREACCEPT`,
 `TERMINAL_NO_ACCEPT`, `REJECTED`, or `INVALID/UNKNOWN` before reduction. A
 missing or not-yet-visible Actions run is asynchronous observation evidence,
 not terminal or rejected evidence; `TERMINAL_NO_ACCEPT` requires authoritative
-terminal/non-mutation evidence from the exact application execution. Before applying the reducer to current-frontier owners, the existing qualification owner SHALL exclude a newly accepted development-only materialization whose exact physical obligations are proven complete and whose required native CI verdict is qualified and terminal (PASS or mechanical FAIL). Immutable acceptance and physical evidence remain historical. This exclusion MUST NOT apply to unknown, incomplete or conflicting effects, pending or unqualified CI, or historical formal-completion intents. The reducer SHALL apply these rules to the remaining current owners: more than one `ACCEPTED` is ambiguous; one
+terminal/non-mutation evidence from the exact application execution. Before applying the reducer to current-frontier owners, the existing qualification owner SHALL exclude only the independently proven causally ordered settled development prefix under the development/completion requirement. Each attempt requires its own immutable W witness, exact terminal native CI at W, source-bound fresh authorization and absence of competing acceptance; a later T verdict cannot replace W and unknown, incomplete, conflicting or replayed evidence MUST NOT be erased. Historical acceptance and physical evidence remain immutable; historical formal-completion intents MUST NOT be reclassified. A fresh accepted marker-only completion whose physical write is settled and whose exact required gate has qualified ordinary FAIL retains its historical completion intent and logical incomplete slice but MUST NOT permanently monopolize same-slice correction or authorize a formal result. The reducer SHALL apply these rules to the remaining current owners: more than one `ACCEPTED` is ambiguous; one
 `ACCEPTED` exclusively owns continuation and terminal/rejected noise does not
 compete; zero accepted plus more than one live candidate is ambiguous; zero
 accepted plus exactly one live candidate waits without semantic redispatch;
@@ -110,7 +159,7 @@ observe the repository, reconcile exact missing idempotent effects, use a
 carrier only when required, validate postconditions, persist the canonical
 formal result, and derive routing/terminal projection. Failure before ACCEPT
 has zero authoritative repository consequence; failure after ACCEPT resumes
-the same intent and semantic replay count remains zero. For a qualified development-only materialization, Phase A authorizes the exact physical consequence without requiring a future CI PASS; Phase B proves that write, then observes its exact native CI. It MUST NOT publish a formal result, checkpoint, completion marker or routing effect. Phase A and Dispatch MUST consume the same current-frontier qualification. Formal completion retains its full exact verification and postconditions.
+the same intent and semantic replay count remains zero. For a qualified development-only materialization, Phase A authorizes the exact physical consequence without requiring a future CI PASS; Phase B proves that write, then observes its exact native CI. It MUST NOT publish a formal result, checkpoint, completion marker or routing effect. Phase A and Dispatch MUST consume the same current-frontier qualification. For fresh implementation completion, Phase A SHALL use current exact native evidence and preserve non-executable manifest/task/checkpoint and authorization guards; it MUST NOT execute a competing candidate overlay quality gate. Phase B SHALL observe the actual marker revision and required exact gates before committing checkpoint and formal result; a settled marker failure remains eligible for normal correction only under the development/completion contract. Historical accepted completion recovery and other Action verification obligations remain unchanged.
 
 When an exact GitHub Actions run terminates before ACCEPT and every relevant
 native `EXECUTION_EXCEPTION` attempt proves `NO_APPLICATION_WRITE_ATTEMPTED`,
@@ -473,7 +522,7 @@ After a lost or ambiguous write response, recovery SHALL observe/reconcile the e
 
 Each normal Scheduled Task wake SHALL fresh-dispatch exactly one repository-authorized Action, load the Role and Skill derived from that Action, execute that Action, return structured result/evidence, apply the necessary repository effects, observe postconditions, persist the unique derived successor or terminal state when the formal consequence completes, and exit at the governed boundary. A successor Action SHALL execute only on a later wake after fresh dispatch, even when it maps to the same Role.
 
-A normal wake remains exactly-one-Action. When its exact dispatch artifact is `NO_WORK`, the external bootstrap MAY invoke one bounded Lead idle semantic mode as a separate non-Action boundary after the normal dispatch exits. That handoff MUST NOT create an Action or same-wake successor. Any admitted candidate is consumed only by a later fresh normal dispatch.
+A normal semantic wake remains exactly-one-Action. When its exact successful dispatch artifact is `NO_WORK / no-routed-work`, the external bootstrap MAY invoke one bounded Lead idle semantic mode as a separate non-Action boundary after the normal dispatch exits. That handoff MUST NOT create an Action or same-wake successor. Any admitted candidate is consumed only by a later fresh normal dispatch. A qualified outstanding native verification obligation is a non-idle, non-authorizing observation/call boundary in the existing dispatch run; it MUST NOT invoke idle or semantic work. Its actual required quality job failure is native gate evidence, not authority or an invented semantic result. A failed aggregate caller run MUST NOT authorize work; qualified planner/attempt/artifact and quality-job evidence MAY be read solely for non-authorizing audit and fresh gate qualification.
 
 The Action's primary delivery unit SHALL be one bounded verified slice: Reconstruct -> RED exact gap/blocker -> GREEN legal correction -> VERIFY exact postcondition/revision/gate -> durable checkpoint. For approved implement-change development, a slice MAY span multiple commits, native CI runs and fresh wakes. A development-only materialization MAY end at its qualified bounded asynchronous observation or existing CarrierRequired boundary without checkpoint, formal result or routing. No other intermediate write, API call, commit or first nonterminal observation by itself completes a slice or authorizes Exit. A slice too large for independent verification SHALL be decomposed into meaningful safe vertical boundaries.
 
