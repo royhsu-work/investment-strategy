@@ -1099,6 +1099,82 @@ def test_completed_withdrawal_requires_acceptance_no_later_than_close(
 
 
 @pytest.mark.parametrize(
+    ("result_kind", "successor"),
+    [("ready", "Executor / implement-change"), ("research-required", "Lead / explore-change")],
+)
+@pytest.mark.parametrize(
+    "extra_effect", [None, "ordinary-comment", "pull-request-title", "formal-comment"]
+)
+def test_completed_withdrawal_preserves_every_raw_original_effect(
+    result_kind: str, successor: str, extra_effect: str | None
+) -> None:
+    """An original mixed request cannot become close-only through accepted projection."""
+
+    retired = _continuation_pr(branch=f"agent/{CHANGE}", head_sha="5" * 40)
+    retired.update(state="closed", closed_at="2026-11-03T03:00:00Z")
+    formal, requests = _accepted_lead_retirement_comments(
+        "5" * 40,
+        result_kind=result_kind,
+        successor=successor,
+        minimal_raw_ingress=True,
+    )
+    original = json.loads(cast(str, requests[1060]["body"]).split("\n", 1)[1])
+    if extra_effect is not None:
+        if extra_effect == "pull-request-title":
+            effect = {
+                "kind": "github-mutation",
+                "payload_json": json.dumps(
+                    {
+                        "issue_number": 229,
+                        "operation": "pull-request-update",
+                        "number": 236,
+                        "expected_head_sha": "5" * 40,
+                        "fields": {"title": "An additional semantic write"},
+                    }
+                ),
+            }
+        else:
+            effect = {
+                "kind": "issue-comment",
+                "payload_json": json.dumps(
+                    {
+                        "issue_number": 229,
+                        "body": (
+                            "ACTION_RESULT\n..."
+                            if extra_effect == "formal-comment"
+                            else "An additional semantic write"
+                        ),
+                    }
+                ),
+            }
+        original["requested_effects"].append(effect)
+    _replace_accepted_source(
+        formal[0],
+        requests[1060],
+        request_body=f"WORKER_RESULT\n{json.dumps(original, sort_keys=True)}",
+    )
+    read = _fake_github(
+        current_pr=retired,
+        historical_pr=None,
+        merged_continuations=[retired],
+        open_prs=[],
+        pr_files=[{"filename": f"openspec/changes/{CHANGE}/proposal.md"}],
+        formal_comments=formal,
+        request_comments=requests,
+    )
+
+    assert carrier.qualify_supersession_branch(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        issue_number=229,
+        change=CHANGE,
+        branch=f"agent/{CHANGE}-supersedes-236",
+        current_revision=MAIN,
+        read=read,
+    ) is (extra_effect is None)
+
+
+@pytest.mark.parametrize(
     ("wire", "identity", "qualified"),
     [
         (
