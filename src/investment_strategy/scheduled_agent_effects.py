@@ -1120,6 +1120,8 @@ def _routing_label(value: object) -> bool:
 def _github_mutation_structurally_valid(
     source: WorkerRequest,
     payload: Mapping[str, object],
+    *,
+    result_kind: str | None = None,
 ) -> bool:
     if payload.get("issue_number") != source.issue_number:
         return False
@@ -1127,7 +1129,11 @@ def _github_mutation_structurally_valid(
     if not isinstance(operation, str):
         return False
     if operation not in allowed_github_mutation_operations(source.role, source.action):
-        return False
+        return candidate_withdrawal_permitted(
+            source.role, source.action, result_kind
+        ) and is_exact_pull_request_close(
+            GITHUB_MUTATION_KIND, payload, issue_number=source.issue_number
+        )
 
     if operation == "application-materialize":
         try:
@@ -1247,7 +1253,12 @@ def _routing_transition_structurally_valid(
     return True
 
 
-def supported_effect_guard(source: WorkerRequest, effect: StagedEffect) -> bool:
+def supported_effect_guard(
+    source: WorkerRequest,
+    effect: StagedEffect,
+    *,
+    result_kind: str | None = None,
+) -> bool:
     """Validate the bounded structural effect surface used by mapped Skills."""
 
     payload = _effect_payload(effect)
@@ -1273,7 +1284,7 @@ def supported_effect_guard(source: WorkerRequest, effect: StagedEffect) -> bool:
             derived=effect.derived,
         )
     if effect.kind == GITHUB_MUTATION_KIND:
-        return _github_mutation_structurally_valid(source, payload)
+        return _github_mutation_structurally_valid(source, payload, result_kind=result_kind)
     return False
 
 
@@ -3311,7 +3322,7 @@ class GitHubEffectAdapter:
             and self.source.action in {"merge-implementation-pr", "merge-archive-pr"}
         )
         if (
-            not supported_effect_guard(self.source, effect)
+            not supported_effect_guard(self.source, effect, result_kind=self.expected_result_kind)
             or not self._source_still_current()
             or (not post_merge_ref_delete and not self._default_branch_still_current())
         ):

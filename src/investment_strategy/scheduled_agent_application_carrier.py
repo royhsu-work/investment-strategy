@@ -1695,7 +1695,7 @@ def qualify_candidate_withdrawal(
             pr_number=pr_number,
             current_revision=current_revision,
             read=reader,
-            implementation_retirement=True,
+            withdrawal_result_kind=result_kind,
         )
         return (
             pr
@@ -1803,6 +1803,7 @@ def qualify_change_carrier(
     current_revision: str,
     read: GitHubReader | None = None,
     implementation_retirement: bool = False,
+    withdrawal_result_kind: str | None = None,
 ) -> ImplementationCarrierQualification:
     """Freshly qualify one exact canonical or deterministic same-Change carrier.
 
@@ -1815,12 +1816,21 @@ def qualify_change_carrier(
 
     `read` replaces transport only. The qualifier still acquires every piece
     of evidence and owns the complete semantic decision.
+    A result-qualified withdrawal purpose does not expand ordinary authoring.
     """
 
     reader = _github_json if read is None else read
+    candidate_withdrawal = candidate_withdrawal_permitted(
+        source.role, source.action, withdrawal_result_kind
+    )
+    retiring = implementation_retirement or candidate_withdrawal
     if (
         source.issue_number <= 0
-        or (source.role, source.action) not in _CHANGE_CARRIER_SOURCES
+        or (
+            (source.role, source.action) not in _CHANGE_CARRIER_SOURCES
+            and not candidate_withdrawal
+        )
+        or (withdrawal_result_kind is not None and not candidate_withdrawal)
         or not isinstance(pr_number, int)
         or isinstance(pr_number, bool)
         or pr_number <= 0
@@ -1964,7 +1974,7 @@ def qualify_change_carrier(
     )
     if (
         (source.role, source.action) in _OPENSPEC_CARRIER_SOURCES
-        and not implementation_retirement
+        and not retiring
         and active_changes != {change}
     ):
         return _indeterminate(
