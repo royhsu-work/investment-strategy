@@ -114,6 +114,10 @@ from investment_strategy.scheduled_agent_runtime import (
     is_github_actions_comment,
     normalize_github_issue,
 )
+from investment_strategy.scheduled_agent_validation_resource import (
+    NativeQualityAttempt,
+    read_native_quality_attempt,
+)
 from investment_strategy.scheduled_agent_wire import RUNTIME_REPAIR_REQUEST_WIRE
 from investment_strategy.scheduled_agent_worker import (
     WorkerActionResult,
@@ -2315,6 +2319,107 @@ def read_native_quality_runs(
             if origin == repository:
                 eligible.append(run)
     return tuple(eligible)
+
+
+def read_native_quality_history(
+    repository: str,
+    token: str,
+    revision: str,
+    *,
+    branch: str,
+    workflow_blob: str,
+    read: GitHubReader = _github_json,
+    log_read: Callable[[str, str, int], str] = _github_job_log,
+) -> tuple[NativeQualityAttempt, ...] | None:
+    """Reconstruct all ordinary quality attempts for one qualified gate.
+
+    Reruns cannot erase historical verdicts. Compare two complete inventories
+    around the exact attempt reads; an intervening run or rerun requires fresh
+    observation. An empty ordinary history alone does not authorize a call,
+    since the existing bridge-call history must also be qualified.
+    """
+    if (
+        not branch
+        or branch != branch.strip()
+        or _SHA.fullmatch(revision) is None
+        or _SHA.fullmatch(workflow_blob) is None
+    ):
+        return None
+
+    def snapshot() -> tuple[tuple[int, int, str, str, str | None], ...] | None:
+        runs = read_native_quality_runs(repository, token, revision, read=read)
+        if runs is None:
+            return None
+        rows: list[tuple[int, int, str, str, str | None]] = []
+        for run in runs:
+            observed_branch = run.get("head_branch")
+            if not isinstance(observed_branch, str) or not observed_branch:
+                return None
+            if observed_branch != branch:
+                continue
+            run_id = _positive_int(run.get("id"))
+            latest = _positive_int(run.get("run_attempt"))
+            event = run.get("event")
+            status, conclusion = run.get("status"), run.get("conclusion")
+            if (
+                run_id is None
+                or latest is None
+                or not isinstance(event, str)
+                or event not in ("push", "pull_request")
+                or not isinstance(status, str)
+                or (conclusion is not None and not isinstance(conclusion, str))
+            ):
+                return None
+            rows.append((run_id, latest, event, status, conclusion))
+        return tuple(sorted(rows, key=lambda row: row[0]))
+
+    def qualify(
+        row: tuple[int, int, str, str, str | None], number: int
+    ) -> NativeQualityAttempt | None:
+        run_id, latest, event, status, conclusion = row
+        endpoint = f"actions/runs/{run_id}/attempts/{number}"
+        try:
+            observed = read(repository, token, endpoint)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            observed = None
+        if number == latest and isinstance(observed, Mapping):
+            if (observed.get("status"), observed.get("conclusion")) != (status, conclusion):
+                return None
+
+        def exact_read(repo: str, credential: str, path: str) -> object:
+            # Bind the classifier to the same exact source used for comparison,
+            # not a second potentially different read of that attempt.
+            if path == endpoint:
+                return observed
+            return read(repo, credential, path)
+
+        attempt = read_native_quality_attempt(
+            repository,
+            token,
+            revision=revision,
+            branch=branch,
+            workflow_blob=workflow_blob,
+            run_id=run_id,
+            run_attempt=number,
+            event=event,
+            read=exact_read,
+            log_read=log_read,
+        )
+        if number < latest and attempt.outcome == "PENDING":
+            return None
+        return attempt
+
+    first = snapshot()
+    if first is None:
+        return None
+    attempts: list[NativeQualityAttempt] = []
+    for row in first:
+        for number in range(1, row[1] + 1):
+            attempt = qualify(row, number)
+            if attempt is None:
+                return None
+            attempts.append(attempt)
+    return tuple(attempts) if snapshot() == first else None
 
 
 def _prior_dispatch_handoff_reason(
