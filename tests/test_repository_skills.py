@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+from investment_strategy.scheduled_agent_action_model import TRANSITIONS, Action
+
 MAPPED_REPOSITORY_SKILLS = (
     "archive-review",
     "implementation-review",
@@ -134,13 +136,15 @@ def test_semantic_adapter_remains_a_separate_follow_up_resource() -> None:
     assert not (root / "openspec-semantic-adapter" / "SKILL.md").exists()
 
 
-def test_openspec_review_exposes_compact_semantic_proof_loop() -> None:
+def test_openspec_review_exposes_ordered_independent_method() -> None:
     text = Path("agents/skills/openspec-review/SKILL.md").read_text(encoding="utf-8")
 
-    markers = ("**DERIVE**", "**CHALLENGE**", "**REALIZE**", "**CLOSE**")
+    markers = ("**DERIVE**", "**CONFORMANCE**", "**CHALLENGE**", "**TRACE**", "**DECIDE**")
     positions = [text.index(marker) for marker in markers]
     assert positions == sorted(positions)
-    assert text.count("## Semantic-proof loop") == 1
+    assert text.count("## Review method") == 1
+    assert "each material acceptance predicate" in text
+    assert text.index("REALIZE:") < text.index("CLOSE:") < text.index("**TRACE**")
     assert "current default/review execution" in text
     assert "exact candidate revision" in text
     assert "review-implementation" in text
@@ -205,3 +209,13 @@ def test_executor_retains_reviewer_and_lead_boundaries() -> None:
     )
     for requirement in requirements:
         assert requirement in body
+
+
+def test_implementation_review_result_vocabulary_matches_model() -> None:
+    expected = {result.name for result in TRANSITIONS[Action.REVIEW_IMPLEMENTATION]}
+    prefix = "For review-implementation, legal results are "
+    for path in ("agents/roles/reviewer.md", "agents/skills/implementation-review/SKILL.md"):
+        body = Path(path).read_text(encoding="utf-8")
+        assert body.count(prefix) == 1
+        declared = body.split(prefix, 1)[1].split(".", 1)[0]
+        assert set(declared.split(", ")) == expected

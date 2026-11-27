@@ -8,26 +8,27 @@
 
 ## Relationship
 
-The local Skill preserves the upstream responsibility of verifying implementation against approved OpenSpec meaning, but separates verification from implementation ownership and binds the gate to the exact current PR head.
+The local Skill preserves the upstream responsibility of verifying implementation against approved OpenSpec meaning, but separates verification from implementation ownership and binds the gate to the exact current PR head, or the historical PR head plus current default-branch revision for a closed+merged carrier.
 
 ## Added responsibilities
 
 - Independent Reviewer ownership with exact-current-head PASS/findings evidence.
 - Conditional codebase-design composition for interface, seam and test-lifecycle evidence in the existing gate.
 - Independent proactive refactoring assessment and TDD evidence scrutiny; correction stays with Executor and re-review independently closes findings.
-- Explicit classification into implementation findings versus specification findings.
+- Independent Derive / Inspect / Challenge / Verify / Refactor / Decide procedure: derive the oracle, inspect production callers, challenge observable behavior, verify evidence and assess in-scope refactoring before deciding.
+- Explicit classification into implementation FINDINGS versus SPEC_BLOCKER for specification defects, using the executable Action model's legal result set.
 - Revision-aware handoff to Executor merge or correction owners.
 - Consumption of the repository-owned substantive Human-input freshness/disposition invariant before finalizing the exact-head gate.
 
 Reason: repository separation of duties requires implementation acceptance to be independent from the Executor that produced the change, and gate completion must not silently skip newer material Human input affecting correctness, scope, traceability, or validity.
 
-Maintenance implication: retain independent gate ownership and consequential-boundary consumption when comparing future upstream Verify behavior; new upstream checks may be adopted without collapsing Reviewer/Executor separation. The shared classifier remains owned by `agents/AGENTS.md`.
+Maintenance implication: retain independent gate ownership and consequential-boundary consumption when comparing future upstream Verify behavior; new upstream checks may be adopted without collapsing Reviewer/Executor separation. Shared Human-input freshness and execution invariants remain owned by `agents/AGENTS.md`; legal results and successor routing remain owned by the executable Action model.
 
 ## Deleted or omitted responsibilities
 
 - Implementation mutation or fixing findings is omitted and owned by Executor.
 - Specification repair is omitted and owned by Lead.
-- Merge execution is omitted and owned by `Executor / merge-pr` after PASS.
+- Merge execution is omitted and owned by `Executor / merge-implementation-pr` after PASS.
 
 Reason: Reviewer must not modify governed artifacts to make its own gate pass.
 
@@ -35,10 +36,10 @@ Maintenance implication: any future upstream verify-and-fix behavior must remain
 
 ## Modified responsibilities
 
-- Verification is exact-head and revision-bound rather than a session-local validation step.
+- Verification is exact-head and revision-bound rather than a session-local validation step; it covers cumulative unreviewed changes and the complete current state.
 - A PASS is durable merge-acceptance evidence but does not waive current merge preconditions.
 - Gate completion additionally consumes shared current coordination-Issue Human-input freshness/disposition evidence without granting Human authority.
 
 Reason: at-least-once scheduled execution, later PR changes, and newer material Human input require stale-review protection.
 
-Maintenance implication: reassess upstream verification changes against exact-head coverage, contradiction handling, and the shared consequential-boundary invariant, not only checklist similarity.
+Maintenance implication: reassess upstream verification changes against exact-head coverage, contradiction handling, and the shared consequential-boundary invariant, not only checklist similarity. For material procedural changes, examine actual fixed-input before/after decisions and any approved independent-discovery evidence.

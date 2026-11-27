@@ -7,77 +7,60 @@ description: Reviewer procedure for independent exact-revision OpenSpec semantic
 
 Mapped Action: Reviewer / review-openspec.
 
+Fresh-read current default-branch governance, Issue/Change/PR, exact review target R, applicable
+semantic baseline B, Human input, canonical specs, all Change artifacts, config and exact-R
+validation. Review all material semantic changes in (B, R] that remain unreviewed and the complete state at R;
+bookkeeping does not advance B. Successful mechanical OpenSpec validation is not semantic PASS evidence,
+even when strict validation passes.
+
 When openspec/config.yaml declares schema: spec-driven, load
-agents/skills/skill-creator/SKILL.md, agents/skills/skill-creator/references/repository-governance.md,
-and agents/skills/openspec-semantic-adapter.md as procedural input. None of these resources is
-runtime authority; Reviewer independence remains with default-branch governance.
-
-Fresh-read the current default branch, Issue/Change/PR, exact proposed revision, canonical specs,
-design, tasks, Human input, and exact-R validation. The semantic baseline B is the exact baseline, and the reviewed
-target is R; a bookkeeping-only revision does not advance or invalidate B. Mechanical validation
-alone does not create semantic acceptance, even when strict validation passes.
-
-## Semantic-proof loop
-
-When reviewing material interface, feasibility, testability, or slice design, load
-`agents/skills/codebase-design/SKILL.md` and apply its OpenSpec Review guidance in CHALLENGE.
-Use the existing requirement and evidence criteria for a finding.
-
-Run one compact proof loop for every material semantic boundary before returning PASS:
-
-1. **DERIVE** — Reconstruct the approved decision boundary independently from Human-approved intent, applicable same-Issue Explore evidence, canonical owners, current default-branch governance/config, and exact baseline `B` plus reviewed target `R`. Record outcomes, invariants, constraints, safety properties, and scope boundaries that the candidate must preserve.
-2. **CHALLENGE** — For each material acceptance predicate, choose the smallest discriminating case that could change PASS to FINDINGS: a negative case, twin, partition, bypass, replay, mutate-away-and-back case, exception, or competing-ownership comparison. Use the case to test consequence, not to expand scope.
-3. **REALIZE** — Classify each claimed proof by its observable substrate: current default/review execution, exact candidate revision, staged/future state, or unavailable/unverified evidence. Match current claims to current evidence; use candidate/staged/future evidence for claims about those states. Reconstruct history when the claim depends on ordering, provenance, replay, supersession, or review-time knowledge.
-4. **CLOSE** — For reuse, consolidation, one-owner, removal, or no-delta claims, state the decided consequence and intended semantic owner, then disposition competing authority and affected boundaries enough to establish closure. OpenSpec review closes design/spec/task-level meaning; `review-implementation` closes exact code-level removal, consumer coverage, and runtime postconditions.
-
-Before accepting the proposal, independently reconstruct the current decision boundary from current
-Human-approved intent, applicable canonical specs, current default-branch governance/config, and
-current repository evidence. Preserve decided outcomes, invariants, constraints, architecture
-decisions, safety properties, and scope boundaries. Consume the existing project-wide proportionality
-owner (`openspec/specs/repository-governance/spec.md`, referenced by `agents/proportionality.md`);
-this reference is not a competing authority.
-
-Apply remove -> reuse -> consolidate -> existing ownership layer before retaining or adding any mechanism.
-
-Review reverse-first and forward traceability:
-tasks -> design -> specs -> proposal
-proposal -> specs -> design -> tasks
-Both directions must be complete before PASS. Check scope, scenarios, safety invariants, design
-trade-offs, task traceability, and Skill maintenance traceability. An undeclared material Skill,
-differently classified material change, or Formatting drift is a finding. Review material semantic
-changes in (B, R] and do not substitute a historical PASS.
-
-If an exact same-Issue Explore result and supporting source/evidence are applicable, dereference and
-preserve them before review; this is not a re-run of Explore. Missing, contradictory, stale, or
-unqualified evidence is a finding or blocked result.
-
-Reviewer symmetry is an independent predicate. A retained or additional mechanism without an exact
-current requirement, concrete safety property, or demonstrated failure mode is an existing
-`FINDINGS`. A removal, reuse, consolidation, or existing ownership layer that is sufficient while
-a new mechanism remains is also an existing FINDINGS; the executable model routes that result
-through `resolve-question`. No new Action, Result, routing state, or review-result type is needed.
-
-Return one structured PASS, FINDINGS, HUMAN_DECISION_REQUIRED, NO_GO, or BLOCKED result with exact
-revision and evidence. The executable model derives the next Action; Reviewer does not choose routing,
-mutate the repository, or execute a successor.
-
-## Conditional repository Skill composition
-
-When this Action materially creates or modifies a repository Skill, conditionally compose:
-`agents/skills/skill-creator/SKILL.md`
-and `agents/skills/skill-creator/references/repository-governance.md`.
-This repository Skill guidance is procedural input, not runtime authority.
-
-Reviewers must preserve every still-applicable scenario/content when evaluating a MODIFIED requirement.
-Successful mechanical OpenSpec validation is not semantic PASS evidence; semantic review remains
-independent.
-
-Reviewer semantic uncertainty must fail closed: a missing or contradictory review context cannot be
-treated as acceptance.
+agents/skills/openspec-semantic-adapter.md. For material repository Skill maintenance or review,
+load agents/skills/skill-creator/SKILL.md and
+agents/skills/skill-creator/references/repository-governance.md. These resources are procedural input,
+not runtime authority.
 
 ## Conditional staged-delivery composition
 
-When reviewing a staged OpenSpec plan, load
-`agents/skills/openspec-delivery/SKILL.md` as procedural input. Independently check that the reviewed
-revision accounts for completed work, current delivery, and mandatory follow-up while preserving this
-Action's exact-revision semantic gate and non-mutation boundary.
+For staged delivery load agents/skills/openspec-delivery/SKILL.md and reconcile completed, current
+and still-mandatory parent outcome on then-current N-1; the reference is procedural input.
+
+## Review method
+
+1. **DERIVE** — Before using candidate claims, independently reconstruct the current decision boundary:
+   Human-approved outcomes, invariants, exclusions, constraints, acceptance consequences, applicable
+   same-Issue Explore result and its supporting sources, canonical owners, and exact B/R. Dereference
+   evidence, not a summary; distinguish source facts, inference and unresolved claims.
+2. **CONFORMANCE** — Inspect each artifact against its responsibility: proposal why/what/scope,
+   delta externally verifiable normative behavior, design structure/ownership/trade-offs, tasks
+   observable implement/verify slices. Apply existing config and semantic adapter, including
+   complete delta blocks, canonical Purpose, valid explicit zero-delta and scope; preserve every
+   still-applicable scenario/content in MODIFIED requirements. Strict GREEN cannot excuse responsibility defects.
+3. **CHALLENGE** — For every material semantic boundary, test each material acceptance predicate
+   with the smallest contrasting case that could change PASS to FINDINGS. Try failure, bypass,
+   replay or competing ownership; reuse a case only if it discriminates each covered predicate.
+   For material interfaces, architecture, feasibility, testability or slice design, load
+   agents/skills/codebase-design/SKILL.md and compare with simpler owners, interfaces and vertical
+   slices through real caller or observable consequences. Establish executability, testability,
+   reviewability, mergeability and deployability on current N-1, not merely a coherent document.
+   Consume openspec/specs/repository-governance/spec.md via agents/proportionality.md (not a competing authority);
+   apply remove -> reuse -> consolidate -> existing ownership layer. Retaining or adding a mechanism
+   without a current requirement, concrete safety property, or demonstrated failure mode, or despite
+   a sufficient simpler alternative, is existing FINDINGS. Harmless alternatives are advisory.
+   - REALIZE: Bind each proof to current default/review execution, exact candidate revision,
+     staged/future state, or unavailable evidence. Verify actual source, time/revision and provenance
+     for ordering, replay, supersession and review-time knowledge; do not use future evidence as current proof.
+   - CLOSE: For reuse, consolidation, one-owner, removal or no-delta, identify the decided consequence
+     and owner and disposition competing responsibilities and affected boundaries. OpenSpec review closes design/spec/task-level meaning;
+     review-implementation closes exact code-level removal, consumer coverage and runtime postconditions.
+4. **TRACE** — Review reverse-first tasks -> design -> specs -> proposal, then forward
+   proposal -> specs -> design -> tasks at R; use canonical context for valid zero-delta work.
+   Both directions must be complete before PASS. Verify scope, scenarios, invariants, upstream evidence, trade-offs and
+   Skill maintenance traceability; an undeclared material Skill, misclassification or Formatting drift
+   is a finding. Traceability does not substitute for independent correctness.
+5. **DECIDE** — Fresh-disposition substantive Human input at the consequential boundary.
+   Return exact-revision PASS only when every material predicate and both traces meet the existing
+   gate. Use FINDINGS for a material defect with evidence, affected requirement and observable
+   closure; use HUMAN_DECISION_REQUIRED, NO_GO or BLOCKED when applicable under the existing Action
+   contract; fail closed on missing, contradictory, stale or unqualified semantic evidence.
+   Preserve staged coverage and the original approved outcome. Return one structured result;
+   the executable model derives the successor. Do not edit the review target or execute a successor.
