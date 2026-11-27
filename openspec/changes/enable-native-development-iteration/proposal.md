@@ -6,9 +6,9 @@ Human authorized the bounded independent maintenance bootstrap in [#496](https:/
 
 ## What Changes
 
-- Separate authorized development materialization from verified slice completion on the existing implementation carrier, including genuine test-only RED.
+- Separate authorized revision materialization from verified slice completion on the existing implementation carrier. Code/test development can reach genuine RED; the separately authorized marker-only write follows verified implementation. Accept publication of completion only after the actual current marker revision has passed its required gates.
 - Replace the separate executable pre-ACCEPT implementation overlay with the existing static-first native quality gate for both development and verified completion, preserving all non-executable authorization, manifest, task and checkpoint checks. Require exact native evidence on the implementation revision and the subsequent marker revision.
-- Settle each development attempt against its own immutable materialization witness and qualified CI; reconstruct lawful same-frontier continuation without hiding competing acceptance. Obtain an outstanding exact verification through the same native quality job and existing source-bound dispatch run, without a second asynchronous workflow-dispatch request.
+- Settle each physical-only attempt against its own immutable materialization witness and qualified CI. Derive the first undelivered slice from the task plan and qualified completion evidence, not checkbox position alone. Normal failed verification does not create an unfinished completion-publication intent. Reconstruct lawful continuation without hiding competing acceptance. Obtain an outstanding exact verification through the same native quality job and existing source-bound dispatch run, without a second asynchronous workflow-dispatch request.
 - Preserve exact-head review, task criteria, one verified checkpoint/formal result, full quality/strict and merge gates. No second runner, special test mode, token, new Action/ResultKind, persisted phase, worker-selected target, or incident-specific Runtime exception.
 
 ## Capabilities
