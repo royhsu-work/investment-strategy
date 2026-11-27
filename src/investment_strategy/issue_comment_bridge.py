@@ -2609,15 +2609,25 @@ def _quality_bridge_attempt(
     *,
     source: int,
     row: tuple[int, int, str, str, str | None],
-    obligation_id: str,
-    revision: str,
+    obligation_id: str | None,
+    revision: str | None,
     workflow_blob: str,
     read: GitHubReader,
     log_read: Callable[[str, str, int], str],
+    audit_result_sha256: str | None = None,
 ) -> NativeQualityAttempt:
     run_id, attempt, definition, status, conclusion = row
     unknown = NativeQualityAttempt(run_id, attempt, "INDETERMINATE")
     absent = NativeQualityAttempt(run_id, attempt, "NO_VERDICT")
+    if obligation_id is None:
+        if (
+            revision is not None
+            or audit_result_sha256 is None
+            or re.fullmatch(r"[0-9a-f]{64}", audit_result_sha256) is None
+        ):
+            return unknown
+    elif revision is None or audit_result_sha256 is not None:
+        return unknown
     if status in _QUALITY_ACTIVE:
         return NativeQualityAttempt(run_id, attempt, "PENDING") if conclusion is None else unknown
     if status != "completed" or conclusion not in ("success", "failure", *_QUALITY_NO_VERDICT):
@@ -2667,13 +2677,21 @@ def _quality_bridge_attempt(
         for step in observed
     ):
         return unknown
-    lines = log_read(repository, token, cast(int, planner["id"])).splitlines()
-    prefix = "native_quality_plan="
-    receipts = [
-        line.removeprefix(prefix)
-        for raw in lines
-        if (line := re.sub(r"^\d{4}-\d\d-\d\dT\S+Z ", "", raw)).startswith(prefix)
+    lines = [
+        re.sub(r"^\d{4}-\d\d-\d\dT\S+Z ", "", raw)
+        for raw in log_read(repository, token, cast(int, planner["id"])).splitlines()
     ]
+    if audit_result_sha256 is not None:
+        result_prefix = "native_quality_result_sha256="
+        result_receipts = [
+            line.removeprefix(result_prefix)
+            for line in lines
+            if line.startswith(result_prefix)
+        ]
+        if result_receipts != [audit_result_sha256]:
+            return unknown
+    prefix = "native_quality_plan="
+    receipts = [line.removeprefix(prefix) for line in lines if line.startswith(prefix)]
     if len(receipts) != 1:
         return unknown
     if receipts[0] == "none":
@@ -2693,7 +2711,7 @@ def _quality_bridge_attempt(
     ):
         return unknown
     blob = _quality_workflow_blob(repository, token, definition, read=read)
-    if blob is None or (gate == obligation_id and blob != workflow_blob):
+    if blob is None or ((obligation_id is None or gate == obligation_id) and blob != workflow_blob):
         return unknown
     if quality is None or quality.get("conclusion") == "skipped":
         # A recorded plan may be skipped by the native dependency/identity guard.
@@ -2718,7 +2736,108 @@ def _quality_bridge_attempt(
     )
     if verdict is None:
         return unknown
-    return NativeQualityAttempt(run_id, attempt, verdict) if gate == obligation_id else absent
+    if obligation_id is None or gate == obligation_id:
+        return NativeQualityAttempt(run_id, attempt, verdict)
+    return absent
+
+
+def qualify_failed_native_quality_audit(
+    repository: str,
+    token: str,
+    *,
+    run: Mapping[str, object],
+    request_comment_id: int,
+    current_revision: str,
+    artifact_sha256: str,
+    read: GitHubReader,
+    log_read: Callable[[str, str, int], str],
+) -> bool:
+    """Read-only failed-caller audit; never establish an accepted work gate."""
+    try:
+        repo = read(repository, token, "")
+        default_branch = repo.get("default_branch") if isinstance(repo, Mapping) else None
+        if (
+            not isinstance(repo, Mapping)
+            or repo.get("full_name") != repository
+            or not isinstance(default_branch, str)
+            or not default_branch
+        ):
+            return False
+
+        def main_is_current() -> bool:
+            ref = read(repository, token, f"git/ref/heads/{quote(default_branch, safe='/')}")
+            obj = ref.get("object") if isinstance(ref, Mapping) else None
+            return isinstance(obj, Mapping) and obj.get("sha") == current_revision
+
+        row = _quality_bridge_run(run, repository, default_branch, request_comment_id)
+        if row is None or row[2:] != (current_revision, "completed", "failure"):
+            return False
+        if not main_is_current():
+            return False
+        run_id, attempt = row[:2]
+        source_path = f"issues/comments/{request_comment_id}"
+        comment = read(repository, token, source_path)
+        if not isinstance(comment, Mapping):
+            return False
+        body, issue_url = comment.get("body"), comment.get("issue_url")
+        prefix = github_repository_api_url(repository, "issues/")
+        created = _quality_time(comment.get("created_at"))
+        started = _quality_time(run.get("created_at"))
+        if (
+            _positive_int(comment.get("id")) != request_comment_id
+            or not _trusted_connector_comment(comment, repository.split("/", 1)[0])
+            or not isinstance(body, str)
+            or parse_dispatch_request(body) is None
+            or not isinstance(issue_url, str)
+            or not issue_url.startswith(prefix)
+            or comment.get("updated_at") != comment.get("created_at")
+            or created is None
+            or started is None
+            or started < created
+        ):
+            return False
+        issue_id = _positive_int_string(issue_url.removeprefix(prefix))
+        if issue_id is None:
+            return False
+        issue = read(repository, token, f"issues/{issue_id}")
+        if (
+            not isinstance(issue, Mapping)
+            or issue.get("number") != issue_id
+            or not is_runtime_checkin_issue(issue)
+        ):
+            return False
+        raw_attempt = read(repository, token, f"actions/runs/{run_id}/attempts/{attempt}")
+        if (
+            not isinstance(raw_attempt, Mapping)
+            or _quality_bridge_run(raw_attempt, repository, default_branch, request_comment_id)
+            != row
+        ):
+            return False
+        blob = _quality_workflow_blob(repository, token, current_revision, read=read)
+        if blob is None:
+            return False
+        evidence = _quality_bridge_attempt(
+            repository,
+            token,
+            source=request_comment_id,
+            row=row,
+            obligation_id=None,
+            revision=None,
+            workflow_blob=blob,
+            read=read,
+            log_read=log_read,
+            audit_result_sha256=artifact_sha256,
+        )
+        latest = read(repository, token, f"actions/runs/{run_id}")
+        return (
+            evidence.outcome in ("STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE")
+            and isinstance(latest, Mapping)
+            and _quality_bridge_run(latest, repository, default_branch, request_comment_id) == row
+            and read(repository, token, source_path) == comment
+            and main_is_current()
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
 
 
 def plan_native_quality_verification(
@@ -6649,7 +6768,10 @@ def _write_outputs(path: Path, plan: BridgePlan, *, repair_admission: bool = Fal
 
 def _write_result_payload(path: Path, plan: BridgePlan) -> None:
     if plan.should_emit and plan.result_body is not None:
-        path.write_text(plan.result_body + "\n", encoding="utf-8")
+        payload = (plan.result_body + "\n").encode("utf-8")
+        path.write_bytes(payload)
+        if plan.quality_call is not None:
+            print("native_quality_result_sha256=" + hashlib.sha256(payload).hexdigest())
 
 
 @dataclass(frozen=True)
