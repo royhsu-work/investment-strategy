@@ -31,6 +31,8 @@ from investment_strategy.scheduled_agent_application_materialization import Mate
 from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_carrier_plan
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
+    candidate_withdrawal_permitted,
+    legal_transition_keys,
 )
 from investment_strategy.scheduled_agent_effects import (
     EffectBatch,
@@ -5255,11 +5257,58 @@ def test_other_actions_do_not_retain_implementation_checkpoint(role: str, action
     assert retained["requested_effects"] == []
 
 
+def test_candidate_withdrawal_capability_has_exact_finite_action_result_boundary() -> None:
+    expected = {
+        ("explore-change", "proposal-ready"),
+        ("explore-change", "research-required"),
+        ("explore-change", "human-decision-required"),
+        ("explore-change", "blocked"),
+        ("propose-change", "research-required"),
+        ("propose-change", "human-decision-required"),
+        ("propose-change", "blocked"),
+        ("resolve-question", "research-required"),
+        ("resolve-question", "human-decision-required"),
+        ("resolve-question", "blocked"),
+        ("resolve-question", "ready"),
+    }
+    admitted = {
+        (action.value, result.value)
+        for action, result in legal_transition_keys()
+        if candidate_withdrawal_permitted(role_for(action).value, action, result)
+    }
+
+    assert admitted == expected
+
+
+@pytest.mark.parametrize(
+    ("role", "action", "result_kind"),
+    [
+        ("lead", "resolve-question", None),
+        ("lead", "unknown-action", "research-required"),
+        ("lead", "resolve-question", "unknown-result"),
+        ("executor", "resolve-question", "research-required"),
+        ("lead", "explore-change", "ready"),
+        (None, "resolve-question", "research-required"),
+        ("lead", None, "research-required"),
+        ("lead", True, "research-required"),
+        ("lead", "resolve-question", True),
+    ],
+)
+def test_candidate_withdrawal_capability_rejects_malformed_or_incoherent_source(
+    role: object, action: object, result_kind: object
+) -> None:
+    assert not candidate_withdrawal_permitted(
+        cast(str, role), cast(str, action), cast(str | None, result_kind)
+    )
+
+
 @pytest.mark.parametrize(
     ("role", "action", "result_kind", "expected"),
     [
         ("lead", "resolve-question", "ready", True),
-        ("lead", "resolve-question", "blocked", False),
+        ("lead", "resolve-question", "research-required", True),
+        ("lead", "resolve-question", "blocked", True),
+        ("lead", "resolve-question", "lifecycle-ready", False),
         ("executor", "implement-change", "ready", False),
         ("reviewer", "review-implementation", "pass", False),
     ],
@@ -5267,10 +5316,13 @@ def test_other_actions_do_not_retain_implementation_checkpoint(role: str, action
 def test_exact_lead_retirement_survives_accepted_intent_normalization(
     role: str, action: str, result_kind: str, expected: bool
 ) -> None:
+    """Projection retains eligible close intent; raw cardinality is checked separately."""
+
     close = {
         "kind": "github-mutation",
         "payload_json": json.dumps(
             {
+                "issue_number": 138,
                 "operation": "pull-request-update",
                 "number": 418,
                 "expected_head_sha": "e" * 40,
@@ -5282,6 +5334,7 @@ def test_exact_lead_retirement_survives_accepted_intent_normalization(
         "kind": "github-mutation",
         "payload_json": json.dumps(
             {
+                "issue_number": 138,
                 "operation": "pull-request-update",
                 "number": 418,
                 "expected_head_sha": "e" * 40,
@@ -5302,104 +5355,99 @@ def test_exact_lead_retirement_survives_accepted_intent_normalization(
     assert retained["requested_effects"] == ([close] if expected else [])
 
 
-def test_exact_lead_retirement_uses_carrier_and_never_replays_closed_pr(
+@pytest.mark.parametrize("result_kind", ["ready", "research-required"])
+def test_raw_candidate_withdrawal_retains_exact_accepted_close(
+    monkeypatch: pytest.MonkeyPatch, result_kind: str
+) -> None:
+    import investment_strategy.scheduled_agent_application_bridge as bridge
+
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "lead", "resolve-question")
+    payload = {
+        "issue_number": 138,
+        "operation": "pull-request-update",
+        "number": 418,
+        "expected_head_sha": "e" * 40,
+        "fields": {"state": "closed"},
+    }
+    close = {"kind": "github-mutation", "payload_json": json.dumps(payload, sort_keys=True)}
+    raw = _raw(
+        role="lead",
+        action="resolve-question",
+        result_kind=result_kind,
+        requested_effects=[close],
+    )
+    request = bridge.canonicalize_raw_worker_result(
+        body=f"WORKER_RESULT\n{raw}\n",
+        source=source,
+        authorized_change=_CHANGE,
+        repository=repository,
+        current_revision=_REVISION,
+    )
+    assert json.loads(request.raw_worker_result)["requested_effects"] == [close]
+
+    def read(observed_repository: str, token: str, path: str) -> object:
+        assert observed_repository == repository
+        assert token == _TEST_TOKEN
+        assert path == "pulls/418"
+        return {
+            "number": 418,
+            "state": "open",
+            "merged": False,
+            "draft": False,
+            "head": {"sha": "e" * 40},
+        }
+
+    monkeypatch.setattr(bridge, "_github_json", read)
+    projected = bridge._fresh_application_worker_result(
+        request.raw_worker_result,
+        source=source,
+        change=_CHANGE,
+        repository=repository,
+        token=_TEST_TOKEN,
+        current_revision=_REVISION,
+        default_branch="main",
+        request_comment_id=_REQUEST_COMMENT_ID,
+    )
+    retained = json.loads(effects.semantic_intent_payload(projected))
+    assert retained["requested_effects"] == [close]
+    assert retained["result_kind"] == result_kind
+    assert retained["result_content"] == "bounded result"
+
+
+def test_empty_accepted_candidate_intent_does_not_acquire_withdrawal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repository = "royhsu-work/investment-strategy"
-    head_sha = "b" * 40
-    pr: dict[str, object] = {
-        "number": 418,
-        "state": "open",
-        "merged": False,
-        "draft": False,
-        "body": "Implementation\n\nRefs #138\n",
-        "closed_at": None,
-        "merged_at": None,
-        "head": {
-            "ref": f"agent/{_CHANGE}-supersedes-408",
-            "sha": head_sha,
-            "repo": {"full_name": repository},
-        },
-        "base": {
-            "ref": "main",
-            "sha": _REVISION,
-            "repo": {"full_name": repository},
-        },
-    }
-    observed: list[str] = []
+    """The immutable empty payload does not assert a historical original or ACCEPT."""
 
-    def read(_repository: str, _token: str, path: str, **kwargs: object) -> object:
-        assert not kwargs or kwargs == {"method": "GET"}
-        observed.append(path)
-        assert path == "pulls/418"
-        return pr
+    import investment_strategy.scheduled_agent_application_bridge as bridge
 
-    monkeypatch.setattr(effects, "_github_json", read)
-    monkeypatch.setattr(
-        effects,
-        "qualify_change_carrier",
-        lambda **_kwargs: SimpleNamespace(
-            disposition="RECONCILIATION_REQUIRED",
-            branch=f"agent/{_CHANGE}-supersedes-408",
-            head_sha=head_sha,
-        ),
-    )
-    adapter = GitHubEffectAdapter(
-        repository,
-        _TEST_TOKEN,
-        WorkerRequest(138, "lead", "resolve-question"),
-        authorized_change=_CHANGE,
+    source = WorkerRequest(138, "lead", "resolve-question")
+    semantic = json.loads(_raw(role="lead", action="resolve-question", result_kind="blocked"))
+    semantic["_semantic_intent_version"] = 2
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        raise AssertionError(f"zero-effect coordination must not acquire a PR obligation: {path}")
+
+    monkeypatch.setattr(bridge, "_github_json", read)
+    projected = bridge._fresh_application_worker_result(
+        json.dumps(semantic),
+        source=source,
+        change=_CHANGE,
+        repository="royhsu-work/investment-strategy",
+        token=_TEST_TOKEN,
         current_revision=_REVISION,
-        expected_result_kind="ready",
-        accepted_intent=True,
+        default_branch="main",
+        request_comment_id=_REQUEST_COMMENT_ID,
     )
-    monkeypatch.setattr(adapter, "_source_still_current", lambda: True)
-    monkeypatch.setattr(adapter, "_default_branch_still_current", lambda: True)
-    monkeypatch.setattr(
-        adapter, "_authorized_issue_observation", lambda *_args: SimpleNamespace(change=_CHANGE)
-    )
-    monkeypatch.setattr(adapter, "_default_branch", lambda: "main")
-    monkeypatch.setattr(adapter, "_default_branch_revision", lambda _branch: _REVISION)
-
-    effect = StagedEffect(
-        kind="github-mutation",
-        payload_json=json.dumps(
-            {
-                "issue_number": 138,
-                "operation": "pull-request-update",
-                "number": 418,
-                "expected_head_sha": head_sha,
-                "fields": {"state": "closed"},
-            }
-        ),
-    )
-    assert adapter.guard(effect)
-    plan = adapter.carrier_plan_if_required(effect)
-    assert plan is not None
-    assert plan.operation == "pull-request-update"
-    assert plan.requested["fields"] == {"state": "closed"}
-    with pytest.raises(CarrierRequired):
-        adapter.apply(effect)
-
-    # The write-capable carrier reports an already-observed durable outcome.
-    # A lost Application response must not issue another PATCH or carrier plan.
-    pr.update(state="closed", closed_at="2026-11-07T00:00:00Z")
-    for _ in range(2):
-        assert adapter.guard(effect)
-        assert adapter.carrier_plan_if_required(effect) is None
-        adapter.apply(effect)
-        assert adapter.observe_postcondition(effect)
-    assert observed and set(observed) == {"pulls/418"}
-
-    # Exact-head and unmerged requirements persist even in accepted recovery.
-    cast(dict[str, object], pr["head"])["sha"] = "c" * 40
-    assert not adapter.guard(effect)
-    cast(dict[str, object], pr["head"])["sha"] = head_sha
-    pr.update(merged=True, merged_at="2026-11-07T00:01:00Z")
-    assert not adapter.guard(effect)
+    assert json.loads(effects.semantic_intent_payload(projected)) == semantic
 
 
-def test_lead_retirement_with_extra_effects_cannot_commit_formal_success() -> None:
+@pytest.mark.parametrize("result_kind", ["ready", "research-required"])
+@pytest.mark.parametrize("extra_kind", ["issue-update", "duplicate-close", "issue-comment"])
+def test_lead_retirement_with_extra_effects_cannot_commit_formal_success(
+    result_kind: str, extra_kind: str
+) -> None:
     source = WorkerRequest(138, "lead", "resolve-question")
     close = {
         "kind": "github-mutation",
@@ -5420,19 +5468,37 @@ def test_lead_retirement_with_extra_effects_cannot_commit_formal_success() -> No
                 "issue_number": 138,
                 "operation": "issue-update",
                 "fields": {"title": "unexpected"},
+                "expected": {"title": "original"},
             }
         ),
     }
+    extra = {
+        "issue-update": update,
+        "duplicate-close": close,
+        "issue-comment": {
+            "kind": "issue-comment",
+            "payload_json": json.dumps({"issue_number": 138, "body": "Extra semantic request"}),
+        },
+    }[extra_kind]
+    # Apply the unnormalized raw batch so projection cannot erase an extra request.
     batch = parse_effect_batch(
         _raw(
             role="lead",
             action="resolve-question",
-            result_kind="ready",
-            requested_effects=[close, update],
+            result_kind=result_kind,
+            requested_effects=[close, extra],
         ),
         source,
     )
     writes: list[StagedEffect] = []
+    dispositions: list[str] = []
+
+    def persist_decision(
+        _decision: ActionApplicationDecision, disposition: str, _reason: str
+    ) -> bool:
+        dispositions.append(disposition)
+        return True
+
     result = apply_effect_batch(
         batch,
         fresh_preflight=lambda: _preflight(action="resolve-question"),
@@ -5440,13 +5506,16 @@ def test_lead_retirement_with_extra_effects_cannot_commit_formal_success() -> No
         apply_effect=writes.append,
         observe_postcondition=lambda _effect: True,
         current_revision=_REVISION,
+        persist_application_decision=persist_decision,
     )
     assert not result.applied
     assert result.reason == "typed application rejected:retirement-effect-cardinality"
     assert writes == []
+    assert "ACCEPTED" not in dispositions
 
 
-def test_lead_retirement_applies_before_application_owned_formal_result() -> None:
+@pytest.mark.parametrize("result_kind", ["ready", "research-required"])
+def test_lead_retirement_applies_before_application_owned_formal_result(result_kind: str) -> None:
     from investment_strategy.scheduled_agent_application_bridge import (
         _application_owned_worker_result,
     )
@@ -5467,7 +5536,7 @@ def test_lead_retirement_applies_before_application_owned_formal_result() -> Non
     raw = _raw(
         role="lead",
         action="resolve-question",
-        result_kind="ready",
+        result_kind=result_kind,
         requested_effects=[close],
     )
     application_owned = _application_owned_worker_result(

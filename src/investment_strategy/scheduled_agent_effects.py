@@ -36,9 +36,8 @@ from investment_strategy.scheduled_agent_action_model import (
     ObservationProvenance as ModelObservationProvenance,
 )
 from investment_strategy.scheduled_agent_application_carrier import (
-    _pr_identity_is_coherent,
     current_reviewed_implementation_head,
-    qualify_change_carrier,
+    qualify_candidate_withdrawal,
     qualify_implementation_carrier,
     qualify_supersession_branch,
 )
@@ -67,7 +66,9 @@ from investment_strategy.scheduled_agent_effect_contract import (
     GITHUB_MUTATION_KIND,
     EvidenceTarget,
     allowed_github_mutation_operations,
+    candidate_withdrawal_permitted,
     consequence_spec_for,
+    is_exact_pull_request_close,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
@@ -197,13 +198,15 @@ def semantic_intent_payload(raw_worker_result: str) -> str:
                 kind == GITHUB_MUTATION_KIND
                 and payload.get("operation") == "application-materialize"
             )
+            role = decoded.get("role")
+            action = decoded.get("action")
             retirement = (
-                kind == GITHUB_MUTATION_KIND
-                and decoded.get("role") == "lead"
-                and decoded.get("action") == "resolve-question"
-                and decoded.get("result_kind") == "ready"
-                and payload.get("operation") == "pull-request-update"
-                and payload.get("fields") == {"state": "closed"}
+                isinstance(role, str)
+                and isinstance(action, str)
+                and candidate_withdrawal_permitted(role, action, decoded.get("result_kind"))
+                and is_exact_pull_request_close(
+                    kind, payload, issue_number=decoded.get("issue_number")
+                )
             )
             checkpoint = (
                 kind == "issue-comment"
@@ -1117,6 +1120,8 @@ def _routing_label(value: object) -> bool:
 def _github_mutation_structurally_valid(
     source: WorkerRequest,
     payload: Mapping[str, object],
+    *,
+    result_kind: str | None = None,
 ) -> bool:
     if payload.get("issue_number") != source.issue_number:
         return False
@@ -1124,7 +1129,11 @@ def _github_mutation_structurally_valid(
     if not isinstance(operation, str):
         return False
     if operation not in allowed_github_mutation_operations(source.role, source.action):
-        return False
+        return candidate_withdrawal_permitted(
+            source.role, source.action, result_kind
+        ) and is_exact_pull_request_close(
+            GITHUB_MUTATION_KIND, payload, issue_number=source.issue_number
+        )
 
     if operation == "application-materialize":
         try:
@@ -1244,7 +1253,12 @@ def _routing_transition_structurally_valid(
     return True
 
 
-def supported_effect_guard(source: WorkerRequest, effect: StagedEffect) -> bool:
+def supported_effect_guard(
+    source: WorkerRequest,
+    effect: StagedEffect,
+    *,
+    result_kind: str | None = None,
+) -> bool:
     """Validate the bounded structural effect surface used by mapped Skills."""
 
     payload = _effect_payload(effect)
@@ -1270,7 +1284,7 @@ def supported_effect_guard(source: WorkerRequest, effect: StagedEffect) -> bool:
             derived=effect.derived,
         )
     if effect.kind == GITHUB_MUTATION_KIND:
-        return _github_mutation_structurally_valid(source, payload)
+        return _github_mutation_structurally_valid(source, payload, result_kind=result_kind)
     return False
 
 
@@ -1361,12 +1375,15 @@ def apply_effect_batch(
     # is not another semantic request. Enforce this on accepted-intent recovery.
     if (
         batch.typed_result is not None
-        and (batch.source.role, batch.source.action) == ("lead", "resolve-question")
-        and batch.typed_result.result.kind is ResultKind.READY
+        and candidate_withdrawal_permitted(
+            batch.source.role, batch.source.action, batch.typed_result.result.kind
+        )
         and any(
-            effect.kind == GITHUB_MUTATION_KIND
-            and (_effect_payload(effect) or {}).get("operation") == "pull-request-update"
-            and (_effect_payload(effect) or {}).get("fields") == {"state": "closed"}
+            is_exact_pull_request_close(
+                effect.kind,
+                _effect_payload(effect) or {},
+                issue_number=batch.source.issue_number,
+            )
             for effect in batch.effects
         )
         and (
@@ -2412,69 +2429,40 @@ class GitHubEffectAdapter:
         expected_head_sha: str,
         *,
         require_open: bool,
+        application_correlation: str | None = None,
     ) -> Mapping[str, object] | None:
-        """Reuse the carrier owner for a Human-resolved exact-head PR retirement.
+        """Bind the current source route to carrier-owned withdrawal evidence."""
 
-        A retirement is not a merge and need not be mergeable.  It must still
-        be the unique recognized implementation carrier.  After an accepted
-        closure, only its same immutable closed/unmerged postcondition counts.
-        """
-
-        if (
-            (self.source.role, self.source.action) != ("lead", "resolve-question")
-            or self.expected_result_kind != "ready"
-            or not _valid_sha(expected_head_sha)
-        ):
-            return None
-        observation = self._authorized_issue_observation()
-        default_branch = self._default_branch()
+        result_kind = self.expected_result_kind
         current_revision = self.current_revision
         if (
-            observation is None
-            or default_branch is None
-            or not _valid_sha(current_revision)
-            or self._default_branch_revision(default_branch) != current_revision
+            result_kind is None
+            or current_revision is None
+            or not candidate_withdrawal_permitted(self.source.role, self.source.action, result_kind)
         ):
             return None
-        pr = _github_json(self.repository, self.token, f"pulls/{number}")
-        if not isinstance(pr, Mapping) or pr.get("number") != number:
+        request_id = _positive_comment_id(self.request_comment_id) if self.accepted_intent else None
+        # Accepted mode cannot silently fall back to fresh open qualification.
+        # The flag selects a phase; only the exact durable request proves it.
+        if self.accepted_intent and request_id is None:
             return None
-        identity = _pr_identity_is_coherent(
-            pr,
-            repository=self.repository,
-            issue_number=self.source.issue_number,
-            default_branch=default_branch,
-        )
-        if identity is None or identity[1] != expected_head_sha or pr.get("draft") is not False:
+        observation = self._authorized_issue_observation()
+        if observation is None:
             return None
-        if not require_open:
-            return (
-                pr
-                if pr.get("state") == "closed"
-                and pr.get("merged") is False
-                and pr.get("merged_at") is None
-                and isinstance(pr.get("closed_at"), str)
-                else None
-            )
-        if pr.get("state") != "open" or pr.get("merged") is not False:
-            return None
-        qualified = qualify_change_carrier(
+        return qualify_candidate_withdrawal(
             repository=self.repository,
             token=self.token,
             source=self.source,
             change=observation.change,
+            result_kind=result_kind,
             pr_number=number,
-            current_revision=cast(str, current_revision),
+            expected_head_sha=expected_head_sha,
+            current_revision=current_revision,
+            require_open=require_open,
+            request_comment_id=request_id,
+            authorization_revision=self.authorization_revision,
+            application_correlation=application_correlation,
             read=_github_json,
-            # Lead remains the authorized Action owner; this query only
-            # classifies the PR as an implementation carrier for retirement.
-            implementation_retirement=True,
-        )
-        return (
-            pr
-            if qualified.disposition in {"QUALIFIED", "RECONCILIATION_REQUIRED"}
-            and (qualified.branch, qualified.head_sha) == identity
-            else None
         )
 
     def _no_existing_source_pull_request(self, branch: str, base: str) -> bool:
@@ -3334,7 +3322,7 @@ class GitHubEffectAdapter:
             and self.source.action in {"merge-implementation-pr", "merge-archive-pr"}
         )
         if (
-            not supported_effect_guard(self.source, effect)
+            not supported_effect_guard(self.source, effect, result_kind=self.expected_result_kind)
             or not self._source_still_current()
             or (not post_merge_ref_delete and not self._default_branch_still_current())
         ):
@@ -4484,9 +4472,45 @@ def consequence_postconditions_complete(
                 current_revision=current_revision,
             )
         if spec.evidence_target is EvidenceTarget.DEFAULT_BRANCH:
-            # The canonical formal-result observer and derived routing are
-            # separate callers.  Once the formal event is qualified, the
-            # default branch itself is the affirmative evidence target.
+            # A retained withdrawal adds an exact accepted close obligation.
+            # Unrelated coordination results keep their default-branch target.
+            for effect in batch.effects:
+                payload = _effect_payload(effect)
+                if payload is None:
+                    if effect.kind == GITHUB_MUTATION_KIND:
+                        return False
+                    continue
+                fields = payload.get("fields")
+                if payload.get("operation") != "pull-request-update" or (
+                    isinstance(fields, Mapping) and "state" not in fields
+                ):
+                    continue
+                if len(batch.effects) != 1 or not is_exact_pull_request_close(
+                    effect.kind, payload, issue_number=source.issue_number
+                ):
+                    return False
+                adapter = GitHubEffectAdapter(
+                    repository,
+                    token,
+                    source,
+                    authorized_change=change,
+                    current_revision=current_revision,
+                    authorization_revision=accepted_authorization_revision,
+                    expected_result_kind=batch.typed_result.result.kind.value,
+                    request_comment_id=request_comment_id,
+                    accepted_intent=accepted_intent,
+                )
+                return (
+                    adapter._lead_retirement_target(
+                        cast(int, payload["number"]),
+                        cast(str, payload["expected_head_sha"]),
+                        require_open=False,
+                        application_correlation=(
+                            observed_application_correlation if formal_result_observed else None
+                        ),
+                    )
+                    is not None
+                )
             return _valid_sha(current_revision)
         if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
             return merged_pr_readiness_complete(

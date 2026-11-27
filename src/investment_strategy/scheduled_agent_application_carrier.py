@@ -24,10 +24,18 @@ from investment_strategy.scheduled_agent_carrier import (
     github_paginated_mappings,
     github_read_bytes_with_retry,
 )
+from investment_strategy.scheduled_agent_effect_contract import (
+    candidate_withdrawal_permitted,
+    is_exact_pull_request_close,
+)
 from investment_strategy.scheduled_agent_formal_result import parse_formal_result
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     normalize_github_issue,
+)
+from investment_strategy.scheduled_agent_wire import (
+    ApplicationDecisionRecord,
+    parse_application_decision,
 )
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -901,53 +909,37 @@ def _canonical_intent_effect_json(raw_intent: str) -> str | None:
     return json.dumps(intent, sort_keys=True, separators=(",", ":"))
 
 
-def _accepted_formal_result_is_proven(
+@dataclass(frozen=True, slots=True)
+class _AcceptedIntentEvidence:
+    """Read-only projection of one native decision and its qualified original."""
+
+    decision: ApplicationDecisionRecord
+    intent: Mapping[str, object]
+    accepted_at: datetime | None
+
+
+def _accepted_intent_from_sources(
     repository: str,
     token: str,
     *,
-    issue_number: int,
+    source: WorkerRequest,
     change: str,
-    retired_number: int,
-    retired_branch: str,
-    retired_head: str | None = None,
-    event: object,
+    result_kind: str,
+    request_comment_id: int,
+    current_revision: str,
     comments: tuple[Mapping[str, object], ...],
     read: GitHubReader,
-) -> bool:
-    """Bind a formal transition to one immutable accepted Application intent.
+) -> _AcceptedIntentEvidence | None:
+    """Prove immutable source semantics without requiring a future consequence."""
 
-    A bot-authored formal comment alone is not proof of Application acceptance.
-    This reuses the existing decision/ingress parsers and checks their source
-    objects, including the exact request body hash, without creating state.
-    """
-
-    # Import at call time because the Application effects/bridge modules use
-    # this carrier qualifier. No competing parser or new authority is added.
+    # These owners consume the carrier qualifier, so reuse their source policy
+    # at call time rather than introducing a second ingress parser.
     from investment_strategy.scheduled_agent_application_bridge import (
         _claimed_source,
         _read_accepted_original_request,
     )
-    from investment_strategy.scheduled_agent_effects import (
-        parse_application_decision,
-        semantic_intent_payload,
-    )
+    from investment_strategy.scheduled_agent_effects import semantic_intent_payload
 
-    correlation = getattr(event, "application_correlation", None)
-    parts = correlation.split(":") if isinstance(correlation, str) else []
-    role = getattr(event, "role", None)
-    action = getattr(event, "action", None)
-    result = getattr(event, "result_kind", None)
-    default_revision = getattr(event, "default_branch_revision", None)
-    if (
-        len(parts) != 8
-        or parts[0] != "application"
-        or not parts[1].isdigit()
-        or parts[2:7] != [str(issue_number), change, role, action, result]
-        or parts[7] != default_revision
-        or not _valid_sha(default_revision)
-    ):
-        return False
-    request_id = int(parts[1])
     decisions = []
     for comment in comments:
         if not github_comment_has_app_provenance(
@@ -955,43 +947,52 @@ def _accepted_formal_result_is_proven(
         ):
             continue
         decision = parse_application_decision(comment.get("body"))
-        if decision is not None and decision.request_comment_id == request_id:
-            decisions.append(decision)
+        if decision is not None and decision.request_comment_id == request_comment_id:
+            decisions.append((decision, _timestamp(comment.get("created_at"))))
     if len(decisions) != 1:
-        return False
-    decision = decisions[0]
+        return None
+    decision, accepted_at = decisions[0]
     if (
         decision.disposition != "ACCEPTED"
-        or (decision.issue_number, decision.change) != (issue_number, change)
-        or (decision.role, decision.action, decision.result_kind) != (role, action, result)
+        or (decision.issue_number, decision.change) != (source.issue_number, change)
+        or (decision.role, decision.action, decision.result_kind)
+        != (source.role, source.action, result_kind)
         or (
-            decision.authorization_revision != default_revision
+            decision.authorization_revision != current_revision
             and not _compare_is_ancestor(
                 repository,
                 token,
                 ancestor=decision.authorization_revision,
-                descendant=cast(str, default_revision),
+                descendant=current_revision,
                 read=read,
             )
         )
     ):
-        return False
-    source = WorkerRequest(decision.issue_number, decision.role, decision.action)
+        return None
+    original_body: object = None
+
+    def read_original(repo: str, credential: str, path: str) -> object | None:
+        nonlocal original_body
+        observed = read(repo, credential, path)
+        if path == f"issues/comments/{request_comment_id}" and isinstance(observed, Mapping):
+            original_body = observed.get("body")
+        return observed
+
     try:
         ingress = _read_accepted_original_request(
             record=decision,
             source=source,
             repository=repository,
             token=token,
-            read=read,
+            read=read_original,
             require_legacy_dispatch_correlation=True,
         )
         if ingress is None:
-            return False
+            return None
         ingress_result = json.loads(ingress.raw_worker_result)
         accepted_result = json.loads(decision.raw_worker_result)
         if not isinstance(ingress_result, dict) or not isinstance(accepted_result, dict):
-            return False
+            return None
         expected_identity = {
             "issue_number": source.issue_number,
             "role": source.role,
@@ -1010,7 +1011,7 @@ def _accepted_formal_result_is_proven(
                 or not isinstance(identity["change"], str)
                 or identity["change"] != decision.change
             ):
-                return False
+                return None
             result_payload.update(identity)
             result_payload.setdefault("evidence_ref", None)
             result_payload.setdefault("requested_effects", [])
@@ -1022,19 +1023,147 @@ def _accepted_formal_result_is_proven(
         )
         accepted_intent = _canonical_intent_effect_json(json.dumps(accepted_result))
         if ingress_intent is None or ingress_intent != accepted_intent:
-            return False
+            return None
         intent = json.loads(decision.raw_worker_result)
     except (TypeError, ValueError):
-        return False
+        return None
     if (
         not isinstance(intent, Mapping)
         or (intent.get("issue_number"), intent.get("role"), intent.get("action"))
-        != (issue_number, role, action)
-        or (intent.get("change"), intent.get("result_kind")) != (change, result)
+        != (source.issue_number, source.role, source.action)
+        or (intent.get("change"), intent.get("result_kind")) != (change, result_kind)
+    ):
+        return None
+    if candidate_withdrawal_permitted(source.role, source.action, result_kind):
+        original_effects = ingress_result.get("requested_effects")
+        if not isinstance(original_effects, list) or len(original_effects) not in {1, 2}:
+            return None
+        if len(original_effects) == 2:
+            # Only a supported historical Application envelope may contain
+            # its derived formal projection. A new raw request owns no such
+            # control, and normalization must not erase an extra worker write.
+            control = original_effects[1]
+            if (
+                not isinstance(original_body, str)
+                or not original_body.startswith("EFFECT_REQUEST\n")
+                or not isinstance(control, Mapping)
+                or control.get("kind") != "issue-comment"
+                or not isinstance(control.get("payload_json"), str)
+            ):
+                return None
+            try:
+                control_payload = json.loads(control["payload_json"])
+            except ValueError:
+                return None
+            if (
+                not isinstance(control_payload, Mapping)
+                or control_payload.get("issue_number") != source.issue_number
+                or not isinstance(control_payload.get("body"), str)
+                or control_payload["body"].splitlines()[:1] != ["ACTION_RESULT"]
+            ):
+                return None
+    return _AcceptedIntentEvidence(decision, intent, accepted_at)
+
+
+def _accepted_withdrawal_matches(
+    proof: _AcceptedIntentEvidence,
+    *,
+    pr_number: int,
+    head_sha: str,
+    closed_at: datetime | None = None,
+) -> bool:
+    """Inspect the complete one-close obligation for either consumption phase."""
+
+    decision = proof.decision
+    if (
+        not candidate_withdrawal_permitted(decision.role, decision.action, decision.result_kind)
+        or proof.accepted_at is None
+        or (closed_at is not None and proof.accepted_at > closed_at)
     ):
         return False
+    effects = proof.intent.get("requested_effects")
+    if not isinstance(effects, list) or len(effects) != 1:
+        return False
+    effect = effects[0]
+    if not isinstance(effect, Mapping) or not isinstance(effect.get("payload_json"), str):
+        return False
+    try:
+        payload = json.loads(effect["payload_json"])
+    except ValueError:
+        return False
+    return bool(
+        isinstance(payload, Mapping)
+        and is_exact_pull_request_close(
+            effect.get("kind"), payload, issue_number=decision.issue_number
+        )
+        and (payload.get("number"), payload.get("expected_head_sha")) == (pr_number, head_sha)
+    )
+
+
+def _accepted_formal_result_is_proven(
+    repository: str,
+    token: str,
+    *,
+    issue_number: int,
+    change: str,
+    retired_number: int,
+    retired_branch: str,
+    retired_head: str | None = None,
+    retired_closed_at: datetime | None = None,
+    event: object,
+    comments: tuple[Mapping[str, object], ...],
+    read: GitHubReader,
+) -> bool:
+    """Bind a real formal transition to the shared immutable source proof."""
+
+    correlation = getattr(event, "application_correlation", None)
+    parts = correlation.split(":") if isinstance(correlation, str) else []
+    role = getattr(event, "role", None)
+    action = getattr(event, "action", None)
+    result = getattr(event, "result_kind", None)
+    default_revision = getattr(event, "default_branch_revision", None)
+    if (
+        len(parts) != 8
+        or parts[0] != "application"
+        or not parts[1].isdigit()
+        or not isinstance(role, str)
+        or not isinstance(action, str)
+        or not isinstance(result, str)
+        or parts[2:7] != [str(issue_number), change, role, action, result]
+        or not _valid_sha(default_revision)
+        or not _valid_sha(parts[7])
+    ):
+        return False
+    # Formal evidence and the Application observation can survive independent
+    # default-branch advances. Both must belong to the fresh default history;
+    # the accepted original remains bound to the actual observation revision.
+    _, current_revision = _repository_default(repository, token, read=read)
+    if current_revision is None:
+        return False
+    for revision in (cast(str, default_revision), parts[7]):
+        if revision != current_revision and not _compare_is_ancestor(
+            repository,
+            token,
+            ancestor=revision,
+            descendant=current_revision,
+            read=read,
+        ):
+            return False
+    proof = _accepted_intent_from_sources(
+        repository,
+        token,
+        source=WorkerRequest(issue_number, role, action),
+        change=change,
+        result_kind=result,
+        request_comment_id=int(parts[1]),
+        current_revision=parts[7],
+        comments=comments,
+        read=read,
+    )
+    if proof is None:
+        return False
     if (role, action, result) == ("executor", "implement-change", "ready"):
-        effects = intent.get("requested_effects")
+        effects = proof.intent.get("requested_effects")
         if not isinstance(effects, list):
             return False
         carriers = []
@@ -1056,35 +1185,17 @@ def _accepted_formal_result_is_proven(
             retired_branch,
         ):
             return False
-    if (role, action, result) == ("lead", "resolve-question", "ready"):
-        # A Lead resolution can retire an already-reviewed carrier without
-        # manufacturing a Reviewer FINDINGS.  The intent, not PR closure alone,
-        # must name one exact existing PR/head and request only its closure.
-        effects = intent.get("requested_effects")
-        if not isinstance(effects, list) or len(effects) != 1 or retired_head is None:
-            return False
-        effect = effects[0]
-        if not isinstance(effect, Mapping) or effect.get("kind") != "github-mutation":
-            return False
-        raw = effect.get("payload_json")
-        try:
-            payload = json.loads(raw) if isinstance(raw, str) else None
-        except ValueError:
-            return False
-        if not isinstance(payload, Mapping) or (
-            payload.get("issue_number"),
-            payload.get("operation"),
-            payload.get("number"),
-            payload.get("expected_head_sha"),
-            payload.get("fields"),
-        ) != (
-            issue_number,
-            "pull-request-update",
-            retired_number,
-            retired_head,
-            {"state": "closed"},
-        ):
-            return False
+    if candidate_withdrawal_permitted(role, action, result):
+        return (
+            retired_head is not None
+            and retired_closed_at is not None
+            and _accepted_withdrawal_matches(
+                proof,
+                pr_number=retired_number,
+                head_sha=retired_head,
+                closed_at=retired_closed_at,
+            )
+        )
     return True
 
 
@@ -1100,10 +1211,11 @@ def _accepted_lead_retirement(
     closed_at: datetime,
     comments: tuple[Mapping[str, object], ...],
     read: GitHubReader,
+    application_correlation: str | None = None,
 ) -> bool:
     """Prove one application-owned closure, independent of older review outcome.
 
-    Exact PR/head, typed Lead READY, accepted close intent, and observed
+    Exact PR/head, an eligible Lead result, accepted close intent, and observed
     closed-unmerged state establish retirement.  No old PASS or FINDINGS is
     transferred to the successor; its fresh gates remain mandatory.
     """
@@ -1114,12 +1226,18 @@ def _accepted_lead_retirement(
         if (
             event is None
             or not event.valid
-            or (event.issue_number, event.change, event.role, event.action)
-            != (issue_number, change, "lead", "resolve-question")
-            or event.result_kind != "ready"
-            or event.successor != ("executor", "implement-change")
+            or (event.issue_number, event.change) != (issue_number, change)
+            or event.role != "lead"
+            or event.action is None
+            or not candidate_withdrawal_permitted(event.role, event.action, event.result_kind)
+            or (
+                application_correlation is not None
+                and event.application_correlation != application_correlation
+            )
         ):
             continue
+        # The shared formal parser has already checked the model-derived
+        # successor for this Action/Result; no second transition table is used.
         occurred = _timestamp(comment.get("created_at"))
         if occurred is None or occurred < closed_at:
             continue
@@ -1131,6 +1249,7 @@ def _accepted_lead_retirement(
             retired_number=retired_number,
             retired_branch=retired_branch,
             retired_head=retired_head,
+            retired_closed_at=closed_at,
             event=event,
             comments=comments,
             read=read,
@@ -1139,7 +1258,17 @@ def _accepted_lead_retirement(
     return len(matching) == 1
 
 
-def _formally_superseded_closed_carrier(
+@dataclass(frozen=True, slots=True)
+class _ClosedCandidateEvidence:
+    """Fresh target identity shared by recovery and completed retirement."""
+
+    pull_request: Mapping[str, object]
+    branch: str
+    head_sha: str
+    closed_at: datetime
+
+
+def _closed_candidate_evidence(
     repository: str,
     token: str,
     *,
@@ -1150,22 +1279,17 @@ def _formally_superseded_closed_carrier(
     retired_number: int,
     read: GitHubReader,
     visited: frozenset[int] = frozenset(),
-) -> bool:
-    """Prove retirement without giving a closed PR or prose any routing authority.
-
-    Either the existing accepted READY -> Reviewer FINDINGS transition or one
-    accepted Lead READY exact-head closure effect must justify retirement.
-    No past READY, PASS, CI, or old branch head is transferred to replacement.
-    """
+) -> _ClosedCandidateEvidence | None:
+    """Qualify one closed target; only its earlier generations need formal proof."""
 
     # Every generation is independently retired. A newer supersession is not
     # authorized merely because its own predecessor had once been retired.
     if retired_number in visited:
-        return False
+        return None
     visited = visited | {retired_number}
     retired = _as_mapping(read(repository, token, f"pulls/{retired_number}"))
     if retired is None or retired.get("number") != retired_number:
-        return False
+        return None
     identity = _pr_identity_is_coherent(
         retired,
         repository=repository,
@@ -1200,7 +1324,7 @@ def _formally_superseded_closed_carrier(
                 visited=visited,
             )
         ):
-            return False
+            return None
         expected_branch = identity[0]
     closed_at = _timestamp(retired.get("closed_at"))
     if (
@@ -1212,7 +1336,7 @@ def _formally_superseded_closed_carrier(
         or retired.get("draft") is not False
         or closed_at is None
     ):
-        return False
+        return None
     owner = repository.split("/", 1)[0]
     matching = _paged_list(
         repository,
@@ -1221,10 +1345,48 @@ def _formally_superseded_closed_carrier(
         read=read,
     )
     if len(matching) != 1 or matching[0].get("number") != retired_number:
-        return False
+        return None
     active_changes, _has_code = _pr_active_changes(repository, token, retired_number, read=read)
     if any(active_change != change for active_change in active_changes):
+        return None
+    return _ClosedCandidateEvidence(retired, identity[0], identity[1], closed_at)
+
+
+def _formally_superseded_closed_carrier(
+    repository: str,
+    token: str,
+    *,
+    issue_number: int,
+    change: str,
+    default_branch: str,
+    historical_pr_number: int | None,
+    retired_number: int,
+    read: GitHubReader,
+    visited: frozenset[int] = frozenset(),
+) -> bool:
+    """Prove retirement without giving a closed PR or prose any routing authority.
+
+    Either the existing accepted READY -> Reviewer FINDINGS transition or one
+    accepted eligible Lead exact-head closure effect must justify retirement.
+    No past READY, PASS, CI, or old branch head is transferred to replacement.
+    """
+
+    target = _closed_candidate_evidence(
+        repository,
+        token,
+        issue_number=issue_number,
+        change=change,
+        default_branch=default_branch,
+        historical_pr_number=historical_pr_number,
+        retired_number=retired_number,
+        read=read,
+        visited=visited,
+    )
+    if target is None:
         return False
+    identity = (target.branch, target.head_sha)
+    expected_branch = target.branch
+    closed_at = target.closed_at
     comments = _paged_list(
         repository,
         token,
@@ -1418,6 +1580,205 @@ def qualify_supersession_branch(
     )
 
 
+def qualify_candidate_withdrawal(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    change: str,
+    result_kind: str,
+    pr_number: int,
+    expected_head_sha: str,
+    current_revision: str,
+    require_open: bool,
+    request_comment_id: int | None = None,
+    authorization_revision: str | None = None,
+    application_correlation: str | None = None,
+    read: GitHubReader | None = None,
+) -> Mapping[str, object] | None:
+    """Qualify a fresh open request or its exact accepted close continuation.
+
+    A closed target needs durable acceptance, not an invocation-local flag.
+    Recovery does not require the formal result that the close must precede.
+    A completed formal observation additionally binds that exact real result.
+    """
+
+    reader = _github_json if read is None else read
+    if (
+        not candidate_withdrawal_permitted(source.role, source.action, result_kind)
+        or not isinstance(pr_number, int)
+        or isinstance(pr_number, bool)
+        or pr_number <= 0
+        or not _valid_sha(expected_head_sha)
+        or not _valid_sha(current_revision)
+        or (
+            request_comment_id is not None
+            and (
+                not isinstance(request_comment_id, int)
+                or isinstance(request_comment_id, bool)
+                or request_comment_id <= 0
+            )
+        )
+        or (not require_open and request_comment_id is None)
+        or (require_open and application_correlation is not None)
+    ):
+        return None
+    if application_correlation is not None:
+        correlation_fields = application_correlation.split(":")
+        if (
+            len(correlation_fields) != 8
+            or correlation_fields[:7]
+            != [
+                "application",
+                str(request_comment_id),
+                str(source.issue_number),
+                change,
+                source.role,
+                source.action,
+                result_kind,
+            ]
+            or not _valid_sha(correlation_fields[7])
+        ):
+            return None
+    default_branch, default_revision = _repository_default(repository, token, read=reader)
+    if default_branch is None or default_revision != current_revision:
+        return None
+    issue = _as_mapping(reader(repository, token, f"issues/{source.issue_number}"))
+    if (
+        issue is None
+        or issue.get("number") != source.issue_number
+        or issue.get("state") != "open"
+        or _change_from_issue(issue) != change
+    ):
+        return None
+    pr = _as_mapping(reader(repository, token, f"pulls/{pr_number}"))
+    if pr is None or pr.get("number") != pr_number:
+        return None
+    identity = _pr_identity_is_coherent(
+        pr,
+        repository=repository,
+        issue_number=source.issue_number,
+        default_branch=default_branch,
+    )
+    if (
+        identity is None
+        or identity[1] != expected_head_sha
+        or pr.get("draft") is not False
+        or pr.get("merged") is not False
+        or pr.get("merged_at") is not None
+        or pr.get("state") != ("open" if require_open else "closed")
+    ):
+        return None
+
+    proof = None
+    comments: tuple[Mapping[str, object], ...] = ()
+    if request_comment_id is not None:
+        comments = _paged_list(
+            repository,
+            token,
+            f"issues/{source.issue_number}/comments?sort=created&direction=asc",
+            read=reader,
+        )
+        proof = _accepted_intent_from_sources(
+            repository,
+            token,
+            source=source,
+            change=change,
+            result_kind=result_kind,
+            request_comment_id=request_comment_id,
+            current_revision=current_revision,
+            comments=comments,
+            read=reader,
+        )
+        if (
+            proof is None
+            or (
+                authorization_revision is not None
+                and proof.decision.authorization_revision != authorization_revision
+            )
+            or not _accepted_withdrawal_matches(
+                proof, pr_number=pr_number, head_sha=expected_head_sha
+            )
+        ):
+            return None
+    if require_open:
+        qualified = qualify_change_carrier(
+            repository=repository,
+            token=token,
+            source=source,
+            change=change,
+            pr_number=pr_number,
+            current_revision=current_revision,
+            read=reader,
+            withdrawal_result_kind=result_kind,
+        )
+        return (
+            pr
+            if qualified.disposition in {"QUALIFIED", "RECONCILIATION_REQUIRED"}
+            and (qualified.branch, qualified.head_sha) == identity
+            else None
+        )
+    if proof is None:
+        return None
+    historical = _historical_carriers(
+        repository,
+        token,
+        issue_number=source.issue_number,
+        change=change,
+        default_branch=default_branch,
+        default_revision=current_revision,
+        read=reader,
+        stop_before_branch=identity[0],
+    )
+    if historical is None or _claimed_open_carriers(
+        repository,
+        token,
+        issue_number=source.issue_number,
+        change=change,
+        default_branch=default_branch,
+        read=reader,
+    ):
+        return None
+    target = _closed_candidate_evidence(
+        repository,
+        token,
+        issue_number=source.issue_number,
+        change=change,
+        default_branch=default_branch,
+        historical_pr_number=historical[-1][0] if historical else None,
+        retired_number=pr_number,
+        read=reader,
+    )
+    if (
+        target is None
+        or target.head_sha != expected_head_sha
+        or not _accepted_withdrawal_matches(
+            proof,
+            pr_number=pr_number,
+            head_sha=expected_head_sha,
+            closed_at=target.closed_at,
+        )
+        or (
+            application_correlation is not None
+            and not _accepted_lead_retirement(
+                repository,
+                token,
+                issue_number=source.issue_number,
+                change=change,
+                retired_number=pr_number,
+                retired_branch=target.branch,
+                retired_head=target.head_sha,
+                closed_at=target.closed_at,
+                comments=comments,
+                read=reader,
+                application_correlation=application_correlation,
+            )
+        )
+    ):
+        return None
+    return target.pull_request
+
+
 def _indeterminate(
     *,
     repository: str,
@@ -1457,6 +1818,7 @@ def qualify_change_carrier(
     current_revision: str,
     read: GitHubReader | None = None,
     implementation_retirement: bool = False,
+    withdrawal_result_kind: str | None = None,
 ) -> ImplementationCarrierQualification:
     """Freshly qualify one exact canonical or deterministic same-Change carrier.
 
@@ -1469,12 +1831,20 @@ def qualify_change_carrier(
 
     `read` replaces transport only. The qualifier still acquires every piece
     of evidence and owns the complete semantic decision.
+    A result-qualified withdrawal purpose does not expand ordinary authoring.
     """
 
     reader = _github_json if read is None else read
+    candidate_withdrawal = candidate_withdrawal_permitted(
+        source.role, source.action, withdrawal_result_kind
+    )
+    retiring = implementation_retirement or candidate_withdrawal
     if (
         source.issue_number <= 0
-        or (source.role, source.action) not in _CHANGE_CARRIER_SOURCES
+        or (
+            (source.role, source.action) not in _CHANGE_CARRIER_SOURCES and not candidate_withdrawal
+        )
+        or (withdrawal_result_kind is not None and not candidate_withdrawal)
         or not isinstance(pr_number, int)
         or isinstance(pr_number, bool)
         or pr_number <= 0
@@ -1618,7 +1988,7 @@ def qualify_change_carrier(
     )
     if (
         (source.role, source.action) in _OPENSPEC_CARRIER_SOURCES
-        and not implementation_retirement
+        and not retiring
         and active_changes != {change}
     ):
         return _indeterminate(
