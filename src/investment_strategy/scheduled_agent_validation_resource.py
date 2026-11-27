@@ -35,6 +35,7 @@ from investment_strategy.scheduled_agent_carrier import (
     carrier_pr_identity,
     create_exact_git_commit,
     create_exact_git_tree,
+    github_complete_job_inventory,
     github_read_bytes_with_retry,
     github_write_bytes,
     make_carrier_plan,
@@ -973,6 +974,20 @@ _NATIVE_QUALITY_SETUP_LOG = "##[group]Run astral-sh/setup-uv@v6"
 _ACTIONS_LOG_TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT\S+Z ")
 
 
+def _native_quality_receipt(log: str) -> list[str] | None:
+    """Read the checkout witness only within the trusted pre-test step boundary."""
+
+    lines = [_ACTIONS_LOG_TIMESTAMP.sub("", line) for line in log.splitlines()]
+    if (
+        lines.count(_NATIVE_QUALITY_CHECKOUT_LOG) != 1
+        or lines.count(_NATIVE_QUALITY_SETUP_LOG) != 1
+    ):
+        return None
+    start = lines.index(_NATIVE_QUALITY_CHECKOUT_LOG)
+    end = lines.index(_NATIVE_QUALITY_SETUP_LOG)
+    return lines[end - 7 : end] if end - 7 > start else None
+
+
 def qualify_native_quality_job(
     job: Mapping[str, object],
     log: str,
@@ -1037,14 +1052,6 @@ def qualify_native_quality_job(
 
     # Only consume the witness emitted between the checkout proof's command
     # group and the first tooling setup. Later candidate output cannot supply it.
-    lines = [_ACTIONS_LOG_TIMESTAMP.sub("", line) for line in log.splitlines()]
-    if (
-        lines.count(_NATIVE_QUALITY_CHECKOUT_LOG) != 1
-        or lines.count(_NATIVE_QUALITY_SETUP_LOG) != 1
-    ):
-        return None
-    start = lines.index(_NATIVE_QUALITY_CHECKOUT_LOG)
-    end = lines.index(_NATIVE_QUALITY_SETUP_LOG)
     receipt = [
         "##[endgroup]",
         f"quality_repository={repository}",
@@ -1054,7 +1061,7 @@ def qualify_native_quality_job(
         f"quality_run_id={run_id}",
         f"quality_run_attempt={run_attempt}",
     ]
-    if end - len(receipt) <= start or lines[end - len(receipt) : end] != receipt:
+    if _native_quality_receipt(log) != receipt:
         return None
 
     outcomes = tuple(step.get("conclusion") for step in steps[setup_count:])
@@ -1067,6 +1074,136 @@ def qualify_native_quality_job(
     if outcomes != ("success",) * failed + ("failure",) + skipped:
         return None
     return "PYTEST_STEP_FAILURE" if failed == len(outcomes) - 1 else "STATIC_STEP_FAILURE"
+
+
+def read_native_quality_verdict(
+    repository: str,
+    token: str,
+    *,
+    revision: str,
+    branch: str,
+    workflow_blob: str,
+    run_id: int,
+    run_attempt: int,
+    event: str,
+    read: Callable[[str, str, str], object],
+    log_read: Callable[[str, str, int], str],
+) -> Literal["PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"] | None:
+    """Read a terminal ordinary quality attempt for an independently selected producer.
+
+    The required workflow blob is chosen by the gate owner, not by the run or
+    its log. A PR workflow definition may be a synthetic merge revision even
+    though the required checkout is the feature head. This read-only result
+    does not establish authorization, intended RED, or absence of an active job.
+    """
+    if (
+        not repository
+        or not _valid_sha(revision)
+        or not _valid_branch(branch)
+        or not _valid_sha(workflow_blob)
+        or type(run_id) is not int
+        or run_id <= 0
+        or type(run_attempt) is not int
+        or run_attempt <= 0
+        or event not in ("push", "pull_request")
+    ):
+        return None
+    workflow_path = ".github/workflows/quality.yml"
+    try:
+        run = _as_mapping(read(repository, token, f"actions/runs/{run_id}/attempts/{run_attempt}"))
+        if run is None:
+            return None
+        run_repo = _as_mapping(run.get("repository"))
+        head_repo = _as_mapping(run.get("head_repository"))
+        if (
+            type(run.get("id")) is not int
+            or run.get("id") != run_id
+            or type(run.get("run_attempt")) is not int
+            or run.get("run_attempt") != run_attempt
+            or run_repo is None
+            or run_repo.get("full_name") != repository
+            or head_repo is None
+            or head_repo.get("full_name") != repository
+            or run.get("path") != workflow_path
+            or run.get("event") != event
+            or run.get("head_sha") != revision
+            or run.get("head_branch") != branch
+            or run.get("status") != "completed"
+            or run.get("conclusion") not in ("success", "failure")
+        ):
+            return None
+        jobs = github_complete_job_inventory(
+            repository, token, run_id=run_id, run_attempt=run_attempt, read=read
+        )
+        if jobs is None or len(jobs) != 1:
+            return None
+        job = jobs[0]
+        job_id = job.get("id")
+        if (
+            type(job_id) is not int
+            or job_id <= 0
+            or job.get("head_sha") != revision
+            or job.get("name") != "quality"
+            or job.get("conclusion") != run.get("conclusion")
+        ):
+            return None
+        log = log_read(repository, token, job_id)
+        receipt = _native_quality_receipt(log)
+        if receipt is None or not receipt[4].startswith("quality_definition_sha="):
+            return None
+        definition_sha = receipt[4].removeprefix("quality_definition_sha=")
+        verdict = qualify_native_quality_job(
+            job,
+            log,
+            repository=repository,
+            revision=revision,
+            definition_sha=definition_sha,
+            run_id=run_id,
+            run_attempt=run_attempt,
+            job_id=job_id,
+            job_name="quality",
+        )
+        if verdict is None:
+            return None
+
+        if event == "push":
+            if definition_sha != revision:
+                return None
+        else:
+            if definition_sha == revision:
+                return None
+            commit = _as_mapping(read(repository, token, f"git/commits/{definition_sha}"))
+            if commit is None or commit.get("sha") != definition_sha:
+                return None
+            parents = commit.get("parents")
+            if not isinstance(parents, list) or len(parents) != 2:
+                return None
+            base, head = (_as_mapping(parent) for parent in parents)
+            if (
+                base is None
+                or not _valid_sha(base.get("sha"))
+                or base.get("sha") == revision
+                or head is None
+                or head.get("sha") != revision
+            ):
+                return None
+
+        # Read immutable Git content at both the selected target and executed
+        # definition. Never use the current PR's mutable merge ref as evidence.
+        for source in dict.fromkeys((revision, definition_sha)):
+            file = _as_mapping(
+                read(repository, token, f"contents/{workflow_path}?{urlencode({'ref': source})}")
+            )
+            if (
+                file is None
+                or file.get("path") != workflow_path
+                or file.get("type") != "file"
+                or file.get("sha") != workflow_blob
+            ):
+                return None
+        return verdict
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
