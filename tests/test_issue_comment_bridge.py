@@ -11323,3 +11323,165 @@ def test_saved_development_obligation_drives_native_bridge_output(
             assert obligation.revision == saved
             assert getattr(obligation, "carrier_revision", None) == current_carrier
             assert getattr(obligation, "carrier_base", None) == REVISION
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "exact",
+        "closed-shard",
+        "replayed",
+        "same-second",
+        "late-run",
+        "foreign-run",
+        "wrong-action",
+        "wrong-definition",
+        "wrong-digest",
+        "missing-job",
+        "incomplete-runs",
+        "edited-dispatch",
+    ],
+)
+def test_development_ingress_requires_one_exact_native_dispatch_source(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    repository = "owner/repo"
+    token = "token"  # noqa: S105
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    issue_url = "https://api.github.com/repos/owner/repo/issues/142"
+    dispatch = {
+        "id": 987,
+        "body": REQUEST_BODY,
+        "created_at": "2026-09-03T03:45:00Z",
+        "updated_at": "2026-09-03T03:45:00Z",
+        "issue_url": issue_url,
+        "user": {"login": "owner"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+    ingress = _effect_request_comment(
+        comment_id=986,
+        created_at="2026-09-03T03:47:00Z",
+        action=source.action,
+        role=source.role,
+        result_kind="more-implementation-required",
+        change="native-quality",
+    )
+    ingress.update(updated_at=ingress["created_at"], issue_url=issue_url)
+    comments = [dispatch, ingress]
+    if case == "replayed":
+        comments.append(
+            {
+                **ingress,
+                "id": 985,
+                "created_at": "2026-09-03T03:46:30Z",
+                "updated_at": "2026-09-03T03:46:30Z",
+            }
+        )
+    if case == "same-second":
+        dispatch["created_at"] = ingress["created_at"]
+        dispatch["updated_at"] = ingress["created_at"]
+    if case == "edited-dispatch":
+        dispatch["updated_at"] = "2026-09-03T03:46:00Z"
+    run = {
+        "id": 77,
+        "run_attempt": 1,
+        "head_sha": "f" * 40 if case == "wrong-definition" else REVISION,
+        "head_branch": "main",
+        "event": "issue_comment",
+        "path": ".github/workflows/scheduled-agent-bridge.yml",
+        "repository": {"full_name": repository},
+        "head_repository": {
+            "full_name": "foreign/repo" if case == "foreign-run" else repository
+        },
+        "status": "completed",
+        "conclusion": "success",
+        "display_title": bridge.render_dispatch_run_name(987),
+        "created_at": "2026-09-03T03:45:01Z",
+        "updated_at": (
+            "2026-09-03T03:48:00Z" if case == "late-run" else "2026-09-03T03:46:00Z"
+        ),
+    }
+    job = {
+        "id": 78,
+        "name": "bridge",
+        "run_id": 77,
+        "run_attempt": 1,
+        "head_sha": run["head_sha"],
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-09-03T03:45:05Z",
+        "completed_at": "2026-09-03T03:45:59Z",
+        "steps": [
+            {"name": name, "status": "completed", "conclusion": "success"}
+            for name in (
+                "Check out authoritative default branch",
+                "Record exact checked-out default-branch revision",
+                "Plan exact correlated machine dispatch decision",
+                "Upload exact run-scoped machine dispatch result",
+            )
+        ],
+    }
+    artifact = bridge.render_dispatch_result_document(
+        request_comment_id=987,
+        default_branch_revision=REVISION,
+        decision=_decision(
+            "AUTHORIZE",
+            issue_number=138,
+            routing=(
+                ("lead", "explore-change")
+                if case == "wrong-action"
+                else ("executor", "implement-change")
+            ),
+        ),
+    ).encode()
+    digest = "sha256:" + hashlib.sha256(artifact).hexdigest()
+    metadata = {
+        "id": 79,
+        "name": "dispatch-result.json",
+        "expired": False,
+        "digest": "sha256:" + "0" * 64 if case == "wrong-digest" else digest,
+        "workflow_run": {"id": 77, "head_sha": run["head_sha"]},
+        "created_at": "2026-09-03T03:45:58Z",
+    }
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path == "issues/comments/986":
+            return ingress
+        if path == "issues/comments/987":
+            return dispatch
+        if path == "issues/142":
+            return _event(state="closed" if case == "closed-shard" else "open")["issue"]
+        if path.startswith("issues/142/comments?"):
+            return comments
+        if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?"):
+            return {"total_count": 2 if case == "incomplete-runs" else 1, "workflow_runs": [run]}
+        if path in ("actions/runs/77", "actions/runs/77/attempts/1"):
+            return run
+        if path.startswith("actions/runs/77/attempts/1/jobs"):
+            return {"total_count": 1, "jobs": [] if case == "missing-job" else [job]}
+        if path.startswith("actions/runs/77/artifacts?"):
+            return {"total_count": 1, "artifacts": [metadata]}
+        return None
+
+    monkeypatch.setattr(bridge, "read_github_artifact_bytes", lambda *_args: artifact)
+    qualify = getattr(bridge, "qualify_development_dispatch_source", None)
+    assert callable(qualify), "Application must bind a new save to its exact native dispatch"
+    proof = qualify(
+        repository,
+        token,
+        source=source,
+        request_comment_id=986,
+        current_revision=REVISION,
+        default_branch="main",
+        read=read,
+    )
+    if case in {"exact", "closed-shard"}:
+        assert proof is not None
+        assert proof.dispatch_request_comment_id == 987
+        assert proof.run_id == 77 and proof.run_attempt == 1
+        assert proof.job_id == 78 and proof.artifact_id == 79
+        assert proof.artifact_digest == digest
+        assert proof.authorization_revision == REVISION
+    else:
+        assert proof is None
+
