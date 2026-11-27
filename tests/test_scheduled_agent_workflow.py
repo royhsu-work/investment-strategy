@@ -200,3 +200,62 @@ def test_reusable_quality_proves_exact_caller_before_candidate_execution(case: s
     else:
         assert witness.returncode != 0
         assert "quality_checkout_sha=" not in witness.stdout
+
+
+def test_bridge_calls_quality_only_from_exact_planner_outputs() -> None:
+    bridge = yaml.safe_load(
+        Path(".github/workflows/scheduled-agent-bridge.yml").read_text(encoding="utf-8")
+    )
+    quality = yaml.safe_load(Path(".github/workflows/quality.yml").read_text(encoding="utf-8"))
+    assert set(bridge[True]) == {"issue_comment"}
+    jobs = bridge["jobs"]
+    assert "verify_quality" in jobs, "Bridge must expose a conditional native quality call"
+    assert set(jobs) == {"bridge", "verify_quality"}
+    planner = jobs["bridge"]
+    call = jobs["verify_quality"]
+    inputs = quality[True]["workflow_call"]["inputs"]
+    expected_outputs = {
+        f"quality_{key}": f"${{{{ steps.handler.outputs.quality_{key} }}}}" for key in inputs
+    }
+    expected_outputs.update(
+        {
+            "quality_call": "${{ steps.handler.outputs.quality_call }}",
+            "quality_result": "${{ steps.handler.outputs.quality_result }}",
+            "checked_out_revision": "${{ steps.revision.outputs.sha }}",
+        }
+    )
+    assert planner["outputs"] == expected_outputs
+    assert call["needs"] == "bridge"
+    assert call["uses"] == "./.github/workflows/quality.yml"
+    assert call["permissions"] == {"contents": "read"}
+    assert "secrets" not in call
+    assert "continue-on-error" not in call
+    assert "runs-on" not in call and "steps" not in call
+    assert call["with"] == {
+        key: f"${{{{ needs.bridge.outputs.quality_{key} }}}}" for key in inputs
+    }
+    guard = " ".join(call["if"].split())
+    assert guard == (
+        "${{ needs.bridge.result == 'success' "
+        "&& needs.bridge.outputs.quality_call == 'true' "
+        "&& needs.bridge.outputs.quality_result == 'verification-obligation-pending' "
+        "&& needs.bridge.outputs.quality_target_repository == github.repository "
+        "&& needs.bridge.outputs.quality_target_revision != '' "
+        "&& needs.bridge.outputs.quality_verification_correlation != '' "
+        "&& needs.bridge.outputs.quality_definition_revision == "
+        "needs.bridge.outputs.checked_out_revision "
+        "&& needs.bridge.outputs.quality_definition_revision == github.workflow_sha "
+        "&& needs.bridge.outputs.quality_definition_revision == github.sha "
+        "&& needs.bridge.outputs.quality_source_comment_id == format('{0}', github.event.comment.id) "
+        "&& needs.bridge.outputs.quality_run_id == github.run_id "
+        "&& needs.bridge.outputs.quality_run_attempt == github.run_attempt }}"
+    )
+    handler = next(step for step in planner["steps"] if step.get("id") == "handler")
+    assert "uv run python -m investment_strategy.issue_comment_bridge" in handler["run"]
+    upload = next(
+        step
+        for step in planner["steps"]
+        if step.get("name") == "Upload exact run-scoped machine dispatch result"
+    )
+    assert upload["if"] == "steps.handler.outputs.should_emit == 'true'"
+    assert planner["steps"].index(handler) < planner["steps"].index(upload)
