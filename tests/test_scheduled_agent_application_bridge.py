@@ -8431,7 +8431,6 @@ def test_development_phase_a_requalifies_native_source_and_shared_frontier(
     worker["requested_effects"] = [
         {"kind": "github-mutation", "payload_json": json.dumps(materialization)}
     ]
-    worker["_native_development_dispatch"] = {"claimed": "untrusted"}
     body = "WORKER_RESULT\n" + json.dumps(worker, sort_keys=True) + "\n"
     event_path = tmp_path / "development-event.json"
     event_path.write_text(json.dumps(_event(body)), encoding="utf-8")
