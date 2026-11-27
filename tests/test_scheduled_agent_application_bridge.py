@@ -8396,6 +8396,7 @@ def test_archive_findings_require_exact_carrier_identity(
     assert formal is not None
     assert bridge._field(formal, "Revision") == head
 
+
 @pytest.mark.parametrize("case", ["exact", "missing-source", "pending-save", "competing-ingress"])
 def test_development_phase_a_requalifies_native_source_and_shared_frontier(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: str
