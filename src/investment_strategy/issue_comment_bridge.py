@@ -2885,11 +2885,14 @@ def plan_native_quality_verification(
     run_attempt: int,
     read: GitHubReader = _github_json,
     log_read: Callable[[str, str, int], str] = _github_job_log,
+    observe_only: bool = False,
 ) -> NativeQualityObservation:
     """Observe both native producers before admitting one read-only local call.
 
     The Application supplies the exact outstanding gate and its immutable
     acceptance boundary. A fresh dispatch is not an execution retry token.
+    Observe-only mode requires the exact successful completed dispatcher and
+    cannot issue a verification call; its consumer still qualifies authority.
     """
     unknown = NativeQualityObservation("INDETERMINATE")
     if (
@@ -2994,11 +2997,12 @@ def plan_native_quality_verification(
         if ordinary is None or first is None:
             return unknown
         own = first[request_comment_id]
-        if (
-            own[:3] != (run_id, run_attempt, current_revision)
-            or own[3] not in _QUALITY_ACTIVE
-            or own[4] is not None
-        ):
+        own_state_qualified = (
+            own[3:] == ("completed", "success")
+            if observe_only
+            else own[3] in _QUALITY_ACTIVE and own[4] is None
+        )
+        if own[:3] != (run_id, run_attempt, current_revision) or not own_state_qualified:
             return unknown
         called: list[NativeQualityAttempt] = []
         for source, latest in first.items():
@@ -3067,7 +3071,7 @@ def plan_native_quality_verification(
                 run_id,
                 run_attempt,
             )
-            if outcome == "NO_VERDICT"
+            if outcome == "NO_VERDICT" and not observe_only
             else None
         )
         return NativeQualityObservation(outcome, history, call)
