@@ -3218,9 +3218,7 @@ def qualify_development_dispatch_source(
         if (
             not isinstance(attempt_run, Mapping)
             or _quality_bridge_run(attempt_run, repository, default_branch, dispatch_id) != row
-            or any(
-                attempt_run.get(key) != run.get(key) for key in ("created_at", "updated_at")
-            )
+            or any(attempt_run.get(key) != run.get(key) for key in ("created_at", "updated_at"))
         ):
             return None
         created = _quality_time(attempt_run.get("created_at"))
