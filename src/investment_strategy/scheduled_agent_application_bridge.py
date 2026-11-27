@@ -9110,6 +9110,18 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             raise ValueError("development ingress has an unsettled or competing predecessor")
         document = json.loads(application_worker_result)
         document["_native_development_dispatch"] = asdict(receipt)
+        if frontier.settled_quality_obligation is not None:
+            predecessor = development_dispatch.development_predecessor_evidence(
+                frontier, args.revision
+            )
+            if (
+                predecessor is None
+                or parsed_materialization is None
+                or parsed_materialization.base_sha != frontier.settled_quality_obligation.revision
+                or parsed_materialization.branch != frontier.settled_quality_obligation.branch
+            ):
+                raise ValueError("development ingress lacks exact settled predecessor")
+            document["_native_development_predecessor"] = predecessor
         application_worker_result = json.dumps(document, sort_keys=True, separators=(",", ":"))
 
     try:

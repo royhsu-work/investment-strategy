@@ -3123,8 +3123,8 @@ def plan_native_quality_verification(
         else:
             # A B-owned call cannot establish candidate-producer correctness.
             candidate = reduce_native_quality_attempts(ordinary)
-            history = tuple(called)
-            outcome = reduce_native_quality_attempts(history)
+            history = (*ordinary, *called)
+            outcome = reduce_native_quality_attempts(tuple(called))
             if candidate in ("FAIL", "CONFLICT", "PENDING", "INDETERMINATE"):
                 return NativeQualityObservation(candidate, ordinary)
             if outcome == "PASS" and candidate != "PASS":
@@ -3156,6 +3156,7 @@ def qualify_development_dispatch_source(
     current_revision: str,
     default_branch: str,
     read: GitHubReader = _github_json,
+    expected_source: Mapping[str, object] | None = None,
 ) -> DevelopmentDispatchSource | None:
     """Qualify the original native dispatch for one physical development ingress.
 
@@ -3265,15 +3266,35 @@ def qualify_development_dispatch_source(
         if len(matching) != 1:
             return None
         run = matching[0]
-        row = _quality_bridge_run(run, repository, default_branch, dispatch_id)
-        if row is None or row[2:] != (current_revision, "completed", "success"):
+        latest_row = _quality_bridge_run(run, repository, default_branch, dispatch_id)
+        if latest_row is None or latest_row[2] != current_revision:
             return None
-        run_id, attempt = row[:2]
+        run_id, latest_attempt = latest_row[:2]
+        attempt = latest_attempt
+        if expected_source is not None:
+            expected_attempt = _positive_int(expected_source.get("run_attempt"))
+            if (
+                expected_source.get("run_id") != run_id
+                or expected_attempt is None
+                or expected_attempt > latest_attempt
+            ):
+                return None
+            attempt = expected_attempt
+        row = (run_id, attempt, current_revision, "completed", "success")
         attempt_run = read(repository, token, f"actions/runs/{run_id}/attempts/{attempt}")
         if (
             not isinstance(attempt_run, Mapping)
             or _quality_bridge_run(attempt_run, repository, default_branch, dispatch_id) != row
-            or any(attempt_run.get(key) != run.get(key) for key in ("created_at", "updated_at"))
+            or (
+                attempt == latest_attempt
+                and (
+                    latest_row != row
+                    or any(
+                        attempt_run.get(key) != run.get(key)
+                        for key in ("created_at", "updated_at")
+                    )
+                )
+            )
         ):
             return None
         created = _quality_time(attempt_run.get("created_at"))
@@ -3325,10 +3346,22 @@ def qualify_development_dispatch_source(
             for step in witnessed
         ):
             return None
-        artifact = _single_run_artifact(
-            read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100"),
-            name="dispatch-result.json",
-        )
+        if expected_source is None:
+            artifact = _single_run_artifact(
+                read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100"),
+                name="dispatch-result.json",
+            )
+        else:
+            expected_artifact = _positive_int(expected_source.get("artifact_id"))
+            if expected_artifact is None:
+                return None
+            observed_artifact = read(repository, token, f"actions/artifacts/{expected_artifact}")
+            artifact = (
+                observed_artifact
+                if isinstance(observed_artifact, Mapping)
+                and observed_artifact.get("name") == "dispatch-result.json"
+                else None
+            )
         if artifact is None:
             return None
         identity = github_run_artifact_identity(
@@ -3353,13 +3386,17 @@ def qualify_development_dispatch_source(
         current_run = read(repository, token, f"actions/runs/{run_id}")
         if (
             not isinstance(current_run, Mapping)
-            or _quality_bridge_run(current_run, repository, default_branch, dispatch_id) != row
-            or current_run.get("updated_at") != attempt_run.get("updated_at")
+            or _quality_bridge_run(current_run, repository, default_branch, dispatch_id)
+            != latest_row
+            or current_run.get("updated_at") != run.get("updated_at")
         ):
             return None
-        return DevelopmentDispatchSource(
+        qualified = DevelopmentDispatchSource(
             dispatch_id, run_id, attempt, job_id, artifact_id, digest, current_revision
         )
+        if expected_source is not None and asdict(qualified) != expected_source:
+            return None
+        return qualified
     except (OSError, RuntimeError, TypeError, ValueError, LookupError):
         return None
 
@@ -6212,6 +6249,374 @@ def _application_continuation_body(
     return body
 
 
+def _development_acceptance_source(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    record: ApplicationDecisionRecord,
+    default_branch: str,
+    read: GitHubReader,
+) -> DevelopmentDispatchSource | None:
+    document = json.loads(record.raw_worker_result)
+    stored = document.get("_native_development_dispatch") if isinstance(document, dict) else None
+    if not isinstance(stored, Mapping):
+        return None
+    qualified = qualify_development_dispatch_source(
+        repository,
+        token,
+        source=source,
+        request_comment_id=record.request_comment_id,
+        current_revision=record.authorization_revision,
+        default_branch=default_branch,
+        read=read,
+        expected_source=stored,
+    )
+    return qualified if qualified is not None and asdict(qualified) == stored else None
+
+
+def _development_planning_boundary(
+    repository: str,
+    token: str,
+    *,
+    receipt: DevelopmentDispatchSource,
+    read: GitHubReader,
+) -> datetime | None:
+    jobs = github_complete_job_inventory(
+        repository, token, run_id=receipt.run_id, run_attempt=receipt.run_attempt, read=read
+    )
+    if jobs is None:
+        return None
+    planners = [job for job in jobs if job.get("name") == "bridge"]
+    if len(planners) != 1:
+        return None
+    planner = planners[0]
+    steps = planner.get("steps")
+    if (
+        planner.get("id") != receipt.job_id
+        or planner.get("run_id") != receipt.run_id
+        or planner.get("run_attempt") != receipt.run_attempt
+        or planner.get("head_sha") != receipt.authorization_revision
+        or planner.get("status") != "completed"
+        or planner.get("conclusion") != "success"
+        or not isinstance(steps, list)
+    ):
+        return None
+    planning = [
+        step
+        for step in steps
+        if isinstance(step, Mapping)
+        and step.get("name") == "Plan exact correlated machine dispatch decision"
+    ]
+    if len(planning) != 1:
+        return None
+    started = _quality_time(planner.get("started_at"))
+    boundary = _quality_time(planning[0].get("started_at"))
+    completed = _quality_time(planner.get("completed_at"))
+    if (
+        started is None
+        or boundary is None
+        or completed is None
+        or not started <= boundary <= completed
+    ):
+        return None
+    return boundary
+
+
+def development_predecessor_evidence(
+    completion: ApplicationCompletion, authorization_revision: str
+) -> dict[str, object] | None:
+    """Project the shared settled proof into the existing immutable ACCEPT intent."""
+    obligation = completion.settled_quality_obligation
+    observation = completion.quality_observation
+    record = completion.accepted_record
+    digest = completion.accepted_decision_sha256
+    if (
+        completion.state != "COMPLETE"
+        or obligation is None
+        or observation is None
+        or record is None
+        or digest is None
+        or observation.outcome not in ("PASS", "FAIL", "CONFLICT")
+        or observation.attempts is None
+    ):
+        return None
+    attempts = [
+        asdict(attempt)
+        for attempt in observation.attempts
+        if attempt.outcome in ("PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE")
+    ]
+    if not attempts:
+        return None
+    return {
+        "request_comment_id": record.request_comment_id,
+        "accepted_decision_sha256": digest,
+        "revision": obligation.revision,
+        "branch": obligation.branch,
+        "workflow_blob": obligation.workflow_blob,
+        "obligation_id": obligation.obligation_id,
+        "authorization_revision": authorization_revision,
+        "attempts": attempts,
+    }
+
+
+def _historical_development_verdict(
+    repository: str,
+    token: str,
+    *,
+    obligation: NativeQualityObligation,
+    evidence: Mapping[str, object],
+    boundary: datetime,
+    read: GitHubReader,
+) -> bool:
+    """Requalify the exact terminal attempts actually used, not the latest verdict."""
+    references = evidence.get("attempts")
+    blob = evidence.get("workflow_blob")
+    gate = evidence.get("obligation_id")
+    authorization = evidence.get("authorization_revision")
+    if (
+        not isinstance(references, list)
+        or not references
+        or not isinstance(blob, str)
+        or not isinstance(gate, str)
+        or not isinstance(authorization, str)
+    ):
+        return False
+    target_blob = _quality_workflow_blob(repository, token, obligation.revision, read=read)
+    if target_blob is None:
+        return False
+    attempts: list[NativeQualityAttempt] = []
+    ordinary: list[NativeQualityAttempt] = []
+    called: list[NativeQualityAttempt] = []
+    for reference in references:
+        if not isinstance(reference, Mapping):
+            return False
+        run_id = _positive_int(reference.get("run_id"))
+        number = _positive_int(reference.get("run_attempt"))
+        if (
+            run_id is None
+            or number is None
+            or reference.get("checkout_revision") != obligation.revision
+        ):
+            return False
+        run = read(repository, token, f"actions/runs/{run_id}/attempts/{number}")
+        if not isinstance(run, Mapping):
+            return False
+        source_id = reference.get("source_comment_id")
+        if source_id is None:
+            event = run.get("event")
+            if not isinstance(event, str) or event not in ("push", "pull_request"):
+                return False
+            attempt = read_native_quality_attempt(
+                repository,
+                token,
+                revision=obligation.revision,
+                branch=obligation.branch,
+                workflow_blob=target_blob,
+                run_id=run_id,
+                run_attempt=number,
+                event=event,
+                read=read,
+                log_read=_github_job_log,
+            )
+            ordinary.append(attempt)
+        else:
+            source_number = _positive_int(source_id)
+            if source_number is None:
+                return False
+            row = _quality_bridge_run(run, repository, obligation.default_branch, source_number)
+            comment = read(repository, token, f"issues/comments/{source_number}")
+            requested = _quality_time(
+                comment.get("created_at") if isinstance(comment, Mapping) else None
+            )
+            created = _quality_time(run.get("created_at"))
+            accepted = _quality_time(obligation.accepted_at)
+            if (
+                row is None
+                or row[:2] != (run_id, number)
+                or not isinstance(comment, Mapping)
+                or comment.get("id") != source_number
+                or not _trusted_connector_comment(comment, repository.split("/", 1)[0])
+                or comment.get("updated_at") != comment.get("created_at")
+                or not isinstance(comment.get("body"), str)
+                or parse_dispatch_request(cast(str, comment["body"])) is None
+                or requested is None
+                or created is None
+                or accepted is None
+                or not accepted < requested <= created
+                or _authorization_ancestry(
+                    repository,
+                    token,
+                    authorization_revision=row[2],
+                    current_revision=authorization,
+                    read=read,
+                ) is None
+            ):
+                return False
+            attempt = _quality_bridge_attempt(
+                repository,
+                token,
+                source=source_number,
+                row=row,
+                obligation_id=gate,
+                revision=obligation.revision,
+                workflow_blob=blob,
+                read=read,
+                log_read=_github_job_log,
+            )
+            called.append(attempt)
+        if (
+            asdict(attempt) != reference
+            or attempt.outcome not in ("PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE")
+        ):
+            return False
+        attempts.append(attempt)
+    combined = tuple(attempts)
+    outcome = reduce_native_quality_attempts(combined)
+    if outcome not in ("PASS", "FAIL", "CONFLICT"):
+        return False
+    if outcome == "PASS" and target_blob != blob and (not ordinary or not called):
+        return False
+    return _quality_verdicts_precede(
+        repository,
+        token,
+        attempts=combined,
+        boundary=boundary,
+        accepted_at=obligation.accepted_at,
+        read=read,
+    )
+
+
+def _settled_development_prefix(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    accepted: list[ApplicationDecisionRecord],
+    decision_times: Mapping[int, str | None],
+    ingress_times: Mapping[int, str | None],
+    issue_comments: tuple[Mapping[str, object], ...],
+    accepted_state: Callable[[ApplicationDecisionRecord, WorkerRequest], ApplicationCompletion],
+    current_revision: str,
+    read: GitHubReader,
+) -> tuple[ApplicationDecisionRecord, ApplicationCompletion] | None:
+    """Retire only a fully proven causal prefix of physical saves."""
+    if (source.role, source.action) != ("executor", "implement-change"):
+        return None
+    ordered: list[tuple[datetime, ApplicationDecisionRecord]] = []
+    for record in accepted:
+        stamp = _quality_time(decision_times.get(record.request_comment_id))
+        if stamp is None:
+            return None
+        ordered.append((stamp, record))
+    if len({stamp for stamp, _ in ordered}) != len(ordered):
+        return None
+    ordered.sort(key=lambda item: item[0])
+    prior: tuple[ApplicationDecisionRecord, NativeQualityObligation, str, datetime] | None = None
+    seen_dispatch: set[int] = set()
+    seen_revisions: set[str] = set()
+    try:
+        for stamp, record in ordered:
+            completion = accepted_state(record, source)
+            obligation = completion.quality_obligation
+            digest = _accepted_decision_sha256(record, issue_comments)
+            if (
+                obligation is None
+                or digest is None
+                or completion.state != "RESUMABLE"
+                or _quality_time(obligation.accepted_at) != stamp
+                or obligation.revision in seen_revisions
+            ):
+                return None
+            receipt = _development_acceptance_source(
+                repository,
+                token,
+                source=source,
+                record=record,
+                default_branch=obligation.default_branch,
+                read=read,
+            )
+            ingress = _quality_time(ingress_times.get(record.request_comment_id))
+            if receipt is None or receipt.dispatch_request_comment_id in seen_dispatch:
+                return None
+            if ingress is None or ingress >= stamp:
+                return None
+            if prior is not None:
+                previous, old, previous_digest, previous_stamp = prior
+                if (
+                    previous.change != record.change
+                    or old.branch != obligation.branch
+                    or old.carrier_revision != obligation.carrier_revision
+                    or obligation.carrier_base != old.revision
+                ):
+                    return None
+                boundary = _development_planning_boundary(
+                    repository, token, receipt=receipt, read=read
+                )
+                if boundary is None or not previous_stamp < boundary < ingress:
+                    return None
+                document = json.loads(record.raw_worker_result)
+                evidence = document.get("_native_development_predecessor")
+                if not isinstance(evidence, Mapping):
+                    return None
+                blob = _quality_workflow_blob(
+                    repository, token, record.authorization_revision, read=read
+                )
+                if blob is None or _authorization_ancestry(
+                    repository,
+                    token,
+                    authorization_revision=record.authorization_revision,
+                    current_revision=current_revision,
+                    read=read,
+                ) is None:
+                    return None
+                # The historical producer, not a later main's producer,
+                # determines the gate actually used for successor admission.
+                gate = old.obligation_id
+                if blob != old.workflow_blob:
+                    identity = json.dumps(
+                        [
+                            repository,
+                            previous.issue_number,
+                            previous.change,
+                            previous.request_comment_id,
+                            previous_digest,
+                            old.revision,
+                            old.branch,
+                            blob,
+                        ],
+                        separators=(",", ":"),
+                    )
+                    gate = hashlib.sha256(identity.encode()).hexdigest()
+                expected = {
+                    "request_comment_id": previous.request_comment_id,
+                    "accepted_decision_sha256": previous_digest,
+                    "revision": old.revision,
+                    "branch": old.branch,
+                    "workflow_blob": blob,
+                    "obligation_id": gate,
+                    "authorization_revision": record.authorization_revision,
+                    "attempts": evidence.get("attempts"),
+                }
+                if evidence != expected or not _historical_development_verdict(
+                    repository,
+                    token,
+                    obligation=old,
+                    evidence=evidence,
+                    boundary=boundary,
+                    read=read,
+                ):
+                    return None
+            seen_dispatch.add(receipt.dispatch_request_comment_id)
+            seen_revisions.add(obligation.revision)
+            prior = record, obligation, digest, stamp
+        if prior is None or prior[1].revision != prior[1].carrier_revision:
+            return None
+        return record, completion
+    except (OSError, RuntimeError, TypeError, ValueError, LookupError):
+        return None
+
+
 def _current_development_completion(
     repository: str,
     token: str,
@@ -6222,6 +6627,7 @@ def _current_development_completion(
     current_revision: str,
     dispatch_request_id: int | None,
     phase_a: bool,
+    accepted_decision_sha256: str | None,
     read: GitHubReader,
 ) -> ApplicationCompletion:
     """Re-observe a saved W's own verdict at the shared authorization boundary."""
@@ -6234,21 +6640,18 @@ def _current_development_completion(
         return completion
     unknown = replace(completion, quality_observation=NativeQualityObservation("INDETERMINATE"))
     try:
-        decoded = json.loads(record.raw_worker_result)
-        original_source = qualify_development_dispatch_source(
+        original_source = _development_acceptance_source(
             repository,
             token,
             source=source,
-            request_comment_id=record.request_comment_id,
-            current_revision=record.authorization_revision,
+            record=record,
             default_branch=obligation.default_branch,
             read=read,
         )
         if (
             original_source is None
-            or not isinstance(decoded, Mapping)
-            or decoded.get("_native_development_dispatch") != asdict(original_source)
             or original_source.dispatch_request_comment_id == dispatch_request_id
+            or accepted_decision_sha256 is None
         ):
             return replace(
                 unknown,
@@ -6349,6 +6752,8 @@ def _current_development_completion(
             quality_obligation=None,
             quality_observation=observation,
             settled_quality_obligation=obligation,
+            accepted_record=record,
+            accepted_decision_sha256=accepted_decision_sha256,
         )
     except (OSError, RuntimeError, TypeError, ValueError):
         return unknown
@@ -6922,8 +7327,23 @@ def qualify_application_completion(
             "application-completion-consequence-without-acceptance",
             request_comment_id=frontier_request_id,
         )
+    settled_prefix: tuple[ApplicationDecisionRecord, ApplicationCompletion] | None = None
     if len(accepted) > 1:
-        return ApplicationCompletion("AMBIGUOUS", "application-completion-accepted-ambiguous")
+        settled_prefix = _settled_development_prefix(
+            repository,
+            token,
+            source=source,
+            accepted=accepted,
+            decision_times=decision_created_at,
+            ingress_times=ingress_created_at,
+            issue_comments=issue_comments,
+            accepted_state=accepted_state,
+            current_revision=current_revision,
+            read=read,
+        )
+        if settled_prefix is None:
+            return ApplicationCompletion("AMBIGUOUS", "application-completion-accepted-ambiguous")
+        accepted = [settled_prefix[0]]
     classifications: dict[int, PreacceptClassification] = {}
     for request_id in current_request_ids - accepted_request_ids:
         candidate = candidates[request_id]
@@ -7020,7 +7440,7 @@ def qualify_application_completion(
     # edited or deleted after ACCEPT, do not parse its new text and do not
     # replay worker semantics; the exact accepted record remains the only
     # resumable payload.
-    completion = accepted_state(record, source)
+    completion = accepted_state(record, source) if settled_prefix is None else settled_prefix[1]
     return _current_development_completion(
         repository,
         token,
@@ -7030,6 +7450,7 @@ def qualify_application_completion(
         current_revision=current_revision,
         dispatch_request_id=current_dispatch_request_comment_id,
         phase_a=phase_a_request_comment_id is not None,
+        accepted_decision_sha256=_accepted_decision_sha256(record, issue_comments),
         read=read,
     )
 
