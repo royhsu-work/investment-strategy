@@ -5259,7 +5259,9 @@ def test_other_actions_do_not_retain_implementation_checkpoint(role: str, action
     ("role", "action", "result_kind", "expected"),
     [
         ("lead", "resolve-question", "ready", True),
-        ("lead", "resolve-question", "blocked", False),
+        ("lead", "resolve-question", "research-required", True),
+        ("lead", "resolve-question", "blocked", True),
+        ("lead", "resolve-question", "lifecycle-ready", False),
         ("executor", "implement-change", "ready", False),
         ("reviewer", "review-implementation", "pass", False),
     ],
@@ -5267,10 +5269,13 @@ def test_other_actions_do_not_retain_implementation_checkpoint(role: str, action
 def test_exact_lead_retirement_survives_accepted_intent_normalization(
     role: str, action: str, result_kind: str, expected: bool
 ) -> None:
+    """Projection retains eligible close intent; raw cardinality is checked separately."""
+
     close = {
         "kind": "github-mutation",
         "payload_json": json.dumps(
             {
+                "issue_number": 138,
                 "operation": "pull-request-update",
                 "number": 418,
                 "expected_head_sha": "e" * 40,
@@ -5282,6 +5287,7 @@ def test_exact_lead_retirement_survives_accepted_intent_normalization(
         "kind": "github-mutation",
         "payload_json": json.dumps(
             {
+                "issue_number": 138,
                 "operation": "pull-request-update",
                 "number": 418,
                 "expected_head_sha": "e" * 40,
@@ -5300,6 +5306,94 @@ def test_exact_lead_retirement_survives_accepted_intent_normalization(
     raw["_semantic_intent_version"] = 2
     retained = json.loads(effects.semantic_intent_payload(json.dumps(raw)))
     assert retained["requested_effects"] == ([close] if expected else [])
+
+
+@pytest.mark.parametrize("result_kind", ["ready", "research-required"])
+def test_raw_candidate_withdrawal_retains_exact_accepted_close(
+    monkeypatch: pytest.MonkeyPatch, result_kind: str
+) -> None:
+    import investment_strategy.scheduled_agent_application_bridge as bridge
+
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "lead", "resolve-question")
+    payload = {
+        "issue_number": 138,
+        "operation": "pull-request-update",
+        "number": 418,
+        "expected_head_sha": "e" * 40,
+        "fields": {"state": "closed"},
+    }
+    close = {"kind": "github-mutation", "payload_json": json.dumps(payload, sort_keys=True)}
+    raw = _raw(
+        role="lead",
+        action="resolve-question",
+        result_kind=result_kind,
+        requested_effects=[close],
+    )
+    request = bridge.canonicalize_raw_worker_result(
+        body=f"WORKER_RESULT\n{raw}\n",
+        source=source,
+        authorized_change=_CHANGE,
+        repository=repository,
+        current_revision=_REVISION,
+    )
+    assert json.loads(request.raw_worker_result)["requested_effects"] == [close]
+
+    def read(observed_repository: str, token: str, path: str) -> object:
+        assert observed_repository == repository
+        assert token == _TEST_TOKEN
+        assert path == "pulls/418"
+        return {
+            "number": 418,
+            "state": "open",
+            "merged": False,
+            "draft": False,
+            "head": {"sha": "e" * 40},
+        }
+
+    monkeypatch.setattr(bridge, "_github_json", read)
+    projected = bridge._fresh_application_worker_result(
+        request.raw_worker_result,
+        source=source,
+        change=_CHANGE,
+        repository=repository,
+        token=_TEST_TOKEN,
+        current_revision=_REVISION,
+        default_branch="main",
+        request_comment_id=_REQUEST_COMMENT_ID,
+    )
+    retained = json.loads(effects.semantic_intent_payload(projected))
+    assert retained["requested_effects"] == [close]
+    assert retained["result_kind"] == result_kind
+    assert retained["result_content"] == "bounded result"
+
+
+def test_empty_accepted_candidate_intent_does_not_acquire_withdrawal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The immutable empty payload does not assert a historical original or ACCEPT."""
+
+    import investment_strategy.scheduled_agent_application_bridge as bridge
+
+    source = WorkerRequest(138, "lead", "resolve-question")
+    semantic = json.loads(_raw(role="lead", action="resolve-question", result_kind="blocked"))
+    semantic["_semantic_intent_version"] = 2
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        raise AssertionError(f"zero-effect coordination must not acquire a PR obligation: {path}")
+
+    monkeypatch.setattr(bridge, "_github_json", read)
+    projected = bridge._fresh_application_worker_result(
+        json.dumps(semantic),
+        source=source,
+        change=_CHANGE,
+        repository="royhsu-work/investment-strategy",
+        token=_TEST_TOKEN,
+        current_revision=_REVISION,
+        default_branch="main",
+        request_comment_id=_REQUEST_COMMENT_ID,
+    )
+    assert json.loads(effects.semantic_intent_payload(projected)) == semantic
 
 
 def test_exact_lead_retirement_uses_carrier_and_never_replays_closed_pr(
@@ -5399,7 +5493,11 @@ def test_exact_lead_retirement_uses_carrier_and_never_replays_closed_pr(
     assert not adapter.guard(effect)
 
 
-def test_lead_retirement_with_extra_effects_cannot_commit_formal_success() -> None:
+@pytest.mark.parametrize("result_kind", ["ready", "research-required"])
+@pytest.mark.parametrize("extra_kind", ["issue-update", "duplicate-close", "issue-comment"])
+def test_lead_retirement_with_extra_effects_cannot_commit_formal_success(
+    result_kind: str, extra_kind: str
+) -> None:
     source = WorkerRequest(138, "lead", "resolve-question")
     close = {
         "kind": "github-mutation",
@@ -5420,19 +5518,37 @@ def test_lead_retirement_with_extra_effects_cannot_commit_formal_success() -> No
                 "issue_number": 138,
                 "operation": "issue-update",
                 "fields": {"title": "unexpected"},
+                "expected": {"title": "original"},
             }
         ),
     }
+    extra = {
+        "issue-update": update,
+        "duplicate-close": close,
+        "issue-comment": {
+            "kind": "issue-comment",
+            "payload_json": json.dumps({"issue_number": 138, "body": "Extra semantic request"}),
+        },
+    }[extra_kind]
+    # Apply the unnormalized raw batch so projection cannot erase an extra request.
     batch = parse_effect_batch(
         _raw(
             role="lead",
             action="resolve-question",
-            result_kind="ready",
-            requested_effects=[close, update],
+            result_kind=result_kind,
+            requested_effects=[close, extra],
         ),
         source,
     )
     writes: list[StagedEffect] = []
+    dispositions: list[str] = []
+
+    def persist_decision(
+        _decision: ActionApplicationDecision, disposition: str, _reason: str
+    ) -> bool:
+        dispositions.append(disposition)
+        return True
+
     result = apply_effect_batch(
         batch,
         fresh_preflight=lambda: _preflight(action="resolve-question"),
@@ -5440,13 +5556,16 @@ def test_lead_retirement_with_extra_effects_cannot_commit_formal_success() -> No
         apply_effect=writes.append,
         observe_postcondition=lambda _effect: True,
         current_revision=_REVISION,
+        persist_application_decision=persist_decision,
     )
     assert not result.applied
     assert result.reason == "typed application rejected:retirement-effect-cardinality"
     assert writes == []
+    assert "ACCEPTED" not in dispositions
 
 
-def test_lead_retirement_applies_before_application_owned_formal_result() -> None:
+@pytest.mark.parametrize("result_kind", ["ready", "research-required"])
+def test_lead_retirement_applies_before_application_owned_formal_result(result_kind: str) -> None:
     from investment_strategy.scheduled_agent_application_bridge import (
         _application_owned_worker_result,
     )
@@ -5467,7 +5586,7 @@ def test_lead_retirement_applies_before_application_owned_formal_result() -> Non
     raw = _raw(
         role="lead",
         action="resolve-question",
-        result_kind="ready",
+        result_kind=result_kind,
         requested_effects=[close],
     )
     application_owned = _application_owned_worker_result(
