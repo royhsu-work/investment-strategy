@@ -475,6 +475,253 @@ def test_native_quality_history_preserves_every_exact_attempt(
     assert actual == expected
 
 
+@pytest.mark.parametrize(
+    ("case", "expected", "will_call"),
+    [
+        ("empty", "NO_VERDICT", True),
+        ("missing-run", "INDETERMINATE", False),
+        ("active", "PENDING", False),
+        ("skipped", "NO_VERDICT", True),
+        ("not-invoked", "NO_VERDICT", True),
+        ("cancelled", "NO_VERDICT", True),
+        ("pass", "PASS", False),
+        ("pytest", "FAIL", False),
+        ("static", "FAIL", False),
+        ("rerun-conflict", "CONFLICT", False),
+        ("rerun-cancelled", "PASS", False),
+        ("missing-plan", "INDETERMINATE", False),
+        ("wrong-plan", "INDETERMINATE", False),
+        ("wrong-target", "INDETERMINATE", False),
+        ("wrong-job-attempt", "INDETERMINATE", False),
+        ("missing-jobs", "INDETERMINATE", False),
+        ("changed-attempt", "INDETERMINATE", False),
+        ("foreign-current", "INDETERMINATE", False),
+        ("stale-main", "INDETERMINATE", False),
+        ("wrong-source", "INDETERMINATE", False),
+        ("unknown-count", "INDETERMINATE", False),
+    ],
+)
+def test_native_quality_obligation_plans_only_after_complete_caller_history(
+    case: str, expected: str, will_call: bool
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    target, producer = "a" * 40, "b" * 40
+    obligation = "c" * 64
+    accepted_at = "2026-09-03T03:30:00Z"
+    definition = REVISION
+    api = f"https://api.github.com/repos/{repository}"
+    prior = case not in {"empty", "foreign-current", "stale-main", "wrong-source"}
+    latest = 2 if case in {"rerun-conflict", "rerun-cancelled"} else 1
+    run_reads = 0
+    names = (
+        "Set up job",
+        "Run actions/checkout@v4",
+        "Prove exact quality checkout",
+        "Run astral-sh/setup-uv@v6",
+        "Run actions/setup-python@v5",
+        "Ruff lint",
+        "Ruff format check",
+        "Mypy",
+        "Run tests",
+    )
+
+    def comment(source: int) -> dict[str, object]:
+        return {
+            "id": source,
+            "body": REQUEST_BODY,
+            "created_at": "2026-09-03T03:40:00Z" if source == 900 else "2026-09-03T03:45:00Z",
+            "updated_at": "2026-09-03T03:40:00Z" if source == 900 else "2026-09-03T03:45:00Z",
+            "issue_url": f"{api}/issues/142",
+            "user": {"login": "royhsu-work"},
+            "performed_via_github_app": {
+                "slug": "untrusted" if case == "wrong-source" else "chatgpt-codex-connector"
+            },
+        }
+
+    def conclusion(attempt: int) -> str:
+        if case in {"pytest", "static"} or (case == "rerun-conflict" and attempt == 1):
+            return "failure"
+        if case == "cancelled" or (case == "rerun-cancelled" and attempt == 2):
+            return "cancelled"
+        return "success"
+
+    def run(run_id: int, attempt: int) -> dict[str, object]:
+        source = 901 if run_id == 77 else 900
+        active = run_id == 77 or case == "active"
+        return {
+            "id": run_id,
+            "run_attempt": attempt,
+            "display_title": f"Scheduled Agent Dispatch {source}",
+            "head_sha": definition,
+            "head_branch": "main",
+            "event": "issue_comment",
+            "path": ".github/workflows/scheduled-agent-bridge.yml",
+            "repository": {"full_name": repository},
+            "head_repository": {
+                "full_name": "other/repo" if case == "foreign-current" else repository
+            },
+            "created_at": comment(source)["created_at"],
+            "status": "in_progress" if active else "completed",
+            "conclusion": None if active else conclusion(attempt),
+        }
+
+    def correlation(source: int, run_id: int, attempt: int) -> str:
+        return hashlib.sha256(
+            f"{obligation}:{definition}:{source}:{run_id}:{attempt}".encode()
+        ).hexdigest()
+
+    def call(source: int, run_id: int, attempt: int) -> dict[str, str]:
+        return {
+            "quality_obligation": obligation,
+            "quality_target_repository": repository,
+            "quality_target_revision": target,
+            "quality_definition_revision": definition,
+            "quality_verification_correlation": correlation(source, run_id, attempt),
+            "quality_source_comment_id": str(source),
+            "quality_run_id": str(run_id),
+            "quality_run_attempt": str(attempt),
+            "quality_call": "true",
+            "quality_result": "verification-obligation-pending",
+        }
+
+    def jobs(attempt: int) -> list[dict[str, object]]:
+        planner = {
+            "id": 750 + attempt * 2,
+            "run_id": 75,
+            "run_attempt": attempt,
+            "head_sha": definition,
+            "name": "bridge",
+            "status": "completed",
+            "conclusion": "success",
+            "steps": [
+                {"name": name, "number": n, "status": "completed", "conclusion": "success"}
+                for n, name in enumerate(
+                    (
+                        "Check out authoritative default branch",
+                        "Record exact checked-out default-branch revision",
+                        "Plan exact correlated machine dispatch decision",
+                        "Upload exact run-scoped machine dispatch result",
+                    ),
+                    1,
+                )
+            ],
+        }
+        if case == "not-invoked":
+            return [planner]
+        verdict = "skipped" if case == "skipped" else conclusion(attempt)
+        outcomes = ["success"] * len(names)
+        if case == "static":
+            outcomes[-3:] = ["failure", "skipped", "skipped"]
+        else:
+            outcomes[-1] = verdict
+        quality = {
+            "id": 751 + attempt * 2,
+            "run_id": 75,
+            "run_attempt": 1 if case == "wrong-job-attempt" else attempt,
+            "head_sha": definition,
+            "name": "verify_quality / quality",
+            "status": "completed",
+            "conclusion": verdict,
+            "steps": [
+                {"name": name, "number": n, "status": "completed", "conclusion": outcome}
+                for n, (name, outcome) in enumerate(zip(names, outcomes, strict=True), 1)
+            ],
+        }
+        if case == "wrong-job-attempt":
+            quality["run_attempt"] = attempt + 1
+        return [planner, quality]
+
+    def read(repo: str, token: str, path: str) -> object:
+        nonlocal run_reads
+        assert repo == repository and token
+        url = urlsplit(path)
+        if path == "":
+            return {"full_name": repository, "default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": "f" * 40 if case == "stale-main" else definition}}
+        if url.path == "contents/.github/workflows/quality.yml":
+            assert parse_qs(url.query)["ref"][0] in {definition, target}
+            return {"type": "file", "path": url.path.removeprefix("contents/"), "sha": producer}
+        if url.path == "issues/comments":
+            return ([comment(900)] if prior else []) + [comment(901)]
+        if url.path.startswith("issues/comments/"):
+            return comment(int(url.path.rsplit("/", 1)[1]))
+        if path == "issues/142":
+            return _event()["issue"]
+        if url.path == "actions/workflows/quality.yml/runs":
+            return {"total_count": 0, "workflow_runs": []}
+        if url.path == "actions/workflows/scheduled-agent-bridge.yml/runs":
+            run_reads += 1
+            number = latest + 1 if case == "changed-attempt" and run_reads > 1 else latest
+            rows = [run(77, 1)]
+            if prior and case != "missing-run":
+                rows.append(run(75, number))
+            result: dict[str, object] = {"workflow_runs": rows}
+            if case != "unknown-count":
+                result["total_count"] = len(rows)
+            return result
+        if url.path.startswith("actions/runs/"):
+            parts = url.path.split("/")
+            run_id, attempt = int(parts[2]), int(parts[4])
+            if len(parts) == 5:
+                return run(run_id, attempt)
+            assert run_id == 75 and parts[5:] == ["jobs"]
+            rows = jobs(attempt)
+            return {"total_count": len(rows) + (case == "missing-jobs"), "jobs": rows}
+        raise AssertionError(path)
+
+    def log_read(repo: str, token: str, job_id: int) -> str:
+        assert repo == repository and token
+        attempt = (job_id - 750) // 2
+        if job_id % 2 == 0:
+            if case == "missing-plan":
+                return "no receipt"
+            receipt = call(900, 75, attempt)
+            if case == "wrong-plan":
+                receipt["quality_verification_correlation"] = "d" * 64
+            if case == "wrong-target":
+                receipt["quality_target_revision"] = "f" * 40
+            if case in {"skipped", "not-invoked"}:
+                return "native_quality_plan=none"
+            return "native_quality_plan=" + json.dumps(receipt, sort_keys=True)
+        return "\n".join(
+            [
+                "##[group]Run actual_sha=$(git rev-parse HEAD)",
+                "##[endgroup]",
+                f"quality_repository={repository}",
+                f"quality_target_sha={target}",
+                f"quality_checkout_sha={target}",
+                f"quality_definition_sha={definition}",
+                "quality_run_id=75",
+                f"quality_run_attempt={attempt}",
+                "quality_source_comment_id=900",
+                f"quality_verification_correlation={correlation(900, 75, attempt)}",
+                "##[group]Run astral-sh/setup-uv@v6",
+            ]
+        )
+
+    observe = getattr(bridge, "plan_native_quality_verification", None)
+    assert callable(observe), "Bridge must qualify caller history before planning native quality"
+    result = observe(
+        repository,
+        "token",
+        revision=target,
+        branch="agent/example",
+        workflow_blob=producer,
+        obligation_id=obligation,
+        accepted_at=accepted_at,
+        current_revision=definition,
+        default_branch="main",
+        request_comment_id=901,
+        run_id=77,
+        run_attempt=1,
+        read=read,
+        log_read=log_read,
+    )
+    assert result.outcome == expected
+    assert result.call == (call(901, 77, 1) if will_call else None)
+
+
 def test_prior_dispatch_handoff_indexes_run_history_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
