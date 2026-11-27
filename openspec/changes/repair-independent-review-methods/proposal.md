@@ -8,10 +8,10 @@ The Human has prioritized this repair before #491 and #478. The outcome is a con
 
 ## What changes
 
-- Make OpenSpec Review independently assess artifact responsibilities, substantive correctness, architecture and delivery feasibility, and both directions of traceability before deciding.
+- Make OpenSpec Review independently assess each artifact's responsibility, every material acceptance boundary, substantive correctness, architecture and delivery feasibility, and both directions of traceability before deciding.
 - Make Implementation Review independently derive expected behavior, inspect actual behavior, actively seek discriminating counterexamples, verify evidence, assess necessary refactoring and decide under existing authority.
 - Preserve all current independence, evidence, source chronology, Human intent, exact revision, safety, stage/closure and lifecycle protections. Align procedural result descriptions with the existing executable Action model.
-- Demonstrate improved review decisions on fixed representative inputs before and after the material procedural changes, including valid controls and advisory cases. Preserve #481's Test First, test protection and independent refactoring outcomes.
+- Demonstrate improved review decisions on fixed representative inputs before and after the material procedural changes, and independent discovery on previously unused inputs at the existing independent review gate. Distinguish proposal and specification responsibility defects, material acceptance-boundary omissions, caller-visible defects and valid/advisory controls. Rehearsal of known findings alone does not demonstrate independent discovery. Preserve #481's Test First, test protection and independent refactoring outcomes.
 
 ## Capabilities
 
@@ -37,4 +37,5 @@ One formal Change delivers both independently verifiable review-method increment
 - Same-Issue decision-complete Explore: [ACTION_RESULT 7210723113](https://github.com/royhsu-work/investment-strategy/issues/493#issuecomment-7210723113), accepted by [Application decision 7210722422](https://github.com/royhsu-work/investment-strategy/issues/493#issuecomment-7210722422).
 - Historical review target: [#491 semantic review 6082424882](https://github.com/royhsu-work/investment-strategy/pull/491#pullrequestreview-6082424882).
 - Positive review-method witness: [#486 review 6076168321](https://github.com/royhsu-work/investment-strategy/pull/486#pullrequestreview-6076168321).
+- Exact-revision corrective review: [REVIEW_RESULT 7211825342](https://github.com/royhsu-work/investment-strategy/issues/493#issuecomment-7211825342) (F1–F3 at 81c8af88ea2cea0e2ce5ee2c922eb0633058e367); correction preserves the accepted Explore and existing gates.
 - Authoring baseline: [f327e5f7f054affa40120c8ca93a2804032a3f25](https://github.com/royhsu-work/investment-strategy/commit/f327e5f7f054affa40120c8ca93a2804032a3f25). Current default-branch governance and exact source revalidation are the authority and feasibility basis, not the historical review's PASS.
