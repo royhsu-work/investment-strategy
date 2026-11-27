@@ -2,26 +2,26 @@
 
 ### Requirement: Development materialization and verified slice completion are distinct consequences
 
-For an approved implementation slice, repository Application SHALL authorize necessary exact-preimage physical materialization independently of formal slice completion. A physical-only operation SHALL be derived from the existing typed ingress and its single authorized materialization effect, not a claimed test mode. Development code/test writes SHALL preserve completion markers and normative OpenSpec content. An authorized marker-only write MAY persist the satisfied current logical slice's monotonic task markers after its implementation criteria and applicable exact native checks have passed. Neither kind may include checkpoint, formal result, PR readiness, merge, terminal or routing effects. Existing scope, semantic review, Human freshness, exact carrier/preimage, immutable acceptance, non-force mutation and fresh physical postconditions remain mandatory. A mixed manifest or completion-shaped request MUST NOT be silently downgraded. Historical formal-completion intents MUST NOT be reclassified.
+For an approved implementation scope, Application SHALL authorize exact-preimage partial-work saves independently of verification and formal delivery, using the existing shared persistence contract. A physical-only implementation save SHALL be derived from its existing typed ingress and single authorized materialization effect. Development writes preserve normative OpenSpec content and task markers; an authorized marker-only save requires current satisfied task criteria and applicable exact implementation gates. Neither kind may publish a formal result, readiness, merge, terminal or routing effect. No new checkpoint comment is required. Preserve exact carrier, scope, authorization, review, preimages, immutable acceptance and observed physical effects. Mixed or disallowed requests MUST NOT be silently downgraded. Historical accepted completion intents retain their original meaning.
 
 The existing native Python Quality job SHALL execute Ruff lint, Ruff format check, Mypy, then pytest, stopping at the first failed step. It SHALL verify and report actual checkout HEAD, target and qualified producer identity; run head association alone is insufficient. Source-bound actual test-only CI before target implementation SHALL qualify intended behavioral RED only after all static steps PASS and the target test fails for the missing or incorrect approved behavior. Static, syntax, format, type, import, fixture/setup, environment, unrelated, skipped, missing or canceled verification MUST NOT qualify as intended RED or GREEN. Minimum corrected behavior and exact required gates SHALL establish GREEN; changed revisions require revalidation. No local toolchain assumption, new CI runner, TEST/VERIFY mode, direct Actions execution, separate persisted TDD phase or semantic Action is permitted.
 
-The current-frontier owner SHALL settle each accepted physical-only attempt against its own immutable physical materialization witness W and its qualified terminal native CI verdict at W, not a later qualified consumer head T. Before excluding any accepted candidate, the shared owner SHALL independently establish immutable source request/dispatch/ACCEPT binding, physical witness, exact run/attempt and verdict, and the lawful causal sequence of fresh authorizations: a successor dispatch MUST have been independently authorized after its predecessor's qualifying settlement evidence was available, with an exact then-current carrier base and no competing live or unknown ingress. Existing source identities, causal timestamps, qualified dispatch and acceptance evidence, and Git lineage SHALL establish this sequence; missing or ambiguous ordering, conflicting/replayed acceptance, or missing W verdict MUST NOT be erased by filtering. Only a uniquely qualified settled prefix may leave the existing current-frontier reduction. A later T PASS cannot settle W. One unresolved accepted tail retains existing ownership protection; after qualified settled PASS or mechanical FAIL the next fresh Dispatch MAY authorize same-Action correction or completion without physical replay or intermediate formal result. Ordinary qualified mechanical FAIL is correction input, not itself mutation Recovery.
+The existing materialization owner SHALL prove the physical save at its own immutable witness W independently of validation, even if the current qualified descendant T later changes those bytes. The current-frontier owner SHALL separately qualify the applicable native terminal CI at W when required for implementation continuation, not use a later T verdict. Saving incomplete, pending or failed work is not a completion claim or failed physical effect. Before excluding any accepted candidate, the shared owner SHALL independently establish immutable source request/dispatch/ACCEPT binding, physical witness, exact run/attempt and verdict, and the lawful causal sequence of fresh authorizations: a successor dispatch MUST have been independently authorized after its predecessor's qualifying settlement evidence was available, with an exact then-current carrier base and no competing live or unknown ingress. Existing source identities, causal timestamps, qualified dispatch and acceptance evidence, and Git lineage SHALL establish this sequence; missing or ambiguous ordering, conflicting/replayed acceptance, or missing W verdict MUST NOT be erased by filtering. Only a uniquely qualified settled prefix may leave the existing current-frontier reduction. A later T PASS cannot settle W. One unresolved accepted tail retains existing ownership protection; after qualified settled PASS or mechanical FAIL the next fresh Dispatch MAY authorize same-Action correction or completion without physical replay or intermediate formal result. Ordinary qualified mechanical FAIL is correction input, not itself mutation Recovery.
 
 The existing verification owner SHALL derive an outstanding exact quality obligation from current qualified source, complete run/attempt/job evidence and physical proof. It SHALL use the same native read-only quality job through an existing source-bound native caller run when no usable verdict or eligible active attempt exists, without a second asynchronous workflow-dispatch API request. A missing/not-yet-visible caller or job is not proof of non-invocation. A fresh later source run MAY invoke only after a qualified earlier caller/attempt is terminal, complete native job/plan evidence proves no usable verdict and no eligible active attempt, and source/head/producer authority is rechecked. Qualify ordinary push/PR runs and caller-bound native jobs by exact repository, target checkout, required producer definition, native run/attempt/job, source correlation where applicable and required steps. Equivalent qualified verdicts may be consumed without creating competing mutation authority. Separate genuine qualified mechanical FAIL and PASS outcomes for the same required gate MUST NOT establish affirmative PASS merely by selection; they permit normal correction when the physical effect is settled. Contradictory source/attempt facts and incomplete evidence MUST NOT be resolved by guessing the latest run. A later attempt cannot erase qualified historical evidence used by a proven successor. No native CI job or non-authorizing observation may publish completion or select a semantic successor. Missing or failed CI never authorizes physical effect replay.
 
-Verified slice completion SHALL remain a distinct affirmative consequence. The existing shared qualification owner SHALL derive the current logical slice from the approved task plan, current markers, and qualified checkpoint/formal lifecycle evidence; a checked-but-unpublished slice remains the current delivery boundary. Later slices and READY MUST NOT be selected solely from unchecked-marker position. Markers without a qualified source witness, competing publication or unknown effects MUST NOT authorize work. Preserve qualified historical completed slices and applicable legacy evidence.
+Verified formal delivery SHALL remain a distinct affirmative consequence. The existing shared task/formal owner SHALL derive work scope from approved tasks, current marker bytes and qualified formal occurrence/evidence, not checkpoint existence or first unchecked position alone. Checked-but-unpublished work remains eligible for delivery or authorized correction. An exact current independently qualified correction obligation MAY target previously delivered work within existing authority. Historical qualified completion remains historical and does not freeze the work or grant current PASS. Same-head supplementary verification and new-head content correction SHALL preserve valid historical evidence, requalify affected inputs and avoid replay. Unqualified scope, competing or unknown effects retain existing protection.
 
-Fresh marker materialization SHALL consume exact native quality PASS and applicable semantic/strict evidence at the current implementation head H, retain all non-executable source/carrier/manifest/path/blob/preimage/task/checkpoint/review/Human checks, and contain no completion-publication obligation. Application SHALL NOT execute an additional candidate overlay quality gate. After the marker-only write produces H', independently observe its physical witness and exact applicable gates. Qualified ordinary FAIL settles the physical-only attempt for normal same-slice correction without marker rollback, effect replay, or a formal result. Neither checked markers nor H PASS satisfies H'. Pending/unqualified CI or unknown effects retain existing ownership protection.
+Fresh marker materialization SHALL consume exact native quality PASS and applicable semantic/strict evidence at implementation H and preserve non-executable scope, carrier, manifest, path/blob/preimage, task, review and Human checks, without executable pre-ACCEPT overlay or formal publication. The actual marker revision H' requires its own applicable exact gates. Qualified ordinary FAIL permits normal same-scope correction without clearing markers or replaying the settled save. Checked markers or H PASS do not establish H' PASS. Pending verification does not erase saved work.
 
-Application SHALL accept a fresh publication-only READY or MORE_IMPLEMENTATION_REQUIRED consequence only when the logical slice's authorized marker bytes and satisfied criteria, current exact required quality/strict PASS at T, and existing authorization/review/readiness are independently qualified. This acceptance SHALL own one exact checkpoint/formal-result correlation and existing successor, without a new physical materialization; if markers are already durable do not rewrite or toggle them. The exact marker witness may be an independently qualified legal ancestor of T; only current exact gates establish publication. A prior unknown or partial publication MUST be reconciled through its original accepted intent and observed effects, not replaced by a second publisher. When a publication-only acceptance is invalidated by qualified ordinary mechanical FAIL before any publication effect was attempted, fresh correction MAY proceed only with exact terminal zero-publication-effect and noncompetition proof; the accepted historical intent stays immutable and grants no later publication authority. Historical accepted bundles retain their original meaning and completed checkpoints MUST NOT be replayed or erased. Independent reviews, exact-head merge, material semantic correction, no replay/no rewind, and dependencies remain unchanged.
+Application SHALL accept fresh formal READY or MORE_IMPLEMENTATION_REQUIRED publication only when current authorized scope/task criteria, durable valid marker bytes, exact current applicable quality/strict PASS, required review/readiness and fresh authority are independently qualified. Existing accepted intent and formal result evidence SHALL identify the exact formal occurrence, relevant task scope, verified revision, gate and marker proof; a separate checkpoint comment MUST NOT be an acceptance predicate or required effect. No materialization is repeated when marker bytes are already valid. Publish one formal consequence for the authorized occurrence and observe its required effects and existing successor. Unknown or partial publication retains original accepted authority; terminal zero-effect invalidation may permit fresh correction only after exact qualified evidence of no live/unknown/competing effect and failed/stale required authority. Historical accepted bundles and actual checkpoint effects retain original source-specific reconciliation and deduplication; no invented or replayed historical comment. Independent reviews, exact-head merge, approved task criteria, material semantic correction, dependencies and no replay/no rewind remain unchanged.
 
 #### Scenario: A test-only candidate reaches intended RED
 
 - GIVEN an independently approved slice with an incomplete target behavior and a qualified existing carrier
 - WHEN Executor submits the normal authorized test-only manifest
 - THEN Application can accept and materialize the exact bytes before CI PASS
-- AND no task marker, checkpoint, formal result or routing changes
+- AND the saved Git revision is a durable checkpoint even before verification, with no task completion marker, mandatory progress comment, formal result or routing change
 - AND native CI can establish static PASS and intended target RED at the actual test-only revision
 
 #### Scenario: A corrected candidate resumes the same slice
@@ -43,7 +43,7 @@ Application SHALL accept a fresh publication-only READY or MORE_IMPLEMENTATION_R
 - GIVEN the exact current development or marker head is proven and complete native source/run/attempt/job evidence establishes no usable verdict or eligible active attempt
 - WHEN the existing verification owner derives the required quality obligation
 - THEN the same native Python Quality job can be called within a fresh source-bound dispatch run for that exact repository and head without a second asynchronous dispatch request
-- AND no materialization, checkpoint, formal result or routing is repeated
+- AND no physical save, historical comment, formal result or routing is repeated
 - AND incomplete inventory or unqualified target fails closed
 
 #### Scenario: Exact settlement retains its own witness across legal descendants
@@ -91,27 +91,27 @@ Application SHALL accept a fresh publication-only READY or MORE_IMPLEMENTATION_R
 - WHEN the current frontier is freshly reconstructed
 - THEN M is settled with no publication obligation and the checked-but-undelivered slice remains current, including the last slice
 - AND a fresh authorized physical correction D can reach exact T PASS without reverting markers or replaying M
-- AND only then a fresh publication-only acceptance P owns one checkpoint/formal result at T, with no second marker write
+- AND only then a fresh publication-only acceptance P owns one formal result at T, with no second marker write or separate checkpoint effect
 - AND only after observing that publication may the next slice or existing final review successor begin
 - AND missing or conflicting physical or CI evidence does not grant competing authority
 
 #### Scenario: Development cannot manufacture completion
 
-- GIVEN a development request includes completion marker, checkpoint, routing or other disallowed effects, or its required exact verification is not PASS
+- GIVEN a code/test save requests a completion marker, formal result, routing or another disallowed effect, or its required exact verification is not PASS
 - WHEN Application qualifies the intended consequence
 - THEN it cannot accept those effects as development-only or claim verified completion without the required evidence
-- AND previous checkpoints and independent review gates are preserved
+- AND historical saved work and independent review gates are preserved
 
-#### Scenario: One verified checkpoint follows multiple development commits
+#### Scenario: One formal delivery follows multiple saved development revisions
 
 - GIVEN several settled development commits, verified task criteria and a separately settled marker-only write whose exact current required gates pass
 - WHEN a fresh Application qualifies the publication-only consequence
-- THEN it accepts and persists one effective checkpoint and formal result and derives the existing successor
+- THEN it accepts and persists one effective formal result and derives the existing successor without requiring a checkpoint comment
 - AND a later wake neither replays those commits nor bypasses required review
 
 #### Scenario: Qualified prior delivery and uncertain publication are not marker preparation
 
-- GIVEN a checked slice with an existing qualified checkpoint/formal result or an accepted publication with unknown or partial effects
+- GIVEN a checked slice with a qualified formal completion or an accepted publication with unknown or partial effects
 - WHEN the current logical slice is reconstructed
 - THEN a qualified delivered slice remains delivered and an unresolved publication retains its original correlation and effect protection
 - AND neither is treated as a new physical-only marker candidate or permits a second publisher
@@ -124,6 +124,14 @@ Application SHALL accept a fresh publication-only READY or MORE_IMPLEMENTATION_R
 - AND a later exact PASS must independently authorize publication
 - AND an unknown or partially written publication cannot use this path
 
+#### Scenario: A prior saved or verified scope can be corrected
+
+- GIVEN an authorized saved or previously verified implementation scope and a current qualified correction obligation for that scope
+- WHEN Executor supplies fresh evidence at the same exact head or an authorized correction at a new head
+- THEN valid historical save, validation and formal completion evidence remains intact
+- AND current affected criteria and gates are qualified independently without clearing old markers, replaying effects or requiring a new checkpoint comment
+- AND the existing review and formal consequence owner alone determines current delivery
+
 ## MODIFIED Requirements
 
 ### Requirement: Application consequence completion is reconstructable across interruption
@@ -134,7 +142,7 @@ classified independently as exactly one of `ACCEPTED`, `LIVE_PREACCEPT`,
 `TERMINAL_NO_ACCEPT`, `REJECTED`, or `INVALID/UNKNOWN` before reduction. A
 missing or not-yet-visible Actions run is asynchronous observation evidence,
 not terminal or rejected evidence; `TERMINAL_NO_ACCEPT` requires authoritative
-terminal/non-mutation evidence from the exact application execution. Before applying the reducer to current-frontier owners, the existing qualification owner SHALL exclude only the independently proven causally ordered settled physical-only prefix under the development/completion requirement. Each attempt requires its own immutable W witness, exact terminal native CI at W, source-bound fresh authorization and absence of competing acceptance; a later T verdict cannot replace W and unknown, incomplete, conflicting or replayed evidence MUST NOT be erased. Historical acceptance and physical evidence remain immutable; historical formal-completion intents MUST NOT be reclassified. A marker-only physical acceptance carries no publication authority; qualified terminal FAIL permits same-slice correction without suspending an accepted completion. A publication-only acceptance invalidated before any publication effect SHALL release current ownership only under the exact terminal zero-effect and fresh failed-gate predicate in the development/completion requirement; unknown or partial publication retains original ownership. The reducer SHALL apply these rules to the remaining current owners: more than one `ACCEPTED` is ambiguous; one
+terminal/non-mutation evidence from the exact application execution. Before applying the reducer to current-frontier owners, the existing qualification owner SHALL exclude only the independently proven causally ordered settled physical-only prefix under the development/completion requirement. Each attempt requires its own immutable W witness, source-bound fresh authorization, absence of competing acceptance and the applicable verification evidence required for continuation (including exact terminal CI at W for implementation behavior progression); a later T verdict cannot replace W and unknown, incomplete, conflicting or replayed evidence MUST NOT be erased. Historical acceptance and physical evidence remain immutable; historical formal-completion intents MUST NOT be reclassified. A marker-only physical acceptance carries no publication authority; qualified terminal FAIL permits same-slice correction without suspending an accepted completion. A publication-only acceptance invalidated before any publication effect SHALL release current ownership only under the exact terminal zero-effect and fresh failed-gate predicate in the development/completion requirement; unknown or partial publication retains original ownership. The reducer SHALL apply these rules to the remaining current owners: more than one `ACCEPTED` is ambiguous; one
 `ACCEPTED` exclusively owns continuation and terminal/rejected noise does not
 compete; zero accepted plus more than one live candidate is ambiguous; zero
 accepted plus exactly one live candidate waits without semantic redispatch;
@@ -154,7 +162,7 @@ re-execute the semantic Action because mutable ingress was edited, deleted, or
 re-observed after acceptance.  The one canonical `ACTION_RESULT`,
 `REVIEW_RESULT`, or `MERGE_RESULT`, exact-bound by `Application-Correlation`
 and qualified against repository postconditions, SHALL be the normal logical
-formal application-consequence commit boundary. A physical-only accepted intent instead settles at its own exact physical postconditions and qualified terminal CI verdict without a formal result or successor. Routing or terminal state is a
+formal application-consequence commit boundary. A physical-only accepted intent instead establishes durable saved work at its own exact physical postconditions without a formal result or successor; applicable verification is separately qualified before the next dependent operation. Routing or terminal state is a
 projection of that committed consequence; `APPLICATION_OUTCOME: COMPLETED`
 MUST NOT be an independent normal completion authority.
 
@@ -180,7 +188,7 @@ observe the repository, reconcile exact missing idempotent effects, use a
 carrier only when required, validate postconditions, persist the canonical
 formal result, and derive routing/terminal projection. Failure before ACCEPT
 has zero authoritative repository consequence; failure after ACCEPT resumes
-the same intent and semantic replay count remains zero. For qualified physical-only implementation materialization, Phase A authorizes the exact physical consequence without requiring a future candidate CI PASS (marker-only materialization requires the prior implementation head's qualified gates and task criteria); Phase B proves that write and observes its own exact native verdict. It MUST NOT publish a formal result, checkpoint or routing effect. Phase A and Dispatch MUST consume the same current-frontier and logical-slice qualification. For fresh completion publication, Phase A SHALL accept only after independently qualified already durable markers, current exact native gate PASS and completion criteria; retain all non-executable and review/Human guards, never invoke a competing executable overlay. Phase B SHALL commit and observe only the necessary checkpoint/formal/routing effects of this exact accepted publication, not rematerialize code or task markers. Historical accepted completion recovery and other Action verification obligations remain unchanged.
+the same intent and semantic replay count remains zero. For qualified physical-only implementation materialization, Phase A authorizes the exact physical consequence without requiring future candidate CI PASS (marker-only materialization requires the prior implementation head's qualified gates and task criteria); Phase B proves the save and separately observes applicable exact native verification. It MUST NOT publish a formal result or routing effect, and no independent checkpoint comment is required. Phase A and Dispatch consume the same current-frontier, authorized scope and effect qualification. For new formal completion publication, Phase A SHALL accept only after independently qualified already durable markers, current exact native gates and completion criteria; retain non-executable and review/Human guards, never invoke a competing executable overlay. Phase B SHALL commit and observe only required formal/readiness/routing effects of this exact publication; no checkpoint-derived acceptance or repeated marker/code materialization. Historical accepted checkpoint and completion effects retain their original reconciliation, and other Action verification obligations remain unchanged.
 
 When an exact GitHub Actions run terminates before ACCEPT and every relevant
 native `EXECUTION_EXCEPTION` attempt proves `NO_APPLICATION_WRITE_ATTEMPTED`,
@@ -545,7 +553,7 @@ Each normal Scheduled Task wake SHALL fresh-dispatch exactly one repository-auth
 
 A normal semantic wake remains exactly-one-Action. When its exact successful dispatch artifact is `NO_WORK / no-routed-work`, the external bootstrap MAY invoke one bounded Lead idle semantic mode as a separate non-Action boundary after the normal dispatch exits. That handoff MUST NOT create an Action or same-wake successor. Any admitted candidate is consumed only by a later fresh normal dispatch. A qualified outstanding native verification obligation is a non-idle, non-authorizing observation/call boundary in the existing dispatch run; it MUST NOT invoke idle or semantic work. Its actual required quality job failure is native gate evidence, not authority or an invented semantic result. A failed aggregate caller run MUST NOT authorize work; qualified planner/attempt/artifact and quality-job evidence MAY be read solely for non-authorizing audit and fresh gate qualification.
 
-The Action's primary delivery unit SHALL be one bounded verified slice: Reconstruct -> RED exact gap/blocker -> GREEN legal correction -> VERIFY exact postcondition/revision/gate -> durable checkpoint. For approved implement-change development, a slice MAY span multiple commits, native CI runs and fresh wakes. A physical-only materialization MAY end at its qualified bounded asynchronous observation or existing CarrierRequired boundary without checkpoint, formal result or routing. No other intermediate write, API call, commit or first nonterminal observation by itself completes a slice or authorizes Exit. A slice too large for independent verification SHALL be decomposed into meaningful safe vertical boundaries.
+The Action's work SHALL be bounded by its approved slice or artifact scope and current authority; reconstruct, save necessary partial work, validate applicable inputs and complete formal delivery only after its required criteria and exact gates. An implementation slice MAY span multiple commits, CI runs and fresh wakes. Checkpoint is persistence, neither a formal completion nor an Exit condition. While legal same-Action work remains, continue under current authority; at an actual qualified asynchronous, CarrierRequired or other existing authority/transport boundary preserve durable work and exit without claiming formal completion. No intermediate write, API call, commit, report or first nonterminal observation alone authorizes Exit. A scope too large for independent verification SHALL be decomposed at meaningful safe boundaries.
 
 The wake MUST NOT require same-role continuation, cross-role barriers, invocation-role comparison, a continuation cursor, a fresh-worker chain, a public recovery mode, or a separate normal transfer journal. Bounded async observation and at-least-once reconstruction remain safety capabilities, not new routing state.
 
@@ -575,7 +583,8 @@ The wake MUST NOT require same-role continuation, cross-role barriers, invocatio
 
 - GIVEN an authorized physical-only write on the existing implementation carrier
 - WHEN its physical effect is proven and native CI is pending, or a qualified CarrierRequired boundary is reached
-- THEN the wake exits at that bounded obligation without checkpoint, formal result or routing (any authorized marker-only physical effect remains candidate bookkeeping, not delivered-slice proof)
+- THEN the write remains a durable saved checkpoint without formal result or routing (authorized markers alone do not prove delivery)
+- AND the invocation continues while lawful or ends only at an existing actual authority/transport boundary, not because a checkpoint exists
 - AND a later fresh wake observes the exact obligation before new semantic work
 - AND a settled attempt with a qualified terminal CI verdict permits the same Action to continue
 
@@ -593,3 +602,175 @@ The wake MUST NOT require same-role continuation, cross-role barriers, invocatio
 - WHEN a later fresh normal wake reconstructs repository state
 - THEN normal dispatch authorizes ordinary `Lead / explore-change`
 - AND the idle invocation does not execute or select that Action
+
+### Requirement: Executor persists satisfied task markers before formal slice delivery
+
+Executor SHALL treat OpenSpec task checkboxes as durable evidence of satisfied task criteria, not fine-grained live progress or independent proof of current formal completion. A qualified later correction may revisit previously verified work without erasing historical markers or evidence.
+
+For each approved vertical feature slice, after that slice's required `VERIFY` succeeds, Executor SHALL persist completion markers for every task in that slice whose completion criteria are satisfied before starting the next slice or handing off from `implement-change`.
+
+Executor MUST NOT defer completed slice markers until the end of the entire OpenSpec change.
+
+The workflow MUST NOT require a dedicated commit for each individual checkbox. Necessary monotonic marker changes MAY be saved separately after the implementation criteria and applicable gates pass; actual marker-bearing revision gates SHALL be qualified before formal delivery. Saving partial work does not require marking tasks complete.
+
+If execution is interrupted during the current incomplete or unverified slice, that slice's markers MAY remain unpersisted; recovery SHALL reconstruct actual code, test, and task state, while markers from previously verified slices remain durable.
+
+#### Scenario: Verified slice persists satisfied task markers
+
+- GIVEN Executor has completed a vertical slice through its required `VERIFY`
+- AND the slice's task completion criteria are satisfied
+- WHEN Executor prepares to begin the next slice or hand off
+- THEN Executor persists the completed task markers for that slice
+- AND the marker update is persisted before formal delivery rather than deferred to the end of the whole change, with exact applicable gates on the current marker-bearing revision
+
+#### Scenario: Individual task finishes before the slice is verified
+
+- GIVEN work for one task inside the current vertical slice is complete
+- AND the slice has not yet completed its required `VERIFY`
+- WHEN Executor continues implementation
+- THEN the workflow does not require a dedicated task-marker commit for that checkbox
+- AND the incomplete slice's partial work may be saved without marking the task complete
+
+#### Scenario: Run is interrupted during an active slice
+
+- GIVEN previously verified slices have persisted task markers
+- AND Executor is interrupted while the current slice is incomplete or unverified
+- WHEN a later Executor run reconstructs implementation state
+- THEN previously verified slice markers remain durable
+- AND the current slice is reconstructed from repository, test, and task reality without treating missing current-slice markers as proof that no work exists
+
+### Requirement: Checkpoint preserves partial work independently of formal delivery
+
+Checkpoint SHALL mean durable saving of partial work and reconstruction for continuation, applicable to both Lead / propose-change artifact work and Executor / implement-change slice work. It SHALL use existing repository-owned Application/Carrier materialization and qualified durable source evidence. Saved content MAY be incomplete, unverified, failed or later lawfully revised. A snapshot's original source identity and historical evidence remain immutable; checkpoint MUST NOT imply verification PASS, semantic review PASS, formal Action completion, routing, invocation exit, merge authority or immutability of current work. A save MUST NOT require a new progress record or checkpoint state. Reuse still-valid saved work and validation with the same applicable input identities; requalify affected evidence when inputs change. Unknown, partial or competing durable effects retain original authority and require existing reconciliation, not replay.
+
+Successful implementation delivery SHALL retain exact task criteria, satisfied markers, full applicable current native gates, fresh authorization and a unique effective formal consequence for its authorized occurrence. A checkpoint comment MUST NOT be an independent prerequisite or competing completion evidence for new delivery. Preserve previous actual accepted checkpoint effects and historical qualified formal consequences; an unknown original comment is not evidence of absence or permission to duplicate it.
+
+For authorized Propose artifact-level persistence, the shared save/reconstruct contract SHALL preserve the approved spec-driven artifact DAG and scope. Successful artifact-local completion reports require durable source/input identity, applicable verification and fresh readback; incomplete or failed saved content does not justify a successful report. Reuse unchanged qualified evidence; do not replay valid artifacts. No checkpoint grants arbitrary revision of completed upstream semantic decisions; retain existing Lead blocker/correction and independent review. Preserve full required artifact coverage, applicable early native strict validation, final consistency/traceability, exact-R strict validation, Application postconditions and independent review. No mandatory per-artifact full Python CI or review. This common contract neither changes nor independently authorizes preactivation ingress or completes the separately required artifact-specific delivery.
+
+Narrow historical recovery exception: the already-accepted #322 `Executor / implement-change / READY` application (request comment `6019133874`, accepted-decision comment `6019173711`) predates recoverable checkpoint evidence. During **pre-formal-result Recovery Exit qualification only**, absence or unavailability of its historical `SLICE_CHECKPOINT` SHALL NOT itself be a mandatory completion predicate. Independently verify current task/implementation/required-gate postconditions and prevent replay or duplication of an uncertain non-idempotent comment/effect; an unverified hazardous side effect blocks only the operation that can repeat it. Retain historical UNKNOWN; do not infer the comment absent, completed or informational from a file witness. Historical accepted obligations keep their original authority and evidence requirements.
+
+RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary authorized artifact/task edits MUST NOT independently require coordination-Issue progress comments. A checkpoint or report MUST NOT force Invocation Exit. Continue current Action while legitimate authority and opportunity remain; existing qualified Exit and next-wake successor boundaries remain. No heartbeat, lock, claim, lease, retry counter, cursor, separate registry, hidden ownership state or second workflow graph.
+
+#### Scenario: Verified slice completes before another slice begins
+
+- GIVEN Executor completes an approved vertical slice
+- AND the slice's required VERIFY and repository gates succeed
+- WHEN Executor prepares to continue implementation
+- THEN all satisfied task markers for that slice are durably persisted
+- AND the exact required gates and current task criteria qualify one application-owned formal consequence with revision-bound evidence
+- AND no separate checkpoint comment is required to begin the next authorized slice or hand off
+
+#### Scenario: Work continues inside an unverified slice
+
+- GIVEN Executor is performing RED, GREEN, refactor, test-trigger, compatibility correction, or ordinary artifact/task edits inside one approved slice
+- AND that slice has not yet reached successful VERIFY
+- WHEN those intermediate mutations are persisted
+- THEN qualified Git/PR/source evidence preserves the saved work even if validation is pending or fails
+- AND no additional implementation-progress Issue comment is required solely for those mutations
+- AND saved work is not verification or formal completion
+
+#### Scenario: Task markers persisted but formal delivery was interrupted
+
+- GIVEN a prior Executor run durably saved authorized satisfied markers
+- BUT formal publication was not completed
+- WHEN a later Executor reconstructs the active work
+- THEN it reuses the valid saved work and qualifies current exact task and gate evidence
+- AND reconciles only actually missing authorized formal effects, retaining unknown original effect protection, without a synthetic checkpoint or repeated marker write
+
+#### Scenario: Legacy accepted READY is qualified without inventing its checkpoint
+
+- GIVEN the exact #322 accepted application identified by request `6019133874` and decision `6019173711`
+- AND its historical checkpoint write is UNKNOWN while current task, implementation, and applicable gates can be independently observed
+- WHEN the existing application evaluates pre-formal-result Recovery Exit without scheduling another Executor slice
+- THEN it does not demand or forge a replacement historical `SLICE_CHECKPOINT` as a positive completion predicate
+- AND it blocks any prospective operation that could duplicate the uncertain comment or other irreversible effect until the specific deduplication/safety predicate is proven
+- AND later fresh Executor slices retain exact verified formal delivery gates without a mandatory separate checkpoint comment
+
+#### Scenario: Propose reuses a durably saved artifact after interruption
+
+- GIVEN artifact content and its dependency and applicable verification evidence have been durably saved under the authorized artifact-local contract
+- WHEN Propose reconstructs after interruption or an authorized correction changes a relevant input
+- THEN still-valid work and evidence is reused and only missing or invalidated work is addressed within existing authority
+- AND successful artifact completion is reported only after applicable checks and readback
+- AND neither saving nor reporting creates a semantic PASS, exit, successor or arbitrary upstream correction authority
+
+### Requirement: Recurring workflow messages use canonical shared templates
+
+The repository SHALL define one shared Markdown presentation contract for recurring durable workflow messages and SHALL support the following eight canonical message types: `ACTION_RESULT`, `REVIEW_RESULT`, `SLICE_CHECKPOINT`, `MERGE_AUTHORIZATION`, `MERGE_RESULT`, `HANDOFF`, `HUMAN_DECISION_REQUIRED`, and `EXECUTION_EXCEPTION`.
+
+The shared template artifact SHALL define a common workflow envelope and the event-specific evidence fields required by each type. Templates MUST define presentation/evidence shape only and MUST NOT redefine routing, authorization, termination, review, merge, lifecycle, result-enum, or generic exception-classification semantics owned by governance and role/action skills.
+
+When this governance/template contract is active on the repository default branch, roles and skills SHALL reference the shared template source rather than duplicate full template bodies per role/action. Before that activation boundary, feature-branch template definitions are work input under review rather than execution authority; applicability is governed by the separate default-branch activation requirement below.
+
+The message contract MUST NOT require a parser-dependent message bus, JSON/YAML runtime schema, template engine, notification state machine, generic exception engine, or hidden workflow state.
+
+Free-form RED/GREEN/refactor/test-trigger/compatibility-correction progress, Lead progress polling, and `No Human action is required` status noise MUST NOT become additional supported workflow message types.
+
+When the canonical template contract is active and a canonical typed message directly represents a lifecycle-journal boundary, that typed message SHALL satisfy the one required journal record for that boundary and MUST NOT require an additional duplicate generic `LIFECYCLE_JOURNAL` or recursive meta-comment. `EXECUTION_EXCEPTION` is not automatically a lifecycle boundary and MUST NOT be treated as an action result or handoff solely because the exception evidence exists.
+
+#### Scenario: Historical checkpoint messages remain evidence after activation
+
+- GIVEN the canonical message contract is authoritative from the default branch
+- AND an existing historical accepted checkpoint effect requires qualification or an optional bounded report uses the existing template
+- WHEN the checkpoint evidence is read or an authorized report is produced
+- THEN it uses the applicable original or current presentation shape with exact saved revision, scope, known verification status and remaining work
+- AND it is not a mandatory new comment, formal result, verification PASS or routing authority
+- AND original accepted effect reconciliation retains exact source identity
+
+#### Scenario: Reviewer gate uses the shared review template after activation
+
+- GIVEN the canonical message contract is authoritative from the default branch
+- AND Reviewer records a revision-bound PASS or finding
+- WHEN the durable review result is persisted
+- THEN it uses `REVIEW_RESULT`
+- AND preserves the exact reviewed revision, gate evidence, findings when present, and expected next owner
+
+#### Scenario: Catchable execution failure uses the shared exception template after activation
+
+- GIVEN the canonical message contract is authoritative from the default branch
+- AND a Scheduled Agent observes a catchable execution failure
+- WHEN it persists the required raw exception evidence
+- THEN it uses `EXECUTION_EXCEPTION`
+- AND preserves the raw platform-observable error separately from classification/disposition
+- AND includes the attempted operation/tool, relevant revision, known mutation outcome, and unfinished work boundary
+
+#### Scenario: Typed transition message is already the lifecycle journal after activation
+
+- GIVEN the canonical message contract is authoritative from the default branch
+- AND a PR merge boundary is durably represented by canonical `MERGE_RESULT`
+- WHEN lifecycle-journal compliance is evaluated for that same merge boundary
+- THEN that typed message is the required bounded journal record
+- AND no second generic lifecycle-journal comment is required solely to restate the merge
+
+### Requirement: Executor consumes complete approved OpenSpec apply context
+
+`Executor / implement-change` SHALL consume the approved Change artifacts and all materially applicable project/config semantics represented by the shared OpenSpec semantic adapter before implementing or marking tasks complete.
+
+The apply context SHALL include the approved proposal, applicable delta specs, design, tasks, applicable canonical specs required to interpret modified behavior, and applicable `openspec/config.yaml` context/rules required by the configured schema. Executor MUST NOT silently omit required context merely because upstream would normally supply it through an unavailable CLI instruction surface.
+
+If required approved context is missing, contradictory, or materially ambiguous such that implementation would require inventing specification meaning, Executor MUST fail closed and return the blocker through the existing Lead specification-question path. This requirement MUST NOT grant Executor authority to redefine requirements, scope, design decisions, or task meaning.
+
+#### Scenario: Missing apply context returns to Lead
+
+- GIVEN Executor is routed to `implement-change`
+- AND a material approved artifact/context/rule required by the configured OpenSpec semantic adapter is unavailable or contradictory
+- AND continuing would require Executor to choose specification meaning
+- WHEN Executor reconstructs the implementation context
+- THEN Executor does not silently omit or invent the missing meaning
+- AND the blocker is returned to Lead through the existing specification-question lifecycle
+
+#### Scenario: Complete apply context preserves existing Executor authority boundary
+
+- GIVEN the approved proposal, specs, design, tasks, applicable canonical specs, and applicable config context/rules are available
+- WHEN Executor implements the Change
+- THEN Executor consumes that complete approved context
+- AND the applicable repository-governance test-first procedure, independent refactoring-assessment boundary and existing VERIFY, partial-work persistence and separate formal-delivery semantics remain applicable
+- AND Executor gains no authority to redefine the approved contract
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Executor persists task completion at verified vertical-slice checkpoints`
+- TO: `### Requirement: Executor persists satisfied task markers before formal slice delivery`
+
+- FROM: `### Requirement: Verified implementation slices persist a bounded coordination-Issue checkpoint`
+- TO: `### Requirement: Checkpoint preserves partial work independently of formal delivery`
