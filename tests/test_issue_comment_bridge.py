@@ -11390,16 +11390,12 @@ def test_development_ingress_requires_one_exact_native_dispatch_source(
         "event": "issue_comment",
         "path": ".github/workflows/scheduled-agent-bridge.yml",
         "repository": {"full_name": repository},
-        "head_repository": {
-            "full_name": "foreign/repo" if case == "foreign-run" else repository
-        },
+        "head_repository": {"full_name": "foreign/repo" if case == "foreign-run" else repository},
         "status": "completed",
         "conclusion": "success",
         "display_title": bridge.render_dispatch_run_name(987),
         "created_at": "2026-09-03T03:45:01Z",
-        "updated_at": (
-            "2026-09-03T03:48:00Z" if case == "late-run" else "2026-09-03T03:46:00Z"
-        ),
+        "updated_at": ("2026-09-03T03:48:00Z" if case == "late-run" else "2026-09-03T03:46:00Z"),
     }
     job = {
         "id": 78,
@@ -11484,4 +11480,3 @@ def test_development_ingress_requires_one_exact_native_dispatch_source(
         assert proof.authorization_revision == REVISION
     else:
         assert proof is None
-
