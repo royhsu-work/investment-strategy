@@ -12,6 +12,7 @@ from urllib.request import Request
 
 import pytest
 
+import investment_strategy.scheduled_agent_carrier as carrier
 import investment_strategy.scheduled_agent_validation_resource as resource
 from investment_strategy.scheduled_agent_application_carrier import (
     ImplementationCarrierQualification,
@@ -34,6 +35,47 @@ _REVISION = "013510b12c5d3cde869308a319a1e2fb12cdfa60"
 _PR_HEAD = "05e1e84523651c6a9bc4ebbe4b275b12dae74dbf"
 _CHANGE = "simplify-scheduled-agent-control-plane"
 _FIXTURE_VALUE = "fixture-value"
+
+
+@pytest.mark.parametrize("case", ["complete", "missing", "duplicate", "wrong-attempt"])
+def test_exact_job_inventory_preserves_all_native_job_evidence(case: str) -> None:
+    jobs: list[dict[str, object]] = [
+        {"id": index, "name": "other", "run_id": 75, "run_attempt": 2}
+        for index in range(1, 101)
+    ]
+    quality: dict[str, object] = {
+        "id": 101,
+        "name": "quality",
+        "run_id": 75,
+        "run_attempt": 2,
+        "status": "completed",
+        "conclusion": "success",
+        "steps": [{"name": "Run tests", "number": 9, "conclusion": "success"}],
+    }
+    endpoint = "actions/runs/75/attempts/2/jobs"
+
+    def read(repository: str, token: str, path: str) -> object:
+        assert repository == _REPOSITORY and token
+        if path == endpoint:
+            return {"total_count": 101, "jobs": jobs[:30]}
+        if path == f"{endpoint}?per_page=100&page=1":
+            return {"total_count": 101, "jobs": jobs}
+        assert path == f"{endpoint}?per_page=100&page=2"
+        if case == "missing":
+            return {"total_count": 101, "jobs": []}
+        if case == "duplicate":
+            return {"total_count": 101, "jobs": [jobs[0]]}
+        if case == "wrong-attempt":
+            return {"total_count": 101, "jobs": [{**quality, "run_attempt": 1}]}
+        return {"total_count": 101, "jobs": [quality]}
+
+    collect = getattr(carrier, "github_complete_job_inventory", None)
+    assert callable(collect), "native quality must reuse a complete attempt job inventory"
+    inventory = collect(_REPOSITORY, "token", run_id=75, run_attempt=2, read=read)
+    if case == "complete":
+        assert inventory == (*jobs, quality)
+    else:
+        assert inventory is None
 
 
 @pytest.mark.parametrize(
