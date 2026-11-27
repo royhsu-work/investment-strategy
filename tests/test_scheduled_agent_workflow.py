@@ -246,7 +246,8 @@ def test_bridge_calls_quality_only_from_exact_planner_outputs() -> None:
         "needs.bridge.outputs.checked_out_revision "
         "&& needs.bridge.outputs.quality_definition_revision == github.workflow_sha "
         "&& needs.bridge.outputs.quality_definition_revision == github.sha "
-        "&& needs.bridge.outputs.quality_source_comment_id == format('{0}', github.event.comment.id) "
+        "&& needs.bridge.outputs.quality_source_comment_id == "
+        "format('{0}', github.event.comment.id) "
         "&& needs.bridge.outputs.quality_run_id == github.run_id "
         "&& needs.bridge.outputs.quality_run_attempt == github.run_attempt }}"
     )
