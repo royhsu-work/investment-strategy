@@ -11445,9 +11445,7 @@ def test_development_ingress_requires_one_exact_native_dispatch_source(
 
     historical = case.startswith("historical-")
     latest_run = (
-        {**run, "run_attempt": 2, "updated_at": "2026-09-03T03:50:00Z"}
-        if historical
-        else run
+        {**run, "run_attempt": 2, "updated_at": "2026-09-03T03:50:00Z"} if historical else run
     )
     expected_source = (
         {
@@ -11787,9 +11785,7 @@ def _assert_saved_development_frontier(
         if path.startswith("issues/138/timeline?"):
             return []
         if path.startswith("issues/comments/"):
-            return next(
-                item for item in global_comments if path.endswith(f"/{item['id']}")
-            )
+            return next(item for item in global_comments if path.endswith(f"/{item['id']}"))
         if path == "actions/runs/60/attempts/1/jobs":
             return {
                 "total_count": 1,

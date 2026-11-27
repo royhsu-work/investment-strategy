@@ -6011,9 +6011,7 @@ def test_shared_artifact_witness_retains_original_and_observes_relevant_inputs(
     fixture.install_pr(324, fixture.branch, fixture.base)
     fixture.set_head(fixture.base)
     payload = fixture.payload()
-    saved = fixture.commit(
-        {fixture.path: "accepted content"}, fixture.message, (fixture.base,)
-    )
+    saved = fixture.commit({fixture.path: "accepted content"}, fixture.message, (fixture.base,))
     fixture.set_head(saved)
     first = _prove_payload_git(fixture, payload, accepted_intent=True)
     assert first.disposition == "COMPLETE", first
