@@ -1176,7 +1176,13 @@ def test_exact_accepted_withdrawal_recovers_without_formal_or_close_replay(
 
 
 def _withdrawal_completion_sources(
-    *, result_kind: str, successor: str, target_state: str
+    *,
+    result_kind: str,
+    successor: str,
+    target_state: str,
+    application_revision: str = MAIN,
+    current_revision: str = MAIN,
+    authorization_is_ancestor: bool = True,
 ) -> tuple[str, str, Callable[..., object | None]]:
     """One formal successor frontier with fresh target observations and raw sources."""
 
@@ -1228,6 +1234,13 @@ def _withdrawal_completion_sources(
         )
     decision = effects.parse_application_decision(formal[0]["body"])
     assert decision is not None
+    correlation = (
+        f"application:1060:229:{CHANGE}:lead:resolve-question:{result_kind}:{application_revision}"
+    )
+    formal[1]["body"] = cast(str, formal[1]["body"]).replace(
+        f"application:1060:229:{CHANGE}:lead:resolve-question:{result_kind}:{MAIN}",
+        correlation,
+    )
     comments = [requests[1060], *formal]
     successor_action = successor.split(" / ", 1)[1]
     timeline = [
@@ -1252,6 +1265,7 @@ def _withdrawal_completion_sources(
         open_prs=open_prs,
         pr_files=[{"filename": f"openspec/changes/{CHANGE}/proposal.md"}],
         branch_ref_sha=cast(str, cast(dict[str, object], retired["head"])["sha"]),
+        default_revision=current_revision,
         formal_comments=comments,
         routing_timeline=timeline,
         request_comments=requests,
@@ -1285,9 +1299,16 @@ def _withdrawal_completion_sources(
             }
         if api_path.startswith("actions/workflows/"):
             return {"total_count": 0, "workflow_runs": []}
+        if api_path == f"compare/{MAIN}...{current_revision}":
+            status = "identical" if current_revision == MAIN else "ahead"
+            return {
+                "status": status if authorization_is_ancestor else "diverged",
+                "behind_by": 0 if authorization_is_ancestor else 1,
+                "base_commit": {"sha": MAIN},
+                "files": [],
+            }
         return fake(repository, token, api_path, allow_not_found=allow_not_found)
 
-    correlation = f"application:1060:229:{CHANGE}:lead:resolve-question:{result_kind}:{MAIN}"
     return decision.raw_worker_result, correlation, read
 
 
@@ -1362,6 +1383,99 @@ def test_successor_completion_uses_the_real_withdrawal_postcondition(
     )
 
     if target_state == "closed":
+        assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+    else:
+        assert completion.state not in {"NONE", "COMPLETE"}
+
+
+@pytest.mark.parametrize(
+    ("result_kind", "successor"),
+    [("ready", "Executor / implement-change"), ("research-required", "Lead / explore-change")],
+)
+@pytest.mark.parametrize(
+    ("revision_state", "qualified"),
+    [("unchanged", True), ("advanced", True), ("diverged", False)],
+)
+def test_formal_withdrawal_proof_keeps_evidence_and_observation_revisions_distinct(
+    monkeypatch: pytest.MonkeyPatch,
+    result_kind: str,
+    successor: str,
+    revision_state: str,
+    qualified: bool,
+) -> None:
+    """The original, ACCEPT and formal evidence survive a safe Application advance."""
+
+    current_revision = MAIN if revision_state == "unchanged" else "8" * 40
+    raw, correlation, read = _withdrawal_completion_sources(
+        result_kind=result_kind,
+        successor=successor,
+        target_state="closed",
+        application_revision=current_revision,
+        current_revision=current_revision,
+        authorization_is_ancestor=revision_state != "diverged",
+    )
+    monkeypatch.setattr(effects, "_github_json", read)
+    observed = {
+        "completion": effects.consequence_postconditions_complete(
+            raw,
+            source=WorkerRequest(229, "lead", "resolve-question"),
+            repository=REPOSITORY,
+            token=TEST_VALUE,
+            current_revision=current_revision,
+            authorized_change=CHANGE,
+            request_comment_id=1060,
+            allow_pending_continuation=True,
+            accepted_authorization_revision=MAIN,
+            allow_accepted_successor=True,
+            accepted_intent=True,
+            observed_application_correlation=correlation,
+            formal_result_observed=True,
+        ),
+        "supersession": carrier.qualify_supersession_branch(
+            repository=REPOSITORY,
+            token=TEST_VALUE,
+            issue_number=229,
+            change=CHANGE,
+            branch=f"agent/{CHANGE}-supersedes-236",
+            current_revision=current_revision,
+            read=read,
+        ),
+    }
+
+    assert observed == {"completion": qualified, "supersession": qualified}
+
+
+@pytest.mark.parametrize(
+    ("revision_state", "qualified"),
+    [("unchanged", True), ("advanced", True), ("diverged", False)],
+)
+def test_successor_completion_preserves_distinct_application_observation_revision(
+    monkeypatch: pytest.MonkeyPatch, revision_state: str, qualified: bool
+) -> None:
+    from investment_strategy import issue_comment_bridge as bridge
+
+    current_revision = MAIN if revision_state == "unchanged" else "8" * 40
+    _raw, _correlation, read = _withdrawal_completion_sources(
+        result_kind="research-required",
+        successor="Lead / explore-change",
+        target_state="closed",
+        application_revision=current_revision,
+        current_revision=current_revision,
+        authorization_is_ancestor=revision_state != "diverged",
+    )
+    monkeypatch.setattr(bridge, "_github_json", read)
+    monkeypatch.setattr(effects, "_github_json", read)
+
+    completion = bridge.qualify_application_completion(
+        REPOSITORY,
+        TEST_VALUE,
+        source=WorkerRequest(229, "lead", "explore-change"),
+        current_revision=current_revision,
+        read=read,
+        now=datetime(2026, 11, 3, 5, 0, tzinfo=UTC),
+    )
+
+    if qualified:
         assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
     else:
         assert completion.state not in {"NONE", "COMPLETE"}
