@@ -85,6 +85,7 @@ from investment_strategy.scheduled_agent_effects import (
     StagedEffect,
     _archive_branch,
     _archive_ref,
+    _implementation_development_save,
     _references_issue,
     _source_branch,
     archive_branch_matches_current_source,
@@ -2109,7 +2110,7 @@ def _application_owned_worker_result(
     result_revision: str | None = None,
     request_comment_id: int | None = None,
 ) -> str:
-    """Require one application-owned formal result after worker effects."""
+    """Bind worker effects and project a formal result only for formal delivery."""
 
     if change is None:
         # Compatibility-only path for callers that predate the machine-owned
@@ -2121,6 +2122,24 @@ def _application_owned_worker_result(
         source,
         authorized_change=change,
     )
+    decoded = json.loads(raw_worker_result)
+    if not isinstance(decoded, dict):
+        raise RuntimeError("worker result must be a JSON object")
+    requested = decoded.get("requested_effects", [])
+    if not isinstance(requested, list):
+        raise RuntimeError("worker result requested effects are invalid")
+
+    # Carry the exact machine envelope forward once, after fresh application
+    # authorization.  These fields are never sourced from the semantic worker.
+    decoded["issue_number"] = source.issue_number
+    decoded["role"] = source.role
+    decoded["action"] = source.action
+    decoded["change"] = change
+    if _implementation_development_save(
+        parse_effect_batch(raw_worker_result, source, authorized_change=change)
+    ):
+        return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
+
     # Formal headers, routing, revisions, and successor text are application
     # protocol, not semantic-worker output.  Preserve only bounded semantic
     # evidence and rebuild the canonical result from fresh machine identity.
@@ -2181,13 +2200,6 @@ def _application_owned_worker_result(
     body_lines.append(f"Evidence: {evidence}")
     body = "\n".join(body_lines)
 
-    decoded = json.loads(raw_worker_result)
-    if not isinstance(decoded, dict):
-        raise RuntimeError("worker result must be a JSON object")
-    requested = decoded.get("requested_effects", [])
-    if not isinstance(requested, list):
-        raise RuntimeError("worker result requested effects are invalid")
-
     ordered: list[object] = []
     for raw_effect in requested:
         if not isinstance(raw_effect, Mapping) or raw_effect.get("kind") != "issue-comment":
@@ -2216,12 +2228,6 @@ def _application_owned_worker_result(
             ),
         }
     )
-    # Carry the exact machine envelope forward once, after fresh application
-    # authorization.  These fields are never sourced from the semantic worker.
-    decoded["issue_number"] = source.issue_number
-    decoded["role"] = source.role
-    decoded["action"] = source.action
-    decoded["change"] = change
     decoded["result_content"] = body
     decoded["requested_effects"] = ordered
     return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
@@ -3025,6 +3031,11 @@ def _fresh_application_worker_result(
     decoded = json.loads(application_raw)
     if not isinstance(decoded, dict):
         raise RuntimeError("application worker result is not an object")
+    if _implementation_development_save(
+        parse_effect_batch(application_raw, source, authorized_change=change)
+    ):
+        decoded["_semantic_intent_version"] = 2
+        return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
     worker = parse_worker_result(application_raw, source, authorized_change=change)
     semantic_effects: list[dict[str, str]] = []
     control_candidates = [
