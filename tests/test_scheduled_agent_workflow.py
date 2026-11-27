@@ -258,3 +258,17 @@ def test_bridge_calls_quality_only_from_exact_planner_outputs() -> None:
     )
     assert upload["if"] == "steps.handler.outputs.should_emit == 'true'"
     assert planner["steps"].index(handler) < planner["steps"].index(upload)
+
+
+def test_native_quality_trigger_covers_marker_and_producer_only_changes() -> None:
+    workflow = yaml.safe_load(Path(".github/workflows/quality.yml").read_text(encoding="utf-8"))
+    for event in ("push", "pull_request"):
+        paths = workflow[True][event]["paths"]
+        assert "openspec/changes/*/tasks.md" in paths
+        assert ".github/workflows/scheduled-agent-bridge.yml" in paths
+        assert ".github/workflows/scheduled-agent-application.yml" in paths
+        assert ".github/workflows/quality.yml" in paths
+        assert not any(
+            pattern in paths
+            for pattern in ("openspec/**", "openspec/changes/**", "openspec/changes/*/**")
+        )
