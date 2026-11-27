@@ -1827,8 +1827,7 @@ def qualify_change_carrier(
     if (
         source.issue_number <= 0
         or (
-            (source.role, source.action) not in _CHANGE_CARRIER_SOURCES
-            and not candidate_withdrawal
+            (source.role, source.action) not in _CHANGE_CARRIER_SOURCES and not candidate_withdrawal
         )
         or (withdrawal_result_kind is not None and not candidate_withdrawal)
         or not isinstance(pr_number, int)
