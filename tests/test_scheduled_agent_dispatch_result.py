@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from datetime import date
 from email.message import Message
 from io import BytesIO
+from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request
 
 import pytest
 
+import investment_strategy.issue_comment_bridge as bridge
 import investment_strategy.scheduled_agent_dispatch_result as transport
 from investment_strategy.issue_comment_bridge import (
     MachineDispatchDecision,
     parse_dispatch_result_document,
 )
+from investment_strategy.scheduled_agent_checkin import checkin_title
 
 _REVISION = "cb8f9ec12d826e0d71897a4c73ece961d00df59e"
 _REQUEST_ID = 100
@@ -359,3 +364,245 @@ def test_human_supplied_native_dispatch_failure_is_read_only_evidence(
             run_id=run_id,
             current_revision="f" * 40,
         )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "valid",
+        "static",
+        "authorize",
+        "idle",
+        "wrong-digest",
+        "foreign-artifact",
+        "wrong-attempt",
+        "wrong-plan",
+        "wrong-checkout",
+        "missing-planner",
+        "failed-planner",
+        "missing-receipt",
+        "stale-main",
+        "wrong-source",
+        "active-job",
+    ],
+)
+def test_failed_quality_run_is_only_exact_non_authorizing_audit(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    repository = "owner/repo"
+    target, gate, producer = "a" * 40, "b" * 64, "c" * 40
+    attempt = 2
+    correlation = hashlib.sha256(
+        f"{gate}:{_REVISION}:{_REQUEST_ID}:{_RUN_ID}:{attempt}".encode()
+    ).hexdigest()
+    reason = "no-routed-work" if case == "idle" else "verification-obligation-pending"
+    raw = (
+        json.dumps(
+            {
+                "schema": "scheduled-agent-dispatch-result/v1",
+                "request_comment_id": _REQUEST_ID,
+                "default_branch_revision": _REVISION,
+                "disposition": "NO_WORK",
+                "reason": reason,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode()
+    if case == "authorize":
+        raw = _authorize_document()
+    digest = hashlib.sha256(raw).hexdigest()
+    run = {
+        **_run(),
+        "display_title": f"Scheduled Agent Dispatch {_REQUEST_ID}",
+        "conclusion": "failure",
+        "run_attempt": attempt,
+        "head_branch": "main",
+        "repository": {"full_name": repository},
+        "head_repository": {"full_name": repository},
+        "created_at": "2026-09-03T03:46:00Z",
+    }
+    plan = {
+        "quality_obligation": gate,
+        "quality_target_repository": repository,
+        "quality_target_revision": target,
+        "quality_definition_revision": _REVISION,
+        "quality_verification_correlation": correlation,
+        "quality_source_comment_id": str(_REQUEST_ID),
+        "quality_run_id": str(_RUN_ID),
+        "quality_run_attempt": str(attempt),
+        "quality_call": "true",
+        "quality_result": "verification-obligation-pending",
+    }
+    if case == "wrong-plan":
+        plan["quality_run_attempt"] = "1"
+    planner_names = (
+        "Check out authoritative default branch",
+        "Record exact checked-out default-branch revision",
+        "Plan exact correlated machine dispatch decision",
+        "Upload exact run-scoped machine dispatch result",
+    )
+    quality_names = (
+        "Set up job",
+        "Run actions/checkout@v4",
+        "Prove exact quality checkout",
+        "Run astral-sh/setup-uv@v6",
+        "Run actions/setup-python@v5",
+        "Ruff lint",
+        "Ruff format check",
+        "Mypy",
+        "Run tests",
+    )
+    verdicts = ["success"] * 8 + ["failure"]
+    if case == "static":
+        verdicts[-3:] = ["failure", "skipped", "skipped"]
+    common = {
+        "run_id": _RUN_ID,
+        "run_attempt": attempt,
+        "head_sha": _REVISION,
+        "status": "completed",
+    }
+    jobs = [
+        {
+            **common,
+            "id": 201,
+            "name": "bridge",
+            "conclusion": "failure" if case == "failed-planner" else "success",
+            "steps": [
+                {"name": name, "number": n, "status": "completed", "conclusion": "success"}
+                for n, name in enumerate(planner_names, 1)
+            ],
+        },
+        {
+            **common,
+            "id": 202,
+            "name": "verify_quality / quality",
+            "run_attempt": 1 if case == "wrong-attempt" else attempt,
+            "status": "in_progress" if case == "active-job" else "completed",
+            "conclusion": "failure",
+            "steps": [
+                {"name": name, "number": n, "status": "completed", "conclusion": result}
+                for n, (name, result) in enumerate(zip(quality_names, verdicts, strict=True), 1)
+            ],
+        },
+    ]
+    if case == "missing-planner":
+        jobs.pop(0)
+
+    def fake_json(repo: str, token: str, path: str) -> object:
+        assert repo == repository and token
+        if path == "":
+            return {"full_name": repository, "default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": "f" * 40 if case == "stale-main" else _REVISION}}
+        if path in (f"actions/runs/{_RUN_ID}", f"actions/runs/{_RUN_ID}/attempts/2"):
+            return run
+        if path.startswith(f"actions/runs/{_RUN_ID}/attempts/2/jobs"):
+            return {"total_count": len(jobs), "jobs": jobs}
+        if path == f"actions/runs/{_RUN_ID}/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": _ARTIFACT_ID,
+                        "name": "dispatch-result.json",
+                        "expired": False,
+                        "digest": "sha256:" + ("f" * 64 if case == "wrong-digest" else digest),
+                        "workflow_run": {
+                            "id": 999 if case == "foreign-artifact" else _RUN_ID,
+                            "head_sha": _REVISION,
+                        },
+                    }
+                ],
+            }
+        if path == f"issues/comments/{_REQUEST_ID}":
+            return {
+                "id": _REQUEST_ID,
+                "body": "DISPATCH_REQUEST\nRequested-At: 2026-09-03T03:45:00Z",
+                "user": {"login": "owner"},
+                "performed_via_github_app": {
+                    "slug": "untrusted" if case == "wrong-source" else "chatgpt-codex-connector"
+                },
+                "issue_url": f"https://api.github.com/repos/{repository}/issues/142",
+                "created_at": "2026-09-03T03:45:00Z",
+                "updated_at": "2026-09-03T03:45:00Z",
+            }
+        if path == "issues/142":
+            return {
+                "number": 142,
+                "title": checkin_title(date(2026, 9, 3)),
+                "state": "open",
+                "labels": [],
+            }
+        if path.startswith("contents/.github/workflows/quality.yml?"):
+            return {
+                "type": "file",
+                "path": ".github/workflows/quality.yml",
+                "sha": producer,
+            }
+        raise AssertionError(path)
+
+    def fake_bytes(repo: str, token: str, path: str) -> bytes:
+        assert repo == repository and token
+        if path == f"actions/artifacts/{_ARTIFACT_ID}/zip":
+            return raw
+        if path == "actions/jobs/201/logs":
+            receipt = "" if case == "missing-receipt" else f"native_quality_result_sha256={digest}"
+            line = "native_quality_plan=" + json.dumps(plan, sort_keys=True)
+            return (line + "\n" + receipt).encode()
+        if path == "actions/jobs/202/logs":
+            checkout = "f" * 40 if case == "wrong-checkout" else target
+            return "\n".join(
+                (
+                    "##[group]Run actual_sha=$(git rev-parse HEAD)",
+                    "##[endgroup]",
+                    f"quality_repository={repository}",
+                    f"quality_target_sha={target}",
+                    f"quality_checkout_sha={checkout}",
+                    f"quality_definition_sha={_REVISION}",
+                    f"quality_run_id={_RUN_ID}",
+                    f"quality_run_attempt={attempt}",
+                    f"quality_source_comment_id={_REQUEST_ID}",
+                    f"quality_verification_correlation={correlation}",
+                    "##[group]Run astral-sh/setup-uv@v6",
+                )
+            ).encode()
+        raise AssertionError(path)
+
+    monkeypatch.setattr(transport, "_github_json", fake_json)
+    monkeypatch.setattr(transport, "_github_bytes", fake_bytes)
+
+    def fetch() -> MachineDispatchDecision:
+        return transport.fetch_dispatch_result(
+            repository,
+            "token",
+            request_comment_id=_REQUEST_ID,
+            run_id=_RUN_ID,
+            current_revision=_REVISION,
+        )
+
+    if case in {"valid", "static"}:
+        result = fetch()
+        assert result.disposition == "NO_WORK"
+        assert result.reason == "verification-obligation-pending"
+        assert result.issue_number is None and result.action is None and result.role is None
+    else:
+        with pytest.raises(RuntimeError):
+            fetch()
+
+
+def test_quality_audit_receipt_binds_exact_emitted_artifact(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    plan = bridge.BridgePlan(
+        should_emit=True,
+        issue_number=142,
+        request_comment_id=_REQUEST_ID,
+        result_body='{"disposition":"NO_WORK"}',
+        quality_call={"quality_call": "true"},
+    )
+    path = tmp_path / "dispatch-result.json"
+    bridge._write_result_payload(path, plan)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert f"native_quality_result_sha256={digest}" in capsys.readouterr().out.splitlines()
