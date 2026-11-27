@@ -9079,7 +9079,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     if physical_only and accepted_intent is None:
         from dataclasses import asdict
 
-        from investment_strategy import issue_comment_bridge as dispatch
+        from investment_strategy import issue_comment_bridge as development_dispatch
 
         ingress_issue = _as_mapping(event.get("issue"))
         ingress_shard = _positive_int(
@@ -9087,7 +9087,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         )
         if ingress_shard is None or plan.request_comment_id != event_comment_id:
             raise ValueError("development ingress identity is unavailable")
-        receipt = dispatch.qualify_development_dispatch_source(
+        receipt = development_dispatch.qualify_development_dispatch_source(
             repository,
             token,
             source=plan.source,
@@ -9097,7 +9097,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         )
         if receipt is None:
             raise ValueError("development ingress lacks exact native dispatch authority")
-        frontier = dispatch.qualify_application_completion(
+        frontier = development_dispatch.qualify_application_completion(
             repository,
             token,
             source=plan.source,
