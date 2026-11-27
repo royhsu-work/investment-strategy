@@ -1042,9 +1042,9 @@ def test_exact_accepted_withdrawal_recovers_without_formal_or_close_replay(
             is None
         )
         fresh_adapter(accepted=True, request_comment_id=request_id).apply(close)
-        assert fresh_adapter(
-            accepted=True, request_comment_id=request_id
-        ).observe_postcondition(close)
+        assert fresh_adapter(accepted=True, request_comment_id=request_id).observe_postcondition(
+            close
+        )
 
     assert observed and all(method == "GET" for method, _path in observed)
     if qualified:
