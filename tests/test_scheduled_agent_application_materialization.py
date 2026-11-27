@@ -5331,12 +5331,19 @@ def test_development_save_uses_actual_ingress_application_and_git_carrier(
     proof_git.routing = proof_git.source.action
     proof_git.path = "tests/test_partial_work.py"
     tasks_path = f"openspec/changes/{_CHANGE}/tasks.md"
-    proof_git.base = proof_git.commit(
-        {proof_git.path: "def test_work():\n    assert True\n", tasks_path: "- [ ] 1.1 Work\n"},
-        "Approved work",
-        (proof_git.base,),
+    proof_git.main = proof_git.commit(
+        {proof_git.path: "def test_work():\n    assert True\n"}, "Default work", (proof_git.base,)
     )
-    proof_git.main = proof_git.authorization = proof_git.base
+    proof_git.authorization = proof_git.main
+    proof_git.base = proof_git.commit(
+        {
+            f"openspec/changes/{_CHANGE}/proposal.md": "Approved proposal",
+            tasks_path: "- [ ] 1.1 Work\n",
+        },
+        "Approved work",
+        (proof_git.main,),
+    )
+    cast(dict[str, object], proof_git.prs[0]["base"])["sha"] = proof_git.main
     proof_git.set_head(proof_git.base)
     proof_git.desired = proof_git.blob("def test_work():\n    assert False\n")
     proof_git.allow_writes = True
@@ -5354,6 +5361,8 @@ def test_development_save_uses_actual_ingress_application_and_git_carrier(
     comments: list[dict[str, object]] = []
 
     def read(repository: str, token: str, path: str, **kwargs: object) -> object:
+        if path.startswith("pulls/324/files"):
+            return proof_git.comparison(proof_git.main, proof_git.head)["files"]
         if path.startswith("issues/322/comments?"):
             return list(comments)
         if path == "issues/322/comments":
@@ -5373,6 +5382,8 @@ def test_development_save_uses_actual_ingress_application_and_git_carrier(
         return proof_git.api(repository, token, path, **kwargs)
 
     monkeypatch.setattr(carrier, "_github_json", read)
+    monkeypatch.setattr(materialization, "_github_json", read)
+    monkeypatch.setattr(validation_resource, "_github_json", read)
     monkeypatch.setattr(effects, "_github_json", read)
     monkeypatch.setattr(application_bridge, "_github_json", read)
     preflight = acquire_dispatch_preflight(
