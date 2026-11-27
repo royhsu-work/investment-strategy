@@ -5314,11 +5314,13 @@ def test_actual_implementation_constructor_is_proved_by_fresh_consumers(
     assert proof_git.mutations == before
 
 
+@pytest.mark.parametrize("carrier_advanced", [False, True], ids=["current", "stale-preimage"])
 def test_development_save_uses_actual_ingress_application_and_git_carrier(
     proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
+    carrier_advanced: bool,
 ) -> None:
-    """A saved RED candidate is observable without formal delivery or CI."""
+    """A candidate can be saved only while its exact preimage remains current."""
     import investment_strategy.scheduled_agent_application_carrier as carrier
     import investment_strategy.scheduled_agent_effects as effects
     import investment_strategy.scheduled_agent_merge_acceptance as acceptance
@@ -5422,6 +5424,31 @@ def test_development_save_uses_actual_ingress_application_and_git_carrier(
     )
     before_write = _prove_payload_git(proof_git, payload)
     assert before_write.disposition == "INCOMPLETE", before_write
+    if carrier_advanced:
+        competing = proof_git.commit(
+            {proof_git.path: "def test_work():\n    assert 2 + 2 == 4\n"},
+            "Concurrent change to the same test",
+            (proof_git.base,),
+        )
+        proof_git.set_head(competing)
+        _, result = acceptance.run_guarded_effect_application(
+            projected,
+            source=proof_git.source,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            request_comment_id=901,
+            application_request_body=body,
+            authorization_revision=proof_git.main,
+            authorized_change=_CHANGE,
+        )
+        assert not result.applied
+        assert result.reason == "effect precondition rejected", result
+        assert comments == []
+        assert proof_git.mutations == []
+        assert proof_git.git("rev-parse", f"refs/heads/{proof_git.branch}") == competing
+        return
+
     try:
         _, result = acceptance.run_guarded_effect_application(
             projected,
