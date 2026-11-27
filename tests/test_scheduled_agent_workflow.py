@@ -231,9 +231,7 @@ def test_bridge_calls_quality_only_from_exact_planner_outputs() -> None:
     assert "secrets" not in call
     assert "continue-on-error" not in call
     assert "runs-on" not in call and "steps" not in call
-    assert call["with"] == {
-        key: f"${{{{ needs.bridge.outputs.quality_{key} }}}}" for key in inputs
-    }
+    assert call["with"] == {key: f"${{{{ needs.bridge.outputs.quality_{key} }}}}" for key in inputs}
     guard = " ".join(call["if"].split())
     assert guard == (
         "${{ needs.bridge.result == 'success' "
