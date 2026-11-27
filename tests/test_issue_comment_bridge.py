@@ -11511,6 +11511,8 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
         ("replay", "AMBIGUOUS"),
         ("unknown-write", "AMBIGUOUS"),
         ("ambiguous-order", "AMBIGUOUS"),
+        ("latest-pending", "RESUMABLE"),
+        ("latest-unknown", "INVALID"),
     ],
 )
 def test_development_frontier_retires_only_causal_saved_prefix(
@@ -11618,7 +11620,7 @@ def _assert_saved_development_frontier(
         "4" * 64,
         cast(str, prior["created_at"]),
         "main",
-        saved,
+        prior_saved if history == "latest-pending" else saved,
         REVISION,
     )
     prior_verdict = bridge.NativeQualityAttempt(
@@ -11829,18 +11831,31 @@ def _assert_saved_development_frontier(
             True,
         ),
     )
-    monkeypatch.setattr(
-        bridge,
-        "_accepted_application_state",
-        lambda **kw: bridge.ApplicationCompletion(
+    def observe_accepted(**kw: object) -> bridge.ApplicationCompletion:
+        record = kw["record"]
+        assert isinstance(record, bridge.ApplicationDecisionRecord)
+        if record.request_comment_id == 654:
+            if history == "latest-pending":
+                return bridge.ApplicationCompletion("RESUMABLE", "pending-write", 654, job_id=81)
+            if history == "latest-unknown":
+                return bridge.ApplicationCompletion("INVALID", "unknown-write", 654)
+        return bridge.ApplicationCompletion(
             "RESUMABLE",
             "verification-obligation-pending",
-            kw["record"].request_comment_id,
+            record.request_comment_id,
             quality_obligation=(
                 (None if history == "unknown-write" else prior_obligation)
-                if kw["record"].request_comment_id == 554
+                if record.request_comment_id == 554
                 else obligation
             ),
+        )
+
+    monkeypatch.setattr(bridge, "_accepted_application_state", observe_accepted)
+    monkeypatch.setattr(
+        bridge,
+        "_qualified_physical_original_accepted_effects",
+        lambda **kw: bridge.parse_effect_batch(
+            kw["record"].raw_worker_result, source, authorized_change=change
         ),
     )
     monkeypatch.setattr(bridge, "_complete_workflow_runs", lambda *_a, **_kw: (run,))
@@ -11874,5 +11889,10 @@ def _assert_saved_development_frontier(
     if expected == "COMPLETE":
         assert completion.quality_obligation is None
         assert completion.request_comment_id == 654
+    elif history in ("latest-pending", "latest-unknown"):
+        assert completion.request_comment_id == 654
+        assert completion.quality_obligation is None
+        if history == "latest-pending":
+            assert completion.job_id == 81
     elif expected == "RESUMABLE":
         assert completion.quality_obligation == obligation
