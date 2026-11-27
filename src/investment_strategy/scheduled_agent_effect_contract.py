@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from re import fullmatch
 from types import MappingProxyType
 from typing import Final
 
@@ -323,6 +324,35 @@ def candidate_withdrawal_permitted(
     return (
         spec.action is Action.RESOLVE_QUESTION and spec.result is ResultKind.READY
     ) or next_action(spec.action, TypedResult(spec.result)) in _CANDIDATE_ACTIONS
+
+
+def is_exact_pull_request_close(
+    kind: object,
+    payload: Mapping[str, object],
+    *,
+    issue_number: object,
+) -> bool:
+    """Recognize an exact close shape without granting carrier authority."""
+
+    payload_issue = payload.get("issue_number")
+    number = payload.get("number")
+    head_sha = payload.get("expected_head_sha")
+    return (
+        kind == GITHUB_MUTATION_KIND
+        and isinstance(issue_number, int)
+        and not isinstance(issue_number, bool)
+        and issue_number > 0
+        and isinstance(payload_issue, int)
+        and not isinstance(payload_issue, bool)
+        and payload_issue == issue_number
+        and payload.get("operation") == "pull-request-update"
+        and isinstance(number, int)
+        and not isinstance(number, bool)
+        and number > 0
+        and isinstance(head_sha, str)
+        and fullmatch(r"[0-9a-f]{40}", head_sha) is not None
+        and payload.get("fields") == {"state": "closed"}
+    )
 
 
 def assert_consequence_specs_complete() -> None:

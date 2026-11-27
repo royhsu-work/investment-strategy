@@ -69,6 +69,7 @@ from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
     candidate_withdrawal_permitted,
     consequence_spec_for,
+    is_exact_pull_request_close,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
@@ -198,13 +199,10 @@ def semantic_intent_payload(raw_worker_result: str) -> str:
                 kind == GITHUB_MUTATION_KIND
                 and payload.get("operation") == "application-materialize"
             )
-            retirement = (
-                kind == GITHUB_MUTATION_KIND
-                and decoded.get("role") == "lead"
-                and decoded.get("action") == "resolve-question"
-                and decoded.get("result_kind") == "ready"
-                and payload.get("operation") == "pull-request-update"
-                and payload.get("fields") == {"state": "closed"}
+            retirement = candidate_withdrawal_permitted(
+                decoded.get("role"), decoded.get("action"), decoded.get("result_kind")
+            ) and is_exact_pull_request_close(
+                kind, payload, issue_number=decoded.get("issue_number")
             )
             checkpoint = (
                 kind == "issue-comment"
@@ -1362,12 +1360,15 @@ def apply_effect_batch(
     # is not another semantic request. Enforce this on accepted-intent recovery.
     if (
         batch.typed_result is not None
-        and (batch.source.role, batch.source.action) == ("lead", "resolve-question")
-        and batch.typed_result.result.kind is ResultKind.READY
+        and candidate_withdrawal_permitted(
+            batch.source.role, batch.source.action, batch.typed_result.result.kind
+        )
         and any(
-            effect.kind == GITHUB_MUTATION_KIND
-            and (_effect_payload(effect) or {}).get("operation") == "pull-request-update"
-            and (_effect_payload(effect) or {}).get("fields") == {"state": "closed"}
+            is_exact_pull_request_close(
+                effect.kind,
+                _effect_payload(effect) or {},
+                issue_number=batch.source.issue_number,
+            )
             for effect in batch.effects
         )
         and (
