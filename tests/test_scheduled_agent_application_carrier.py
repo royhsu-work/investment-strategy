@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
@@ -1054,6 +1055,198 @@ def test_exact_accepted_withdrawal_recovers_without_formal_or_close_replay(
         cast(dict[str, object], current["head"])["sha"] = HEAD
         current.update(merged=True, merged_at="2026-11-03T03:01:00Z")
         assert not fresh_adapter(accepted=True).guard(close)
+
+
+def _withdrawal_completion_sources(
+    *, result_kind: str, successor: str, target_state: str
+) -> tuple[str, str, Callable[..., object | None]]:
+    """One formal successor frontier with fresh target observations and raw sources."""
+
+    retired = _continuation_pr(branch=f"agent/{CHANGE}")
+    retired.update(state="closed", closed_at="2026-11-03T03:00:00Z")
+    if target_state == "reopened":
+        retired.update(state="open", closed_at=None)
+    elif target_state == "wrong-head":
+        cast(dict[str, object], retired["head"])["sha"] = "5" * 40
+    elif target_state == "merged":
+        retired.update(
+            merged=True,
+            merged_at="2026-11-03T03:01:00Z",
+            merge_commit_sha="7" * 40,
+        )
+    open_prs = [retired] if target_state == "reopened" else []
+    if target_state == "competing":
+        open_prs.append(
+            _continuation_pr(
+                number=237,
+                branch=f"agent/{CHANGE}-supersedes-236",
+                head_sha="6" * 40,
+            )
+        )
+    formal, requests = _accepted_lead_retirement_comments(
+        HEAD,
+        result_kind=result_kind,
+        successor=successor,
+        minimal_raw_ingress=True,
+    )
+    requests[1060].update(
+        created_at="2026-11-03T02:58:00Z",
+        issue_url=f"https://api.github.com/repos/{REPOSITORY}/issues/229",
+    )
+    for comment in formal:
+        comment["issue_url"] = f"https://api.github.com/repos/{REPOSITORY}/issues/229"
+    if target_state == "no-withdrawal":
+        decision = effects.parse_application_decision(formal[0]["body"])
+        assert decision is not None
+        accepted = json.loads(decision.raw_worker_result)
+        accepted["requested_effects"] = []
+        original = json.loads(cast(str, requests[1060]["body"]).split("\n", 1)[1])
+        original["requested_effects"] = []
+        _replace_accepted_source(
+            formal[0],
+            requests[1060],
+            request_body=f"WORKER_RESULT\n{json.dumps(original, sort_keys=True)}",
+            accepted_result=accepted,
+        )
+    decision = effects.parse_application_decision(formal[0]["body"])
+    assert decision is not None
+    comments = [requests[1060], *formal]
+    successor_action = successor.split(" / ", 1)[1]
+    timeline = [
+        {"id": 1260, "event": "commented", "created_at": "2026-11-03T04:00:00Z"},
+        {
+            "id": 1261,
+            "event": "unlabeled",
+            "created_at": "2026-11-03T04:00:01Z",
+            "label": {"name": "action:resolve-question"},
+        },
+        {
+            "id": 1262,
+            "event": "labeled",
+            "created_at": "2026-11-03T04:00:01Z",
+            "label": {"name": f"action:{successor_action}"},
+        },
+    ]
+    fake = _fake_github(
+        current_pr=retired,
+        historical_pr=None,
+        merged_continuations=[] if target_state == "reopened" else [retired],
+        open_prs=open_prs,
+        pr_files=[{"filename": f"openspec/changes/{CHANGE}/proposal.md"}],
+        branch_ref_sha=cast(str, cast(dict[str, object], retired["head"])["sha"]),
+        formal_comments=comments,
+        routing_timeline=timeline,
+        request_comments=requests,
+    )
+
+    def read(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        assert repository == REPOSITORY
+        assert token == TEST_VALUE
+        assert method == "GET"
+        assert payload is None
+        if target_state == "no-withdrawal" and api_path.startswith("pulls"):
+            raise AssertionError("zero-effect coordination must not require a PR")
+        if api_path.startswith("issues/comments?"):
+            return comments
+        if api_path == "issues/229":
+            return {
+                "number": 229,
+                "state": "open",
+                "body": f"Change: {CHANGE}\n",
+                "labels": [{"name": f"action:{successor_action}"}],
+                "created_at": "2026-09-01T00:00:00Z",
+                "closed_at": None,
+            }
+        if api_path.startswith("actions/workflows/"):
+            return {"total_count": 0, "workflow_runs": []}
+        return fake(repository, token, api_path, allow_not_found=allow_not_found)
+
+    correlation = f"application:1060:229:{CHANGE}:lead:resolve-question:{result_kind}:{MAIN}"
+    return decision.raw_worker_result, correlation, read
+
+
+@pytest.mark.parametrize(
+    ("result_kind", "successor"),
+    [("ready", "Executor / implement-change"), ("research-required", "Lead / explore-change")],
+)
+@pytest.mark.parametrize(
+    ("target_state", "complete"),
+    [
+        ("closed", True),
+        ("reopened", False),
+        ("wrong-head", False),
+        ("merged", False),
+        ("competing", False),
+        ("no-withdrawal", True),
+    ],
+)
+def test_formal_withdrawal_completion_reobserves_the_exact_closed_target(
+    monkeypatch: pytest.MonkeyPatch,
+    result_kind: str,
+    successor: str,
+    target_state: str,
+    complete: bool,
+) -> None:
+    raw, correlation, read = _withdrawal_completion_sources(
+        result_kind=result_kind, successor=successor, target_state=target_state
+    )
+    monkeypatch.setattr(effects, "_github_json", read)
+
+    assert (
+        effects.consequence_postconditions_complete(
+            raw,
+            source=WorkerRequest(229, "lead", "resolve-question"),
+            repository=REPOSITORY,
+            token=TEST_VALUE,
+            current_revision=MAIN,
+            authorized_change=CHANGE,
+            request_comment_id=1060,
+            allow_pending_continuation=True,
+            accepted_authorization_revision=MAIN,
+            allow_accepted_successor=True,
+            accepted_intent=True,
+            observed_application_correlation=correlation,
+            formal_result_observed=True,
+        )
+        is complete
+    )
+
+
+@pytest.mark.parametrize("target_state", ["closed", "reopened"])
+def test_successor_completion_uses_the_real_withdrawal_postcondition(
+    monkeypatch: pytest.MonkeyPatch, target_state: str
+) -> None:
+    from investment_strategy import issue_comment_bridge as bridge
+
+    _raw, _correlation, read = _withdrawal_completion_sources(
+        result_kind="research-required",
+        successor="Lead / explore-change",
+        target_state=target_state,
+    )
+    monkeypatch.setattr(bridge, "_github_json", read)
+    monkeypatch.setattr(effects, "_github_json", read)
+
+    completion = bridge.qualify_application_completion(
+        REPOSITORY,
+        TEST_VALUE,
+        source=WorkerRequest(229, "lead", "explore-change"),
+        current_revision=MAIN,
+        read=read,
+        now=datetime(2026, 11, 3, 5, 0, tzinfo=UTC),
+    )
+
+    if target_state == "closed":
+        assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+    else:
+        assert completion.state not in {"NONE", "COMPLETE"}
 
 
 @pytest.mark.parametrize("wrong_fields", [False, True])
