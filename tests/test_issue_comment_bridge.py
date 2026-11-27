@@ -11043,6 +11043,7 @@ def test_saved_development_obligation_drives_native_bridge_output(
     from investment_strategy.scheduled_agent_validation_resource import ValidationResourceTarget
 
     repository = "owner/repo"
+    test_token = "test-token"  # noqa: S105
     saved, producer = "a" * 40, "b" * 40
     source = bridge.WorkerRequest(138, "executor", "implement-change")
     change = "native-quality"
@@ -11161,7 +11162,7 @@ def test_saved_development_obligation_drives_native_bridge_output(
     def qualify(*_args: object, **_kw: object) -> bridge.ApplicationCompletion:
         return bridge._accepted_application_state(
             repository=repository,
-            token="token",
+            token=test_token,
             source=source,
             record=record,
             issue_comments=(accepted,),
@@ -11210,7 +11211,7 @@ def test_saved_development_obligation_drives_native_bridge_output(
         ),
     )
     monkeypatch.setenv("GITHUB_REPOSITORY", repository)
-    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("GITHUB_TOKEN", test_token)
     monkeypatch.setenv("GITHUB_EVENT_NAME", "issue_comment")
     monkeypatch.setenv("GITHUB_RUN_ID", "77")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
