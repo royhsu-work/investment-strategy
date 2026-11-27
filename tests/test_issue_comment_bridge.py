@@ -11497,6 +11497,35 @@ def test_development_ingress_requires_one_exact_native_dispatch_source(
 def test_current_saved_development_verdict_qualifies_shared_frontier(
     monkeypatch: pytest.MonkeyPatch, phase_a: bool, case: str, expected: str
 ) -> None:
+    _assert_saved_development_frontier(monkeypatch, phase_a, case, expected)
+
+
+@pytest.mark.parametrize("phase_a", [False, True])
+@pytest.mark.parametrize(
+    ("history", "expected"),
+    [
+        ("red", "COMPLETE"),
+        ("missing", "AMBIGUOUS"),
+        ("late", "AMBIGUOUS"),
+        ("wrong-base", "AMBIGUOUS"),
+        ("replay", "AMBIGUOUS"),
+        ("unknown-write", "AMBIGUOUS"),
+        ("ambiguous-order", "AMBIGUOUS"),
+    ],
+)
+def test_development_frontier_retires_only_causal_saved_prefix(
+    monkeypatch: pytest.MonkeyPatch, phase_a: bool, history: str, expected: str
+) -> None:
+    _assert_saved_development_frontier(monkeypatch, phase_a, "pass", expected, history)
+
+
+def _assert_saved_development_frontier(
+    monkeypatch: pytest.MonkeyPatch,
+    phase_a: bool,
+    case: str,
+    expected: str,
+    history: str | None = None,
+) -> None:
     """Both ingress and dispatch consume the same saved-work qualification."""
     from dataclasses import asdict
 
@@ -11544,6 +11573,60 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
     )
     worker["_native_development_dispatch"] = asdict(original_receipt)
     worker["_semantic_intent_version"] = 2
+    prior_saved = "c" * 40
+    prior_receipt = bridge.DevelopmentDispatchSource(
+        501, 50, 1, 51, 52, "sha256:" + "2" * 64, REVISION
+    )
+    prior_worker = dict(worker)
+    prior_worker["_native_development_dispatch"] = asdict(prior_receipt)
+    prior_request = {
+        **request,
+        "id": 554,
+        "created_at": "2026-09-18T00:00:00Z",
+        "updated_at": "2026-09-18T00:00:00Z",
+    }
+    prior_encoded = base64.b64encode(json.dumps(prior_worker).encode()).decode()
+    prior_projection = {
+        **prior_request,
+        "body": "\n".join((lines[0], lines[1], f"Worker-Result-B64: {prior_encoded}")),
+    }
+    prior = _application_decision_comment(prior_projection, comment_id=600)
+    prior["created_at"] = (
+        "2026-09-18T01:30:00Z" if history == "ambiguous-order" else "2026-09-18T00:30:00Z"
+    )
+    prior["updated_at"] = prior["created_at"]
+    prior["issue_url"] = f"https://api.github.com/repos/{repository}/issues/138"
+    prior["body"] = cast(str, prior["body"]).replace(
+        hashlib.sha256(cast(str, prior_projection["body"]).encode()).hexdigest(),
+        hashlib.sha256(cast(str, prior_request["body"]).encode()).hexdigest(),
+    )
+    prior_digest = hashlib.sha256(cast(str, prior["body"]).encode()).hexdigest()
+    prior_obligation = bridge.NativeQualityObligation(
+        prior_saved,
+        branch,
+        producer,
+        "4" * 64,
+        cast(str, prior["created_at"]),
+        "main",
+        saved,
+        REVISION,
+    )
+    prior_verdict = bridge.NativeQualityAttempt(
+        57, 1, "PYTEST_STEP_FAILURE", 58, prior_saved, prior_saved, None
+    )
+    if history is not None and history != "missing":
+        worker["_native_development_predecessor"] = {
+            "request_comment_id": 554,
+            "accepted_decision_sha256": prior_digest,
+            "revision": prior_saved,
+            "branch": branch,
+            "workflow_blob": producer,
+            "obligation_id": prior_obligation.obligation_id,
+            "authorization_revision": REVISION,
+            "attempts": [asdict(prior_verdict)],
+        }
+    if history == "replay":
+        worker["_native_development_dispatch"] = asdict(prior_receipt)
     accepted_encoded = base64.b64encode(json.dumps(worker).encode()).decode()
     projected_request = {
         **request,
@@ -11568,7 +11651,7 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
         cast(str, accepted["created_at"]),
         "main",
         saved,
-        REVISION,
+        prior_saved if history is not None and history != "wrong-base" else REVISION,
     )
     dispatch = {
         **request,
@@ -11584,6 +11667,10 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
         "updated_at": "2026-09-18T02:05:00Z",
     }
     shard = [request, dispatch, *([own] if phase_a else [])]
+    accepted_comments = [accepted]
+    if history is not None:
+        shard.insert(0, prior_request)
+        accepted_comments.insert(0, prior)
     issue = {
         **_current_source_issue(),
         "body": f"Change: {change}",
@@ -11635,17 +11722,64 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
 
     def read(_repo: str, _token: str, path: str) -> object:
         if path.startswith("issues/138/comments?"):
-            return [accepted]
+            return accepted_comments
         if path.startswith("issues/142/comments?"):
             return shard
         if path.startswith("issues/comments?"):
-            return [*shard, accepted]
+            return [*shard, *accepted_comments]
         if path == "issues/138":
             return issue
         if path.startswith("issues/138/timeline?"):
             return []
         if path.startswith("issues/comments/"):
-            return next(item for item in [*shard, accepted] if path.endswith(f"/{item['id']}"))
+            return next(
+                item
+                for item in [*shard, *accepted_comments]
+                if path.endswith(f"/{item['id']}")
+            )
+        if path == "actions/runs/60/attempts/1/jobs":
+            return {
+                "total_count": 1,
+                "jobs": [
+                    {
+                        **planner,
+                        "id": 61,
+                        "run_id": 60,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "started_at": "2026-09-18T00:49:00Z",
+                        "completed_at": "2026-09-18T00:59:00Z",
+                        "steps": [
+                            {
+                                "name": "Plan exact correlated machine dispatch decision",
+                                "started_at": "2026-09-18T00:50:00Z",
+                            }
+                        ],
+                    }
+                ],
+            }
+        if path == "actions/runs/57/attempts/1":
+            return {
+                **run,
+                "id": 57,
+                "head_sha": prior_saved,
+                "head_branch": branch,
+                "event": "push",
+                "status": "completed",
+                "conclusion": "failure",
+            }
+        if path == "actions/jobs/58":
+            return {
+                **quality_job,
+                "id": 58,
+                "run_id": 57,
+                "head_sha": prior_saved,
+                "conclusion": "failure",
+                "started_at": "2026-09-18T00:35:00Z",
+                "completed_at": (
+                    "2026-09-18T00:51:00Z" if history == "late" else "2026-09-18T00:45:00Z"
+                ),
+            }
         if path == "actions/runs/77/attempts/1/jobs":
             return {"total_count": 1, "jobs": [planner]}
         if path in ("actions/runs/77", "actions/runs/77/attempts/1"):
@@ -11660,6 +11794,8 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
             return {"full_name": repository, "default_branch": "main"}
         if path == "git/ref/heads/main":
             return {"object": {"sha": REVISION}}
+        if path.startswith("contents/"):
+            return {"sha": producer}
         raise AssertionError(path)
 
     def observe(*_args: object, **_kwargs: object) -> bridge.NativeQualityObservation:
@@ -11688,15 +11824,31 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
     monkeypatch.setattr(
         bridge,
         "_accepted_application_state",
-        lambda **_kw: bridge.ApplicationCompletion(
-            "RESUMABLE", "verification-obligation-pending", 654, quality_obligation=obligation
+        lambda **kw: bridge.ApplicationCompletion(
+            "RESUMABLE",
+            "verification-obligation-pending",
+            kw["record"].request_comment_id,
+            quality_obligation=(
+                (None if history == "unknown-write" else prior_obligation)
+                if kw["record"].request_comment_id == 554
+                else obligation
+            ),
         ),
     )
     monkeypatch.setattr(bridge, "_complete_workflow_runs", lambda *_a, **_kw: (run,))
     monkeypatch.setattr(
         bridge,
         "qualify_development_dispatch_source",
-        lambda *_a, **_kw: original_receipt,
+        lambda *_a, **kw: (
+            prior_receipt
+            if kw["request_comment_id"] == 554 or history == "replay"
+            else original_receipt
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "read_native_quality_attempt",
+        lambda *_a, **_kw: prior_verdict,
     )
     monkeypatch.setattr(bridge, "plan_native_quality_verification", observe)
     completion = bridge.qualify_application_completion(
@@ -11714,5 +11866,5 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
     if expected == "COMPLETE":
         assert completion.quality_obligation is None
         assert completion.request_comment_id == 654
-    else:
+    elif expected == "RESUMABLE":
         assert completion.quality_obligation == obligation
