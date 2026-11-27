@@ -199,10 +199,15 @@ def semantic_intent_payload(raw_worker_result: str) -> str:
                 kind == GITHUB_MUTATION_KIND
                 and payload.get("operation") == "application-materialize"
             )
-            retirement = candidate_withdrawal_permitted(
-                decoded.get("role"), decoded.get("action"), decoded.get("result_kind")
-            ) and is_exact_pull_request_close(
-                kind, payload, issue_number=decoded.get("issue_number")
+            role = decoded.get("role")
+            action = decoded.get("action")
+            retirement = (
+                isinstance(role, str)
+                and isinstance(action, str)
+                and candidate_withdrawal_permitted(role, action, decoded.get("result_kind"))
+                and is_exact_pull_request_close(
+                    kind, payload, issue_number=decoded.get("issue_number")
+                )
             )
             checkpoint = (
                 kind == "issue-comment"
