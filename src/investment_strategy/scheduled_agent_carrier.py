@@ -310,17 +310,17 @@ def _qualified_jobs_page(
     return _QualifiedJobsPage(count, jobs, unique_ids) if len(unique_ids) == len(jobs) else None
 
 
-def github_complete_run_jobs(
+def github_complete_job_inventory(
     repository: str,
     token: str,
     *,
     run_id: int,
     run_attempt: int,
     read: Callable[[str, str, str], object],
-) -> QualifiedApplicationJobs | None:
-    """Read one exhaustive Actions job inventory, or admit no job evidence.
+) -> tuple[Mapping[str, object], ...] | None:
+    """Read one exhaustive Actions job inventory without dropping job evidence.
 
-    A short page cannot prove the absence of another `apply` job. Every page
+    A short page cannot prove the absence of another job. Every page
     must carry the same authoritative total_count. An attempt-specific endpoint
     binds the job inventory to the exact attempt even when GitHub omits the
     optional per-job run_attempt; IDs must be unique across pages.
@@ -356,7 +356,7 @@ def github_complete_run_jobs(
         seen_ids.update(qualified.ids)
         jobs.extend(qualified.jobs)
         if len(jobs) == total:
-            return _application_jobs_contract(tuple(jobs))
+            return tuple(jobs)
         if page == 0:
             # The default 30-item response was incomplete. Restart from an
             # explicit 100-item first page, never treating it as page 1 of a
@@ -368,6 +368,22 @@ def github_complete_run_jobs(
         if len(qualified.jobs) != 100:
             return None
         page += 1
+
+
+def github_complete_run_jobs(
+    repository: str,
+    token: str,
+    *,
+    run_id: int,
+    run_attempt: int,
+    read: Callable[[str, str, str], object],
+) -> QualifiedApplicationJobs | None:
+    """Project the complete attempt inventory onto the existing Application contract."""
+
+    jobs = github_complete_job_inventory(
+        repository, token, run_id=run_id, run_attempt=run_attempt, read=read
+    )
+    return None if jobs is None else _application_jobs_contract(jobs)
 
 
 def github_run_artifact_inventory(
