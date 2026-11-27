@@ -615,7 +615,7 @@ The workflow MUST NOT require a dedicated commit for each individual checkbox. N
 
 If execution is interrupted during the current incomplete or unverified slice, that slice's markers MAY remain unpersisted; recovery SHALL reconstruct actual code, test, and task state, while markers from previously verified slices remain durable.
 
-#### Scenario: Verified slice persists satisfied task markers
+#### Scenario: Verified slice reaches its implementation checkpoint
 
 - GIVEN Executor has completed a vertical slice through its required `VERIFY`
 - AND the slice's task completion criteria are satisfied
@@ -669,7 +669,7 @@ RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary au
 - AND no additional implementation-progress Issue comment is required solely for those mutations
 - AND saved work is not verification or formal completion
 
-#### Scenario: Task markers persisted but formal delivery was interrupted
+#### Scenario: Task markers persisted but checkpoint write was interrupted
 
 - GIVEN a prior Executor run durably saved authorized satisfied markers
 - BUT formal publication was not completed
@@ -708,7 +708,7 @@ Free-form RED/GREEN/refactor/test-trigger/compatibility-correction progress, Lea
 
 When the canonical template contract is active and a canonical typed message directly represents a lifecycle-journal boundary, that typed message SHALL satisfy the one required journal record for that boundary and MUST NOT require an additional duplicate generic `LIFECYCLE_JOURNAL` or recursive meta-comment. `EXECUTION_EXCEPTION` is not automatically a lifecycle boundary and MUST NOT be treated as an action result or handoff solely because the exception evidence exists.
 
-#### Scenario: Historical checkpoint messages remain evidence after activation
+#### Scenario: Verified Slice uses the shared checkpoint template after activation
 
 - GIVEN the canonical message contract is authoritative from the default branch
 - AND an existing historical accepted checkpoint effect requires qualification or an optional bounded report uses the existing template
