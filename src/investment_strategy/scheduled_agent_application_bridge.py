@@ -8657,6 +8657,9 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     )
     if len(materializations) > 1:
         raise RuntimeError("EFFECT_REQUEST contains ambiguous materialization effects")
+    physical_only = _implementation_development_save(
+        parse_effect_batch(application_worker_result, plan.source, authorized_change=plan.change)
+    )
     materialization = None if not materializations else materializations[0]
     parsed_materialization = None
     first_activation = False
@@ -8677,10 +8680,8 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             parsed_materialization, plan.source
         )
 
-    # Post-ACCEPT Executor slices have already passed candidate verification,
-    # but their checkpoint is a distinct non-idempotent, revision-bound effect.
-    # First construct the exact carrier without comments or routing; only a
-    # later fresh proof of its actual head may bind and persist the checkpoint.
+    # Re-observe the accepted carrier for both physical saves and historical
+    # completion bundles. Only the latter can carry a formal result obligation.
     defer_accepted_checkpoint = False
     historical_formal_only = False
     if (
@@ -8690,15 +8691,17 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         and materialization is not None
         and not requires_validation
     ):
-        committed_result = _qualified_committed_implementation_result(
-            repository=repository,
-            token=token,
-            source=plan.source,
-            worker_result=worker_result,
-            change=effective_change,
-            current_revision=args.revision,
-            request_comment_id=plan.request_comment_id,
-        )
+        committed_result = None
+        if not physical_only:
+            committed_result = _qualified_committed_implementation_result(
+                repository=repository,
+                token=token,
+                source=plan.source,
+                worker_result=worker_result,
+                change=effective_change,
+                current_revision=args.revision,
+                request_comment_id=plan.request_comment_id,
+            )
         checkpoint_proof = prove_materialization(
             materialization,
             plan.source,
@@ -8747,7 +8750,8 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 _write_validation_outputs(None)
                 return 0
         elif (
-            continuation is not None
+            not physical_only
+            and continuation is not None
             and checkpoint_proof.historical_witness is not None
             and consequence_spec_for(
                 plan.source.action, worker_result.typed_result.result.kind
@@ -8756,7 +8760,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         ):
             historical_formal_only = True
         elif checkpoint_proof.disposition == "INCOMPLETE" and committed_result is None:
-            defer_accepted_checkpoint = True
+            defer_accepted_checkpoint = not physical_only
         else:
             raise RuntimeError(
                 checkpoint_proof.reason
@@ -8829,7 +8833,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         raise RuntimeError("EFFECT_REQUEST validation completion has no materialization")
 
     checkpoint_already_durable = False
-    if target is not None:
+    if target is not None and not physical_only:
         if (
             accepted_intent is not None
             and plan.source.role == "executor"
@@ -9088,7 +9092,8 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             token=token,
             current_revision=args.revision,
             apply_derived=(
-                not activation_validated
+                not physical_only
+                and not activation_validated
                 and (not requires_validation or args.validation_passed)
                 and not defer_accepted_checkpoint
             ),
