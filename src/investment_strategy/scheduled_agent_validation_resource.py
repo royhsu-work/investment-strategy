@@ -960,6 +960,115 @@ def _blob_text(repository: str, token: str, blob_sha: str) -> str:
         raise RuntimeError("work-product blob is not valid UTF-8") from exc
 
 
+_NATIVE_QUALITY_SETUP_STEPS = (
+    "Set up job",
+    "Run actions/checkout@v4",
+    "Prove exact quality checkout",
+    "Run astral-sh/setup-uv@v6",
+    "Run actions/setup-python@v5",
+)
+_NATIVE_QUALITY_STEPS = ("Ruff lint", "Ruff format check", "Mypy", "Run tests")
+_NATIVE_QUALITY_CHECKOUT_LOG = "##[group]Run actual_sha=$(git rev-parse HEAD)"
+_NATIVE_QUALITY_SETUP_LOG = "##[group]Run astral-sh/setup-uv@v6"
+_ACTIONS_LOG_TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT\S+Z ")
+
+
+def qualify_native_quality_job(
+    job: Mapping[str, object],
+    log: str,
+    *,
+    repository: str,
+    revision: str,
+    definition_sha: str,
+    run_id: int,
+    run_attempt: int,
+    job_id: int,
+    job_name: str,
+) -> Literal["PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"] | None:
+    """Interpret one exact job from a qualified producer and attempt.
+
+    The caller must bind the job and complete job log to the native attempt
+    inventory and independently qualify the producer. A pytest step failure
+    supplies no claim about an intended assertion or a test-only revision.
+    """
+    identity = {"id": job_id, "run_id": run_id, "run_attempt": run_attempt}
+    if (
+        not repository
+        or not job_name
+        or not _valid_sha(revision)
+        or not _valid_sha(definition_sha)
+        or any(
+            type(expected) is not int
+            or expected <= 0
+            or type(job.get(field)) is not int
+            or job.get(field) != expected
+            for field, expected in identity.items()
+        )
+        or job.get("name") != job_name
+        or job.get("status") != "completed"
+        or job.get("conclusion") not in ("success", "failure")
+    ):
+        return None
+
+    required = _NATIVE_QUALITY_SETUP_STEPS + _NATIVE_QUALITY_STEPS
+    raw_steps = job.get("steps")
+    if not isinstance(raw_steps, list):
+        return None
+    steps: list[Mapping[str, object]] = []
+    for raw in raw_steps:
+        step = _as_mapping(raw)
+        if step is None:
+            return None
+        if step.get("name") in required:
+            steps.append(step)
+    if tuple(step["name"] for step in steps) != required:
+        return None
+    numbers: list[int] = []
+    for step in steps:
+        number = step.get("number")
+        if type(number) is not int or number <= 0 or step.get("status") != "completed":
+            return None
+        numbers.append(number)
+    if numbers != sorted(set(numbers)):
+        return None
+    setup_count = len(_NATIVE_QUALITY_SETUP_STEPS)
+    if any(step.get("conclusion") != "success" for step in steps[:setup_count]):
+        return None
+
+    # Only consume the witness emitted between the checkout proof's command
+    # group and the first tooling setup. Later candidate output cannot supply it.
+    lines = [_ACTIONS_LOG_TIMESTAMP.sub("", line) for line in log.splitlines()]
+    if (
+        lines.count(_NATIVE_QUALITY_CHECKOUT_LOG) != 1
+        or lines.count(_NATIVE_QUALITY_SETUP_LOG) != 1
+    ):
+        return None
+    start = lines.index(_NATIVE_QUALITY_CHECKOUT_LOG)
+    end = lines.index(_NATIVE_QUALITY_SETUP_LOG)
+    receipt = [
+        "##[endgroup]",
+        f"quality_repository={repository}",
+        f"quality_target_sha={revision}",
+        f"quality_checkout_sha={revision}",
+        f"quality_definition_sha={definition_sha}",
+        f"quality_run_id={run_id}",
+        f"quality_run_attempt={run_attempt}",
+    ]
+    if end - len(receipt) <= start or lines[end - len(receipt) : end] != receipt:
+        return None
+
+    outcomes = tuple(step.get("conclusion") for step in steps[setup_count:])
+    if job["conclusion"] == "success":
+        return "PASS" if outcomes == ("success",) * len(outcomes) else None
+    if "failure" not in outcomes:
+        return None
+    failed = outcomes.index("failure")
+    skipped = ("skipped",) * (len(outcomes) - failed - 1)
+    if outcomes != ("success",) * failed + ("failure",) + skipped:
+        return None
+    return "PYTEST_STEP_FAILURE" if failed == len(outcomes) - 1 else "STATIC_STEP_FAILURE"
+
+
 _IMPLEMENTATION_VERIFICATION_COMMANDS: tuple[tuple[str, ...], ...] = (
     ("uv", "run", "pytest"),
     ("uv", "run", "ruff", "check", "."),
