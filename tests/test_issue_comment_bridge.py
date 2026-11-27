@@ -11831,6 +11831,7 @@ def _assert_saved_development_frontier(
             True,
         ),
     )
+
     def observe_accepted(**kw: object) -> bridge.ApplicationCompletion:
         record = kw["record"]
         assert isinstance(record, bridge.ApplicationDecisionRecord)
