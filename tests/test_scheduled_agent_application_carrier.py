@@ -14,6 +14,7 @@ import pytest
 
 from investment_strategy import scheduled_agent_application_carrier as carrier
 from investment_strategy import scheduled_agent_effects as effects
+from investment_strategy.scheduled_agent_carrier import CarrierRequired
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
 REPOSITORY = "royhsu-work/investment-strategy"
@@ -531,7 +532,6 @@ def test_lead_retirement_guard_uses_real_code_only_implementation_qualification(
         authorized_change=CHANGE,
         current_revision=MAIN,
         expected_result_kind="ready",
-        accepted_intent=True,
     )
     monkeypatch.setattr(
         adapter, "_authorized_issue_observation", lambda: SimpleNamespace(change=CHANGE)
@@ -909,6 +909,151 @@ def _replace_accepted_source(
         lines.append(f"{field}: {replacements[field]}" if field in replacements else line)
     request_comment["body"] = request_body
     decision_comment["body"] = "\n".join(lines)
+
+
+@pytest.mark.parametrize(
+    ("result_kind", "successor"),
+    [("ready", "Executor / implement-change"), ("research-required", "Lead / explore-change")],
+)
+@pytest.mark.parametrize(
+    ("acceptance", "qualified"),
+    [("accepted", True), ("absent", False), ("wrong-request", False), ("duplicate", False)],
+)
+def test_exact_accepted_withdrawal_recovers_without_formal_or_close_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    result_kind: str,
+    successor: str,
+    acceptance: str,
+    qualified: bool,
+) -> None:
+    """A new adapter reconciles the exact accepted close before any formal result."""
+
+    current = _continuation_pr(branch=f"agent/{CHANGE}")
+    formal, requests = _accepted_lead_retirement_comments(
+        HEAD,
+        result_kind=result_kind,
+        successor=successor,
+        minimal_raw_ingress=True,
+    )
+    comments: list[dict[str, object]] = []
+    open_prs = [current]
+    closed_prs: list[dict[str, object]] = []
+    observed: list[tuple[str, str]] = []
+    fake = _fake_github(
+        current_pr=current,
+        historical_pr=None,
+        merged_continuations=closed_prs,
+        open_prs=open_prs,
+        pr_files=[{"filename": f"openspec/changes/{CHANGE}/proposal.md"}],
+        formal_comments=comments,
+        request_comments=requests,
+    )
+
+    def read(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        assert repository == REPOSITORY
+        assert token == TEST_VALUE
+        assert method == "GET"
+        assert payload is None
+        observed.append((method, api_path))
+        if api_path == "issues/229":
+            return {
+                "number": 229,
+                "state": "open",
+                "body": f"Change: {CHANGE}\n",
+                "labels": [{"name": "action:resolve-question"}],
+                "created_at": "2026-09-01T00:00:00Z",
+                "closed_at": None,
+            }
+        return fake(repository, token, api_path, allow_not_found=allow_not_found)
+
+    monkeypatch.setattr(effects, "_github_json", read)
+
+    def fresh_adapter(
+        *, accepted: bool = False, request_comment_id: int = 1060
+    ) -> effects.GitHubEffectAdapter:
+        return effects.GitHubEffectAdapter(
+            REPOSITORY,
+            TEST_VALUE,
+            WorkerRequest(229, "lead", "resolve-question"),
+            authorized_change=CHANGE,
+            current_revision=MAIN,
+            expected_result_kind=result_kind,
+            request_comment_id=request_comment_id,
+            authorization_revision=MAIN,
+            accepted_intent=accepted,
+        )
+
+    close = effects.StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 229,
+                "operation": "pull-request-update",
+                "number": 236,
+                "expected_head_sha": HEAD,
+                "fields": {"state": "closed"},
+            }
+        ),
+    )
+    assert fresh_adapter().guard(close)
+    plan = fresh_adapter().carrier_plan_if_required(close)
+    assert plan is not None
+    assert plan.operation == "pull-request-update"
+    assert plan.target == {"pull_request_number": 236}
+    assert plan.requested == {"fields": {"state": "closed"}, "expected_head_sha": HEAD}
+    assert plan.expected_postcondition == {
+        "pr": 236,
+        "head_sha": HEAD,
+        "fields": {"state": "closed"},
+    }
+    with pytest.raises(CarrierRequired):
+        fresh_adapter().apply(close)
+
+    # The physical close survived, while its response and formal result did not.
+    current.update(state="closed", closed_at="2026-11-03T03:00:00Z")
+    open_prs.clear()
+    closed_prs.append(current)
+    if acceptance != "absent":
+        comments.append(formal[0])
+    if acceptance == "duplicate":
+        comments.append({**formal[0], "id": 1161})
+    request_id = 1061 if acceptance == "wrong-request" else 1060
+    assert not fresh_adapter().guard(close)
+
+    for _ in range(2):
+        assert fresh_adapter(accepted=True, request_comment_id=request_id).guard(close) is qualified
+        if not qualified:
+            assert not fresh_adapter(
+                accepted=True, request_comment_id=request_id
+            ).observe_postcondition(close)
+            continue
+        assert (
+            fresh_adapter(accepted=True, request_comment_id=request_id).carrier_plan_if_required(
+                close
+            )
+            is None
+        )
+        fresh_adapter(accepted=True, request_comment_id=request_id).apply(close)
+        assert fresh_adapter(
+            accepted=True, request_comment_id=request_id
+        ).observe_postcondition(close)
+
+    assert observed and all(method == "GET" for method, _path in observed)
+    if qualified:
+        # Neither an accepted flag nor the old close forgives a changed target.
+        cast(dict[str, object], current["head"])["sha"] = "5" * 40
+        assert not fresh_adapter(accepted=True).guard(close)
+        cast(dict[str, object], current["head"])["sha"] = HEAD
+        current.update(merged=True, merged_at="2026-11-03T03:01:00Z")
+        assert not fresh_adapter(accepted=True).guard(close)
 
 
 @pytest.mark.parametrize("wrong_fields", [False, True])
