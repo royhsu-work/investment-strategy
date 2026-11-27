@@ -13,7 +13,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, cast
@@ -227,6 +227,8 @@ class ApplicationCompletion:
     accepted_record: ApplicationDecisionRecord | None = None
     accepted_decision_sha256: str | None = None
     quality_obligation: NativeQualityObligation | None = None
+    quality_observation: NativeQualityObservation | None = None
+    settled_quality_obligation: NativeQualityObligation | None = None
 
 
 # The canonical proof owns permission. This Bridge-only table preserves the
@@ -2882,6 +2884,49 @@ def qualify_failed_native_quality_audit(
         return False
 
 
+def _quality_verdicts_precede(
+    repository: str,
+    token: str,
+    *,
+    attempts: tuple[NativeQualityAttempt, ...],
+    boundary: datetime,
+    accepted_at: str,
+    read: GitHubReader,
+) -> bool:
+    """Qualify the actual job event, not a later observation of its verdict."""
+    accepted = _quality_time(accepted_at)
+    if accepted is None or accepted >= boundary:
+        return False
+    for attempt in attempts:
+        if attempt.outcome not in ("PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"):
+            continue
+        if attempt.job_id is None:
+            return False
+        job = read(repository, token, f"actions/jobs/{attempt.job_id}")
+        if not isinstance(job, Mapping):
+            return False
+        started = _quality_time(job.get("started_at"))
+        completed = _quality_time(job.get("completed_at"))
+        expected_head = (
+            attempt.checkout_revision
+            if attempt.source_comment_id is None
+            else attempt.definition_revision
+        )
+        if (
+            job.get("id") != attempt.job_id
+            or job.get("run_id") != attempt.run_id
+            or job.get("run_attempt") != attempt.run_attempt
+            or job.get("head_sha") != expected_head
+            or job.get("status") != "completed"
+            or job.get("conclusion") != ("success" if attempt.outcome == "PASS" else "failure")
+            or started is None
+            or completed is None
+            or not accepted < started <= completed < boundary
+        ):
+            return False
+    return True
+
+
 def plan_native_quality_verification(
     repository: str,
     token: str,
@@ -2899,6 +2944,7 @@ def plan_native_quality_verification(
     read: GitHubReader = _github_json,
     log_read: Callable[[str, str, int], str] = _github_job_log,
     observe_only: bool = False,
+    verdict_before: datetime | None = None,
 ) -> NativeQualityObservation:
     """Observe both native producers before admitting one read-only local call.
 
@@ -3060,6 +3106,15 @@ def plan_native_quality_verification(
             snapshot() != first
             or ordinary_history(target_blob) != ordinary
             or not main_is_current()
+        ):
+            return unknown
+        if verdict_before is not None and not _quality_verdicts_precede(
+            repository,
+            token,
+            attempts=(*ordinary, *called),
+            boundary=verdict_before,
+            accepted_at=accepted_at,
+            read=read,
         ):
             return unknown
         if target_blob == workflow_blob:
@@ -6157,6 +6212,148 @@ def _application_continuation_body(
     return body
 
 
+def _current_development_completion(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    record: ApplicationDecisionRecord,
+    completion: ApplicationCompletion,
+    current_revision: str,
+    dispatch_request_id: int | None,
+    phase_a: bool,
+    read: GitHubReader,
+) -> ApplicationCompletion:
+    """Re-observe a saved W's own verdict at the shared authorization boundary."""
+    obligation = completion.quality_obligation
+    if (
+        obligation is None
+        or obligation.carrier_revision != obligation.revision
+        or dispatch_request_id is None
+    ):
+        return completion
+    unknown = replace(completion, quality_observation=NativeQualityObservation("INDETERMINATE"))
+    try:
+        decoded = json.loads(record.raw_worker_result)
+        original_source = qualify_development_dispatch_source(
+            repository,
+            token,
+            source=source,
+            request_comment_id=record.request_comment_id,
+            current_revision=record.authorization_revision,
+            default_branch=obligation.default_branch,
+            read=read,
+        )
+        if (
+            original_source is None
+            or not isinstance(decoded, Mapping)
+            or decoded.get("_native_development_dispatch") != asdict(original_source)
+            or original_source.dispatch_request_comment_id == dispatch_request_id
+        ):
+            return replace(
+                unknown,
+                state="INVALID",
+                reason="application-completion-development-source-invalid",
+            )
+        runs = _complete_workflow_runs(
+            repository, token, _DISPATCH_WORKFLOW, read=read, require_count=True
+        )
+        if runs is None:
+            return unknown
+        matching = [
+            run
+            for run in runs
+            if run.get("display_title") == render_dispatch_run_name(dispatch_request_id)
+        ]
+        if len(matching) != 1:
+            return unknown
+        run = matching[0]
+        row = _quality_bridge_run(run, repository, obligation.default_branch, dispatch_request_id)
+        if row is None or row[2] != current_revision:
+            return unknown
+        run_id, attempt, _, status, conclusion = row
+        if phase_a:
+            if (status, conclusion) != ("completed", "success"):
+                return unknown
+        elif status not in _QUALITY_ACTIVE or conclusion is not None:
+            return unknown
+        jobs = github_complete_job_inventory(
+            repository, token, run_id=run_id, run_attempt=attempt, read=read
+        )
+        if jobs is None:
+            return unknown
+        planners = [job for job in jobs if job.get("name") == "bridge"]
+        if len(planners) != 1:
+            return unknown
+        planner = planners[0]
+        steps = planner.get("steps")
+        if (
+            planner.get("run_id") != run_id
+            or planner.get("run_attempt") != attempt
+            or planner.get("head_sha") != current_revision
+            or not isinstance(steps, list)
+        ):
+            return unknown
+        planning = [
+            step
+            for step in steps
+            if isinstance(step, Mapping)
+            and step.get("name") == "Plan exact correlated machine dispatch decision"
+        ]
+        if len(planning) != 1:
+            return unknown
+        boundary = _quality_time(planning[0].get("started_at"))
+        started = _quality_time(planner.get("started_at"))
+        if boundary is None or started is None or boundary < started:
+            return unknown
+        observation = plan_native_quality_verification(
+            repository,
+            token,
+            revision=obligation.revision,
+            branch=obligation.branch,
+            workflow_blob=obligation.workflow_blob,
+            obligation_id=obligation.obligation_id,
+            accepted_at=obligation.accepted_at,
+            current_revision=current_revision,
+            default_branch=obligation.default_branch,
+            request_comment_id=dispatch_request_id,
+            run_id=run_id,
+            run_attempt=attempt,
+            read=read,
+            observe_only=phase_a,
+            verdict_before=boundary,
+        )
+        if observation.outcome not in ("PASS", "FAIL", "CONFLICT"):
+            return replace(completion, quality_observation=observation)
+        if (
+            observation.attempts is None
+            or not any(
+                item.checkout_revision == obligation.revision
+                and item.outcome in ("PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE")
+                for item in observation.attempts
+            )
+            or not _quality_verdicts_precede(
+                repository,
+                token,
+                attempts=observation.attempts,
+                boundary=boundary,
+                accepted_at=obligation.accepted_at,
+                read=read,
+            )
+        ):
+            return unknown
+        return replace(
+            completion,
+            state="COMPLETE",
+            reason="application-completion-development-verdict-settled",
+            quality_obligation=None,
+            quality_observation=observation,
+            settled_quality_obligation=obligation,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return unknown
+
+
 def _application_correlation_fields(correlation: str) -> tuple[str, ...] | None:
     fields = tuple(correlation.split(":"))
     return fields if len(fields) == 8 and fields[0] == "application" else None
@@ -6823,7 +7020,18 @@ def qualify_application_completion(
     # edited or deleted after ACCEPT, do not parse its new text and do not
     # replay worker semantics; the exact accepted record remains the only
     # resumable payload.
-    return accepted_state(record, source)
+    completion = accepted_state(record, source)
+    return _current_development_completion(
+        repository,
+        token,
+        source=source,
+        record=record,
+        completion=completion,
+        current_revision=current_revision,
+        dispatch_request_id=current_dispatch_request_comment_id,
+        phase_a=phase_a_request_comment_id is not None,
+        read=read,
+    )
 
 
 def render_dispatch_result_document(
@@ -7584,7 +7792,8 @@ def main() -> int:
         continuation_body = None
         quality_call = None
         if (
-            completion.quality_obligation is not None
+            completion.state == "RESUMABLE"
+            and completion.quality_obligation is not None
             and completion.quality_obligation.carrier_revision
             == completion.quality_obligation.revision
         ):
@@ -7604,23 +7813,30 @@ def main() -> int:
                 and run_id is not None
                 and run_attempt is not None
             ):
-                observation = plan_native_quality_verification(
-                    repository,
-                    token,
-                    revision=obligation.revision,
-                    branch=obligation.branch,
-                    workflow_blob=obligation.workflow_blob,
-                    obligation_id=obligation.obligation_id,
-                    accepted_at=obligation.accepted_at,
-                    current_revision=args.revision,
-                    default_branch=obligation.default_branch,
-                    request_comment_id=identity[1],
-                    run_id=run_id,
-                    run_attempt=run_attempt,
-                    read=_github_json,
-                    log_read=_github_job_log,
-                )
-                if observation.outcome == "NO_VERDICT":
+                observation = completion.quality_observation
+                if observation is None:
+                    observation = plan_native_quality_verification(
+                        repository,
+                        token,
+                        revision=obligation.revision,
+                        branch=obligation.branch,
+                        workflow_blob=obligation.workflow_blob,
+                        obligation_id=obligation.obligation_id,
+                        accepted_at=obligation.accepted_at,
+                        current_revision=args.revision,
+                        default_branch=obligation.default_branch,
+                        request_comment_id=identity[1],
+                        run_id=run_id,
+                        run_attempt=run_attempt,
+                        read=_github_json,
+                        log_read=_github_job_log,
+                    )
+                if (
+                    observation.outcome == "NO_VERDICT"
+                    and observation.call is not None
+                    and observation.call.get("quality_run_id") == str(run_id)
+                    and observation.call.get("quality_run_attempt") == str(run_attempt)
+                ):
                     quality_call = observation.call
         elif completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
             if (
