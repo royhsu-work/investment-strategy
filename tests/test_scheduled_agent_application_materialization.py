@@ -5314,6 +5314,162 @@ def test_actual_implementation_constructor_is_proved_by_fresh_consumers(
     assert proof_git.mutations == before
 
 
+def test_development_save_uses_actual_ingress_application_and_git_carrier(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A saved RED candidate is observable without formal delivery or CI."""
+    import investment_strategy.scheduled_agent_application_carrier as carrier
+    import investment_strategy.scheduled_agent_effects as effects
+    import investment_strategy.scheduled_agent_merge_acceptance as acceptance
+    from investment_strategy.scheduled_agent_runtime import (
+        GitHubIssueObservation,
+        acquire_dispatch_preflight,
+    )
+
+    proof_git.source = WorkerRequest(322, "executor", "implement-change")
+    proof_git.routing = proof_git.source.action
+    proof_git.path = "tests/test_partial_work.py"
+    tasks_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    proof_git.base = proof_git.commit(
+        {proof_git.path: "def test_work():\n    assert True\n", tasks_path: "- [ ] 1.1 Work\n"},
+        "Approved work",
+        (proof_git.base,),
+    )
+    proof_git.main = proof_git.authorization = proof_git.base
+    proof_git.set_head(proof_git.base)
+    proof_git.desired = proof_git.blob("def test_work():\n    assert False\n")
+    proof_git.allow_writes = True
+    payload = proof_git.payload()
+    worker = {
+        "issue_number": 322,
+        "role": "executor",
+        "action": "implement-change",
+        "change": _CHANGE,
+        "result_kind": "more-implementation-required",
+        "evidence_ref": "test-only-candidate",
+        "result_content": "Save partial test work",
+        "requested_effects": [{"kind": "github-mutation", "payload_json": json.dumps(payload)}],
+    }
+    comments: list[dict[str, object]] = []
+
+    def read(repository: str, token: str, path: str, **kwargs: object) -> object:
+        if path.startswith("issues/322/comments?"):
+            return list(comments)
+        if path == "issues/322/comments":
+            assert kwargs.get("method") == "POST"
+            body = cast(dict[str, object], kwargs["payload"])["body"]
+            assert isinstance(body, str) and body.startswith("APPLICATION_DECISION\n")
+            comment = {
+                "id": 1001,
+                "body": body,
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+            }
+            comments.append(comment)
+            return comment
+        if path == "issues/comments/1001":
+            return comments[0]
+        return proof_git.api(repository, token, path, **kwargs)
+
+    monkeypatch.setattr(carrier, "_github_json", read)
+    monkeypatch.setattr(effects, "_github_json", read)
+    monkeypatch.setattr(application_bridge, "_github_json", read)
+    preflight = acquire_dispatch_preflight(
+        observations=(
+            GitHubIssueObservation(
+                issue_number=322,
+                change=_CHANGE,
+                routing=("executor", "implement-change"),
+                state="open",
+                created_order=1,
+                authoritative=True,
+            ),
+        ),
+        source_total_count=1,
+        incomplete_results=False,
+        exhausted=True,
+    )
+    monkeypatch.setattr(acceptance, "acquire_current_github_preflight", lambda *_: preflight)
+    body = "WORKER_RESULT\n" + json.dumps(worker) + "\n"
+    request = application_bridge.canonicalize_raw_worker_result(
+        body=body,
+        source=proof_git.source,
+        authorized_change=_CHANGE,
+        repository=proof_git.repository,
+        current_revision=proof_git.main,
+    )
+    projected = application_bridge._fresh_application_worker_result(
+        request.raw_worker_result,
+        source=proof_git.source,
+        change=_CHANGE,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        request_comment_id=901,
+    )
+    with pytest.raises(CarrierRequired) as raised:
+        acceptance.run_guarded_effect_application(
+            projected,
+            source=proof_git.source,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            request_comment_id=901,
+            application_request_body=body,
+            authorization_revision=proof_git.main,
+            authorized_change=_CHANGE,
+        )
+
+    plan = raised.value.plan
+    assert plan.force is False
+    assert plan.expected["ref_sha"] == proof_git.base
+    assert plan.requested["commit_parents"] == [proof_git.base]
+    assert len(comments) == 1
+    record = effects.parse_application_decision(comments[0]["body"])
+    assert record is not None and record.disposition == "ACCEPTED"
+    assert record.request_comment_id == 901
+    assert record.request_body_sha256 == hashlib.sha256(body.encode()).hexdigest()
+    saved = cast(str, plan.requested["sha"])
+    proof_git.set_head(saved)
+    assert proof_git.entries(saved)[proof_git.path]["sha"] == proof_git.desired
+    assert proof_git.entries(saved)[tasks_path] == proof_git.entries(proof_git.base)[tasks_path]
+    written = list(proof_git.mutations)
+    batch, resumed = acceptance.run_guarded_effect_application(
+        record.raw_worker_result,
+        source=proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        authorized_change=_CHANGE,
+        authorization_revision=record.authorization_revision,
+        accepted_intent=True,
+        reconcile_only=True,
+        uncertain_effect_index=0,
+    )
+    assert resumed.applied, resumed
+    assert len(batch.effects) == 1
+    assert proof_git.mutations == written
+    assert len(comments) == 1
+    assert proof_git.routing == "implement-change"
+    proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert proof.disposition == "COMPLETE", proof
+    assert proof.witness is not None and proof.witness.revision == saved
+
+    # A later qualified same-path Git correction must not erase the original W.
+    # Its authorization/CI settlement is tested at the separate frontier slice.
+    corrected = proof_git.commit(
+        {proof_git.path: "def test_work():\n    assert True\n"}, "Correct saved work", (saved,)
+    )
+    proof_git.set_head(corrected)
+    evolved = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert evolved.disposition == "COMPLETE", evolved
+    assert evolved.witness is not None and evolved.witness.revision == saved
+    assert evolved.target is not None and evolved.target.revision == corrected
+    assert proof_git.mutations == written
+
+
 def test_workflow_file_implementation_delegates_git_objects_to_existing_carrier(
     proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
