@@ -486,6 +486,11 @@ def test_native_quality_history_preserves_every_exact_attempt(
     ("case", "expected", "will_call"),
     [
         ("empty", "NO_VERDICT", True),
+        ("observe-pass", "PASS", False),
+        ("observe-fail", "FAIL", False),
+        ("observe-empty", "NO_VERDICT", False),
+        ("observe-active", "INDETERMINATE", False),
+        ("observe-failed-dispatch", "INDETERMINATE", False),
         ("missing-run", "INDETERMINATE", False),
         ("deleted-source", "INDETERMINATE", False),
         ("edited-source", "INDETERMINATE", False),
@@ -524,7 +529,7 @@ def test_native_quality_obligation_plans_only_after_complete_caller_history(
     accepted_at = "2026-09-03T03:30:00Z"
     definition = REVISION
     api = f"https://api.github.com/repos/{repository}"
-    prior = case not in {"empty", "foreign-current", "stale-main", "wrong-source"}
+    prior = case not in {"empty", "observe-empty", "foreign-current", "stale-main", "wrong-source"}
     latest = 2 if case in {"rerun-conflict", "rerun-cancelled"} else 1
     run_reads = 0
     names = (
@@ -562,7 +567,7 @@ def test_native_quality_obligation_plans_only_after_complete_caller_history(
 
     def conclusion(attempt: int) -> str:
         if (
-            case in {"pytest", "static"}
+            case in {"pytest", "static", "observe-fail"}
             or case.startswith("setup-")
             or (case == "rerun-conflict" and attempt == 1)
         ):
@@ -573,7 +578,11 @@ def test_native_quality_obligation_plans_only_after_complete_caller_history(
 
     def run(run_id: int, attempt: int) -> dict[str, object]:
         source = 901 if run_id == 77 else 900
-        active = run_id == 77 or case == "active"
+        active = (run_id == 77 and not case.startswith("observe-")) or case == "active"
+        active = active or (run_id == 77 and case == "observe-active")
+        result = "failure" if run_id == 77 and case == "observe-failed-dispatch" else conclusion(attempt)
+        if run_id == 77 and case == "observe-fail":
+            result = "success"
         return {
             "id": run_id,
             "run_attempt": attempt,
@@ -588,7 +597,7 @@ def test_native_quality_obligation_plans_only_after_complete_caller_history(
             },
             "created_at": comment(source)["created_at"],
             "status": "in_progress" if active else "completed",
-            "conclusion": None if active else conclusion(attempt),
+            "conclusion": None if active else result,
         }
 
     def correlation(source: int, run_id: int, attempt: int) -> str:
@@ -749,6 +758,7 @@ def test_native_quality_obligation_plans_only_after_complete_caller_history(
         run_attempt=1,
         read=read,
         log_read=log_read,
+        **({"observe_only": True} if case.startswith("observe-") else {}),
     )
     assert result.outcome == expected
     assert result.call == (call(901, 77, 1) if will_call else None)
