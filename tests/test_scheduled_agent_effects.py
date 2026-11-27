@@ -1129,6 +1129,46 @@ def _implementation_checkpoint_effects(
     ]
 
 
+def test_partial_implementation_save_does_not_publish_completion() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    payload = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": _REVISION,
+        "message": "save test-only candidate",
+        "files": [
+            {
+                "path": "tests/test_scheduled_agent_effects.py",
+                "blob_sha": "b" * 40,
+                "expected_sha": "c" * 40,
+            }
+        ],
+        "pr_number": 178,
+    }
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=[{"kind": "github-mutation", "payload_json": json.dumps(payload)}],
+        ),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda effect: supported_effect_guard(source, effect),
+        apply_effect=applied.append,
+        observe_postcondition=lambda effect: effect in applied,
+        current_revision=_REVISION,
+    )
+
+    assert result.applied, result.reason
+    assert applied == list(batch.effects)
+
+
 @pytest.mark.parametrize(
     "result_kind,requested_effects",
     (
