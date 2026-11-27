@@ -196,6 +196,8 @@ class NativeQualityObligation:
     obligation_id: str
     accepted_at: str
     default_branch: str
+    carrier_revision: str
+    carrier_base: str
 
 
 @dataclass(frozen=True)
@@ -3455,7 +3457,6 @@ def _saved_development_quality_obligation(
         or target.repository != repository
         or target.change != record.change
         or target.branch is None
-        or target.revision != witness.revision
     ):
         return None
     blob = _quality_workflow_blob(repository, token, current_revision, read=read)
@@ -3481,6 +3482,8 @@ def _saved_development_quality_obligation(
         hashlib.sha256(identity.encode()).hexdigest(),
         accepted_at,
         default_branch,
+        target.revision,
+        witness.revisions.carrier_base,
     )
 
 
@@ -3578,7 +3581,11 @@ def _application_job(
                 if obligation is not None:
                     return ApplicationCompletion(
                         "RESUMABLE",
-                        "verification-obligation-pending",
+                        (
+                            "verification-obligation-pending"
+                            if obligation.carrier_revision == obligation.revision
+                            else "application-completion-historical-save-unsettled"
+                        ),
                         request_comment_id=request_comment_id,
                         job_id=job_id,
                         quality_obligation=obligation,
@@ -7296,7 +7303,11 @@ def main() -> int:
                 )
         continuation_body = None
         quality_call = None
-        if completion.quality_obligation is not None:
+        if (
+            completion.quality_obligation is not None
+            and completion.quality_obligation.carrier_revision
+            == completion.quality_obligation.revision
+        ):
             obligation = completion.quality_obligation
             decision = replace(
                 decision,
