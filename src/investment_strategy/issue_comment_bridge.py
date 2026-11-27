@@ -133,6 +133,7 @@ APPLICATION_RUN_NAME_PREFIX = "Scheduled Agent Application "
 DISPATCH_RESULT_SCHEMA = "scheduled-agent-dispatch-result/v1"
 _APPLICATION_WORKFLOW = "scheduled-agent-application.yml"
 _DISPATCH_WORKFLOW = "scheduled-agent-bridge.yml"
+_QUALITY_WORKFLOW = "quality.yml"
 _APPLICATION_DECISION_PROTOCOL_REVISION = "e874b4bdfc866649c0e7e61c151991d124d5c0c6"
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
@@ -2157,13 +2158,15 @@ def _complete_workflow_runs(
     workflow: str,
     *,
     read: GitHubReader,
+    event: str = "issue_comment",
+    head_sha: str | None = None,
 ) -> tuple[Mapping[str, object], ...] | None:
     """Read one complete workflow-run history with a single counted-page proof.
 
-    Event-filtered GitHub searches are capped at 1,000 runs. When the count
-    exceeds that cap, switch to unfiltered pages and require native event
-    provenance before selecting issue_comment runs. A failed/inconsistent
-    observation never proves absence.
+    Exact-head searches require counted pages and confirmed event and head
+    metadata. At the search cap, use the unfiltered history (which is not
+    capped) and reapply the filters. Preserve the legacy issue-comment reader
+    contract when no exact head is requested.
     """
 
     path = f"actions/workflows/{quote(workflow, safe='')}/runs"
@@ -2171,7 +2174,9 @@ def _complete_workflow_runs(
     def page(number: int, *, filtered: bool) -> Mapping[str, object] | None:
         params: dict[str, str | int] = {"per_page": 100, "page": number}
         if filtered:
-            params = {"event": "issue_comment", **params}
+            params = {"event": event, **params}
+            if head_sha is not None:
+                params["head_sha"] = head_sha
         payload = read(repository, token, f"{path}?{urlencode(params)}")
         if not isinstance(payload, Mapping) or not isinstance(payload.get("workflow_runs"), list):
             return None
@@ -2185,7 +2190,8 @@ def _complete_workflow_runs(
         return None
 
     if type(total_count) is int:
-        filtered = total_count <= 1000
+        reported_count = total_count
+        filtered = total_count < 1000 or (head_sha is None and total_count == 1000)
         if not filtered:
             unfiltered_first = page(1, filtered=False)
             if unfiltered_first is None:
@@ -2216,12 +2222,34 @@ def _complete_workflow_runs(
                     or (not filtered and not isinstance(run.get("event"), str))
                 ):
                     return None
+                if head_sha is not None:
+                    revision = run.get("head_sha")
+                    if (
+                        not isinstance(revision, str)
+                        or _SHA.fullmatch(revision) is None
+                        or (filtered and (revision != head_sha or run.get("event") != event))
+                    ):
+                        return None
                 runs.append(cast(Mapping[str, object], run))
         ids = [cast(int, run["id"]) for run in runs]
         if len(ids) != len(set(ids)):
             return None
-        return tuple(run for run in runs if filtered or run.get("event") == "issue_comment")
+        if filtered:
+            return tuple(runs)
+        matching = tuple(
+            run
+            for run in runs
+            if run.get("event") == event and (head_sha is None or run.get("head_sha") == head_sha)
+        )
+        if head_sha is not None and (
+            len(matching) < reported_count
+            or (reported_count > 1000 and len(matching) != reported_count)
+        ):
+            return None
+        return matching
 
+    if head_sha is not None:
+        return None
     # Historical injected readers without total_count retain a bounded
     # short-page terminator; do not trust a filtered 1,000-result cap.
     legacy_runs: list[Mapping[str, object]] = []
@@ -2243,6 +2271,50 @@ def _complete_workflow_runs(
         if next_page is None:
             return None
         current = next_page
+
+
+def read_native_quality_runs(
+    repository: str,
+    token: str,
+    revision: str,
+    *,
+    read: GitHubReader = _github_json,
+) -> tuple[Mapping[str, object], ...] | None:
+    """Read push/PR candidates for one exact head before qualifying their jobs."""
+    if _SHA.fullmatch(revision) is None:
+        return None
+
+    eligible: list[Mapping[str, object]] = []
+    seen: set[int] = set()
+    for event in ("push", "pull_request"):
+        try:
+            runs = _complete_workflow_runs(
+                repository, token, _QUALITY_WORKFLOW, read=read, event=event, head_sha=revision
+            )
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if runs is None:
+            return None
+        for run in runs:
+            run_id = _positive_int(run.get("id"))
+            run_repo = run.get("repository")
+            head_repo = run.get("head_repository")
+            origin = head_repo.get("full_name") if isinstance(head_repo, Mapping) else None
+            if (
+                run_id is None
+                or run_id in seen
+                or _positive_int(run.get("run_attempt")) is None
+                or run.get("path") != f".github/workflows/{_QUALITY_WORKFLOW}"
+                or not isinstance(run_repo, Mapping)
+                or run_repo.get("full_name") != repository
+                or not isinstance(origin, str)
+                or not origin
+            ):
+                return None
+            seen.add(run_id)
+            if origin == repository:
+                eligible.append(run)
+    return tuple(eligible)
 
 
 def _prior_dispatch_handoff_reason(
