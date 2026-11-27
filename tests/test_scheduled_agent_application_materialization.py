@@ -6549,7 +6549,6 @@ def test_content_materialization_keeps_unrelated_divergent_parent_tree(
     _apply_git(proof_git, accepted_intent=True)
     assert proof_git.mutations == before
 
-
     edited_blob = proof_git.blob("revised proposal")
     edit = {
         **original,
@@ -6571,6 +6570,7 @@ def test_content_materialization_keeps_unrelated_divergent_parent_tree(
     assert original_proof.witness is not None and original_proof.witness.revision == commit
     assert original_proof.target is not None and original_proof.target.revision == revised
     assert proof_git.mutations == before
+
 
 def test_content_only_rejects_concurrent_requested_path_overlap(
     proof_git: _ProofGitRepository,
