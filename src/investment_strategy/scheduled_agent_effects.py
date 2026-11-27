@@ -793,18 +793,17 @@ def _typed_application_plan(
             ),
         )
 
-    if (
-        not _implementation_development_save(batch)
-        and not _implementation_checkpoint_effects_complete(
-            batch,
-            decision,
-            validate_implementation_checkpoint,
-            accepted_intent,
-            durable_checkpoint_revision,
-            defer_issue_comments,
-            observe_postcondition,
-            original_322_recovery,
-        )
+    if not _implementation_development_save(
+        batch
+    ) and not _implementation_checkpoint_effects_complete(
+        batch,
+        decision,
+        validate_implementation_checkpoint,
+        accepted_intent,
+        durable_checkpoint_revision,
+        defer_issue_comments,
+        observe_postcondition,
+        original_322_recovery,
     ):
         return (
             decision,
