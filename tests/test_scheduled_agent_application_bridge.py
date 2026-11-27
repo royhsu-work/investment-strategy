@@ -6059,6 +6059,64 @@ def test_main_exits_at_carrier_boundary_before_formal_continuation(
     assert "SLICE_CHECKPOINT" not in output
 
 
+def test_fresh_ingress_keeps_development_save_physical_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    head = "b" * 40
+    materialization = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": head,
+        "message": "Save partial test work",
+        "pr_number": 178,
+        "files": [
+            {
+                "path": "tests/test_scheduled_agent_application_bridge.py",
+                "blob_sha": "c" * 40,
+                "expected_sha": "d" * 40,
+            }
+        ],
+    }
+    worker = _worker_result(
+        action=source.action, role=source.role, result_kind="more-implementation-required"
+    )
+    worker["change"] = _CHANGE
+    worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(materialization)}
+    ]
+    request = bridge.canonicalize_raw_worker_result(
+        "WORKER_RESULT\n" + json.dumps(worker) + "\n",
+        source=source,
+        authorized_change=_CHANGE,
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: SimpleNamespace(recognized=True, default_branch="main", head_sha=head),
+    )
+    projected = bridge._fresh_application_worker_result(
+        request.raw_worker_result,
+        source=source,
+        change=_CHANGE,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+        request_comment_id=777,
+    )
+    batch = bridge.parse_effect_batch(projected, source, authorized_change=_CHANGE)
+
+    assert len(batch.effects) == 1
+    assert batch.effects[0].kind == "github-mutation"
+    assert json.loads(batch.effects[0].payload_json) == materialization
+
+
 def test_application_owns_formal_result_after_other_worker_effects() -> None:
     source = WorkerRequest(138, "lead", "explore-change")
     worker = _worker_result()
