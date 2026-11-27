@@ -445,6 +445,78 @@ def test_code_only_continuation_is_qualified_from_historical_evidence(
     assert decision.historical_pr_number == 232
 
 
+@pytest.mark.parametrize("result_kind", ["ready", "research-required"])
+def test_candidate_withdrawal_guard_and_plan_do_not_require_replacement_readiness(
+    monkeypatch: pytest.MonkeyPatch, result_kind: str
+) -> None:
+    """A complete READY control distinguishes non-ready refusal from fixture failure."""
+
+    current = _continuation_pr(branch=f"agent/{CHANGE}")
+    fake = _fake_github(
+        current_pr=current,
+        historical_pr=None,
+        open_prs=[current],
+        pr_files=[{"filename": f"openspec/changes/{CHANGE}/proposal.md"}],
+    )
+
+    def read(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        assert repository == REPOSITORY
+        assert token == TEST_VALUE
+        if api_path == "issues/229":
+            return {
+                "number": 229,
+                "state": "open",
+                "body": f"Change: {CHANGE}\n",
+                "labels": [{"name": "action:resolve-question"}],
+                "created_at": "2026-09-01T00:00:00Z",
+                "closed_at": None,
+            }
+        return fake(repository, token, api_path, allow_not_found=allow_not_found)
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    adapter = effects.GitHubEffectAdapter(
+        REPOSITORY,
+        TEST_VALUE,
+        WorkerRequest(229, "lead", "resolve-question"),
+        authorized_change=CHANGE,
+        current_revision=MAIN,
+        expected_result_kind=result_kind,
+    )
+    close = effects.StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 229,
+                "operation": "pull-request-update",
+                "number": 236,
+                "expected_head_sha": HEAD,
+                "fields": {"state": "closed"},
+            }
+        ),
+    )
+
+    assert adapter.guard(close)
+    plan = adapter.carrier_plan_if_required(close)
+    assert plan is not None
+    assert plan.operation == "pull-request-update"
+    assert plan.target == {"pull_request_number": 236}
+    assert plan.requested == {
+        "fields": {"state": "closed"},
+        "expected_head_sha": HEAD,
+    }
+    assert plan.expected_postcondition == {
+        "pr": 236,
+        "head_sha": HEAD,
+        "fields": {"state": "closed"},
+    }
+
+
 def test_lead_retirement_guard_uses_real_code_only_implementation_qualification(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
