@@ -8395,3 +8395,117 @@ def test_archive_findings_require_exact_carrier_identity(
     formal = bridge._formal_result_body(result, source=source)
     assert formal is not None
     assert bridge._field(formal, "Revision") == head
+
+@pytest.mark.parametrize("case", ["exact", "missing-source", "pending-save", "competing-ingress"])
+def test_development_phase_a_requalifies_native_source_and_shared_frontier(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: str
+) -> None:
+    from dataclasses import asdict
+
+    from investment_strategy import issue_comment_bridge as dispatch
+
+    source = WorkerRequest(138, "executor", "implement-change")
+    head = "b" * 40
+    materialization = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": head,
+        "message": "Save partial test work",
+        "pr_number": 178,
+        "files": [
+            {
+                "path": "tests/test_scheduled_agent_application_bridge.py",
+                "blob_sha": "c" * 40,
+                "expected_sha": "d" * 40,
+            }
+        ],
+    }
+    worker = _worker_result(
+        action=source.action, role=source.role, result_kind="more-implementation-required"
+    )
+    worker["change"] = _CHANGE
+    worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(materialization)}
+    ]
+    worker["_native_development_dispatch"] = {"claimed": "untrusted"}
+    body = "WORKER_RESULT\n" + json.dumps(worker, sort_keys=True) + "\n"
+    event_path = tmp_path / "development-event.json"
+    event_path.write_text(json.dumps(_event(body)), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", _REVISION)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled_agent_application_bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+        ],
+    )
+    monkeypatch.setattr(bridge, "_fresh_event_observation", lambda *_args: False)
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_args: _preflight(action=source.action, change=_CHANGE),
+    )
+    monkeypatch.setattr(
+        bridge, "_find_application_decision_from_current_frontier", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        bridge,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: SimpleNamespace(recognized=True, default_branch="main", head_sha=head),
+    )
+    receipt = dispatch.DevelopmentDispatchSource(
+        101, 77, 1, 78, 79, "sha256:" + "1" * 64, _REVISION
+    )
+    seen: list[str] = []
+
+    def native_source(*_args: object, **kwargs: object) -> object:
+        assert kwargs["source"] == source
+        assert kwargs["request_comment_id"] == 102
+        assert kwargs["current_revision"] == _REVISION
+        seen.append("native-source")
+        return None if case == "missing-source" else receipt
+
+    def shared_frontier(*_args: object, **kwargs: object) -> dispatch.ApplicationCompletion:
+        assert kwargs["source"] == source
+        assert kwargs["current_dispatch_request_comment_id"] == 101
+        assert kwargs["current_dispatch_issue_number"] == 142
+        assert kwargs["phase_a_request_comment_id"] == 102
+        seen.append("shared-frontier")
+        if case == "pending-save":
+            return dispatch.ApplicationCompletion("RESUMABLE", "verification-obligation-pending")
+        if case == "competing-ingress":
+            return dispatch.ApplicationCompletion("AMBIGUOUS", "competing-ingress")
+        return dispatch.ApplicationCompletion("NONE", "application-completion-none")
+
+    class AcceptBoundaryReached(Exception):
+        pass
+
+    def accept(raw: str, **_kwargs: object) -> object:
+        assert case == "exact", "unqualified development ingress reached ACCEPT"
+        assert json.loads(raw)["_native_development_dispatch"] == asdict(receipt)
+        seen.append("accept")
+        raise AcceptBoundaryReached
+
+    monkeypatch.setattr(dispatch, "qualify_development_dispatch_source", native_source)
+    monkeypatch.setattr(dispatch, "qualify_application_completion", shared_frontier)
+    monkeypatch.setattr(bridge, "run_guarded_effect_application", accept)
+    if case == "exact":
+        with pytest.raises(AcceptBoundaryReached):
+            bridge._main_unprotected(bridge.ApplicationExceptionContext())
+        assert seen == ["native-source", "shared-frontier", "accept"]
+    else:
+        with pytest.raises(ValueError, match="development ingress"):
+            bridge._main_unprotected(bridge.ApplicationExceptionContext())
+        assert seen == (
+            ["native-source"] if case == "missing-source" else ["native-source", "shared-frontier"]
+        )
