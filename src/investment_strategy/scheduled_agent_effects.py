@@ -36,9 +36,8 @@ from investment_strategy.scheduled_agent_action_model import (
     ObservationProvenance as ModelObservationProvenance,
 )
 from investment_strategy.scheduled_agent_application_carrier import (
-    _pr_identity_is_coherent,
     current_reviewed_implementation_head,
-    qualify_change_carrier,
+    qualify_candidate_withdrawal,
     qualify_implementation_carrier,
     qualify_supersession_branch,
 )
@@ -2420,72 +2419,37 @@ class GitHubEffectAdapter:
         *,
         require_open: bool,
     ) -> Mapping[str, object] | None:
-        """Reuse the carrier owner for a Human-resolved exact-head PR retirement.
+        """Bind the current source route to carrier-owned withdrawal evidence."""
 
-        A retirement is not a merge and need not be mergeable.  It must still
-        be the unique recognized implementation carrier.  After an accepted
-        closure, only its same immutable closed/unmerged postcondition counts.
-        """
-
-        # Newly permitted outcomes admit an open target. Closed reconciliation
-        # retains the existing READY contract.
-        if (
-            not candidate_withdrawal_permitted(
-                self.source.role, self.source.action, self.expected_result_kind
-            )
-            or (not require_open and self.expected_result_kind != "ready")
-            or not _valid_sha(expected_head_sha)
-        ):
-            return None
-        observation = self._authorized_issue_observation()
-        default_branch = self._default_branch()
+        result_kind = self.expected_result_kind
         current_revision = self.current_revision
         if (
-            observation is None
-            or default_branch is None
-            or not _valid_sha(current_revision)
-            or self._default_branch_revision(default_branch) != current_revision
+            result_kind is None
+            or current_revision is None
+            or not candidate_withdrawal_permitted(self.source.role, self.source.action, result_kind)
         ):
             return None
-        pr = _github_json(self.repository, self.token, f"pulls/{number}")
-        if not isinstance(pr, Mapping) or pr.get("number") != number:
+        request_id = _positive_comment_id(self.request_comment_id) if self.accepted_intent else None
+        # Accepted mode cannot silently fall back to fresh open qualification.
+        # The flag selects a phase; only the exact durable request proves it.
+        if self.accepted_intent and request_id is None:
             return None
-        identity = _pr_identity_is_coherent(
-            pr,
-            repository=self.repository,
-            issue_number=self.source.issue_number,
-            default_branch=default_branch,
-        )
-        if identity is None or identity[1] != expected_head_sha or pr.get("draft") is not False:
+        observation = self._authorized_issue_observation()
+        if observation is None:
             return None
-        if not require_open:
-            return (
-                pr
-                if pr.get("state") == "closed"
-                and pr.get("merged") is False
-                and pr.get("merged_at") is None
-                and isinstance(pr.get("closed_at"), str)
-                else None
-            )
-        if pr.get("state") != "open" or pr.get("merged") is not False:
-            return None
-        qualified = qualify_change_carrier(
+        return qualify_candidate_withdrawal(
             repository=self.repository,
             token=self.token,
             source=self.source,
             change=observation.change,
+            result_kind=result_kind,
             pr_number=number,
-            current_revision=cast(str, current_revision),
+            expected_head_sha=expected_head_sha,
+            current_revision=current_revision,
+            require_open=require_open,
+            request_comment_id=request_id,
+            authorization_revision=self.authorization_revision,
             read=_github_json,
-            # Lead remains the authorized Action owner; this query only
-            # classifies the PR as an implementation carrier for retirement.
-            implementation_retirement=True,
-        )
-        return (
-            pr
-            if qualified.disposition in {"QUALIFIED", "RECONCILIATION_REQUIRED"}
-            and (qualified.branch, qualified.head_sha) == identity
-            else None
         )
 
     def _no_existing_source_pull_request(self, branch: str, base: str) -> bool:
