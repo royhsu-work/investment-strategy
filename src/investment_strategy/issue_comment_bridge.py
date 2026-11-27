@@ -65,6 +65,7 @@ from investment_strategy.scheduled_agent_application_materialization import (
     MaterializationProof,
     _proof_witness,
     find_materialization_payload,
+    prove_materialization,
 )
 from investment_strategy.scheduled_agent_carrier import (
     CarrierOutcomeReport,
@@ -92,9 +93,11 @@ from investment_strategy.scheduled_agent_effects import (
     ApplyResult,
     EffectBatch,
     StagedEffect,
+    _implementation_development_save,
     consequence_postconditions_complete,
     merged_pr_readiness_complete,
     parse_application_decision,
+    parse_effect_batch,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     CurrentFrontier,
@@ -178,6 +181,19 @@ class BridgePlan:
     issue_number: int | None = None
     request_comment_id: int | None = None
     result_body: str | None = None
+    quality_call: dict[str, str] | None = None
+
+
+@dataclass(frozen=True)
+class NativeQualityObligation:
+    """Exact saved-work gate; never a new durable lifecycle state."""
+
+    revision: str
+    branch: str
+    workflow_blob: str
+    obligation_id: str
+    accepted_at: str
+    default_branch: str
 
 
 @dataclass(frozen=True)
@@ -193,6 +209,7 @@ class ApplicationCompletion:
     # Application-owned exact accepted-source proof, not Bridge-local history.
     accepted_record: ApplicationDecisionRecord | None = None
     accepted_decision_sha256: str | None = None
+    quality_obligation: NativeQualityObligation | None = None
 
 
 # The canonical proof owns permission. This Bridge-only table preserves the
@@ -3166,6 +3183,131 @@ def _qualified_unapplied_terminal_carrier_effect(
     return identity_matches
 
 
+def _saved_development_quality_obligation(
+    repository: str,
+    token: str,
+    *,
+    record: ApplicationDecisionRecord,
+    accepted_decision_sha256: str,
+    issue_comments: tuple[Mapping[str, object], ...],
+    current_revision: str,
+    run: Mapping[str, object],
+    job: QualifiedApplicationJob,
+    read: GitHubReader,
+) -> NativeQualityObligation | None:
+    """Use the existing physical Original and canonical materialization witness."""
+    source = WorkerRequest(record.issue_number, record.role, record.action)
+    if (
+        job.status != "completed"
+        or job.conclusion not in ("success", "failure", *_QUALITY_NO_VERDICT)
+        or run.get("status") != "completed"
+        or run.get("conclusion") != job.conclusion
+        or run.get("path") != f".github/workflows/{_APPLICATION_WORKFLOW}"
+        or run.get("event") != "issue_comment"
+        or run.get("head_sha") != record.authorization_revision
+    ):
+        return None
+    repo = read(repository, token, "")
+    origin, head = run.get("repository"), run.get("head_repository")
+    default_branch = repo.get("default_branch") if isinstance(repo, Mapping) else None
+    if (
+        not isinstance(repo, Mapping)
+        or repo.get("full_name") != repository
+        or not isinstance(default_branch, str)
+        or not default_branch
+        or run.get("head_branch") != default_branch
+        or not isinstance(origin, Mapping)
+        or origin.get("full_name") != repository
+        or not isinstance(head, Mapping)
+        or head.get("full_name") != repository
+    ):
+        return None
+    matches = [
+        comment
+        for comment in issue_comments
+        if is_github_actions_comment(comment)
+        and isinstance(comment.get("body"), str)
+        and parse_application_decision(cast(str, comment["body"])) == record
+    ]
+    if len(matches) != 1:
+        return None
+    comment = matches[0]
+    accepted_at = comment.get("created_at")
+    comment_id = _positive_int(comment.get("id"))
+    if (
+        not isinstance(accepted_at, str)
+        or _quality_time(accepted_at) is None
+        or comment.get("updated_at") != accepted_at
+        or comment_id is None
+        or comment.get("issue_url")
+        != github_repository_api_url(repository, f"issues/{record.issue_number}")
+    ):
+        return None
+    observed = read(repository, token, f"issues/comments/{comment_id}")
+    if (
+        not isinstance(observed, Mapping)
+        or not is_github_actions_comment(observed)
+        or any(
+            observed.get(key) != comment.get(key)
+            for key in ("id", "body", "issue_url", "created_at", "updated_at")
+        )
+        or hashlib.sha256(cast(str, comment["body"]).encode()).hexdigest()
+        != accepted_decision_sha256
+    ):
+        return None
+    original = _qualified_physical_original_accepted_effects(
+        record=record, source=source, repository=repository, token=token, read=read
+    )
+    if original is None or not _implementation_development_save(original):
+        return None
+    payload = json.loads(original.effects[0].payload_json)
+    proof = prove_materialization(
+        payload,
+        source,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+        default_branch=default_branch,
+        accepted_authorization_revision=record.authorization_revision,
+        accepted_intent=True,
+    )
+    target, witness = proof.target, proof.witness
+    if (
+        proof.disposition != "COMPLETE"
+        or target is None
+        or witness is None
+        or target.repository != repository
+        or target.change != record.change
+        or target.branch is None
+        or target.revision != witness.revision
+    ):
+        return None
+    blob = _quality_workflow_blob(repository, token, current_revision, read=read)
+    if blob is None:
+        return None
+    identity = json.dumps(
+        [
+            repository,
+            record.issue_number,
+            record.change,
+            record.request_comment_id,
+            accepted_decision_sha256,
+            witness.revision,
+            target.branch,
+            blob,
+        ],
+        separators=(",", ":"),
+    )
+    return NativeQualityObligation(
+        witness.revision,
+        target.branch,
+        blob,
+        hashlib.sha256(identity.encode()).hexdigest(),
+        accepted_at,
+        default_branch,
+    )
+
+
 def _application_job(
     repository: str,
     token: str,
@@ -3178,6 +3320,7 @@ def _application_job(
     recent_comments: tuple[Mapping[str, object], ...] = (),
     current_dispatch_request_comment_id: int | None = None,
     current_revision: str | None = None,
+    issue_comments: tuple[Mapping[str, object], ...] = (),
 ) -> ApplicationCompletion:
     """Locate one exact application run and prefer its durable carrier handoff."""
 
@@ -3233,6 +3376,40 @@ def _application_job(
             request_comment_id=request_comment_id,
         )
     job_id = job.id
+
+    # A physical-only accepted save has no formal consequence to replay.
+    # Only a terminal native Application plus the canonical write witness can
+    # expose its outstanding verification gate; unknown writes stay in the
+    # existing recovery path.
+    if record is not None and accepted_decision_sha256 is not None and current_revision:
+        try:
+            source = WorkerRequest(record.issue_number, record.role, record.action)
+            batch = parse_effect_batch(
+                record.raw_worker_result, source, authorized_change=record.change
+            )
+            if _implementation_development_save(batch):
+                obligation = _saved_development_quality_obligation(
+                    repository,
+                    token,
+                    record=record,
+                    accepted_decision_sha256=accepted_decision_sha256,
+                    issue_comments=issue_comments,
+                    current_revision=current_revision,
+                    run=run,
+                    job=job,
+                    read=read,
+                )
+                if obligation is not None:
+                    return ApplicationCompletion(
+                        "RESUMABLE",
+                        "verification-obligation-pending",
+                        request_comment_id=request_comment_id,
+                        job_id=job_id,
+                        quality_obligation=obligation,
+                    )
+        except (HTTPError, OSError, RuntimeError, TypeError, ValueError):
+            # Failure to prove the saved work is never a verification target.
+            pass
 
     # Reconcile the final durable Effect for a terminal no-carrier run before
     # considering optional recovery/diagnostic artifacts. Error text is not a
@@ -4405,6 +4582,7 @@ def _accepted_application_state(
             recent_comments=recent_comments,
             current_dispatch_request_comment_id=current_dispatch_request_comment_id,
             current_revision=current_revision,
+            issue_comments=issue_comments,
         )
 
     # New semantic envelopes resume Phase B even with zero worker Effects.
@@ -6405,11 +6583,21 @@ def plan_dispatch_decision(
     decision: DispatchDecision,
     application_continuation: str | None = None,
     qualified_carrier: QualifiedCarrierPlan | None = None,
+    quality_call: dict[str, str] | None = None,
 ) -> BridgePlan:
     identity = _request_identity(event)
     if identity is None:
         return BridgePlan(False)
     issue_number, request_comment_id = identity
+    if quality_call is not None and (
+        decision.disposition != "NO_WORK"
+        or decision.reason != "verification-obligation-pending"
+        or quality_call.get("quality_source_comment_id") != str(request_comment_id)
+        or quality_call.get("quality_definition_revision") != default_branch_revision
+        or application_continuation is not None
+        or qualified_carrier is not None
+    ):
+        raise ValueError("quality call is not bound to the non-authorizing dispatch")
     return BridgePlan(
         should_emit=True,
         issue_number=issue_number,
@@ -6421,6 +6609,7 @@ def plan_dispatch_decision(
             application_continuation=application_continuation,
             qualified_carrier=qualified_carrier,
         ),
+        quality_call=quality_call,
     )
 
 
@@ -6446,6 +6635,15 @@ def _write_outputs(path: Path, plan: BridgePlan, *, repair_admission: bool = Fal
         lines.append(f"issue_number={plan.issue_number}")
     if plan.request_comment_id is not None:
         lines.append(f"request_comment_id={plan.request_comment_id}")
+    if plan.quality_call is not None:
+        lines.extend(
+            f"{key}={value}"
+            for key, value in plan.quality_call.items()
+            if key != "quality_obligation"
+        )
+        print("native_quality_plan=" + json.dumps(plan.quality_call, sort_keys=True))
+    else:
+        print("native_quality_plan=none")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -6918,7 +7116,43 @@ def main() -> int:
                     f"issue-{source.issue_number}:{source.action}",
                 )
         continuation_body = None
-        if completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
+        quality_call = None
+        if completion.quality_obligation is not None:
+            obligation = completion.quality_obligation
+            decision = replace(
+                decision,
+                selected_issue_id=None,
+                selected_routing=None,
+                disposition="NO_WORK",
+                reason="verification-obligation-pending",
+            )
+            run_id = _positive_int_string(os.environ.get("GITHUB_RUN_ID", ""))
+            run_attempt = _positive_int_string(os.environ.get("GITHUB_RUN_ATTEMPT", ""))
+            if (
+                os.environ.get("GITHUB_EVENT_NAME") == "issue_comment"
+                and os.environ.get("GITHUB_WORKFLOW_SHA") == args.revision
+                and run_id is not None
+                and run_attempt is not None
+            ):
+                observation = plan_native_quality_verification(
+                    repository,
+                    token,
+                    revision=obligation.revision,
+                    branch=obligation.branch,
+                    workflow_blob=obligation.workflow_blob,
+                    obligation_id=obligation.obligation_id,
+                    accepted_at=obligation.accepted_at,
+                    current_revision=args.revision,
+                    default_branch=obligation.default_branch,
+                    request_comment_id=identity[1],
+                    run_id=run_id,
+                    run_attempt=run_attempt,
+                    read=_github_json,
+                    log_read=_github_job_log,
+                )
+                if observation.outcome == "NO_VERDICT":
+                    quality_call = observation.call
+        elif completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
             if (
                 completion.reason
                 in {
@@ -6960,6 +7194,7 @@ def main() -> int:
             decision=decision,
             application_continuation=continuation_body,
             qualified_carrier=completion.qualified_carrier,
+            quality_call=quality_call,
         )
     _write_outputs(args.github_output, plan)
     _write_result_payload(args.result_payload, plan)
