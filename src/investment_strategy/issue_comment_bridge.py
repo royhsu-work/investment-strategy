@@ -72,6 +72,7 @@ from investment_strategy.scheduled_agent_carrier import (
     QualifiedApplicationJob,
     QualifiedCarrierPlan,
     github_comment_has_app_provenance,
+    github_complete_job_inventory,
     github_complete_run_jobs,
     github_original_request_matches,
     github_paginated_mappings,
@@ -116,7 +117,9 @@ from investment_strategy.scheduled_agent_runtime import (
 )
 from investment_strategy.scheduled_agent_validation_resource import (
     NativeQualityAttempt,
+    qualify_native_quality_job,
     read_native_quality_attempt,
+    reduce_native_quality_attempts,
 )
 from investment_strategy.scheduled_agent_wire import RUNTIME_REPAIR_REQUEST_WIRE
 from investment_strategy.scheduled_agent_worker import (
@@ -2164,6 +2167,7 @@ def _complete_workflow_runs(
     read: GitHubReader,
     event: str = "issue_comment",
     head_sha: str | None = None,
+    require_count: bool = False,
 ) -> tuple[Mapping[str, object], ...] | None:
     """Read one complete workflow-run history with a single counted-page proof.
 
@@ -2195,7 +2199,9 @@ def _complete_workflow_runs(
 
     if type(total_count) is int:
         reported_count = total_count
-        filtered = total_count < 1000 or (head_sha is None and total_count == 1000)
+        filtered = total_count < 1000 or (
+            head_sha is None and not require_count and total_count == 1000
+        )
         if not filtered:
             unfiltered_first = page(1, filtered=False)
             if unfiltered_first is None:
@@ -2252,7 +2258,7 @@ def _complete_workflow_runs(
             return None
         return matching
 
-    if head_sha is not None:
+    if head_sha is not None or require_count:
         return None
     # Historical injected readers without total_count retain a bounded
     # short-page terminator; do not trust a filtered 1,000-result cap.
@@ -2423,6 +2429,424 @@ def read_native_quality_history(
                 return None
             attempts.append(attempt)
     return tuple(attempts) if snapshot() == first else None
+
+
+_QualityOutcome = Literal["PASS", "FAIL", "CONFLICT", "NO_VERDICT", "PENDING", "INDETERMINATE"]
+
+
+@dataclass(frozen=True)
+class NativeQualityObservation:
+    """Invocation-local verification evidence; never semantic dispatch authority."""
+
+    outcome: _QualityOutcome
+    attempts: tuple[NativeQualityAttempt, ...] | None = None
+    call: dict[str, str] | None = None
+
+
+def _quality_call_fields(
+    repository: str,
+    revision: str,
+    definition: str,
+    obligation: str,
+    source_id: int,
+    run_id: int,
+    attempt: int,
+) -> dict[str, str]:
+    correlation = hashlib.sha256(
+        f"{obligation}:{definition}:{source_id}:{run_id}:{attempt}".encode()
+    ).hexdigest()
+    return {
+        "quality_obligation": obligation,
+        "quality_target_repository": repository,
+        "quality_target_revision": revision,
+        "quality_definition_revision": definition,
+        "quality_verification_correlation": correlation,
+        "quality_source_comment_id": str(source_id),
+        "quality_run_id": str(run_id),
+        "quality_run_attempt": str(attempt),
+        "quality_call": "true",
+        "quality_result": "verification-obligation-pending",
+    }
+
+
+def _quality_time(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _quality_workflow_blob(
+    repository: str, token: str, revision: str, *, read: GitHubReader
+) -> str | None:
+    path = f".github/workflows/{_QUALITY_WORKFLOW}"
+    file = read(repository, token, f"contents/{path}?{urlencode({'ref': revision})}")
+    if not isinstance(file, Mapping) or file.get("type") != "file" or file.get("path") != path:
+        return None
+    sha = file.get("sha")
+    return sha if isinstance(sha, str) and _SHA.fullmatch(sha) is not None else None
+
+
+def _quality_dispatch_requests(
+    repository: str, token: str, accepted_at: str, *, read: GitHubReader
+) -> dict[int, str] | None:
+    boundary = _quality_time(accepted_at)
+    if boundary is None:
+        return None
+    query = urlencode({"sort": "created", "direction": "asc", "since": accepted_at})
+    rows = _paged_list(repository, token, f"issues/comments?{query}", read=read)
+    requests: dict[int, str] = {}
+    for comment in rows:
+        body = comment.get("body")
+        if (
+            not isinstance(body, str)
+            or body.splitlines()[:1] != [REQUEST_MARKER]
+            or not _trusted_connector_comment(comment, repository.split("/", 1)[0])
+        ):
+            continue
+        stamp = _quality_time(comment.get("created_at"))
+        if stamp is None or stamp == boundary:
+            return None
+        if stamp < boundary:
+            continue
+        source_id = _positive_int(comment.get("id"))
+        issue_url = comment.get("issue_url")
+        prefix = github_repository_api_url(repository, "issues/")
+        if (
+            source_id is None
+            or source_id in requests
+            or not isinstance(issue_url, str)
+            or not issue_url.startswith(prefix)
+            or comment.get("updated_at") != comment.get("created_at")
+            or parse_dispatch_request(body) is None
+        ):
+            return None
+        issue_id = _positive_int_string(issue_url.removeprefix(prefix))
+        if issue_id is None:
+            return None
+        observed = read(repository, token, f"issues/comments/{source_id}")
+        if (
+            not isinstance(observed, Mapping)
+            or not _trusted_connector_comment(observed, repository.split("/", 1)[0])
+            or any(
+                observed.get(key) != comment.get(key)
+                for key in ("id", "body", "issue_url", "created_at", "updated_at")
+            )
+        ):
+            return None
+        issue = read(repository, token, f"issues/{issue_id}")
+        if (
+            not isinstance(issue, Mapping)
+            or issue.get("number") != issue_id
+            or not is_runtime_checkin_issue(issue)
+        ):
+            return None
+        requests[source_id] = cast(str, comment["created_at"])
+    return requests
+
+
+def _quality_bridge_run(
+    run: Mapping[str, object], repository: str, default_branch: str, source: int
+) -> tuple[int, int, str, str, str | None] | None:
+    run_id, attempt = _positive_int(run.get("id")), _positive_int(run.get("run_attempt"))
+    repo, head = run.get("repository"), run.get("head_repository")
+    definition, status, conclusion = run.get("head_sha"), run.get("status"), run.get("conclusion")
+    if (
+        run_id is None
+        or attempt is None
+        or not isinstance(repo, Mapping)
+        or repo.get("full_name") != repository
+        or not isinstance(head, Mapping)
+        or head.get("full_name") != repository
+        or run.get("event") != "issue_comment"
+        or run.get("path") != f".github/workflows/{_DISPATCH_WORKFLOW}"
+        or run.get("head_branch") != default_branch
+        or run.get("display_title") != render_dispatch_run_name(source)
+        or not isinstance(definition, str)
+        or _SHA.fullmatch(definition) is None
+        or not isinstance(status, str)
+        or (conclusion is not None and not isinstance(conclusion, str))
+    ):
+        return None
+    return run_id, attempt, definition, status, conclusion
+
+
+_QUALITY_ACTIVE = ("queued", "in_progress", "requested", "waiting", "pending")
+_QUALITY_NO_VERDICT = (
+    "cancelled", "skipped", "timed_out", "action_required", "startup_failure", "stale", "neutral"
+)
+
+
+def _quality_bridge_attempt(
+    repository: str,
+    token: str,
+    *,
+    source: int,
+    row: tuple[int, int, str, str, str | None],
+    obligation_id: str,
+    revision: str,
+    workflow_blob: str,
+    read: GitHubReader,
+    log_read: Callable[[str, str, int], str],
+) -> NativeQualityAttempt:
+    run_id, attempt, definition, status, conclusion = row
+    unknown = NativeQualityAttempt(run_id, attempt, "INDETERMINATE")
+    absent = NativeQualityAttempt(run_id, attempt, "NO_VERDICT")
+    if status in _QUALITY_ACTIVE:
+        return NativeQualityAttempt(run_id, attempt, "PENDING") if conclusion is None else unknown
+    if status != "completed" or conclusion not in ("success", "failure", *_QUALITY_NO_VERDICT):
+        return unknown
+    jobs = github_complete_job_inventory(
+        repository, token, run_id=run_id, run_attempt=attempt, read=read
+    )
+    if jobs is None:
+        return unknown
+    by_name: dict[str, Mapping[str, object]] = {}
+    for job in jobs:
+        name = job.get("name")
+        if (
+            not isinstance(name, str)
+            or name not in ("bridge", "verify_quality / quality", "verify_quality")
+            or name in by_name
+            or job.get("run_id") != run_id
+            or job.get("run_attempt") != attempt
+            or job.get("head_sha") != definition
+            or job.get("status") != "completed"
+            or _positive_int(job.get("id")) is None
+        ):
+            return unknown
+        by_name[name] = job
+    planner = by_name.pop("bridge", None)
+    if len(by_name) > 1:
+        return unknown
+    quality = next(iter(by_name.values()), None)
+    not_called = quality is None or quality.get("conclusion") == "skipped"
+    if planner is None or planner.get("conclusion") != "success":
+        # An unsuccessful/missing planner cannot authorize a dependent job.
+        return absent if not_called and conclusion != "success" else unknown
+    planner_steps = planner.get("steps")
+    if not isinstance(planner_steps, list):
+        return unknown
+    required = (
+        "Check out authoritative default branch",
+        "Record exact checked-out default-branch revision",
+        "Plan exact correlated machine dispatch decision",
+        "Upload exact run-scoped machine dispatch result",
+    )
+    observed = [
+        step for step in planner_steps if isinstance(step, Mapping) and step.get("name") in required
+    ]
+    if tuple(step.get("name") for step in observed) != required or any(
+        step.get("status") != "completed" or step.get("conclusion") != "success"
+        for step in observed
+    ):
+        return unknown
+    lines = log_read(repository, token, cast(int, planner["id"])).splitlines()
+    prefix = "native_quality_plan="
+    receipts = [
+        line.removeprefix(prefix)
+        for raw in lines
+        if (line := re.sub(r"^\d{4}-\d\d-\d\dT\S+Z ", "", raw)).startswith(prefix)
+    ]
+    if len(receipts) != 1:
+        return unknown
+    if receipts[0] == "none":
+        return absent if not_called and conclusion in ("success", *_QUALITY_NO_VERDICT) else unknown
+    plan = json.loads(receipts[0])
+    if not isinstance(plan, dict):
+        return unknown
+    gate, target = plan.get("quality_obligation"), plan.get("quality_target_revision")
+    if (
+        not isinstance(gate, str)
+        or re.fullmatch(r"[0-9a-f]{64}", gate) is None
+        or not isinstance(target, str)
+        or _SHA.fullmatch(target) is None
+        or plan != _quality_call_fields(
+            repository, target, definition, gate, source, run_id, attempt
+        )
+        or (gate == obligation_id and target != revision)
+    ):
+        return unknown
+    blob = _quality_workflow_blob(repository, token, definition, read=read)
+    if blob is None or (gate == obligation_id and blob != workflow_blob):
+        return unknown
+    if not_called:
+        # A recorded plan may be skipped by the native dependency/identity guard.
+        return absent if conclusion in ("success", *_QUALITY_NO_VERDICT) else unknown
+    assert quality is not None
+    job_conclusion = quality.get("conclusion")
+    if job_conclusion in _QUALITY_NO_VERDICT:
+        return absent if conclusion == job_conclusion else unknown
+    if job_conclusion not in ("success", "failure") or conclusion != job_conclusion:
+        return unknown
+    verdict = qualify_native_quality_job(
+        quality,
+        log_read(repository, token, cast(int, quality["id"])),
+        repository=repository,
+        revision=target,
+        definition_sha=definition,
+        run_id=run_id,
+        run_attempt=attempt,
+        job_id=cast(int, quality["id"]),
+        job_name="verify_quality / quality",
+        source_comment_id=source,
+        verification_correlation=plan["quality_verification_correlation"],
+    )
+    if verdict is None:
+        return unknown
+    return NativeQualityAttempt(run_id, attempt, verdict) if gate == obligation_id else absent
+
+
+def plan_native_quality_verification(
+    repository: str,
+    token: str,
+    *,
+    revision: str,
+    branch: str,
+    workflow_blob: str,
+    obligation_id: str,
+    accepted_at: str,
+    current_revision: str,
+    default_branch: str,
+    request_comment_id: int,
+    run_id: int,
+    run_attempt: int,
+    read: GitHubReader = _github_json,
+    log_read: Callable[[str, str, int], str] = _github_job_log,
+) -> NativeQualityObservation:
+    """Observe both native producers before admitting one read-only local call.
+
+    The Application supplies the exact outstanding gate and its immutable
+    acceptance boundary. A fresh dispatch is not an execution retry token.
+    """
+    unknown = NativeQualityObservation("INDETERMINATE")
+    if (
+        _SHA.fullmatch(revision) is None
+        or _SHA.fullmatch(current_revision) is None
+        or _SHA.fullmatch(workflow_blob) is None
+        or re.fullmatch(r"[0-9a-f]{64}", obligation_id) is None
+        or any(_positive_int(n) is None for n in (request_comment_id, run_id, run_attempt))
+        or not default_branch
+        or not branch
+    ):
+        return unknown
+
+    def main_is_current() -> bool:
+        repo = read(repository, token, "")
+        ref = read(repository, token, f"git/ref/heads/{quote(default_branch, safe='/')}")
+        obj = ref.get("object") if isinstance(ref, Mapping) else None
+        return (
+            isinstance(repo, Mapping)
+            and repo.get("full_name") == repository
+            and repo.get("default_branch") == default_branch
+            and isinstance(obj, Mapping)
+            and obj.get("sha") == current_revision
+        )
+
+    def snapshot() -> dict[int, tuple[int, int, str, str, str | None]] | None:
+        requests = _quality_dispatch_requests(repository, token, accepted_at, read=read)
+        if requests is None or request_comment_id not in requests:
+            return None
+        runs = _complete_workflow_runs(
+            repository, token, _DISPATCH_WORKFLOW, read=read, require_count=True
+        )
+        if runs is None:
+            return None
+        found: dict[int, tuple[int, int, str, str, str | None]] = {}
+        for run in runs:
+            title = run.get("display_title")
+            source = parse_dispatch_run_name(title) if isinstance(title, str) else None
+            if source is None or source not in requests:
+                continue
+            row = _quality_bridge_run(run, repository, default_branch, source)
+            created, requested = _quality_time(run.get("created_at")), _quality_time(requests[source])
+            if row is None or source in found or created is None or requested is None:
+                return None
+            if created < requested:
+                return None
+            found[source] = row
+        return found if set(found) == set(requests) else None
+
+    def ordinary_history(blob: str) -> tuple[NativeQualityAttempt, ...] | None:
+        return read_native_quality_history(
+            repository, token, revision, branch=branch, workflow_blob=blob, read=read,
+            log_read=log_read,
+        )
+
+    try:
+        if not main_is_current():
+            return unknown
+        if _quality_workflow_blob(repository, token, current_revision, read=read) != workflow_blob:
+            return unknown
+        target_blob = _quality_workflow_blob(repository, token, revision, read=read)
+        if target_blob is None:
+            return unknown
+        ordinary = ordinary_history(target_blob)
+        first = snapshot()
+        if ordinary is None or first is None:
+            return unknown
+        own = first[request_comment_id]
+        if (
+            own[:3] != (run_id, run_attempt, current_revision)
+            or own[3] not in _QUALITY_ACTIVE
+            or own[4] is not None
+        ):
+            return unknown
+        called: list[NativeQualityAttempt] = []
+        for source, latest in first.items():
+            observed_run, last, definition, _, _ = latest
+            if _authorization_ancestry(
+                repository, token, authorization_revision=definition,
+                current_revision=current_revision, read=read,
+            ) is None:
+                return unknown
+            for attempt in range(1, last + 1):
+                raw = read(repository, token, f"actions/runs/{observed_run}/attempts/{attempt}")
+                if not isinstance(raw, Mapping):
+                    return unknown
+                row = _quality_bridge_run(raw, repository, default_branch, source)
+                if (
+                    row is None
+                    or row[:3] != (observed_run, attempt, definition)
+                    or (attempt == last and row != latest)
+                ):
+                    return unknown
+                if source == request_comment_id and attempt == run_attempt:
+                    continue
+                result = _quality_bridge_attempt(
+                    repository, token, source=source, row=row, obligation_id=obligation_id,
+                    revision=revision, workflow_blob=workflow_blob, read=read, log_read=log_read,
+                )
+                if attempt < last and result.outcome == "PENDING":
+                    return unknown
+                called.append(result)
+        if snapshot() != first or ordinary_history(target_blob) != ordinary or not main_is_current():
+            return unknown
+        if target_blob == workflow_blob:
+            history = (*ordinary, *called)
+            outcome = reduce_native_quality_attempts(history)
+        else:
+            # A B-owned call cannot establish candidate-producer correctness.
+            candidate = reduce_native_quality_attempts(ordinary)
+            history = tuple(called)
+            outcome = reduce_native_quality_attempts(history)
+            if candidate in ("FAIL", "CONFLICT", "PENDING", "INDETERMINATE"):
+                return NativeQualityObservation(candidate, ordinary)
+            if outcome == "PASS" and candidate != "PASS":
+                return unknown
+        return NativeQualityObservation(
+            outcome,
+            history,
+            _quality_call_fields(
+                repository, revision, current_revision, obligation_id,
+                request_comment_id, run_id, run_attempt,
+            ) if outcome == "NO_VERDICT" else None,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return unknown
 
 
 def _prior_dispatch_handoff_reason(
