@@ -8657,8 +8657,12 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     )
     if len(materializations) > 1:
         raise RuntimeError("EFFECT_REQUEST contains ambiguous materialization effects")
-    physical_only = _implementation_development_save(
-        parse_effect_batch(application_worker_result, plan.source, authorized_change=plan.change)
+    projected_batch = parse_effect_batch(
+        application_worker_result, plan.source, authorized_change=plan.change
+    )
+    physical_only = _implementation_development_save(projected_batch)
+    marker_only = physical_only and not _implementation_development_save(
+        projected_batch, include_task_markers=False
     )
     materialization = None if not materializations else materializations[0]
     parsed_materialization = None
@@ -9108,6 +9112,12 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         )
         if frontier.state not in ("NONE", "COMPLETE", "ABORTED", "REJECTED"):
             raise ValueError("development ingress has an unsettled or competing predecessor")
+        if marker_only and (
+            frontier.settled_quality_obligation is None
+            or frontier.quality_observation is None
+            or frontier.quality_observation.outcome != "PASS"
+        ):
+            raise ValueError("development ingress lacks exact native marker GREEN")
         document = json.loads(application_worker_result)
         document["_native_development_dispatch"] = asdict(receipt)
         if frontier.settled_quality_obligation is not None:
