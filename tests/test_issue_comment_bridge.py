@@ -5788,25 +5788,42 @@ def test_completed_application_consumes_only_exact_complete_carrier_outcome(
     assert completion.recovery_artifact == recovery
 
 
+@pytest.mark.parametrize("first_publication_rejected", [False, True])
 def test_read_only_reconciliation_reobserves_later_complete_without_replay(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, first_publication_rejected: bool
 ) -> None:
     """A stable unknown is observed again; only new COMPLETE proof dispatches."""
+    failure: dict[str, object] = {
+        "reason": "indeterminate accepted effects require reconciliation",
+        "mutation_status": "unknown",
+        "unfinished_boundary": "effect-reconciliation",
+        "failed_effect_index": 1,
+        "failed_effect_kind": "issue-comment",
+        "failed_effect_sha256": "b" * 64,
+        "completed_effect_indexes": [0],
+        "completed_effect_sha256": ["c" * 64],
+        "rejection": None,
+    }
+    if first_publication_rejected:
+        failure.update(
+            {
+                "reason": "fresh native implementation delivery gates",
+                "mutation_status": "not-complete",
+                "unfinished_boundary": "effect-precondition",
+                "failed_effect_index": 0,
+                "completed_effect_indexes": [],
+                "completed_effect_sha256": [],
+                "rejection": {"classification": "effect-precondition-unsatisfied"},
+                "operation_stage": "BEFORE-WRITE",
+                "write_call_entered": False,
+            }
+        )
+    assert application._accepted_recovery_boundary(failure) == "READ_ONLY"
     recovery = replace(
         _qualified_recovery_fixture(continuation_eligible=True),
         document={
             "prior_failure_evidence_sha256": ["a" * 64],
-            "failure_evidence": {
-                "reason": "indeterminate accepted effects require reconciliation",
-                "mutation_status": "unknown",
-                "unfinished_boundary": "effect-reconciliation",
-                "failed_effect_index": 1,
-                "failed_effect_kind": "issue-comment",
-                "failed_effect_sha256": "b" * 64,
-                "completed_effect_indexes": [0],
-                "completed_effect_sha256": ["c" * 64],
-                "rejection": None,
-            },
+            "failure_evidence": failure,
         },
     )
     monkeypatch.setattr(
