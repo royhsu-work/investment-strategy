@@ -7672,10 +7672,14 @@ def _settled_development_prefix(
                         read=read,
                     )
                     observation = settled.quality_observation
+                    stale_authority = record.authorization_revision != current_revision
                     if (
                         settled.state == "COMPLETE"
                         and observation is not None
-                        and observation.outcome in ("FAIL", "CONFLICT")
+                        and (
+                            observation.outcome in ("FAIL", "CONFLICT")
+                            or (stale_authority and observation.outcome == "PASS")
+                        )
                     ):
                         pr_number = _positive_int(publication.get("pr_number"))
                         if pr_number is None:
@@ -7689,8 +7693,14 @@ def _settled_development_prefix(
                             current_revision=current_revision,
                             read=read,
                         )
+                        ref = read(
+                            repository, token, f"git/ref/heads/{quote(default_branch, safe='/')}"
+                        )
+                        obj = ref.get("object") if isinstance(ref, Mapping) else None
                         if (
-                            carrier.disposition == "QUALIFIED"
+                            isinstance(obj, Mapping)
+                            and obj.get("sha") == current_revision
+                            and carrier.disposition == "QUALIFIED"
                             and carrier.branch == old.branch
                             and carrier.head_sha == old.revision
                             and read(repository, token, f"issues/{source.issue_number}")
@@ -7715,6 +7725,7 @@ def _settled_development_prefix(
                         settled.state != "COMPLETE"
                         or observation is None
                         or observation.outcome != "PASS"
+                        or stale_authority
                     ):
                         return record, replace(
                             completion, reason="application-completion-read-only-observing"
