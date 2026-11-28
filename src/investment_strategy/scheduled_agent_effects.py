@@ -2031,9 +2031,12 @@ class GitHubEffectAdapter:
             == marker_blob
         )
 
-    def _delivery_quality_is_current(self) -> bool:
-        """Re-observe the same qualified native gate before a new formal write."""
-        from investment_strategy.issue_comment_bridge import plan_native_quality_verification
+    def _delivery_gates_are_current(self) -> bool:
+        """Re-observe the same qualified native gates before a new formal write."""
+        from investment_strategy.issue_comment_bridge import (
+            _native_strict_marker_evidence,
+            plan_native_quality_verification,
+        )
 
         evidence = self._qualified_delivery_evidence
         current_revision = self.current_revision
@@ -2119,24 +2122,31 @@ class GitHubEffectAdapter:
                 )
             ):
                 return False
-            return (
-                plan_native_quality_verification(
+            observation = plan_native_quality_verification(
+                self.repository,
+                self.token,
+                revision=revision,
+                branch=branch,
+                workflow_blob=workflow_blob,
+                obligation_id=obligation_id,
+                accepted_at=accepted_at,
+                current_revision=current_revision,
+                default_branch=default_branch,
+                request_comment_id=dispatch_id,
+                run_id=run_id,
+                run_attempt=run_attempt,
+                read=_github_json,
+                observe_only=True,
+            )
+            return observation.outcome == "PASS" and bool(
+                _native_strict_marker_evidence(
                     self.repository,
                     self.token,
                     revision=revision,
                     branch=branch,
-                    workflow_blob=workflow_blob,
-                    obligation_id=obligation_id,
-                    accepted_at=accepted_at,
                     current_revision=current_revision,
-                    default_branch=default_branch,
-                    request_comment_id=dispatch_id,
-                    run_id=run_id,
-                    run_attempt=run_attempt,
                     read=_github_json,
-                    observe_only=True,
-                ).outcome
-                == "PASS"
+                )
             )
         except (OSError, RuntimeError, TypeError, ValueError):
             return False
@@ -3619,7 +3629,7 @@ class GitHubEffectAdapter:
             return qualified
         if effect.kind == "issue-comment":
             return self._qualified_delivery_evidence is None or (
-                self._delivery_carrier_matches() and self._delivery_quality_is_current()
+                self._delivery_carrier_matches() and self._delivery_gates_are_current()
             )
         guarded = payload is not None and self._guard_github_mutation(payload)
         if not guarded and self._last_rejection is None:
