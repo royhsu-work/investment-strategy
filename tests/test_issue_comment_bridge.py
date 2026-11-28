@@ -11995,9 +11995,7 @@ def _assert_saved_development_frontier(
                         "COMPLETE",
                         "fresh accepted proof",
                         pending_frontier_proof=(
-                            None
-                            if history == "publication-invalidated-partial"
-                            else frontier_proof
+                            None if history == "publication-invalidated-partial" else frontier_proof
                         ),
                     ),
                     accepted_record=record,
