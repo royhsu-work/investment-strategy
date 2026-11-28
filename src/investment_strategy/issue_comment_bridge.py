@@ -6914,7 +6914,11 @@ def _reviewed_correction_marker(
     read: GitHubReader,
 ) -> (
     tuple[
-        FormalLifecycleEvent, ApplicationDecisionRecord, MaterializationRequest, dict[str, object]
+        FormalLifecycleEvent,
+        ApplicationDecisionRecord,
+        MaterializationRequest,
+        dict[str, object],
+        Mapping[str, object],
     ]
     | None
 ):
@@ -7068,7 +7072,7 @@ def _reviewed_correction_marker(
     request = find_materialization_payload(payload, source)
     if request is None:
         return None
-    return review, marker, request, payload
+    return review, marker, request, payload, evidence
 
 
 def qualify_initial_marker_save(
@@ -7324,7 +7328,7 @@ def qualify_initial_implementation_delivery(
             )
             if correction is None:
                 return None
-            event, record, marker, payload = correction
+            event, record, marker, payload, _ = correction
             index = 0
         elif len(markers) == 1:
             record, marker, payload = markers[0]
@@ -7673,6 +7677,60 @@ def _settled_development_prefix(
                     markers = [
                         item for item in settled_records if item.request_comment_id == marker_id
                     ]
+                    if not markers:
+                        # A reviewed correction may bind a previously delivered
+                        # marker without writing it again in this occurrence.
+                        frontier, qualified = _derive_frontier(
+                            repository=repository,
+                            token=token,
+                            source=source,
+                            current_issue=current_issue,
+                            issue_comments=issue_comments,
+                            lifecycle_events=lifecycle_events,
+                            current_revision=current_revision,
+                            read=read,
+                        )
+                        if not qualified or frontier is None or frontier.change != record.change:
+                            return None
+                        path = f"openspec/changes/{record.change}/tasks.md"
+                        content = _content_text_at(
+                            repository, token, path=path, revision=prior[1].revision
+                        )
+                        slices = _task_slices(content)
+                        if slices is None:
+                            return None
+                        correction = _reviewed_correction_marker(
+                            repository,
+                            token,
+                            source=source,
+                            frontier=frontier,
+                            comments=issue_comments,
+                            lifecycle=lifecycle_events,
+                            slices=slices,
+                            branch=prior[1].branch,
+                            revision=prior[1].revision,
+                            current_revision=current_revision,
+                            read=read,
+                        )
+                        if correction is None:
+                            return None
+                        _, historical_marker, _, _, historical = correction
+                        if any(
+                            delivery.get(key) != historical.get(key)
+                            for key in (
+                                "scope_task_ids",
+                                "pr_number",
+                                "branch",
+                                "reviewed_revision",
+                                "review_comment_id",
+                                "marker_request_comment_id",
+                                "marker_accepted_decision_sha256",
+                                "marker_revision",
+                                "marker_blob",
+                            )
+                        ):
+                            return None
+                        markers = [historical_marker]
                     if len(markers) != 1 or _accepted_decision_sha256(
                         markers[0], issue_comments
                     ) != delivery.get("marker_accepted_decision_sha256"):
