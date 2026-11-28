@@ -821,9 +821,7 @@ def _typed_application_plan(
         body = payload.get("body") if payload is not None else None
         qualified_delivery = (
             isinstance(body, str)
-            and _formal_action_result_body_is_bounded(
-                body, source=batch.source, decision=decision
-            )
+            and _formal_action_result_body_is_bounded(body, source=batch.source, decision=decision)
             and validate_implementation_delivery(effect)
         )
 
