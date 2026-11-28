@@ -7640,15 +7640,15 @@ def _settled_development_prefix(
                         return None
                     retired_publication = None
                 if publication is not None and index != len(ordered) - 1:
-                    artifact = completion.recovery_artifact
+                    candidate_artifact = completion.recovery_artifact
                     if not (
-                        isinstance(artifact, ApplicationRecoveryArtifact)
+                        isinstance(candidate_artifact, ApplicationRecoveryArtifact)
                         and _native_delivery_never_called(record, completion, digest)
                     ):
                         return None
                     # Preserve the immutable ACCEPT as history, without
                     # attributing either a save or a formal consequence to it.
-                    retired_publication = stamp, artifact
+                    retired_publication = stamp, candidate_artifact
                     seen_dispatch.add(receipt.dispatch_request_comment_id)
                     continue
                 if (
