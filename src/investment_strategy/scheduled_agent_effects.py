@@ -478,8 +478,10 @@ def _formal_action_result_body_is_bounded(
     )
 
 
-def _implementation_development_save(batch: EffectBatch) -> bool:
-    """Recognize a physical-only code or test save, not a formal delivery."""
+def _implementation_development_save(
+    batch: EffectBatch, *, include_task_markers: bool = True
+) -> bool:
+    """Recognize physical-only save shape, independently of write authority."""
     typed_result = batch.typed_result
     if (
         (batch.source.role, batch.source.action) != ("executor", "implement-change")
@@ -503,7 +505,16 @@ def _implementation_development_save(batch: EffectBatch) -> bool:
         and request.expected_change == typed_result.change
         and request.change == typed_result.change
         and bool(request.files)
-        and all(PurePosixPath(file.path).parts[:1] != ("openspec",) for file in request.files)
+        and (
+            all(PurePosixPath(file.path).parts[:1] != ("openspec",) for file in request.files)
+            or (
+                include_task_markers
+                and len(request.files) == 1
+                and request.files[0].path == f"openspec/changes/{request.change}/tasks.md"
+                and request.files[0].expected_sha is not None
+                and request.files[0].blob_sha != request.files[0].expected_sha
+            )
+        )
     )
 
 
@@ -793,8 +804,10 @@ def _typed_application_plan(
             ),
         )
 
+    # Shape recognition is not marker write authority. Keep the existing
+    # completion guard until exact native marker admission is qualified.
     if not _implementation_development_save(
-        batch
+        batch, include_task_markers=False
     ) and not _implementation_checkpoint_effects_complete(
         batch,
         decision,
