@@ -2031,6 +2031,116 @@ class GitHubEffectAdapter:
             == marker_blob
         )
 
+    def _delivery_quality_is_current(self) -> bool:
+        """Re-observe the same qualified native gate before a new formal write."""
+        from investment_strategy.issue_comment_bridge import plan_native_quality_verification
+
+        evidence = self._qualified_delivery_evidence
+        current_revision = self.current_revision
+        if evidence is None or current_revision is None:
+            return False
+        revision = evidence.get("revision")
+        branch = evidence.get("branch")
+        quality = _as_mapping(evidence.get("quality"))
+        dispatch = _as_mapping(evidence.get("dispatch"))
+        if (
+            not isinstance(revision, str)
+            or not isinstance(branch, str)
+            or quality is None
+            or dispatch is None
+            or quality.get("revision") != revision
+            or quality.get("branch") != branch
+            or quality.get("authorization_revision") != current_revision
+            or dispatch.get("authorization_revision") != current_revision
+        ):
+            return False
+        request_id = _positive_comment_id(quality.get("request_comment_id"))
+        dispatch_id = _positive_comment_id(dispatch.get("dispatch_request_comment_id"))
+        run_id = _positive_comment_id(dispatch.get("run_id"))
+        run_attempt = _positive_comment_id(dispatch.get("run_attempt"))
+        workflow_blob = quality.get("workflow_blob")
+        obligation_id = quality.get("obligation_id")
+        if (
+            request_id is None
+            or dispatch_id is None
+            or run_id is None
+            or run_attempt is None
+            or not isinstance(workflow_blob, str)
+            or not isinstance(obligation_id, str)
+        ):
+            return False
+        try:
+            default_branch = self._default_branch()
+            if default_branch is None:
+                return False
+            comments = _paged_github_list(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}/comments?sort=created",
+            )
+            matches = [
+                (item, record)
+                for item in comments
+                if is_github_actions_comment(item)
+                for record in (parse_application_decision(item.get("body")),)
+                if record is not None and record.request_comment_id == request_id
+            ]
+            if len(matches) != 1:
+                return False
+            item, record = matches[0]
+            comment_id = _positive_comment_id(item.get("id"))
+            body = item.get("body")
+            accepted_at = item.get("created_at")
+            issue_url = (
+                f"https://api.github.com/repos/{self.repository}/issues/{self.source.issue_number}"
+            )
+            if (
+                comment_id is None
+                or not isinstance(body, str)
+                or _sha256_text(body) != quality.get("accepted_decision_sha256")
+                or not isinstance(accepted_at, str)
+                or item.get("updated_at") != accepted_at
+                or item.get("issue_url") != issue_url
+                or record.disposition != "ACCEPTED"
+                or record.issue_number != self.source.issue_number
+                or record.role != self.source.role
+                or record.action != self.source.action
+                or record.change != self.authorized_change
+                or record.result_kind != "more-implementation-required"
+            ):
+                return False
+            observed = _github_json(self.repository, self.token, f"issues/comments/{comment_id}")
+            if (
+                not isinstance(observed, Mapping)
+                or not is_github_actions_comment(observed)
+                or any(
+                    observed.get(key) != item.get(key)
+                    for key in ("id", "body", "created_at", "updated_at", "issue_url")
+                )
+            ):
+                return False
+            return (
+                plan_native_quality_verification(
+                    self.repository,
+                    self.token,
+                    revision=revision,
+                    branch=branch,
+                    workflow_blob=workflow_blob,
+                    obligation_id=obligation_id,
+                    accepted_at=accepted_at,
+                    current_revision=current_revision,
+                    default_branch=default_branch,
+                    request_comment_id=dispatch_id,
+                    run_id=run_id,
+                    run_attempt=run_attempt,
+                    read=_github_json,
+                    observe_only=True,
+                ).outcome
+                == "PASS"
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return False
+
     def validate_implementation_delivery(self, effect: StagedEffect) -> bool:
         """Qualify publication independently of legacy checkpoint materialization."""
         from investment_strategy.issue_comment_bridge import (
@@ -3508,7 +3618,9 @@ class GitHubEffectAdapter:
                 )
             return qualified
         if effect.kind == "issue-comment":
-            return self._qualified_delivery_evidence is None or self._delivery_carrier_matches()
+            return self._qualified_delivery_evidence is None or (
+                self._delivery_carrier_matches() and self._delivery_quality_is_current()
+            )
         guarded = payload is not None and self._guard_github_mutation(payload)
         if not guarded and self._last_rejection is None:
             self._last_rejection = ApplicationRejection(
