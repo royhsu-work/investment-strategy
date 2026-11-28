@@ -11538,6 +11538,7 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
     ("history", "expected"),
     [
         ("red", "COMPLETE"),
+        ("marker-red", "COMPLETE"),
         ("missing", "AMBIGUOUS"),
         ("late", "AMBIGUOUS"),
         ("wrong-base", "AMBIGUOUS"),
@@ -11617,9 +11618,19 @@ def _assert_saved_development_frontier(
     prior_worker = dict(worker)
     prior_worker.pop("_native_development_dispatch")
     prior_worker.pop("_semantic_intent_version")
+    prior_payload = {**payload, "base_sha": REVISION}
+    if history == "marker-red":
+        prior_payload["files"] = [
+            {
+                "path": f"openspec/changes/{change}/tasks.md",
+                "expected_sha": "7" * 40,
+                "blob_sha": "8" * 40,
+            }
+        ]
+        prior_payload["message"] = "Save verified marker before its independent quality gate"
     prior_effect = {
         "kind": "github-mutation",
-        "payload_json": json.dumps({**payload, "base_sha": REVISION}),
+        "payload_json": json.dumps(prior_payload),
     }
     prior_worker["requested_effects"] = [prior_effect]
     prior_raw = base64.b64encode(json.dumps(prior_worker).encode()).decode()
@@ -11939,7 +11950,9 @@ def _assert_saved_development_frontier(
 
 
 @pytest.mark.parametrize("prior_evidence", ["valid", "missing", "wrong-hash"])
-@pytest.mark.parametrize("operation", ["marker", "publish", "wrong-kind", "wrong-head", "fail"])
+@pytest.mark.parametrize(
+    "operation", ["marker", "publish", "wrong-kind", "wrong-head", "fail", "corrected", "pending"]
+)
 def test_next_slice_requires_bound_prior_native_delivery(
     monkeypatch: pytest.MonkeyPatch, prior_evidence: str, operation: str
 ) -> None:
@@ -11955,6 +11968,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
     prior_marker_preimage = "6" * 40
     head = "b" * 40
     current_marker_base = "c" * 40
+    marker_head = "e" * 40 if operation == "corrected" else head
     publishing = operation != "marker"
     task_blob, candidate_blob = "1" * 40, "2" * 40
     path = f"openspec/changes/{change}/tasks.md"
@@ -12185,12 +12199,56 @@ def test_next_slice_requires_bound_prior_native_delivery(
     comments = (*comments, saved)
     saved_record = bridge.parse_application_decision(saved["body"])
     assert saved_record is not None
+    settled: tuple[bridge.ApplicationDecisionRecord, ...] = (saved_record,)
+    latest = saved_record
+    latest_comment = saved
+    if operation == "corrected":
+        correction_request = {
+            **saved_request,
+            "id": 190,
+            "created_at": "2026-09-18T02:00:13Z",
+            "updated_at": "2026-09-18T02:00:13Z",
+        }
+        correction_lines = cast(str, correction_request["body"]).splitlines()
+        correction_worker = json.loads(
+            base64.b64decode(correction_lines[2].removeprefix("Worker-Result-B64: "))
+        )
+        correction_payload = {
+            **marker_payload,
+            "base_sha": marker_head,
+            "message": "Correct failed marked slice without another marker write",
+            "files": [
+                {
+                    "path": "tests/test_native_next.py",
+                    "expected_sha": "7" * 40,
+                    "blob_sha": "8" * 40,
+                }
+            ],
+        }
+        correction_worker["requested_effects"] = [
+            {"kind": "github-mutation", "payload_json": json.dumps(correction_payload)}
+        ]
+        correction_encoded = base64.b64encode(json.dumps(correction_worker).encode()).decode()
+        correction_request["body"] = "\n".join(
+            (correction_lines[0], correction_lines[1], f"Worker-Result-B64: {correction_encoded}")
+        )
+        corrected = _application_decision_comment(correction_request, comment_id=195)
+        corrected["created_at"] = "2026-09-18T02:00:14Z"
+        corrected["updated_at"] = corrected["created_at"]
+        comments = (*comments, corrected)
+        correction_record = bridge.parse_application_decision(corrected["body"])
+        assert correction_record is not None
+        settled = (saved_record, correction_record)
+        latest = correction_record
+        latest_comment = corrected
     completion = bridge.ApplicationCompletion(
-        "COMPLETE",
+        "RESUMABLE" if operation == "pending" else "COMPLETE",
         "qualified current saved work",
-        request_comment_id=150,
-        accepted_record=saved_record,
-        accepted_decision_sha256=hashlib.sha256(cast(str, saved["body"]).encode()).hexdigest(),
+        request_comment_id=latest.request_comment_id,
+        accepted_record=latest,
+        accepted_decision_sha256=hashlib.sha256(
+            cast(str, latest_comment["body"]).encode()
+        ).hexdigest(),
         settled_quality_obligation=bridge.NativeQualityObligation(
             prior_head if operation == "wrong-head" else head,
             branch,
@@ -12202,7 +12260,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
             prior_head,
         ),
         quality_observation=bridge.NativeQualityObservation(
-            "FAIL" if operation == "fail" else "PASS",
+            "PENDING" if operation == "pending" else "FAIL" if operation == "fail" else "PASS",
             (
                 bridge.NativeQualityAttempt(
                     180,
@@ -12215,7 +12273,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
                 ),
             ),
         ),
-        settled_development_records=(saved_record,),
+        settled_development_records=settled,
     )
     monkeypatch.setattr(bridge, "qualify_development_dispatch_source", lambda *a, **kw: receipt)
     monkeypatch.setattr(bridge, "qualify_application_completion", lambda *a, **kw: completion)
@@ -12230,12 +12288,12 @@ def test_next_slice_requires_bound_prior_native_delivery(
     def content_sha(*args: object, revision: str, **kwargs: object) -> str:
         if revision == prior_marker_base:
             return prior_marker_preimage
-        return candidate_blob if publishing and revision == head else task_blob
+        return candidate_blob if publishing and revision in (head, marker_head) else task_blob
 
     def content_text(*args: object, revision: str, **kwargs: object) -> str:
         if revision == prior_marker_base:
             return task_text.replace("- [x] 1.1", "- [ ] 1.1")
-        return candidate if publishing and revision == head else task_text
+        return candidate if publishing and revision in (head, marker_head) else task_text
 
     for module in (bridge, resources):
         monkeypatch.setattr(module, "_content_sha_at", content_sha)
@@ -12250,7 +12308,9 @@ def test_next_slice_requires_bound_prior_native_delivery(
             lambda *a, **kw: SimpleNamespace(
                 disposition="COMPLETE",
                 target=SimpleNamespace(revision=head, branch=branch, pr_number=139),
-                witness=SimpleNamespace(revision=head, desired_blobs=((path, candidate_blob),)),
+                witness=SimpleNamespace(
+                    revision=marker_head, desired_blobs=((path, candidate_blob),)
+                ),
             ),
         )
         evidence_result = bridge.qualify_initial_implementation_delivery(
@@ -12265,11 +12325,16 @@ def test_next_slice_requires_bound_prior_native_delivery(
             default_branch="main",
             read=read,
         )
-        if prior_evidence == "valid" and operation == "publish":
+        if prior_evidence == "valid" and operation in ("publish", "corrected"):
             assert evidence_result is not None
             assert evidence_result["scope_task_ids"] == ["2.1"]
             assert evidence_result["revision"] == head
             assert evidence_result["result_kind"] == "ready"
+            assert evidence_result["marker_revision"] == marker_head
+            assert evidence_result["marker_request_comment_id"] == 150
+            quality = evidence_result["quality"]
+            assert isinstance(quality, dict)
+            assert quality["request_comment_id"] == latest.request_comment_id
         else:
             assert evidence_result is None
         return
