@@ -12453,6 +12453,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
         read=read,
     ) is (prior_evidence in ("valid", "returned", "legacy"))
 
+
 @pytest.mark.parametrize("verdict", ["PASS", "CONFLICT", "PENDING"])
 def test_native_delivery_reobserves_quality_before_publication(
     monkeypatch: pytest.MonkeyPatch,
@@ -12573,4 +12574,3 @@ def test_native_delivery_reobserves_quality_before_publication(
     )
     assert adapter.validate_implementation_delivery(effect)
     assert adapter.guard(effect) is (verdict == "PASS")
-
