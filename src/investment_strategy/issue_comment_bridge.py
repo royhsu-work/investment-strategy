@@ -6928,17 +6928,12 @@ def _reviewed_correction_marker(
     ]
     | None
 ):
-    """Reuse the first affected approved group's delivered marker."""
-    finding = frontier.event
+    """Reuse the next affected approved group's delivered marker."""
     if (
         not slices
         or not all(checked for group in slices for _, checked in group)
-        or not isinstance(finding, FormalLifecycleEvent)
-        or not finding.valid
-        or (finding.role, finding.action, finding.result_kind)
-        != ("reviewer", "review-implementation", "findings")
-        or finding.revision is None
-        or finding.default_branch_revision is None
+        or not isinstance(frontier.event, FormalLifecycleEvent)
+        or not frontier.event.valid
     ):
         return None
     qualification = build_qualification_input(
@@ -6951,9 +6946,30 @@ def _reviewed_correction_marker(
         lifecycle_events=lifecycle,
     )
     events = qualification.events
-    if len(events) < 3 or events[-1] != finding:
+    if len(events) < 3 or events[-1] != frontier.event:
         return None
-    delivered = events[-2]
+    finding_index = len(events) - 1
+    while finding_index > 0:
+        event = events[finding_index]
+        if (
+            not event.valid
+            or (event.role, event.action, event.result_kind)
+            != ("executor", "implement-change", "more-implementation-required")
+            or event.successor != ("executor", "implement-change")
+        ):
+            break
+        finding_index -= 1
+    finding = events[finding_index]
+    if (
+        finding_index < 2
+        or not finding.valid
+        or (finding.role, finding.action, finding.result_kind)
+        != ("reviewer", "review-implementation", "findings")
+        or finding.revision is None
+        or finding.default_branch_revision is None
+    ):
+        return None
+    delivered = events[finding_index - 1]
     if (
         not delivered.valid
         or (delivered.role, delivered.action, delivered.result_kind)
@@ -6964,7 +6980,7 @@ def _reviewed_correction_marker(
     review = next(
         (
             event
-            for event in reversed(events[:-2])
+            for event in reversed(events[: finding_index - 1])
             if (event.role, event.action, event.result_kind)
             == ("reviewer", "review-openspec", "pass")
         ),
@@ -6984,7 +7000,7 @@ def _reviewed_correction_marker(
     ):
         return None
     decisions = _application_decisions(comments)
-    finding_owners = _frontier_application_decisions(decisions, frontier)
+    finding_owners = _frontier_application_decisions(decisions, replace(frontier, event=finding))
     if len(finding_owners) != 1:
         return None
     finding_record = finding_owners[0]
@@ -7057,8 +7073,7 @@ def _reviewed_correction_marker(
         affected_indices.add(matches[0])
     if not affected_indices:
         return None
-    selected_index = min(affected_indices)
-    correction_kind = "more-implementation-required" if len(affected_indices) > 1 else "ready"
+    remaining_indices = sorted(affected_indices)
     finding_binding = {
         "finding_application_correlation": finding.application_correlation,
         "finding_accepted_decision_sha256": finding_digest,
@@ -7090,12 +7105,15 @@ def _reviewed_correction_marker(
         return None
     deliveries = [
         event
-        for event in events[events.index(review) + 1 : -1]
+        for event in events[events.index(review) + 1 : finding_index]
         if (event.role, event.action) == ("executor", "implement-change")
         and event.result_kind in ("ready", "more-implementation-required")
     ]
     if len(deliveries) < len(slices) or deliveries[-1] != delivered:
         return None
+    prior_count = len(deliveries)
+    deliveries.extend(events[finding_index + 1 :])
+    last_correction_revision = finding.revision
     original_evidence: list[Mapping[str, object] | None] = []
     for occurrence, delivery_event in enumerate(deliveries):
         owners = _frontier_application_decisions(decisions, replace(frontier, event=delivery_event))
@@ -7135,6 +7153,29 @@ def _reviewed_correction_marker(
             ):
                 return None
             expected_kind = "ready"
+            if occurrence >= prior_count:
+                if (
+                    len(remaining_indices) <= 1
+                    or scope_index != remaining_indices[0]
+                    or any(
+                        occurrence_evidence.get(key) != value
+                        for key, value in finding_binding.items()
+                    )
+                    or delivery_event.revision is None
+                    or _authorization_ancestry(
+                        repository,
+                        token,
+                        authorization_revision=last_correction_revision,
+                        current_revision=delivery_event.revision,
+                        read=read,
+                    )
+                    is None
+                ):
+                    return None
+                expected_kind = "more-implementation-required"
+                remaining_indices.pop(0)
+                latest_delivery = occurrence_evidence
+                last_correction_revision = delivery_event.revision
         if delivery_event.result_kind != expected_kind or not _bound_native_delivery_scope(
             repository,
             token,
@@ -7157,7 +7198,8 @@ def _reviewed_correction_marker(
             )
     if any(original_evidence[index] is None for index in affected_indices):
         return None
-    evidence = original_evidence[selected_index]
+    correction_kind = "more-implementation-required" if len(remaining_indices) > 1 else "ready"
+    evidence = original_evidence[remaining_indices[0]]
     if evidence is None:
         return None
     marker_id = _positive_int(evidence.get("marker_request_comment_id"))
@@ -7457,8 +7499,13 @@ def qualify_initial_implementation_delivery(
             current_dispatch_issue_number=shard,
             phase_a_request_comment_id=request_comment_id,
         )
-        evidence_only = completion.state in ("NONE", "REJECTED")
         obligation = completion.settled_quality_obligation
+        completed_predecessor = (
+            completion.state == "COMPLETE"
+            and obligation is None
+            and not completion.settled_development_records
+        )
+        evidence_only = completion.state in ("NONE", "REJECTED") or completed_predecessor
         if evidence_only:
             if (
                 completion.accepted_record is not None
@@ -7490,6 +7537,16 @@ def qualify_initial_implementation_delivery(
         )
         if not qualified or frontier is None or frontier.change != change:
             return None
+        if completed_predecessor:
+            owners = _frontier_application_decisions(_application_decisions(comments), frontier)
+            if (
+                len(owners) != 1
+                or owners[0].disposition != "ACCEPTED"
+                or owners[0].request_comment_id != completion.request_comment_id
+                or (owners[0].role, owners[0].action, owners[0].result_kind)
+                != ("executor", "implement-change", "more-implementation-required")
+            ):
+                return None
         path = f"openspec/changes/{change}/tasks.md"
         content = _content_text_at(repository, token, path=path, revision=revision)
         slices = _task_slices(content)
