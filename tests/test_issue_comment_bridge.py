@@ -12116,7 +12116,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
     )
     delivered["updated_at"] = delivered["created_at"]
     comments: tuple[dict[str, object], ...] = (review, marker_accepted, accepted, delivered)
-    transitions = [
+    transitions: list[tuple[int, str, str | None]] = [
         (10, "review-openspec", "implement-change"),
         (100, source.action, source.action),
     ]
