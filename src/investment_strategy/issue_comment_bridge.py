@@ -6911,7 +6911,7 @@ def _reviewed_correction_marker(
     comments: tuple[Mapping[str, object], ...],
     lifecycle: tuple[Mapping[str, object], ...],
     slices: tuple[tuple[tuple[str, bool], ...], ...],
-    branch: str,
+    branch: str | None,
     revision: str,
     current_revision: str,
     read: GitHubReader,
@@ -6921,6 +6921,7 @@ def _reviewed_correction_marker(
         ApplicationDecisionRecord,
         MaterializationRequest,
         dict[str, object],
+        Mapping[str, object],
         Mapping[str, object],
     ]
     | None
@@ -7065,7 +7066,12 @@ def _reviewed_correction_marker(
     )
     if not isinstance(evidence, Mapping):
         return None
+    latest_delivery = evidence
     pr_number = _positive_int(evidence.get("pr_number"))
+    delivery_branch = evidence.get("branch")
+    if not isinstance(delivery_branch, str) or (branch is not None and branch != delivery_branch):
+        return None
+    branch = delivery_branch
     if pr_number is None or not _bound_native_delivery_scope(
         repository,
         token,
@@ -7132,7 +7138,7 @@ def _reviewed_correction_marker(
     request = find_materialization_payload(payload, source)
     if request is None:
         return None
-    return review, marker, request, payload, evidence
+    return review, marker, request, payload, evidence, latest_delivery
 
 
 def qualify_initial_marker_save(
@@ -7276,6 +7282,92 @@ def qualify_initial_marker_save(
         return False
 
 
+def _observe_same_head_correction_quality(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    frontier: CurrentFrontier,
+    comments: tuple[Mapping[str, object], ...],
+    historical_delivery: Mapping[str, object],
+    marker: MaterializationRequest,
+    revision: str,
+    current_revision: str,
+    default_branch: str,
+    receipt: DevelopmentDispatchSource,
+    read: GitHubReader,
+) -> ApplicationCompletion | None:
+    """Reobserve the original physical witness, not a new current-occurrence write."""
+    finding = frontier.event
+    if (
+        not isinstance(finding, FormalLifecycleEvent)
+        or finding.revision != revision
+        or historical_delivery.get("revision") != revision
+        or marker.pr_number is None
+    ):
+        return None
+    carrier = qualify_implementation_carrier(
+        repository=repository,
+        token=token,
+        source=source,
+        change=frontier.change,
+        pr_number=marker.pr_number,
+        current_revision=current_revision,
+        read=read,
+    )
+    if (
+        carrier.disposition != "QUALIFIED"
+        or carrier.branch != marker.branch
+        or carrier.head_sha != revision
+    ):
+        return None
+    historical_quality = historical_delivery.get("quality")
+    if not isinstance(historical_quality, Mapping):
+        return None
+    quality_id = _positive_int(historical_quality.get("request_comment_id"))
+    records = [
+        record for record in _application_decisions(comments) if record.request_comment_id == quality_id
+    ]
+    if len(records) != 1:
+        return None
+    record = records[0]
+    digest = _accepted_decision_sha256(record, comments)
+    if digest is None or digest != historical_quality.get("accepted_decision_sha256"):
+        return None
+    observed = _application_job(
+        repository,
+        token,
+        record.request_comment_id,
+        read=read,
+        record=record,
+        accepted_decision_sha256=digest,
+        current_revision=current_revision,
+        issue_comments=comments,
+    )
+    obligation = observed.quality_obligation
+    if (
+        observed.state != "RESUMABLE"
+        or obligation is None
+        or obligation.revision != revision
+        or obligation.carrier_revision != revision
+        or obligation.branch != marker.branch
+        or obligation.default_branch != default_branch
+    ):
+        return None
+    return _current_development_completion(
+        repository,
+        token,
+        source=source,
+        record=record,
+        completion=observed,
+        current_revision=current_revision,
+        dispatch_request_id=receipt.dispatch_request_comment_id,
+        phase_a=True,
+        accepted_decision_sha256=digest,
+        read=read,
+    )
+
+
 def qualify_initial_implementation_delivery(
     repository: str,
     token: str,
@@ -7318,18 +7410,17 @@ def qualify_initial_implementation_delivery(
             current_dispatch_issue_number=shard,
             phase_a_request_comment_id=request_comment_id,
         )
+        evidence_only = completion.state in ("NONE", "REJECTED")
         obligation = completion.settled_quality_obligation
-        quality = development_predecessor_evidence(completion, current_revision)
-        if (
-            obligation is None
-            or obligation.revision != revision
-            or obligation.carrier_revision != revision
-            or obligation.default_branch != default_branch
-            or completion.quality_observation is None
-            or completion.quality_observation.outcome != "PASS"
-            or quality is None
-            or not completion.settled_development_records
-        ):
+        if evidence_only:
+            if (
+                completion.accepted_record is not None
+                or completion.quality_obligation is not None
+                or obligation is not None
+                or completion.settled_development_records
+            ):
+                return None
+        elif obligation is None or not completion.settled_development_records:
             return None
         issue = read(repository, token, f"issues/{source.issue_number}")
         if not isinstance(issue, Mapping):
@@ -7382,14 +7473,33 @@ def qualify_initial_implementation_delivery(
                 comments=comments,
                 lifecycle=lifecycle,
                 slices=slices,
-                branch=obligation.branch,
+                branch=obligation.branch if obligation is not None else None,
                 revision=revision,
                 current_revision=current_revision,
                 read=read,
             )
             if correction is None:
                 return None
-            event, record, marker, payload, historical = correction
+            event, record, marker, payload, historical, latest_delivery = correction
+            if evidence_only:
+                observed = _observe_same_head_correction_quality(
+                    repository,
+                    token,
+                    source=source,
+                    frontier=frontier,
+                    comments=comments,
+                    historical_delivery=latest_delivery,
+                    marker=marker,
+                    revision=revision,
+                    current_revision=current_revision,
+                    default_branch=default_branch,
+                    receipt=receipt,
+                    read=read,
+                )
+                if observed is None:
+                    return None
+                completion = observed
+                obligation = completion.settled_quality_obligation
             matching_indices = [
                 i
                 for i, group in enumerate(slices)
@@ -7421,7 +7531,18 @@ def qualify_initial_implementation_delivery(
             event, index = scoped
         else:
             return None
-        if marker.pr_number is None or marker.branch != obligation.branch:
+        quality = development_predecessor_evidence(completion, current_revision)
+        if (
+            obligation is None
+            or obligation.revision != revision
+            or obligation.carrier_revision != revision
+            or obligation.default_branch != default_branch
+            or completion.quality_observation is None
+            or completion.quality_observation.outcome != "PASS"
+            or quality is None
+            or marker.pr_number is None
+            or marker.branch != obligation.branch
+        ):
             return None
         if (
             not all(checked for _, checked in slices[index])
@@ -7796,7 +7917,7 @@ def _settled_development_prefix(
                         )
                         if correction is None:
                             return None
-                        _, historical_marker, _, _, historical = correction
+                        _, historical_marker, _, _, historical, _ = correction
                         if any(
                             delivery.get(key) != historical.get(key)
                             for key in (
