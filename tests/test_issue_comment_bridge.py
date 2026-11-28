@@ -12753,6 +12753,78 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     monkeypatch.setattr(
         resources, "_blob_text", lambda *a: task_text if a[-1] == task_blob else candidate
     )
+    if finding_correction:
+        qualification = bridge.build_qualification_input(
+            issue_number=source.issue_number,
+            change=change,
+            state="open",
+            current_routing=frontier.current_routing,
+            comments=comments,
+            current_revision=REVISION,
+            lifecycle_events=lifecycle,
+        )
+        assert len(qualification.events) == 3
+        reviewed, historical, current_finding = qualification.events
+        assert current_finding == frontier.event
+        assert current_finding.revision == historical.revision == prior_head
+        assert current_finding.default_branch_revision == REVISION
+        decisions = bridge._application_decisions(comments)  # noqa: SLF001
+        finding_owners = bridge._frontier_application_decisions(  # noqa: SLF001
+            decisions, frontier
+        )
+        assert len(finding_owners) == 1
+        reviewer = bridge.WorkerRequest(138, "reviewer", "review-implementation")
+        finding_record = finding_owners[0]
+        original_finding = bridge._qualified_physical_original_accepted_effects(  # noqa: SLF001
+            record=finding_record, source=reviewer, repository=repository, token=token, read=read
+        )
+        assert original_finding is not None and not original_finding.effects
+        projected = json.loads(
+            bridge._application_owned_worker_result(  # noqa: SLF001
+                finding_record.raw_worker_result,
+                source=reviewer,
+                change=change,
+                current_revision=REVISION,
+                result_revision=prior_head,
+                request_comment_id=finding_record.request_comment_id,
+            )
+        )
+        assert projected["result_content"] == next(
+            comment["body"] for comment in comments if comment["id"] == current_finding.comment_id
+        )
+        assert bridge._bound_native_delivery_scope(  # noqa: SLF001
+            repository,
+            token,
+            source=source,
+            frontier=frontier,
+            event=historical,
+            review=reviewed,
+            scope=("1.1",),
+            comments=comments,
+            branch=branch,
+            pr_number=139,
+            revision=head,
+            current_revision=REVISION,
+            read=read,
+        )
+        parsed_slices = bridge._task_slices(candidate)  # noqa: SLF001
+        assert parsed_slices == ((("1.1", True),),)
+        historical_marker = bridge._reviewed_correction_marker(  # noqa: SLF001
+            repository,
+            token,
+            source=source,
+            frontier=frontier,
+            comments=comments,
+            lifecycle=lifecycle,
+            slices=parsed_slices,
+            branch=branch,
+            revision=head,
+            current_revision=REVISION,
+            read=read,
+        )
+        assert historical_marker is not None
+        assert historical_marker[1].request_comment_id == 30
+
     if publishing:
         monkeypatch.setattr(
             bridge,
