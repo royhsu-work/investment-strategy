@@ -3628,9 +3628,16 @@ class GitHubEffectAdapter:
                 )
             return qualified
         if effect.kind == "issue-comment":
-            return self._qualified_delivery_evidence is None or (
+            qualified = self._qualified_delivery_evidence is None or (
                 self._delivery_carrier_matches() and self._delivery_gates_are_current()
             )
+            if not qualified:
+                self._last_rejection = ApplicationRejection(
+                    ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+                    expected="fresh native implementation delivery gates",
+                    observed=effect.payload_json,
+                )
+            return qualified
         guarded = payload is not None and self._guard_github_mutation(payload)
         if not guarded and self._last_rejection is None:
             self._last_rejection = ApplicationRejection(
