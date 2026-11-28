@@ -13350,15 +13350,16 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             ),
         )
         expected_kind = "more-implementation-required" if affected_groups else "ready"
+        requested_kind = expected_kind
+        if operation == "wrong-kind":
+            requested_kind = "more-implementation-required"
         evidence_result = bridge.qualify_initial_implementation_delivery(
             repository,
             token,
             source=source,
             change=change,
             revision=head,
-            result_kind=(
-                "more-implementation-required" if operation == "wrong-kind" else expected_kind
-            ),
+            result_kind=requested_kind,
             request_comment_id=200,
             current_revision=REVISION,
             default_branch="main",
@@ -13382,11 +13383,11 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
                     f"application:130:138:{change}:reviewer:review-implementation:"
                     f"findings:{REVISION}"
                 )
-                assert evidence_result["finding_accepted_decision_sha256"] == hashlib.sha256(
-                    cast(str, finding_accepted["body"]).encode()
-                ).hexdigest()
+                finding_body = cast(str, finding_accepted["body"])
+                finding_digest = hashlib.sha256(finding_body.encode()).hexdigest()
+                assert evidence_result["finding_accepted_decision_sha256"] == finding_digest
                 assert evidence_result["finding_revision"] == prior_head
-                assert bridge.qualify_initial_implementation_delivery(
+                early_ready = bridge.qualify_initial_implementation_delivery(
                     repository,
                     token,
                     source=source,
@@ -13397,7 +13398,8 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
                     current_revision=REVISION,
                     default_branch="main",
                     read=read,
-                ) is None
+                )
+                assert early_ready is None
             assert evidence_result["marker_revision"] == (
                 first_head if earlier_finding else prior_head
             )
