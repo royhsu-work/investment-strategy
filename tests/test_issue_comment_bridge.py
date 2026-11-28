@@ -12364,6 +12364,21 @@ def test_reviewed_affected_groups_deliver_first_group_before_ready(
     )
 
 
+@pytest.mark.parametrize("operation", ["corrected", "evidence-only"])
+@pytest.mark.parametrize("invalid_binding", [False, True])
+def test_reviewed_affected_groups_continue_after_first_formal_delivery(
+    monkeypatch: pytest.MonkeyPatch, operation: str, invalid_binding: bool
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch,
+        "finding-multi",
+        operation,
+        affected_groups=True,
+        continued_correction=True,
+        invalid_binding=invalid_binding,
+    )
+
+
 def _assert_next_slice_requires_bound_prior_native_delivery(
     monkeypatch: pytest.MonkeyPatch,
     prior_evidence: str,
@@ -12375,6 +12390,8 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     scope_conflict: bool = False,
     omit_scope: bool = False,
     affected_groups: bool = False,
+    continued_correction: bool = False,
+    invalid_binding: bool = False,
 ) -> None:
     from investment_strategy import scheduled_agent_validation_resource as resources
 
@@ -12790,10 +12807,14 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
         finding["updated_at"] = finding["created_at"]
         comments = (*comments, finding_accepted, finding)
         transitions.append((140, "review-implementation", source.action))
-    if repeat_finding:
-        # The first correction of an earlier slice was delivered at the same
-        # head. A second qualified finding must not reclassify it as Slice 2.
-        assert earlier_finding
+    if repeat_finding or continued_correction:
+        # The first correction was delivered at the reviewed head.
+        assert earlier_finding or continued_correction
+        repeated_kind = "ready"
+        repeated_successor = "Reviewer / review-implementation"
+        if continued_correction:
+            repeated_kind = "more-implementation-required"
+            repeated_successor = "Executor / implement-change"
         repeated_evidence = {
             **older_evidence,
             "revision": prior_head,
@@ -12809,16 +12830,39 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
                 "artifact_digest": "sha256:" + "3" * 64,
                 "authorization_revision": REVISION,
             },
-            "result_kind": "ready",
+            "result_kind": repeated_kind,
         }
+        if continued_correction:
+            finding_body = cast(str, finding_accepted["body"])
+            origin_digest = hashlib.sha256(finding_body.encode()).hexdigest()
+            if invalid_binding:
+                origin_digest = "0" * 64
+            repeated_evidence.update(
+                {
+                    "finding_application_correlation": (
+                        f"application:130:138:{change}:reviewer:review-implementation:"
+                        f"findings:{REVISION}"
+                    ),
+                    "finding_accepted_decision_sha256": origin_digest,
+                    "finding_revision": prior_head,
+                }
+            )
         repeated_request = {
             **prior_request,
             "id": 155,
             "created_at": "2026-09-18T02:00:16Z",
             "updated_at": "2026-09-18T02:00:16Z",
         }
+        repeated_original = json.loads(
+            base64.b64decode(lines[2].removeprefix("Worker-Result-B64: "))
+        )
+        repeated_original["result_kind"] = repeated_kind
+        original_encoded = base64.b64encode(json.dumps(repeated_original).encode()).decode()
+        repeated_request["body"] = "\n".join(
+            (lines[0], lines[1], f"Worker-Result-B64: {original_encoded}")
+        )
         repeated_worker = {
-            **json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: "))),
+            **repeated_original,
             "_native_implementation_delivery": repeated_evidence,
         }
         repeated_encoded = base64.b64encode(json.dumps(repeated_worker).encode()).decode()
@@ -12843,8 +12887,8 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             180,
             action=source.action,
             role=source.role,
-            result="ready",
-            successor="Reviewer / review-implementation",
+            result=repeated_kind,
+            successor=repeated_successor,
             request_id=155,
             change=change,
         )
@@ -12858,43 +12902,48 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             + f"\nEvidence: native-delivery:{repeated_digest}"
         )
         repeated_delivery["updated_at"] = repeated_delivery["created_at"]
-        second_finding_request = {
-            **finding_request,
-            "id": 210,
-            "created_at": "2026-09-18T02:00:20Z",
-            "updated_at": "2026-09-18T02:00:20Z",
-        }
-        second_finding_accepted = _application_decision_comment(
-            second_finding_request, comment_id=215
-        )
-        second_finding_accepted["created_at"] = "2026-09-18T02:00:21Z"
-        second_finding_accepted["updated_at"] = second_finding_accepted["created_at"]
-        second_finding = {
-            **finding,
-            "id": 220,
-            "created_at": "2026-09-18T02:00:22Z",
-            "updated_at": "2026-09-18T02:00:22Z",
-            "body": cast(str, finding["body"]).replace("application:130:", "application:210:"),
-        }
-        comments = (
-            *comments,
-            repeated_accepted,
-            repeated_delivery,
-            second_finding_accepted,
-            second_finding,
-        )
-        transitions.extend(
-            [
-                (180, source.action, "review-implementation"),
-                (220, "review-implementation", source.action),
-            ]
-        )
-        older_requests.update(
-            {
-                "issues/comments/155": repeated_request,
-                "issues/comments/210": second_finding_request,
+        if continued_correction:
+            comments = (*comments, repeated_accepted, repeated_delivery)
+            transitions.append((180, source.action, source.action))
+            older_requests["issues/comments/155"] = repeated_request
+        else:
+            second_finding_request = {
+                **finding_request,
+                "id": 210,
+                "created_at": "2026-09-18T02:00:20Z",
+                "updated_at": "2026-09-18T02:00:20Z",
             }
-        )
+            second_finding_accepted = _application_decision_comment(
+                second_finding_request, comment_id=215
+            )
+            second_finding_accepted["created_at"] = "2026-09-18T02:00:21Z"
+            second_finding_accepted["updated_at"] = second_finding_accepted["created_at"]
+            second_finding = {
+                **finding,
+                "id": 220,
+                "created_at": "2026-09-18T02:00:22Z",
+                "updated_at": "2026-09-18T02:00:22Z",
+                "body": cast(str, finding["body"]).replace("application:130:", "application:210:"),
+            }
+            comments = (
+                *comments,
+                repeated_accepted,
+                repeated_delivery,
+                second_finding_accepted,
+                second_finding,
+            )
+            transitions.extend(
+                [
+                    (180, source.action, "review-implementation"),
+                    (220, "review-implementation", source.action),
+                ]
+            )
+            older_requests.update(
+                {
+                    "issues/comments/155": repeated_request,
+                    "issues/comments/210": second_finding_request,
+                }
+            )
     if prior_evidence in ("returned", "returned-missing"):
         blocker = _formal_frontier_comment(
             120,
@@ -13019,11 +13068,14 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     latest = saved_record
     latest_comment = saved
     if operation == "corrected":
+        correction_stamp = "2026-09-18T02:00:18Z"
+        if repeat_finding or continued_correction:
+            correction_stamp = "2026-09-18T02:00:26Z"
         correction_request = {
             **saved_request,
             "id": 190,
-            "created_at": "2026-09-18T02:00:26Z" if repeat_finding else "2026-09-18T02:00:18Z",
-            "updated_at": "2026-09-18T02:00:26Z" if repeat_finding else "2026-09-18T02:00:18Z",
+            "created_at": correction_stamp,
+            "updated_at": correction_stamp,
         }
         correction_lines = cast(str, correction_request["body"]).splitlines()
         correction_worker = json.loads(
@@ -13049,9 +13101,9 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             (correction_lines[0], correction_lines[1], f"Worker-Result-B64: {correction_encoded}")
         )
         corrected = _application_decision_comment(correction_request, comment_id=195)
-        corrected["created_at"] = (
-            "2026-09-18T02:00:27Z" if repeat_finding else "2026-09-18T02:00:19Z"
-        )
+        corrected["created_at"] = "2026-09-18T02:00:19Z"
+        if repeat_finding or continued_correction:
+            corrected["created_at"] = "2026-09-18T02:00:27Z"
         corrected["updated_at"] = corrected["created_at"]
         comments = (*comments, corrected)
         correction_record = bridge.parse_application_decision(corrected["body"])
@@ -13059,6 +13111,9 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
         settled = (correction_record,) if finding_correction else (saved_record, correction_record)
         latest = correction_record
         latest_comment = corrected
+    save_accepted_at = "2026-09-18T02:00:17Z"
+    if continued_correction:
+        save_accepted_at = cast(str, latest_comment["created_at"])
     completion = bridge.ApplicationCompletion(
         "RESUMABLE" if operation == "pending" else "COMPLETE",
         "qualified current saved work",
@@ -13072,7 +13127,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             branch,
             "4" * 40,
             "5" * 64,
-            "2026-09-18T02:00:17Z",
+            save_accepted_at,
             "main",
             head,
             prior_head,
@@ -13169,6 +13224,9 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             "_quality_bridge_run",
             lambda *a, **kw: (171, 1, REVISION, "completed", "success"),
         )
+        planning_stamp = "2026-09-18T02:00:16Z"
+        if continued_correction:
+            planning_stamp = "2026-09-18T02:00:25Z"
         monkeypatch.setattr(
             bridge,
             "github_complete_job_inventory",
@@ -13182,7 +13240,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
                     "steps": [
                         {
                             "name": "Plan exact correlated machine dispatch decision",
-                            "started_at": "2026-09-18T02:00:16Z",
+                            "started_at": planning_stamp,
                         }
                     ],
                 },
@@ -13240,15 +13298,22 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             current_revision=REVISION,
             lifecycle_events=lifecycle,
         )
-        assert len(qualification.events) == (6 if repeat_finding else 4 if multi_finding else 3)
+        expected_events = 4 if multi_finding else 3
+        if repeat_finding:
+            expected_events = 6
+        if continued_correction:
+            expected_events = 5
+        assert len(qualification.events) == expected_events
         reviewed = qualification.events[0]
         historical, current_finding = qualification.events[-2:]
-        assert current_finding == frontier.event
+        if continued_correction:
+            historical, current_finding = qualification.events[-3:-1]
+        assert qualification.events[-1] == frontier.event
         assert current_finding.revision == historical.revision == prior_head
         assert current_finding.default_branch_revision == REVISION
         decisions = bridge._application_decisions(comments)  # noqa: SLF001
         finding_owners = bridge._frontier_application_decisions(  # noqa: SLF001
-            decisions, frontier
+            decisions, replace(frontier, event=current_finding)
         )
         assert len(finding_owners) == 1
         reviewer = bridge.WorkerRequest(138, "reviewer", "review-implementation")
@@ -13292,7 +13357,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             current_revision=REVISION,
             read=read,
         )
-        if earlier_finding:
+        if earlier_finding or continued_correction:
             assert bridge._bound_native_delivery_scope(  # noqa: SLF001
                 repository,
                 token,
@@ -13349,7 +13414,9 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
                 ),
             ),
         )
-        expected_kind = "more-implementation-required" if affected_groups else "ready"
+        expected_kind = "ready"
+        if affected_groups and not continued_correction:
+            expected_kind = "more-implementation-required"
         requested_kind = expected_kind
         if operation == "wrong-kind":
             requested_kind = "more-implementation-required"
@@ -13369,6 +13436,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             prior_evidence == "finding-wrong-scope"
             or scope_conflict
             or omit_scope
+            or invalid_binding
             or operation in ("evidence-only-fail", "evidence-only-owned")
         ):
             assert evidence_result is None
@@ -13387,19 +13455,20 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
                 finding_digest = hashlib.sha256(finding_body.encode()).hexdigest()
                 assert evidence_result["finding_accepted_decision_sha256"] == finding_digest
                 assert evidence_result["finding_revision"] == prior_head
-                early_ready = bridge.qualify_initial_implementation_delivery(
+                wrong_kind = "more-implementation-required" if continued_correction else "ready"
+                wrong_delivery = bridge.qualify_initial_implementation_delivery(
                     repository,
                     token,
                     source=source,
                     change=change,
                     revision=head,
-                    result_kind="ready",
+                    result_kind=wrong_kind,
                     request_comment_id=200,
                     current_revision=REVISION,
                     default_branch="main",
                     read=read,
                 )
-                assert early_ready is None
+                assert wrong_delivery is None
             assert evidence_result["marker_revision"] == (
                 first_head if earlier_finding else prior_head
             )
