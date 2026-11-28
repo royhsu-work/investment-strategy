@@ -7036,12 +7036,12 @@ def _reviewed_correction_marker(
     ]
     if len(expected_evidence) != 1 or observed_evidence != expected_evidence:
         return None
-    # Even a unique delivered slice cannot override an explicit, incompatible
-    # task reference in the qualified finding. This is a consistency check,
-    # not a new source of correction authority.
-    referenced_tasks = set(
-        re.findall(r"\btask\s+`?(\d+(?:\.\d+)+)\b", expected_evidence[0], re.IGNORECASE)
-    )
+    # The immutable accepted finding, already matched to its original
+    # request, owns the structured scope. Prose is evidence, never selection.
+    finding_worker = _application_worker_for_record(finding_record, reviewer)
+    if finding_worker is None or finding_worker.reviewed_task_ids is None:
+        return None
+    referenced_tasks = set(finding_worker.reviewed_task_ids)
     matching_indices = [
         index
         for index, group in enumerate(slices)

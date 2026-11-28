@@ -1212,11 +1212,11 @@ def _application_decision_comment_for_request(
 
 def _worker_semantic_projection(
     raw_worker_result: str, source: WorkerRequest, *, change: str
-) -> tuple[BoundedActionResult, str]:
+) -> tuple[BoundedActionResult, str, tuple[str, ...] | None]:
     """Use the canonical typed parser, not optional wire-field presence, as identity."""
 
     worker = parse_worker_result(raw_worker_result, source, authorized_change=change)
-    return worker.typed_result, worker.result_content
+    return worker.typed_result, worker.result_content, worker.reviewed_task_ids
 
 
 def _read_accepted_original_request(
