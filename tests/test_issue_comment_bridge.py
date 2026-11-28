@@ -12533,7 +12533,9 @@ def test_native_delivery_reobserves_quality_before_publication(
         assert kwargs["observe_only"] is True
         return bridge.NativeQualityObservation(verdict, (attempt,))
 
-    monkeypatch.setattr(bridge, "qualify_initial_implementation_delivery", lambda *a, **kw: evidence)
+    monkeypatch.setattr(
+        bridge, "qualify_initial_implementation_delivery", lambda *a, **kw: evidence
+    )
     monkeypatch.setattr(bridge, "plan_native_quality_verification", observe)
     monkeypatch.setattr(bridge, "_native_strict_marker_evidence", lambda *a, **kw: ((41, 1, 42),))
     monkeypatch.setattr(effects, "_github_json", read)
