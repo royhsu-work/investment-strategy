@@ -6018,13 +6018,37 @@ def test_shared_artifact_witness_retains_original_and_observes_relevant_inputs(
     assert first.witness is not None and first.witness.revision == saved
     assert first.target is not None and first.target.revision == saved
 
-    # A later qualified carrier changes current inputs, never the saved W.
+    # A legal same-Change edit may change the artifact itself. Other inputs
+    # arrive from the qualified default branch through the existing overlay.
     changed_path = "README.md" if changed_input == "none" else inputs[changed_input]
-    current = fixture.commit({changed_path: "new input"}, "Later authorized work", (saved,))
+    if changed_input == "artifact":
+        current = fixture.commit({changed_path: "new input"}, "Later authorized work", (saved,))
+    else:
+        if changed_input == "none":
+            unrelated = fixture.commit({changed_path: "new input"}, "Unrelated edit", (saved,))
+            fixture.set_head(unrelated)
+            rejected = _prove_payload_git(fixture, payload, accepted_intent=True)
+            assert rejected.disposition == "CONTRADICTORY", rejected
+            assert rejected.reason == "materialization descendant changes unrelated paths"
+        fixture.main = fixture.commit({changed_path: "new input"}, "Main advance", (fixture.base,))
+        current = fixture.commit(
+            {changed_path: "new input"},
+            f"Reconcile default-branch ancestry for {_CHANGE}",
+            (saved, fixture.main),
+        )
     fixture.set_head(current)
     observed = _prove_payload_git(fixture, payload, accepted_intent=True)
     assert observed.disposition == "COMPLETE", observed
-    assert observed.witness == first.witness
+    assert observed.witness is not None
+    assert observed.witness.revision == first.witness.revision
+    assert observed.witness.desired_blobs == first.witness.desired_blobs
+    assert (
+        observed.witness.revisions.accepted_authorization
+        == first.witness.revisions.accepted_authorization
+    )
+    assert observed.witness.revisions.carrier_base == first.witness.revisions.carrier_base
+    assert observed.witness.revisions.mutation_preimage == first.witness.revisions.mutation_preimage
+    assert observed.witness.revisions.current_default == fixture.main
     assert observed.target is not None and observed.target.revision == current
 
     def identities(revision: str) -> tuple[str | None, ...]:
