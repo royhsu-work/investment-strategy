@@ -6923,10 +6923,12 @@ def _reviewed_correction_marker(
         dict[str, object],
         Mapping[str, object],
         Mapping[str, object],
+        str,
+        Mapping[str, object],
     ]
     | None
 ):
-    """Reuse a delivered marker only when the correction has an unambiguous scope."""
+    """Reuse the first affected approved group's delivered marker."""
     finding = frontier.event
     if (
         not slices
@@ -6987,11 +6989,13 @@ def _reviewed_correction_marker(
         return None
     finding_record = finding_owners[0]
     reviewer = WorkerRequest(source.issue_number, "reviewer", "review-implementation")
+    finding_digest = _accepted_decision_sha256(finding_record, comments)
     if (
         finding_record.disposition != "ACCEPTED"
         or sum(item.request_comment_id == finding_record.request_comment_id for item in decisions)
         != 1
-        or _accepted_decision_sha256(finding_record, comments) is None
+        or finding_digest is None
+        or finding.application_correlation is None
         or _authorization_ancestry(
             repository,
             token,
@@ -7041,15 +7045,25 @@ def _reviewed_correction_marker(
     finding_worker = _application_worker_for_record(finding_record, reviewer)
     if finding_worker is None or finding_worker.reviewed_task_ids is None:
         return None
-    referenced_tasks = set(finding_worker.reviewed_task_ids)
-    matching_indices = [
-        index
-        for index, group in enumerate(slices)
-        if referenced_tasks.issubset(task_id for task_id, _ in group)
-    ]
-    if len(matching_indices) != 1:
+    affected_indices: set[int] = set()
+    for affected_task in finding_worker.reviewed_task_ids:
+        matches = [
+            index
+            for index, group in enumerate(slices)
+            if any(task_id == affected_task for task_id, _ in group)
+        ]
+        if len(matches) != 1:
+            return None
+        affected_indices.add(matches[0])
+    if not affected_indices:
         return None
-    selected_index = matching_indices[0]
+    selected_index = min(affected_indices)
+    expected_kind = "more-implementation-required" if len(affected_indices) > 1 else "ready"
+    finding_binding = {
+        "finding_application_correlation": finding.application_correlation,
+        "finding_accepted_decision_sha256": finding_digest,
+        "finding_revision": finding.revision,
+    }
     # The reviewed task plan and all later markers must survive correction.
     path = f"openspec/changes/{frontier.change}/tasks.md"
     current_blob = _content_sha_at(repository, token, path=path, revision=revision)
@@ -7141,6 +7155,8 @@ def _reviewed_correction_marker(
             original_evidence.append(
                 occurrence_evidence if isinstance(occurrence_evidence, Mapping) else None
             )
+    if any(original_evidence[index] is None for index in affected_indices):
+        return None
     evidence = original_evidence[selected_index]
     if evidence is None:
         return None
@@ -7158,7 +7174,16 @@ def _reviewed_correction_marker(
     request = find_materialization_payload(payload, source)
     if request is None:
         return None
-    return review, marker, request, payload, evidence, latest_delivery
+    return (
+        review,
+        marker,
+        request,
+        payload,
+        evidence,
+        latest_delivery,
+        expected_kind,
+        finding_binding,
+    )
 
 
 def qualify_initial_marker_save(
@@ -7486,6 +7511,8 @@ def qualify_initial_implementation_delivery(
                 return None
             markers.append((record, request, payload))
         reviewed_correction = not markers
+        expected_kind = "ready"
+        finding_binding: Mapping[str, object] = {}
         if not markers:
             correction = _reviewed_correction_marker(
                 repository,
@@ -7502,7 +7529,16 @@ def qualify_initial_implementation_delivery(
             )
             if correction is None:
                 return None
-            event, record, marker, payload, historical, latest_delivery = correction
+            (
+                event,
+                record,
+                marker,
+                payload,
+                historical,
+                latest_delivery,
+                expected_kind,
+                finding_binding,
+            ) = correction
             if evidence_only:
                 observed = _observe_same_head_correction_quality(
                     repository,
@@ -7551,6 +7587,7 @@ def qualify_initial_implementation_delivery(
             if scoped is None:
                 return None
             event, index = scoped
+            expected_kind = "ready" if index == len(slices) - 1 else "more-implementation-required"
         else:
             return None
         quality = development_predecessor_evidence(completion, current_revision)
@@ -7572,12 +7609,7 @@ def qualify_initial_implementation_delivery(
                 not reviewed_correction
                 and any(checked for group in slices[index + 1 :] for _, checked in group)
             )
-            or result_kind
-            != (
-                "ready"
-                if reviewed_correction or index == len(slices) - 1
-                else "more-implementation-required"
-            )
+            or result_kind != expected_kind
         ):
             return None
         scope = tuple(task_id for task_id, _ in slices[index])
@@ -7629,6 +7661,7 @@ def qualify_initial_implementation_delivery(
         if not strict:
             return None
         return {
+            **finding_binding,
             "scope_task_ids": list(scope),
             "revision": revision,
             "pr_number": marker.pr_number,
@@ -7939,7 +7972,25 @@ def _settled_development_prefix(
                         )
                         if correction is None:
                             return None
-                        _, historical_marker, _, _, historical, _ = correction
+                        (
+                            _,
+                            historical_marker,
+                            _,
+                            _,
+                            historical,
+                            _,
+                            expected_kind,
+                            finding_binding,
+                        ) = correction
+                        if record.result_kind != expected_kind:
+                            return None
+                        # A historical single-group READY may predate the binding.
+                        # A partial correction always belongs to the original finding.
+                        has_binding = any(key in delivery for key in finding_binding)
+                        if (has_binding or expected_kind != "ready") and any(
+                            delivery.get(key) != value for key, value in finding_binding.items()
+                        ):
+                            return None
                         if any(
                             delivery.get(key) != historical.get(key)
                             for key in (
