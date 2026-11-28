@@ -7015,7 +7015,17 @@ def _reviewed_correction_marker(
         if comment.get("id") == finding.comment_id
         and parse_formal_result(comment, current_revision=current_revision) == finding
     ]
-    if len(formal) != 1 or formal[0].get("body") != projection.get("result_content"):
+    if len(formal) != 1 or not isinstance(formal[0].get("body"), str):
+        return None
+    expected_body = projection.get("result_content")
+    if not isinstance(expected_body, str):
+        return None
+    expected_evidence = [
+        line for line in expected_body.splitlines() if line.startswith("Evidence:")
+    ]
+    if len(expected_evidence) != 1 or [
+        line for line in cast(str, formal[0]["body"]).splitlines() if line.startswith("Evidence:")
+    ] != expected_evidence:
         return None
     owners = _frontier_application_decisions(decisions, replace(frontier, event=delivered))
     if len(owners) != 1:
