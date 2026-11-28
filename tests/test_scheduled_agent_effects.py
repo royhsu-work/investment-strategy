@@ -1169,6 +1169,60 @@ def test_partial_implementation_save_does_not_publish_completion() -> None:
     assert applied == list(batch.effects)
 
 
+@pytest.mark.parametrize("wrapper", ["standard", "guarded"])
+def test_marker_only_save_uses_shared_guard_without_formal_delivery(
+    monkeypatch: pytest.MonkeyPatch, wrapper: str
+) -> None:
+    from investment_strategy import scheduled_agent_merge_acceptance as merge_acceptance
+
+    source = WorkerRequest(138, "executor", "implement-change")
+    raw = _raw(
+        result_kind="more-implementation-required",
+        requested_effects=_implementation_checkpoint_effects()[:1],
+    )
+    applied: list[StagedEffect] = []
+    guarded: list[StagedEffect] = []
+
+    def guard(_adapter: GitHubEffectAdapter, effect: StagedEffect) -> bool:
+        guarded.append(effect)
+        return supported_effect_guard(source, effect)
+
+    def apply(_adapter: GitHubEffectAdapter, effect: StagedEffect) -> None:
+        applied.append(effect)
+
+    def observe(_adapter: GitHubEffectAdapter, effect: StagedEffect) -> bool:
+        return effect in applied
+
+    def forbidden(*_args: object, **_kwargs: object) -> bool:
+        pytest.fail("physical marker save must not consume the legacy checkpoint validator")
+
+    monkeypatch.setattr(effects, "acquire_current_github_preflight", lambda *_args: _preflight())
+    monkeypatch.setattr(
+        merge_acceptance, "acquire_current_github_preflight", lambda *_args: _preflight()
+    )
+    monkeypatch.setattr(GitHubEffectAdapter, "guard", guard)
+    monkeypatch.setattr(GitHubEffectAdapter, "apply", apply)
+    monkeypatch.setattr(GitHubEffectAdapter, "observe_postcondition", observe)
+    monkeypatch.setattr(GitHubEffectAdapter, "validate_implementation_checkpoint", forbidden)
+    runner = (
+        effects.run_effect_application
+        if wrapper == "standard"
+        else merge_acceptance.run_guarded_effect_application
+    )
+    batch, result = runner(
+        raw,
+        source=source,
+        repository="royhsu-work/investment-strategy",
+        token=_TEST_TOKEN,
+        current_revision=_REVISION,
+    )
+
+    assert result.applied, result.reason
+    assert applied == list(batch.effects)
+    assert len(applied) == 1
+    assert guarded == [applied[0], applied[0]]
+
+
 @pytest.mark.parametrize(
     "result_kind,requested_effects",
     (
