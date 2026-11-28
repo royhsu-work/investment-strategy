@@ -12268,6 +12268,14 @@ def test_reviewed_single_slice_correction_reuses_its_delivered_marker(
     _assert_next_slice_requires_bound_prior_native_delivery(monkeypatch, "finding", "corrected")
 
 
+def test_reviewed_multi_slice_correction_reuses_last_delivered_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-multi", "corrected"
+    )
+
+
 def test_reviewed_correction_rejects_finding_outside_approved_task_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -12304,7 +12312,10 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     prior_marker_preimage = "6" * 40
     head = "b" * 40
     current_marker_base = "c" * 40
-    finding_correction = prior_evidence in ("finding", "finding-wrong-scope")
+    multi_finding = prior_evidence == "finding-multi"
+    finding_correction = multi_finding or prior_evidence in ("finding", "finding-wrong-scope")
+    prior_task = "2.1" if multi_finding else "1.1"
+    first_head, first_base, first_preimage = "11" * 20, "12" * 20, "13" * 20
     prior_result_kind = "ready" if finding_correction else "more-implementation-required"
     marker_head = "e" * 40 if operation == "corrected" else head
     if finding_correction:
@@ -12315,7 +12326,9 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     task_text = "## Slice 1\n- [x] 1.1 First\n\n## Slice 2\n- [ ] 2.1 Next\n"
     candidate = task_text.replace("- [ ] 2.1", "- [x] 2.1")
     if finding_correction:
-        task_text = candidate = "## Slice 1\n- [x] 1.1 First\n"
+        if not multi_finding:
+            candidate = "## Slice 1\n- [x] 1.1 First\n"
+        task_text = candidate
         candidate_blob = task_blob
     review = _formal_frontier_comment(
         10,
@@ -12376,7 +12389,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     prior_request["issue_url"] = f"https://api.github.com/repos/{repository}/issues/140"
     prior_request["updated_at"] = prior_request["created_at"]
     evidence = {
-        "scope_task_ids": ["1.1"],
+        "scope_task_ids": [prior_task],
         "revision": prior_head,
         "pr_number": 139,
         "branch": branch,
@@ -12521,6 +12534,105 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
         (10, "review-openspec", "implement-change"),
         (100, source.action, "review-implementation" if finding_correction else source.action),
     ]
+    older_requests: dict[str, dict[str, object]] = {}
+    if multi_finding:
+        # Earlier completion has its own accepted marker, bytes and formal event.
+        review["created_at"] = "2026-09-18T01:59:01Z"
+        older_marker = {**marker_request, "id": 11, "created_at": "2026-09-18T01:59:03Z"}
+        older_marker["updated_at"] = older_marker["created_at"]
+        older_payload = {
+            **marker_payload,
+            "base_sha": first_base,
+            "files": [
+                {"path": path, "expected_sha": first_preimage, "blob_sha": prior_marker_preimage}
+            ],
+        }
+        older_worker = {
+            **marker_worker,
+            "requested_effects": [
+                {"kind": "github-mutation", "payload_json": json.dumps(older_payload)}
+            ],
+        }
+        older_encoded = base64.b64encode(json.dumps(older_worker).encode()).decode()
+        older_marker["body"] = "\n".join(
+            (marker_lines[0], marker_lines[1], f"Worker-Result-B64: {older_encoded}")
+        )
+        older_marker_accepted = _application_decision_comment(older_marker, comment_id=12)
+        older_marker_accepted["created_at"] = "2026-09-18T01:59:04Z"
+        older_marker_accepted["updated_at"] = older_marker_accepted["created_at"]
+        older_digest = hashlib.sha256(cast(str, older_marker_accepted["body"]).encode()).hexdigest()
+        older_request = {**prior_request, "id": 13, "created_at": "2026-09-18T01:59:06Z"}
+        older_request["updated_at"] = older_request["created_at"]
+        older_original = json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: ")))
+        older_original["result_kind"] = "more-implementation-required"
+        older_encoded = base64.b64encode(json.dumps(older_original).encode()).decode()
+        older_request["body"] = "\n".join(
+            (lines[0], lines[1], f"Worker-Result-B64: {older_encoded}")
+        )
+        older_quality = cast(dict[str, object], evidence["quality"])
+        older_attempts = cast(list[dict[str, object]], older_quality["attempts"])
+        older_evidence = {
+            **evidence,
+            "scope_task_ids": ["1.1"],
+            "revision": first_head,
+            "marker_request_comment_id": 11,
+            "marker_accepted_decision_sha256": older_digest,
+            "marker_revision": first_head,
+            "marker_blob": prior_marker_preimage,
+            "quality": {
+                **older_quality,
+                "request_comment_id": 11,
+                "accepted_decision_sha256": older_digest,
+                "revision": first_head,
+                "attempts": [
+                    {
+                        **older_attempts[0],
+                        "run_id": 31,
+                        "job_id": 32,
+                        "checkout_revision": first_head,
+                        "definition_revision": first_head,
+                    }
+                ],
+            },
+            "strict": [[33, 1, 34]],
+            "result_kind": "more-implementation-required",
+        }
+        older_projected = {**older_original, "_native_implementation_delivery": older_evidence}
+        older_encoded = base64.b64encode(json.dumps(older_projected).encode()).decode()
+        older_projection = {
+            **older_request,
+            "body": "\n".join((lines[0], lines[1], f"Worker-Result-B64: {older_encoded}")),
+        }
+        older_accepted = _application_decision_comment(older_projection, comment_id=14)
+        older_accepted["body"] = cast(str, older_accepted["body"]).replace(
+            hashlib.sha256(cast(str, older_projection["body"]).encode()).hexdigest(),
+            hashlib.sha256(cast(str, older_request["body"]).encode()).hexdigest(),
+        )
+        older_accepted["created_at"] = "2026-09-18T01:59:07Z"
+        older_accepted["updated_at"] = older_accepted["created_at"]
+        older_delivered = _formal_frontier_comment(
+            20,
+            action=source.action,
+            role=source.role,
+            result="more-implementation-required",
+            successor="Executor / implement-change",
+            request_id=13,
+            change=change,
+        )
+        older_evidence_digest = hashlib.sha256(
+            json.dumps(older_evidence, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        older_delivered["body"] = (
+            cast(str, older_delivered["body"]).replace(
+                f"\nRevision: {REVISION}\n", f"\nRevision: {first_head}\n"
+            )
+            + f"\nEvidence: native-delivery:{older_evidence_digest}"
+        )
+        older_delivered["created_at"] = "2026-09-18T01:59:10Z"
+        older_delivered["updated_at"] = older_delivered["created_at"]
+        comments = (review, older_marker_accepted, older_accepted, older_delivered, *comments[1:])
+        transitions.insert(1, (20, source.action, source.action))
+        older_requests = {"issues/comments/11": older_marker, "issues/comments/13": older_request}
     finding_request = _effect_request_comment(
         comment_id=130,
         created_at="2026-09-18T02:00:12Z",
@@ -12538,7 +12650,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             base64.b64decode(finding_lines[2].removeprefix("Worker-Result-B64: "))
         )
         finding_worker["evidence_ref"] = f"https://github.com/{repository}/commit/{prior_head}"
-        task_id = "9.9" if prior_evidence == "finding-wrong-scope" else "1.1"
+        task_id = "9.9" if prior_evidence == "finding-wrong-scope" else prior_task
         finding_content = f"F1: approved task {task_id} requires content correction."
         finding_worker["result_content"] = finding_content
         finding_encoded = base64.b64encode(json.dumps(finding_worker).encode()).decode()
@@ -12590,6 +12702,12 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             [(120, source.action, "resolve-question"), (140, "resolve-question", source.action)]
         )
     lifecycle = tuple(_frontier_lifecycle(transitions))
+    if multi_finding:
+        for item in lifecycle:
+            if item["id"] in (10, 1000, 1001):
+                item["created_at"] = cast(str, item["created_at"]).replace("02:00:", "01:59:")
+            elif item["id"] == 20:
+                item["created_at"] = "2026-09-18T01:59:10Z"
     issue = {
         **_current_source_issue(),
         "labels": [{"name": "action:implement-change"}],
@@ -12597,6 +12715,13 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     }
 
     def read(_repository: str, _token: str, api_path: str) -> object:
+        if api_path in older_requests:
+            return older_requests[api_path]
+        if multi_finding and api_path in (
+            f"compare/{first_head}...{head}",
+            f"compare/{first_head}...{prior_head}",
+        ):
+            return {"status": "ahead", "base_commit": {"sha": first_head}}
         if api_path == "issues/comments/200":
             return {"id": 200, "issue_url": f"https://api.github.com/repos/{repository}/issues/140"}
         if api_path == "issues/comments/30":
@@ -12760,20 +12885,34 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     monkeypatch.setattr(bridge, "_native_strict_marker_evidence", lambda *a, **kw: ((182, 1, 183),))
 
     def content_sha(*args: object, revision: str, **kwargs: object) -> str:
+        if multi_finding and revision == first_base:
+            return first_preimage
+        if multi_finding and revision == first_head:
+            return prior_marker_preimage
         if revision == prior_marker_base:
             return prior_marker_preimage
         return candidate_blob if publishing and revision in (head, marker_head) else task_blob
 
     def content_text(*args: object, revision: str, **kwargs: object) -> str:
-        if revision == prior_marker_base:
-            return task_text.replace("- [x] 1.1", "- [ ] 1.1")
+        if multi_finding and revision == first_base:
+            return task_text.replace("- [x]", "- [ ]")
+        if revision == prior_marker_base or (multi_finding and revision == first_head):
+            return task_text.replace(f"- [x] {prior_task}", f"- [ ] {prior_task}")
         return candidate if publishing and revision in (head, marker_head) else task_text
 
     for module in (bridge, resources):
         monkeypatch.setattr(module, "_content_sha_at", content_sha)
         monkeypatch.setattr(module, "_content_text_at", content_text)
     monkeypatch.setattr(
-        resources, "_blob_text", lambda *a: task_text if a[-1] == task_blob else candidate
+        resources,
+        "_blob_text",
+        lambda *a: (
+            task_text.replace("- [x] 2.1", "- [ ] 2.1")
+            if multi_finding and a[-1] == prior_marker_preimage
+            else task_text
+            if a[-1] == task_blob
+            else candidate
+        ),
     )
     if finding_correction:
         qualification = bridge.build_qualification_input(
@@ -12785,8 +12924,9 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             current_revision=REVISION,
             lifecycle_events=lifecycle,
         )
-        assert len(qualification.events) == 3
-        reviewed, historical, current_finding = qualification.events
+        assert len(qualification.events) == (4 if multi_finding else 3)
+        reviewed = qualification.events[0]
+        historical, current_finding = qualification.events[-2:]
         assert current_finding == frontier.event
         assert current_finding.revision == historical.revision == prior_head
         assert current_finding.default_branch_revision == REVISION
@@ -12827,7 +12967,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             frontier=frontier,
             event=historical,
             review=reviewed,
-            scope=("1.1",),
+            scope=(prior_task,),
             comments=comments,
             branch=branch,
             pr_number=139,
@@ -12836,7 +12976,9 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             read=read,
         )
         parsed_slices = bridge._task_slices(candidate)  # noqa: SLF001
-        assert parsed_slices == ((("1.1", True),),)
+        assert parsed_slices == (
+            ((("1.1", True),), (("2.1", True),)) if multi_finding else ((("1.1", True),),)
+        )
         historical_marker = bridge._reviewed_correction_marker(  # noqa: SLF001
             repository,
             token,
@@ -12850,7 +12992,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             current_revision=REVISION,
             read=read,
         )
-        if prior_evidence != "finding-wrong-scope":
+        if prior_evidence != "finding-wrong-scope" and not multi_finding:
             assert historical_marker is not None
             assert historical_marker[1].request_comment_id == 30
 
@@ -12883,7 +13025,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             return
         if finding_correction:
             assert evidence_result is not None
-            assert evidence_result["scope_task_ids"] == ["1.1"]
+            assert evidence_result["scope_task_ids"] == [prior_task]
             assert evidence_result["revision"] == head
             assert evidence_result["result_kind"] == "ready"
             assert evidence_result["marker_revision"] == prior_head
