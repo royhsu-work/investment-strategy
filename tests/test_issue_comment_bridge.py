@@ -12099,7 +12099,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
         + f"\nEvidence: native-delivery:{evidence_digest}"
     )
     delivered["updated_at"] = delivered["created_at"]
-    comments = (review, marker_accepted, accepted, delivered)
+    comments: tuple[dict[str, object], ...] = (review, marker_accepted, accepted, delivered)
     lifecycle = tuple(
         _frontier_lifecycle(
             [(10, "review-openspec", "implement-change"), (100, source.action, source.action)]
