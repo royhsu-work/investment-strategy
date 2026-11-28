@@ -12268,8 +12268,21 @@ def test_reviewed_single_slice_correction_reuses_its_delivered_marker(
     _assert_next_slice_requires_bound_prior_native_delivery(monkeypatch, "finding", "corrected")
 
 
+@pytest.mark.parametrize("phase_a", [False, True])
+def test_reviewed_correction_publication_preserves_accepted_owner(
+    monkeypatch: pytest.MonkeyPatch, phase_a: bool
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding", "corrected", reconcile_phase_a=phase_a
+    )
+
+
 def _assert_next_slice_requires_bound_prior_native_delivery(
-    monkeypatch: pytest.MonkeyPatch, prior_evidence: str, operation: str
+    monkeypatch: pytest.MonkeyPatch,
+    prior_evidence: str,
+    operation: str,
+    *,
+    reconcile_phase_a: bool | None = None,
 ) -> None:
     from investment_strategy import scheduled_agent_validation_resource as resources
 
@@ -12865,6 +12878,112 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             quality = evidence_result["quality"]
             assert isinstance(quality, dict)
             assert quality["request_comment_id"] == latest.request_comment_id
+            if reconcile_phase_a is not None:
+                from dataclasses import asdict
+
+                publication_request = _effect_request_comment(
+                    comment_id=200,
+                    created_at="2026-09-18T02:00:22Z",
+                    action=source.action,
+                    role=source.role,
+                    result_kind="ready",
+                    change=change,
+                )
+                publication_request["user"] = {"login": "royhsu-work"}
+                publication_request["issue_url"] = (
+                    f"https://api.github.com/repos/{repository}/issues/140"
+                )
+                publication_request["updated_at"] = publication_request["created_at"]
+                publication_body = cast(str, publication_request["body"])
+                publication_lines = publication_body.splitlines()
+                publication_worker = json.loads(
+                    base64.b64decode(
+                        publication_lines[2].removeprefix("Worker-Result-B64: ")
+                    )
+                )
+                publication_worker["_native_implementation_delivery"] = evidence_result
+                publication_encoded = base64.b64encode(
+                    json.dumps(publication_worker).encode()
+                ).decode()
+                projection = {
+                    **publication_request,
+                    "body": "\n".join(
+                        (
+                            publication_lines[0],
+                            publication_lines[1],
+                            f"Worker-Result-B64: {publication_encoded}",
+                        )
+                    ),
+                }
+                publication_accept = _application_decision_comment(projection, comment_id=205)
+                publication_accept["body"] = cast(str, publication_accept["body"]).replace(
+                    hashlib.sha256(cast(str, projection["body"]).encode()).hexdigest(),
+                    hashlib.sha256(publication_body.encode()).hexdigest(),
+                )
+                publication_accept["created_at"] = "2026-09-18T02:00:23Z"
+                publication_accept["updated_at"] = publication_accept["created_at"]
+                publication = bridge.parse_application_decision(publication_accept["body"])
+                assert publication is not None
+                comments = (*comments, publication_accept)
+                obligation = completion.settled_quality_obligation
+                assert obligation is not None
+                save_stamp = cast(str, latest_comment["created_at"])
+                settled_save = replace(
+                    completion,
+                    state="RESUMABLE",
+                    quality_obligation=replace(obligation, accepted_at=save_stamp),
+                    settled_quality_obligation=None,
+                )
+                pending = bridge.ApplicationCompletion(
+                    "RESUMABLE", "pending-write", publication.request_comment_id, job_id=201
+                )
+                latest_receipt = replace(receipt, dispatch_request_comment_id=160)
+
+                def read_recovery(repo: str, auth: str, api_path: str) -> object:
+                    if api_path == "issues/comments/200":
+                        return publication_request
+                    return read(repo, auth, api_path)
+
+                assert evidence_result["dispatch"] == asdict(receipt)
+                monkeypatch.setattr(
+                    bridge,
+                    "_development_acceptance_source",
+                    lambda *a, **kw: latest_receipt if kw["record"] == latest else receipt,
+                )
+                monkeypatch.setattr(
+                    bridge,
+                    "_development_planning_boundary",
+                    lambda *a, **kw: datetime(2026, 9, 18, 2, 0, 21, tzinfo=UTC),
+                )
+                monkeypatch.setattr(
+                    bridge, "_quality_workflow_blob", lambda *a, **kw: obligation.workflow_blob
+                )
+                monkeypatch.setattr(
+                    bridge, "_historical_development_verdict", lambda *a, **kw: True
+                )
+                recovered = bridge._settled_development_prefix(  # noqa: SLF001
+                    repository,
+                    token,
+                    source=source,
+                    accepted=[latest, publication],
+                    decision_times={
+                        latest.request_comment_id: save_stamp,
+                        publication.request_comment_id: "2026-09-18T02:00:23Z",
+                    },
+                    ingress_times={
+                        latest.request_comment_id: "2026-09-18T02:00:18Z",
+                        publication.request_comment_id: "2026-09-18T02:00:22Z",
+                    },
+                    issue_comments=comments,
+                    accepted_state=lambda record, _: settled_save if record == latest else pending,
+                    current_revision=REVISION,
+                    dispatch_request_id=210,
+                    phase_a=reconcile_phase_a,
+                    current_issue=issue,
+                    lifecycle_events=lifecycle,
+                    read=read_recovery,
+                )
+                assert recovered == (publication, pending)
         elif prior_evidence in ("valid", "returned", "legacy") and operation in (
             "publish",
             "corrected",
