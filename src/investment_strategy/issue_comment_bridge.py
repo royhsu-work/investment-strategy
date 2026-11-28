@@ -7440,7 +7440,7 @@ def _settled_development_prefix(
     prior: tuple[ApplicationDecisionRecord, NativeQualityObligation, str, datetime] | None = None
     prior_completion: ApplicationCompletion | None = None
     settled_records: list[ApplicationDecisionRecord] = []
-    retired_publication: tuple[datetime, ApplicationRecoveryArtifact] | None = None
+    retired_publication: tuple[datetime, ApplicationRecoveryArtifact, str] | None = None
     seen_dispatch: set[int] = set()
     seen_revisions: set[str] = set()
     try:
@@ -7613,20 +7613,34 @@ def _settled_development_prefix(
                     # A later accepted correction must independently prove the
                     # negative verdict at its own planning boundary. A fresh
                     # verdict today cannot authorize an old successor.
-                    retired_at, artifact = retired_publication
+                    retired_at, artifact, retired_authority = retired_publication
                     attempts = evidence.get("attempts")
+                    stale_successor = (
+                        retired_authority != record.authorization_revision
+                        and _authorization_ancestry(
+                            repository,
+                            token,
+                            authorization_revision=retired_authority,
+                            current_revision=record.authorization_revision,
+                            read=read,
+                        )
+                        is not None
+                    )
                     job = read(repository, token, f"actions/jobs/{artifact.job_id}")
                     completed = (
                         _quality_time(job.get("completed_at")) if isinstance(job, Mapping) else None
                     )
                     if (
-                        publication is not None
-                        or not isinstance(attempts, list)
-                        or not any(
-                            isinstance(attempt, Mapping)
-                            and attempt.get("outcome")
-                            in ("STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE")
-                            for attempt in attempts
+                        not isinstance(attempts, list)
+                        or (publication is not None and not stale_successor)
+                        or (
+                            not stale_successor
+                            and not any(
+                                isinstance(attempt, Mapping)
+                                and attempt.get("outcome")
+                                in ("STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE")
+                                for attempt in attempts
+                            )
                         )
                         or not isinstance(job, Mapping)
                         or job.get("id") != artifact.job_id
@@ -7648,7 +7662,7 @@ def _settled_development_prefix(
                         return None
                     # Preserve the immutable ACCEPT as history, without
                     # attributing either a save or a formal consequence to it.
-                    retired_publication = stamp, candidate_artifact
+                    retired_publication = stamp, candidate_artifact, record.authorization_revision
                     seen_dispatch.add(receipt.dispatch_request_comment_id)
                     continue
                 if (
