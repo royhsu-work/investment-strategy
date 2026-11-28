@@ -8547,7 +8547,7 @@ def test_development_phase_a_requalifies_native_source_and_shared_frontier(
         }, "unqualified ingress reached ACCEPT"
         document = json.loads(raw)
         if case == "marker-pass":
-            assert kwargs["apply_derived"] is False, "marker save must not derive routing"
+            assert _kwargs["apply_derived"] is False, "marker save must not derive routing"
             assert document["requested_effects"] == worker["requested_effects"]
         assert document["_native_development_dispatch"] == asdict(receipt)
         if case in {"settled-predecessor", "marker-pass"}:
