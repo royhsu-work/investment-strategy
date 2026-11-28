@@ -12138,9 +12138,12 @@ def test_next_slice_marker_requires_bound_prior_native_delivery(
     assert qualified and frontier is not None
     record = bridge.parse_application_decision(accepted["body"])
     assert record is not None
-    assert bridge._qualified_physical_original_accepted_effects(  # noqa: SLF001
-        record=record, source=source, repository=repository, token=token, read=read
-    ) is not None
+    assert (
+        bridge._qualified_physical_original_accepted_effects(  # noqa: SLF001
+            record=record, source=source, repository=repository, token=token, read=read
+        )
+        is not None
+    )
     receipt = bridge.DevelopmentDispatchSource(
         170, 171, 1, 172, 173, "sha256:" + "1" * 64, REVISION
     )
@@ -12178,6 +12181,7 @@ def test_next_slice_marker_requires_bound_prior_native_delivery(
     )
     monkeypatch.setattr(bridge, "openspec_review_revision_applies", lambda *a, **kw: True)
     monkeypatch.setattr(bridge, "_native_strict_marker_evidence", lambda *a, **kw: ((182, 1, 183),))
+
     def content_sha(*args: object, revision: str, **kwargs: object) -> str:
         return prior_marker_preimage if revision == prior_marker_base else task_blob
 
