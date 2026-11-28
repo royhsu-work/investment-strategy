@@ -1279,6 +1279,55 @@ def test_verified_publication_only_uses_native_delivery_guard(
     assert len(applied) == 2 and applied[1].kind == "routing-transition"
 
 
+@pytest.mark.parametrize("wrapper", ["standard", "guarded"])
+@pytest.mark.parametrize("result_kind", ["more-implementation-required", "ready"])
+def test_fresh_delivery_rejects_legacy_bundled_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, wrapper: str, result_kind: str
+) -> None:
+    from investment_strategy import scheduled_agent_merge_acceptance as merge_acceptance
+
+    source = WorkerRequest(138, "executor", "implement-change")
+    raw = _raw(
+        result_kind=result_kind,
+        requested_effects=_implementation_checkpoint_effects(result_kind),
+    )
+    applied: list[StagedEffect] = []
+    overlay_calls: list[object] = []
+
+    def legacy_overlay(*args: object) -> bool:
+        overlay_calls.append(args)
+        return True
+
+    monkeypatch.setattr(effects, "acquire_current_github_preflight", lambda *_args: _preflight())
+    monkeypatch.setattr(
+        merge_acceptance, "acquire_current_github_preflight", lambda *_args: _preflight()
+    )
+    monkeypatch.setattr(GitHubEffectAdapter, "guard", lambda _adapter, _effect: True)
+    monkeypatch.setattr(
+        GitHubEffectAdapter, "apply", lambda _adapter, effect: applied.append(effect)
+    )
+    monkeypatch.setattr(
+        GitHubEffectAdapter, "observe_postcondition", lambda _adapter, effect: effect in applied
+    )
+    monkeypatch.setattr(GitHubEffectAdapter, "validate_implementation_checkpoint", legacy_overlay)
+    runner = (
+        effects.run_effect_application
+        if wrapper == "standard"
+        else merge_acceptance.run_guarded_effect_application
+    )
+    _, result = runner(
+        raw,
+        source=source,
+        repository="royhsu-work/investment-strategy",
+        token=_TEST_TOKEN,
+        current_revision=_REVISION,
+    )
+
+    assert not result.applied
+    assert applied == []
+    assert overlay_calls == []
+
+
 def test_marker_only_save_without_qualified_guard_is_rejected() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     batch = parse_effect_batch(
