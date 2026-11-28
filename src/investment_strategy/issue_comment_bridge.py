@@ -35,6 +35,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     ApplicationExceptionArtifact,
     ApplicationRecoveryArtifact,
     ApplicationRequest,
+    CompleteNeverCalledWitness,
     RecoveryEvidenceNode,
     RecoveryProofResult,
     TypedEvidenceError,
@@ -4307,6 +4308,16 @@ def _application_job(
         )
         if unresolved is not None:
             return unresolved
+        if proof.pending_frontier_proof is not None:
+            return ApplicationCompletion(
+                "RESUMABLE",
+                "application-completion-continuation-required",
+                request_comment_id=request_comment_id,
+                recovery_artifact=recovery_artifact,
+                accepted_proof=proof,
+                accepted_record=record,
+                accepted_decision_sha256=accepted_decision_sha256,
+            )
     return ApplicationCompletion(
         "RESUMABLE",
         "application-completion-continuation-required",
@@ -7349,6 +7360,53 @@ def _historical_development_verdict(
     )
 
 
+def _native_delivery_never_called(
+    record: ApplicationDecisionRecord,
+    completion: ApplicationCompletion,
+    digest: str,
+) -> bool:
+    """Qualify the existing first-Formal no-call proof, not a gate verdict."""
+    proof = completion.accepted_proof
+    artifact = completion.recovery_artifact
+    if (
+        completion.state != "RESUMABLE"
+        or completion.accepted_record != record
+        or completion.accepted_decision_sha256 != digest
+        or proof is None
+        or proof.disposition != "COMPLETE"
+        or not isinstance(artifact, ApplicationRecoveryArtifact)
+        or artifact.request_comment_id != record.request_comment_id
+        or artifact.accepted_decision_sha256 != digest
+    ):
+        return False
+    frontier = proof.pending_frontier_proof
+    failure = artifact.document.get("failure_evidence")
+    rejection = failure.get("rejection") if isinstance(failure, Mapping) else None
+    if (
+        frontier is None
+        or frontier.disposition != "NOT_APPLIED"
+        or frontier.obligation != "FORMAL_RESULT"
+        or frontier.remaining_obligation != "FORMAL_RESULT"
+        or frontier.frontier_index != 0
+        or not isinstance(frontier.witness, CompleteNeverCalledWitness)
+        or not isinstance(failure, Mapping)
+        or _accepted_recovery_boundary(failure) != "READ_ONLY"
+        or failure.get("unfinished_boundary") != "effect-precondition"
+        or failure.get("failed_effect_index") != 0
+        or not isinstance(rejection, Mapping)
+        or rejection.get("expected") != "fresh native implementation delivery gates"
+    ):
+        return False
+    witness = frontier.witness
+    return (
+        witness.request_comment_id == record.request_comment_id
+        and witness.target_index == 0
+        and witness.accepted_decision_sha256 == digest
+        and bool(witness.artifact_chain)
+        and witness.artifact_chain[0] == (artifact.run_id, artifact.run_attempt, artifact.artifact_id)
+    )
+
+
 def _settled_development_prefix(
     repository: str,
     token: str,
@@ -7360,6 +7418,10 @@ def _settled_development_prefix(
     issue_comments: tuple[Mapping[str, object], ...],
     accepted_state: Callable[[ApplicationDecisionRecord, WorkerRequest], ApplicationCompletion],
     current_revision: str,
+    dispatch_request_id: int | None,
+    phase_a: bool,
+    current_issue: Mapping[str, object],
+    lifecycle_events: tuple[Mapping[str, object], ...],
     read: GitHubReader,
 ) -> tuple[ApplicationDecisionRecord, ApplicationCompletion] | None:
     """Retire only a fully proven causal prefix of physical saves."""
@@ -7375,6 +7437,7 @@ def _settled_development_prefix(
         return None
     ordered.sort(key=lambda item: item[0])
     prior: tuple[ApplicationDecisionRecord, NativeQualityObligation, str, datetime] | None = None
+    prior_completion: ApplicationCompletion | None = None
     seen_dispatch: set[int] = set()
     seen_revisions: set[str] = set()
     try:
@@ -7547,11 +7610,80 @@ def _settled_development_prefix(
                     read=read,
                 ):
                     return None
+                if (
+                    publication is not None
+                    and prior_completion is not None
+                    and _native_delivery_never_called(record, completion, digest)
+                ):
+                    settled = _current_development_completion(
+                        repository,
+                        token,
+                        source=source,
+                        record=previous,
+                        completion=replace(
+                            prior_completion,
+                            settled_development_records=tuple(item for _, item in ordered[:index]),
+                        ),
+                        current_revision=current_revision,
+                        dispatch_request_id=dispatch_request_id,
+                        phase_a=phase_a,
+                        accepted_decision_sha256=previous_digest,
+                        read=read,
+                    )
+                    observation = settled.quality_observation
+                    if (
+                        settled.state == "COMPLETE"
+                        and observation is not None
+                        and observation.outcome in ("FAIL", "CONFLICT")
+                    ):
+                        pr_number = _positive_int(publication.get("pr_number"))
+                        if pr_number is None:
+                            return None
+                        carrier = qualify_implementation_carrier(
+                            repository=repository,
+                            token=token,
+                            source=source,
+                            change=record.change,
+                            pr_number=pr_number,
+                            current_revision=current_revision,
+                            read=read,
+                        )
+                        if (
+                            carrier.disposition == "QUALIFIED"
+                            and carrier.branch == old.branch
+                            and carrier.head_sha == old.revision
+                            and read(repository, token, f"issues/{source.issue_number}")
+                            == current_issue
+                            and _paged_list(
+                                repository,
+                                token,
+                                f"issues/{source.issue_number}/comments",
+                                read=read,
+                            )
+                            == issue_comments
+                            and _paged_list(
+                                repository,
+                                token,
+                                f"issues/{source.issue_number}/timeline",
+                                read=read,
+                            )
+                            == lifecycle_events
+                        ):
+                            return previous, settled
+                    if (
+                        settled.state != "COMPLETE"
+                        or observation is None
+                        or observation.outcome != "PASS"
+                    ):
+                        return record, replace(
+                            completion, reason="application-completion-read-only-observing"
+                        )
             if obligation is None:
                 return record, completion
             seen_dispatch.add(receipt.dispatch_request_comment_id)
             seen_revisions.add(obligation.revision)
             prior = record, obligation, digest, stamp
+            prior_completion = completion
         if prior is None or prior[1].revision != prior[1].carrier_revision:
             return None
         return record, replace(
@@ -8285,6 +8417,10 @@ def qualify_application_completion(
             issue_comments=issue_comments,
             accepted_state=accepted_state,
             current_revision=current_revision,
+            dispatch_request_id=current_dispatch_request_comment_id,
+            phase_a=phase_a_request_comment_id is not None,
+            current_issue=cast(Mapping[str, object], issue),
+            lifecycle_events=lifecycle,
             read=read,
         )
         if settled_prefix is None:
