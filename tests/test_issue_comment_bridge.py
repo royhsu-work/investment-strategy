@@ -12611,3 +12611,24 @@ def test_native_delivery_reobserves_quality_before_publication(
     )
     assert adapter.validate_implementation_delivery(effect)
     assert adapter.guard(effect) is (verdict == "PASS" and strict_pass)
+    if verdict != "PASS" or not strict_pass:
+        from investment_strategy import scheduled_agent_application_bridge as application
+
+        rejection = adapter.effect_rejection()
+        assert rejection is not None
+        recovery = effects.EffectRecoveryEvidence(
+            failed_effect_index=0,
+            failed_effect_kind=effect.kind,
+            failed_effect_sha256=hashlib.sha256(effect.payload_json.encode()).hexdigest(),
+            completed_effect_indexes=(),
+            completed_effect_sha256=(),
+            mutation_status="not-complete",
+            unfinished_boundary="effect-precondition",
+            rejection=rejection,
+            operation_stage="BEFORE-WRITE",
+            write_call_entered=False,
+        )
+        failure = application._recovery_failure_document(
+            effects.ApplyResult(False, "effect precondition rejected", recovery_evidence=recovery)
+        )
+        assert application._accepted_recovery_boundary(failure) == "READ_ONLY"
