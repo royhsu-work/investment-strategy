@@ -6925,8 +6925,8 @@ def _reviewed_correction_marker(
     """Reuse a delivered marker only when the correction has an unambiguous scope."""
     finding = frontier.event
     if (
-        len(slices) != 1
-        or not all(checked for _, checked in slices[0])
+        not slices
+        or not all(checked for group in slices for _, checked in group)
         or not isinstance(finding, FormalLifecycleEvent)
         or not finding.valid
         or (finding.role, finding.action, finding.result_kind)
@@ -7038,7 +7038,9 @@ def _reviewed_correction_marker(
     referenced_tasks = set(
         re.findall(r"\btask\s+`?(\d+(?:\.\d+)+)\b", expected_evidence[0], re.IGNORECASE)
     )
-    if not referenced_tasks.issubset(task_id for task_id, _ in slices[0]):
+    if (len(slices) > 1 and not referenced_tasks) or not referenced_tasks.issubset(
+        task_id for task_id, _ in slices[-1]
+    ):
         return None
     owners = _frontier_application_decisions(decisions, replace(frontier, event=delivered))
     if len(owners) != 1:
@@ -7057,7 +7059,7 @@ def _reviewed_correction_marker(
         frontier=frontier,
         event=delivered,
         review=review,
-        scope=tuple(task_id for task_id, _ in slices[0]),
+        scope=tuple(task_id for task_id, _ in slices[-1]),
         comments=comments,
         branch=branch,
         pr_number=pr_number,
@@ -7066,6 +7068,32 @@ def _reviewed_correction_marker(
         read=read,
     ):
         return None
+    if len(slices) > 1:
+        earlier_deliveries = [
+            event
+            for event in events[events.index(review) + 1 : -2]
+            if (event.role, event.action, event.result_kind)
+            == ("executor", "implement-change", "more-implementation-required")
+        ]
+        if len(earlier_deliveries) != len(slices) - 1:
+            return None
+        for group, earlier in zip(slices[:-1], earlier_deliveries, strict=True):
+            if not earlier.valid or not _bound_native_delivery_scope(
+                repository,
+                token,
+                source=source,
+                frontier=frontier,
+                event=earlier,
+                review=review,
+                scope=tuple(task_id for task_id, _ in group),
+                comments=comments,
+                branch=branch,
+                pr_number=pr_number,
+                revision=revision,
+                current_revision=current_revision,
+                read=read,
+            ):
+                return None
     marker_id = _positive_int(evidence.get("marker_request_comment_id"))
     markers = [item for item in decisions if item.request_comment_id == marker_id]
     if len(markers) != 1:
@@ -7337,7 +7365,7 @@ def qualify_initial_implementation_delivery(
             if correction is None:
                 return None
             event, record, marker, payload, _ = correction
-            index = 0
+            index = len(slices) - 1
         elif len(markers) == 1:
             record, marker, payload = markers[0]
             if marker.pr_number is None:
