@@ -8406,6 +8406,7 @@ def test_archive_findings_require_exact_carrier_identity(
         "competing-ingress",
         "settled-predecessor",
         "wrong-predecessor-base",
+        "marker-pass",
     ],
 )
 def test_development_phase_a_requalifies_native_source_and_shared_frontier(
@@ -8428,7 +8429,11 @@ def test_development_phase_a_requalifies_native_source_and_shared_frontier(
         "pr_number": 178,
         "files": [
             {
-                "path": "tests/test_scheduled_agent_application_bridge.py",
+                "path": (
+                    f"openspec/changes/{_CHANGE}/tasks.md"
+                    if case == "marker-pass"
+                    else "tests/test_scheduled_agent_application_bridge.py"
+                ),
                 "blob_sha": "c" * 40,
                 "expected_sha": "d" * 40,
             }
@@ -8496,7 +8501,7 @@ def test_development_phase_a_requalifies_native_source_and_shared_frontier(
         _REVISION,
     )
     prior_attempt = dispatch.NativeQualityAttempt(
-        66, 1, "PYTEST_STEP_FAILURE", 67, head, head, None
+        66, 1, "PASS" if case == "marker-pass" else "PYTEST_STEP_FAILURE", 67, head, head, None
     )
     seen: list[str] = []
 
@@ -8517,14 +8522,16 @@ def test_development_phase_a_requalifies_native_source_and_shared_frontier(
             return dispatch.ApplicationCompletion("RESUMABLE", "verification-obligation-pending")
         if case == "competing-ingress":
             return dispatch.ApplicationCompletion("AMBIGUOUS", "competing-ingress")
-        if case in {"settled-predecessor", "wrong-predecessor-base"}:
+        if case in {"settled-predecessor", "wrong-predecessor-base", "marker-pass"}:
             return dispatch.ApplicationCompletion(
                 "COMPLETE",
                 "settled",
                 100,
                 accepted_record=prior_record,
                 accepted_decision_sha256=prior_digest,
-                quality_observation=dispatch.NativeQualityObservation("FAIL", (prior_attempt,)),
+                quality_observation=dispatch.NativeQualityObservation(
+                    "PASS" if case == "marker-pass" else "FAIL", (prior_attempt,)
+                ),
                 settled_quality_obligation=prior_obligation,
             )
         return dispatch.ApplicationCompletion("NONE", "application-completion-none")
@@ -8533,10 +8540,17 @@ def test_development_phase_a_requalifies_native_source_and_shared_frontier(
         pass
 
     def accept(raw: str, **_kwargs: object) -> object:
-        assert case in {"exact", "settled-predecessor"}, "unqualified ingress reached ACCEPT"
+        assert case in {
+            "exact",
+            "settled-predecessor",
+            "marker-pass",
+        }, "unqualified ingress reached ACCEPT"
         document = json.loads(raw)
+        if case == "marker-pass":
+            assert kwargs["apply_derived"] is False, "marker save must not derive routing"
+            assert document["requested_effects"] == worker["requested_effects"]
         assert document["_native_development_dispatch"] == asdict(receipt)
-        if case == "settled-predecessor":
+        if case in {"settled-predecessor", "marker-pass"}:
             assert document["_native_development_predecessor"] == {
                 "request_comment_id": 100,
                 "accepted_decision_sha256": prior_digest,
@@ -8555,7 +8569,7 @@ def test_development_phase_a_requalifies_native_source_and_shared_frontier(
     monkeypatch.setattr(dispatch, "qualify_development_dispatch_source", native_source)
     monkeypatch.setattr(dispatch, "qualify_application_completion", shared_frontier)
     monkeypatch.setattr(bridge, "run_guarded_effect_application", accept)
-    if case in {"exact", "settled-predecessor"}:
+    if case in {"exact", "settled-predecessor", "marker-pass"}:
         with pytest.raises(AcceptBoundaryReached):
             bridge._main_unprotected(bridge.ApplicationExceptionContext())
         assert seen == ["native-source", "shared-frontier", "accept"]
