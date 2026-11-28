@@ -804,10 +804,8 @@ def _typed_application_plan(
             ),
         )
 
-    # Shape recognition is not marker write authority. Keep the existing
-    # completion guard until exact native marker admission is qualified.
     if not _implementation_development_save(
-        batch, include_task_markers=False
+        batch
     ) and not _implementation_checkpoint_effects_complete(
         batch,
         decision,
@@ -1951,6 +1949,7 @@ class GitHubEffectAdapter:
         pending_application_correlation: str | None = None,
         authorization_revision: str | None = None,
         accepted_intent: bool = False,
+        physical_marker_save: bool = False,
         accepted_correction_observer: (
             Callable[[StagedEffect], tuple[int, MaterializationProof] | None] | None
         ) = None,
@@ -1968,6 +1967,8 @@ class GitHubEffectAdapter:
         self.pending_application_correlation = pending_application_correlation
         self.authorization_revision = authorization_revision
         self.accepted_intent = accepted_intent
+        self._physical_marker_save = physical_marker_save
+        self._qualified_marker_request: MaterializationRequest | None = None
         self._accepted_correction_observer = (
             accepted_correction_observer if accepted_intent else None
         )
@@ -2947,6 +2948,28 @@ class GitHubEffectAdapter:
                     ),
                 )
                 return False
+            if self._physical_marker_save and not self.accepted_intent:
+                if proof.disposition != "INCOMPLETE":
+                    return False
+                if self._qualified_marker_request != request:
+                    # The first guard precedes ACCEPT. Later guards still prove
+                    # the physical preimage; do not reclassify our own ACCEPT
+                    # as a new predecessor within this invocation.
+                    from investment_strategy.issue_comment_bridge import (
+                        qualify_initial_marker_save,
+                    )
+
+                    if self.request_comment_id is None or not qualify_initial_marker_save(
+                        self.repository,
+                        self.token,
+                        request=request,
+                        source=self.source,
+                        request_comment_id=self.request_comment_id,
+                        current_revision=current_revision,
+                        default_branch=default_branch,
+                    ):
+                        return False
+                    self._qualified_marker_request = request
             return proof.disposition in {"COMPLETE", "INCOMPLETE"}
         if operation == "issue-label-add":
             return True
@@ -4719,6 +4742,7 @@ def run_effect_application(
     pending_application_correlation: str | None = None,
     authorized_change: str | None = None,
     authorization_revision: str | None = None,
+    request_comment_id: int | None = None,
     accepted_intent: bool = False,
     reconcile_only: bool = False,
     original_322_recovery: bool = False,
@@ -4739,6 +4763,9 @@ def run_effect_application(
         authorized_change=batch.typed_result.change,
         current_revision=current_revision,
         expected_result_kind=batch.typed_result.result.kind.value,
+        request_comment_id=request_comment_id,
+        physical_marker_save=_implementation_development_save(batch)
+        and not _implementation_development_save(batch, include_task_markers=False),
         materialization_promote_change=materialization_promote_change,
         validated_materialization_revision=validated_materialization_revision,
         allow_pending_continuation=allow_pending_continuation,

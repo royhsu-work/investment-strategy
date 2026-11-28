@@ -1223,12 +1223,34 @@ def test_marker_only_save_uses_shared_guard_without_formal_delivery(
     assert guarded == [applied[0], applied[0]]
 
 
+def test_marker_only_save_without_qualified_guard_is_rejected() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=_implementation_checkpoint_effects()[:1],
+        ),
+        source,
+    )
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: False,
+        apply_effect=lambda _effect: pytest.fail("unqualified marker save was applied"),
+        observe_postcondition=lambda _effect: False,
+        current_revision=_REVISION,
+    )
+
+    assert not result.applied
+    assert result.reason == "effect precondition rejected"
+
+
 @pytest.mark.parametrize(
     "result_kind,requested_effects",
     (
         ("more-implementation-required", []),
         ("ready", []),
-        ("more-implementation-required", _implementation_checkpoint_effects()[:1]),
+        ("ready", _implementation_checkpoint_effects()[:1]),
         ("ready", _implementation_checkpoint_effects()[1:]),
     ),
 )

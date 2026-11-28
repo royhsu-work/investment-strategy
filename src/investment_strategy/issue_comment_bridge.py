@@ -63,6 +63,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
 from investment_strategy.scheduled_agent_application_carrier import qualify_implementation_carrier
 from investment_strategy.scheduled_agent_application_materialization import (
     MaterializationProof,
+    MaterializationRequest,
     _proof_witness,
     find_materialization_payload,
     prove_materialization,
@@ -120,11 +121,15 @@ from investment_strategy.scheduled_agent_runtime import (
 )
 from investment_strategy.scheduled_agent_validation_resource import (
     NativeQualityAttempt,
+    _content_text_at,
+    _task_slices,
     native_quality_setup_failure_index,
     native_quality_witness_matches,
+    openspec_review_revision_applies,
     qualify_native_quality_job,
     read_native_quality_attempt,
     reduce_native_quality_attempts,
+    task_checkpoint_is_exact,
 )
 from investment_strategy.scheduled_agent_wire import RUNTIME_REPAIR_REQUEST_WIRE
 from investment_strategy.scheduled_agent_worker import (
@@ -6357,6 +6362,258 @@ def development_predecessor_evidence(
         "authorization_revision": authorization_revision,
         "attempts": attempts,
     }
+
+
+def _native_strict_pass_for_marker(
+    repository: str,
+    token: str,
+    *,
+    revision: str,
+    branch: str,
+    current_revision: str,
+    read: GitHubReader,
+) -> bool:
+    """Qualify an ordinary native strict PASS, including the executed checkout."""
+    path = ".github/workflows/openspec-validate.yml"
+    definitions = [
+        read(repository, token, f"contents/{path}?{urlencode({'ref': ref})}")
+        for ref in (current_revision, revision)
+    ]
+    if any(
+        not isinstance(item, Mapping)
+        or item.get("type") != "file"
+        or item.get("path") != path
+        or not isinstance(item.get("sha"), str)
+        or _SHA.fullmatch(item["sha"]) is None
+        for item in definitions
+    ):
+        return False
+    if cast(Mapping[str, object], definitions[0])["sha"] != cast(
+        Mapping[str, object], definitions[1]
+    )["sha"]:
+        return False
+    required_steps = (
+        "Checkout validation target",
+        "Verify exact checkout revision",
+        "Run actions/setup-node@v4",
+        "Install qualified OpenSpec baseline",
+        "Show OpenSpec version",
+        "Qualify executable compatibility",
+        "Show active changes",
+        "Validate all OpenSpec artifacts",
+    )
+    observed = False
+    for event in ("push", "pull_request"):
+        runs = _complete_workflow_runs(
+            repository,
+            token,
+            "openspec-validate.yml",
+            read=read,
+            event=event,
+            head_sha=revision,
+            require_count=True,
+        )
+        if runs is None:
+            return False
+        for run in runs:
+            if run.get("head_branch") != branch:
+                continue
+            run_id = _positive_int(run.get("id"))
+            attempt = _positive_int(run.get("run_attempt"))
+            if run_id is None or attempt is None:
+                return False
+            for number in range(1, attempt + 1):
+                row = read(repository, token, f"actions/runs/{run_id}/attempts/{number}")
+                if not isinstance(row, Mapping):
+                    return False
+                repo = row.get("repository")
+                head_repo = row.get("head_repository")
+                if (
+                    row.get("id") != run_id
+                    or row.get("run_attempt") != number
+                    or row.get("path") != path
+                    or row.get("event") != event
+                    or row.get("head_sha") != revision
+                    or row.get("head_branch") != branch
+                    or not isinstance(repo, Mapping)
+                    or repo.get("full_name") != repository
+                    or not isinstance(head_repo, Mapping)
+                    or head_repo.get("full_name") != repository
+                    or row.get("status") != "completed"
+                    or row.get("conclusion") != "success"
+                ):
+                    return False
+                jobs = github_complete_job_inventory(
+                    repository, token, run_id=run_id, run_attempt=number, read=read
+                )
+                if jobs is None or len(jobs) != 1:
+                    return False
+                job = jobs[0]
+                job_id = _positive_int(job.get("id"))
+                steps = job.get("steps")
+                if (
+                    job_id is None
+                    or job.get("name") != "validate"
+                    or job.get("run_id") != run_id
+                    or job.get("run_attempt") != number
+                    or job.get("head_sha") != revision
+                    or job.get("status") != "completed"
+                    or job.get("conclusion") != "success"
+                    or not isinstance(steps, list)
+                ):
+                    return False
+                executed = tuple(
+                    step.get("name")
+                    for step in steps
+                    if isinstance(step, Mapping)
+                    and step.get("name") in required_steps
+                    and step.get("status") == "completed"
+                    and step.get("conclusion") == "success"
+                )
+                if executed != required_steps or not _recovery_review_log_proves_checkout(
+                    _github_job_log(repository, token, job_id), repository, revision
+                ):
+                    return False
+                observed = True
+    return observed
+
+
+def qualify_initial_marker_save(
+    repository: str,
+    token: str,
+    *,
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    request_comment_id: int,
+    current_revision: str,
+    default_branch: str,
+    read: GitHubReader = _github_json,
+) -> bool:
+    """Qualify the first undelivered scope without a checkpoint publication.
+
+    Later delivery/correction occurrences require their own qualified scope;
+    neither checked boxes nor a prior saved-work PASS can select that scope.
+    """
+    if (
+        request.pr_number is None
+        or len(request.files) != 1
+        or request.files[0].path != f"openspec/changes/{request.change}/tasks.md"
+        or request.files[0].expected_sha is None
+        or request.files[0].expected_sha == request.files[0].blob_sha
+    ):
+        return False
+    try:
+        receipt = qualify_development_dispatch_source(
+            repository,
+            token,
+            source=source,
+            request_comment_id=request_comment_id,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            read=read,
+        )
+        ingress = read(repository, token, f"issues/comments/{request_comment_id}")
+        prefix = github_repository_api_url(repository, "issues/")
+        url = ingress.get("issue_url") if isinstance(ingress, Mapping) else None
+        if receipt is None or not isinstance(url, str) or not url.startswith(prefix):
+            return False
+        shard = _positive_int_string(url.removeprefix(prefix))
+        if shard is None:
+            return False
+        completion = qualify_application_completion(
+            repository,
+            token,
+            source=source,
+            current_revision=current_revision,
+            read=read,
+            current_dispatch_request_comment_id=receipt.dispatch_request_comment_id,
+            current_dispatch_issue_number=shard,
+            phase_a_request_comment_id=request_comment_id,
+        )
+        obligation = completion.settled_quality_obligation
+        if (
+            obligation is None
+            or obligation.revision != request.base_sha
+            or obligation.carrier_revision != request.base_sha
+            or obligation.branch != request.branch
+            or obligation.default_branch != default_branch
+            or completion.quality_observation is None
+            or completion.quality_observation.outcome != "PASS"
+            or development_predecessor_evidence(completion, current_revision) is None
+        ):
+            return False
+        carrier = qualify_implementation_carrier(
+            repository=repository,
+            token=token,
+            source=source,
+            change=request.change,
+            pr_number=request.pr_number,
+            current_revision=current_revision,
+            read=read,
+        )
+        if (
+            carrier.disposition != "QUALIFIED"
+            or carrier.branch != request.branch
+            or carrier.head_sha != request.base_sha
+        ):
+            return False
+        issue = read(repository, token, f"issues/{source.issue_number}")
+        if not isinstance(issue, Mapping):
+            return False
+        comments = _paged_list(
+            repository, token, f"issues/{source.issue_number}/comments", read=read
+        )
+        lifecycle = _paged_list(
+            repository, token, f"issues/{source.issue_number}/timeline", read=read
+        )
+        frontier, qualified = _derive_frontier(
+            repository=repository,
+            token=token,
+            source=source,
+            current_issue=issue,
+            issue_comments=comments,
+            lifecycle_events=lifecycle,
+            current_revision=current_revision,
+            read=read,
+        )
+        event = None if frontier is None else frontier.event
+        if (
+            not qualified
+            or not isinstance(event, FormalLifecycleEvent)
+            or not event.valid
+            or (event.role, event.action, event.result_kind) != ("reviewer", "review-openspec", "pass")
+            or event.revision is None
+            or not openspec_review_revision_applies(
+                repository,
+                token,
+                change=request.change,
+                reviewed_revision=event.revision,
+                head_revision=request.base_sha,
+            )
+        ):
+            return False
+        file = request.files[0]
+        content = _content_text_at(repository, token, path=file.path, revision=request.base_sha)
+        slices = _task_slices(content)
+        if slices is None or any(checked for group in slices for _, checked in group):
+            return False
+        return task_checkpoint_is_exact(
+            repository,
+            token,
+            expected_change=request.change,
+            base_sha=request.base_sha,
+            file=file,
+            completed_task_ids=tuple(task_id for task_id, _ in slices[0]),
+        ) and _native_strict_pass_for_marker(
+            repository,
+            token,
+            revision=request.base_sha,
+            branch=request.branch,
+            current_revision=current_revision,
+            read=read,
+        )
+    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+        return False
 
 
 def _historical_development_verdict(
