@@ -6718,6 +6718,7 @@ def _bound_native_delivery_scope(
     marker_records = [item for item in decisions if item.request_comment_id == marker_id]
     marker_revision = evidence.get("marker_revision")
     marker_blob = evidence.get("marker_blob")
+    current_task_blob = evidence.get("current_task_blob", marker_blob)
     if (
         marker_id is None
         or len(marker_records) != 1
@@ -6725,6 +6726,8 @@ def _bound_native_delivery_scope(
         or _SHA.fullmatch(marker_revision) is None
         or not isinstance(marker_blob, str)
         or _SHA.fullmatch(marker_blob) is None
+        or not isinstance(current_task_blob, str)
+        or _SHA.fullmatch(current_task_blob) is None
     ):
         return False
     marker = marker_records[0]
@@ -6800,7 +6803,7 @@ def _bound_native_delivery_scope(
         and _content_sha_at(repository, token, path=file.path, revision=marker_revision)
         == marker_blob
         and _content_sha_at(repository, token, path=file.path, revision=event.revision)
-        == marker_blob
+        == current_task_blob
         and task_checkpoint_is_exact(
             repository,
             token,
@@ -7038,8 +7041,19 @@ def _reviewed_correction_marker(
     referenced_tasks = set(
         re.findall(r"\btask\s+`?(\d+(?:\.\d+)+)\b", expected_evidence[0], re.IGNORECASE)
     )
-    if (len(slices) > 1 and not referenced_tasks) or not referenced_tasks.issubset(
-        task_id for task_id, _ in slices[-1]
+    matching_indices = [
+        index
+        for index, group in enumerate(slices)
+        if referenced_tasks.issubset(task_id for task_id, _ in group)
+    ]
+    if len(matching_indices) != 1:
+        return None
+    selected_index = matching_indices[0]
+    # The reviewed task plan and all later markers must survive correction.
+    path = f"openspec/changes/{frontier.change}/tasks.md"
+    current_blob = _content_sha_at(repository, token, path=path, revision=revision)
+    if current_blob is None or current_blob != _content_sha_at(
+        repository, token, path=path, revision=finding.revision
     ):
         return None
     owners = _frontier_application_decisions(decisions, replace(frontier, event=delivered))
@@ -7068,32 +7082,42 @@ def _reviewed_correction_marker(
         read=read,
     ):
         return None
-    if len(slices) > 1:
-        earlier_deliveries = [
-            event
-            for event in events[events.index(review) + 1 : -2]
-            if (event.role, event.action, event.result_kind)
-            == ("executor", "implement-change", "more-implementation-required")
-        ]
-        if len(earlier_deliveries) != len(slices) - 1:
+    earlier_deliveries = [
+        event
+        for event in events[events.index(review) + 1 : -2]
+        if (event.role, event.action, event.result_kind)
+        == ("executor", "implement-change", "more-implementation-required")
+    ]
+    if len(earlier_deliveries) != len(slices) - 1:
+        return None
+    for group, earlier in zip(slices[:-1], earlier_deliveries, strict=True):
+        if not earlier.valid or not _bound_native_delivery_scope(
+            repository,
+            token,
+            source=source,
+            frontier=frontier,
+            event=earlier,
+            review=review,
+            scope=tuple(task_id for task_id, _ in group),
+            comments=comments,
+            branch=branch,
+            pr_number=pr_number,
+            revision=revision,
+            current_revision=current_revision,
+            read=read,
+        ):
             return None
-        for group, earlier in zip(slices[:-1], earlier_deliveries, strict=True):
-            if not earlier.valid or not _bound_native_delivery_scope(
-                repository,
-                token,
-                source=source,
-                frontier=frontier,
-                event=earlier,
-                review=review,
-                scope=tuple(task_id for task_id, _ in group),
-                comments=comments,
-                branch=branch,
-                pr_number=pr_number,
-                revision=revision,
-                current_revision=current_revision,
-                read=read,
-            ):
-                return None
+    if selected_index < len(earlier_deliveries):
+        selected = earlier_deliveries[selected_index]
+        owners = _frontier_application_decisions(decisions, replace(frontier, event=selected))
+        if len(owners) != 1:
+            return None
+        document = json.loads(owners[0].raw_worker_result)
+        evidence = (
+            document.get("_native_implementation_delivery") if isinstance(document, dict) else None
+        )
+        if not isinstance(evidence, Mapping):
+            return None
     marker_id = _positive_int(evidence.get("marker_request_comment_id"))
     markers = [item for item in decisions if item.request_comment_id == marker_id]
     if len(markers) != 1:
@@ -7348,6 +7372,7 @@ def qualify_initial_implementation_delivery(
             if request is None:
                 return None
             markers.append((record, request, payload))
+        reviewed_correction = not markers
         if not markers:
             correction = _reviewed_correction_marker(
                 repository,
@@ -7364,8 +7389,15 @@ def qualify_initial_implementation_delivery(
             )
             if correction is None:
                 return None
-            event, record, marker, payload, _ = correction
-            index = len(slices) - 1
+            event, record, marker, payload, historical = correction
+            matching_indices = [
+                i
+                for i, group in enumerate(slices)
+                if [task_id for task_id, _ in group] == historical.get("scope_task_ids")
+            ]
+            if len(matching_indices) != 1:
+                return None
+            index = matching_indices[0]
         elif len(markers) == 1:
             record, marker, payload = markers[0]
             if marker.pr_number is None:
@@ -7393,18 +7425,27 @@ def qualify_initial_implementation_delivery(
             return None
         if (
             not all(checked for _, checked in slices[index])
-            or any(checked for group in slices[index + 1 :] for _, checked in group)
+            or (
+                not reviewed_correction
+                and any(checked for group in slices[index + 1 :] for _, checked in group)
+            )
             or result_kind
-            != ("ready" if index == len(slices) - 1 else "more-implementation-required")
+            != (
+                "ready"
+                if reviewed_correction or index == len(slices) - 1
+                else "more-implementation-required"
+            )
         ):
             return None
         scope = tuple(task_id for task_id, _ in slices[index])
         file = marker.files[0]
         digest = _accepted_decision_sha256(record, comments)
+        current_task_blob = _content_sha_at(repository, token, path=path, revision=revision)
         if (
             digest is None
             or file.expected_sha == file.blob_sha
-            or _content_sha_at(repository, token, path=path, revision=revision) != file.blob_sha
+            or current_task_blob is None
+            or (not reviewed_correction and current_task_blob != file.blob_sha)
             or not task_checkpoint_is_exact(
                 repository,
                 token,
@@ -7455,6 +7496,11 @@ def qualify_initial_implementation_delivery(
             "marker_accepted_decision_sha256": digest,
             "marker_revision": proof.witness.revision,
             "marker_blob": file.blob_sha,
+            **(
+                {"current_task_blob": current_task_blob}
+                if current_task_blob != file.blob_sha
+                else {}
+            ),
             "quality": quality,
             "strict": [list(attempt) for attempt in strict],
             "dispatch": asdict(receipt),
@@ -7763,6 +7809,12 @@ def _settled_development_prefix(
                                 "marker_accepted_decision_sha256",
                                 "marker_revision",
                                 "marker_blob",
+                            )
+                        ):
+                            return None
+                        if delivery.get("current_task_blob", delivery.get("marker_blob")) != (
+                            _content_sha_at(
+                                repository, token, path=path, revision=prior[1].revision
                             )
                         ):
                             return None
