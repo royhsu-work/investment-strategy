@@ -12096,7 +12096,8 @@ def _assert_saved_development_frontier(
                         "fresh accepted proof",
                         pending_frontier_proof=(
                             None
-                            if history in (
+                            if history
+                            in (
                                 "publication-invalidated-partial",
                                 "publication-invalidated-corrected-partial",
                             )
