@@ -12302,6 +12302,16 @@ def test_reviewed_correction_publication_preserves_accepted_owner(
     )
 
 
+@pytest.mark.parametrize("prior_evidence", ["finding", "finding-multi-earlier"])
+@pytest.mark.parametrize(
+    "operation", ["evidence-only", "evidence-only-fail", "evidence-only-owned"]
+)
+def test_reviewed_same_head_supplements_evidence_without_another_save(
+    monkeypatch: pytest.MonkeyPatch, prior_evidence: str, operation: str
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(monkeypatch, prior_evidence, operation)
+
+
 def _assert_next_slice_requires_bound_prior_native_delivery(
     monkeypatch: pytest.MonkeyPatch,
     prior_evidence: str,
@@ -12319,7 +12329,8 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     prior_head = "d" * 40
     prior_marker_base = "a" * 40
     prior_marker_preimage = "6" * 40
-    head = "b" * 40
+    evidence_only = operation.startswith("evidence-only")
+    head = prior_head if evidence_only else "b" * 40
     current_marker_base = "c" * 40
     earlier_finding = prior_evidence == "finding-multi-earlier"
     multi_finding = earlier_finding or prior_evidence == "finding-multi"
@@ -12671,7 +12682,11 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
         )
         finding_worker["evidence_ref"] = f"https://github.com/{repository}/commit/{prior_head}"
         task_id = "9.9" if prior_evidence == "finding-wrong-scope" else target_task
-        finding_content = f"F1: approved task {task_id} requires content correction."
+        finding_content = (
+            f"F1: approved task {task_id} lacks verification evidence."
+            if evidence_only
+            else f"F1: approved task {task_id} requires content correction."
+        )
         finding_worker["result_content"] = finding_content
         finding_encoded = base64.b64encode(json.dumps(finding_worker).encode()).decode()
         finding_request["body"] = "\n".join(
@@ -12894,6 +12909,107 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
         ),
         settled_development_records=settled,
     )
+    if evidence_only:
+        historical_quality_record = bridge.parse_application_decision(marker_accepted["body"])
+        assert historical_quality_record is not None
+        latest = historical_quality_record
+        historical_obligation = bridge.NativeQualityObligation(
+            prior_head,
+            branch,
+            "4" * 40,
+            "5" * 64,
+            cast(str, marker_accepted["created_at"]),
+            "main",
+            prior_head,
+            prior_marker_base,
+        )
+        completion = bridge.ApplicationCompletion(
+            "RESUMABLE" if operation == "evidence-only-owned" else "NONE",
+            "current occurrence observation",
+        )
+
+        def observe_historical_job(
+            *args: object, **kwargs: object
+        ) -> bridge.ApplicationCompletion:
+            assert args[:3] == (repository, token, 30)
+            assert kwargs["record"] == historical_quality_record
+            assert kwargs["accepted_decision_sha256"] == marker_digest
+            assert kwargs["current_revision"] == REVISION
+            return bridge.ApplicationCompletion(
+                "RESUMABLE",
+                "verification-obligation-pending",
+                request_comment_id=30,
+                quality_obligation=historical_obligation,
+            )
+
+        def observe_historical_gate(
+            *args: object, **kwargs: object
+        ) -> bridge.NativeQualityObservation:
+            assert kwargs["revision"] == prior_head
+            assert kwargs["branch"] == branch
+            assert kwargs["accepted_at"] == marker_accepted["created_at"]
+            assert kwargs["workflow_blob"] == historical_obligation.workflow_blob
+            assert kwargs["obligation_id"] == historical_obligation.obligation_id
+            assert kwargs["request_comment_id"] == receipt.dispatch_request_comment_id
+            assert kwargs["run_id"] == receipt.run_id
+            assert kwargs["run_attempt"] == receipt.run_attempt
+            assert kwargs["observe_only"] is True
+            return bridge.NativeQualityObservation(
+                "FAIL" if operation == "evidence-only-fail" else "PASS",
+                (
+                    bridge.NativeQualityAttempt(
+                        43,
+                        1,
+                        "PYTEST_STEP_FAILURE" if operation == "evidence-only-fail" else "PASS",
+                        44,
+                        prior_head,
+                        prior_head,
+                        None,
+                    ),
+                ),
+            )
+
+        monkeypatch.setattr(bridge, "_application_job", observe_historical_job)
+        monkeypatch.setattr(
+            bridge,
+            "_development_acceptance_source",
+            lambda *a, **kw: bridge.DevelopmentDispatchSource(
+                50, 51, 1, 52, 53, "sha256:" + "1" * 64, REVISION
+            ),
+        )
+        monkeypatch.setattr(
+            bridge,
+            "_complete_workflow_runs",
+            lambda *a, **kw: (
+                {"display_title": bridge.render_dispatch_run_name(170)},
+            ),
+        )
+        monkeypatch.setattr(
+            bridge,
+            "_quality_bridge_run",
+            lambda *a, **kw: (171, 1, REVISION, "completed", "success"),
+        )
+        monkeypatch.setattr(
+            bridge,
+            "github_complete_job_inventory",
+            lambda *a, **kw: (
+                {
+                    "name": "bridge",
+                    "run_id": 171,
+                    "run_attempt": 1,
+                    "head_sha": REVISION,
+                    "started_at": "2026-09-18T02:00:15Z",
+                    "steps": [
+                        {
+                            "name": "Plan exact correlated machine dispatch decision",
+                            "started_at": "2026-09-18T02:00:16Z",
+                        }
+                    ],
+                },
+            ),
+        )
+        monkeypatch.setattr(bridge, "_quality_verdicts_precede", lambda *a, **kw: True)
+        monkeypatch.setattr(bridge, "plan_native_quality_verification", observe_historical_gate)
     monkeypatch.setattr(bridge, "qualify_development_dispatch_source", lambda *a, **kw: receipt)
     monkeypatch.setattr(bridge, "qualify_application_completion", lambda *a, **kw: completion)
     monkeypatch.setattr(
@@ -13059,7 +13175,10 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             default_branch="main",
             read=read,
         )
-        if prior_evidence == "finding-wrong-scope":
+        if prior_evidence == "finding-wrong-scope" or operation in (
+            "evidence-only-fail",
+            "evidence-only-owned",
+        ):
             assert evidence_result is None
             return
         if finding_correction:
