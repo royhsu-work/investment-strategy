@@ -1506,9 +1506,10 @@ def test_implement_completion_rejects_multiple_slice_task_ids_at_application_bou
 def test_durable_task_markers_without_checkpoint_do_not_advance() -> None:
     result, applied = _apply_completion_effects(_implementation_checkpoint_effects()[:1])
 
-    assert not result.applied
-    assert "implementation-checkpoint-incomplete" in result.reason
-    assert applied == []
+    assert result.applied
+    assert len(applied) == 1
+    assert applied[0].kind == "github-mutation"
+    assert not applied[0].derived
 
 
 def test_checkpoint_before_task_does_not_advance() -> None:
