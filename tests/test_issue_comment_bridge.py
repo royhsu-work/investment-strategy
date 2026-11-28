@@ -12543,7 +12543,9 @@ def test_native_delivery_reobserves_quality_before_publication(
     )
     monkeypatch.setattr(bridge, "plan_native_quality_verification", observe)
     monkeypatch.setattr(
-        bridge, "_native_strict_marker_evidence", lambda *a, **kw: ((41, 1, 42),) if strict_pass else ()
+        bridge,
+        "_native_strict_marker_evidence",
+        lambda *a, **kw: ((41, 1, 42),) if strict_pass else (),
     )
     monkeypatch.setattr(effects, "_github_json", read)
     monkeypatch.setattr(
