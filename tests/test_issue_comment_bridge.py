@@ -12794,9 +12794,10 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             for comment in comments
             if comment["id"] == current_finding.comment_id
         )
-        assert [
-            line for line in projected["result_content"].splitlines() if line.startswith("Evidence:")
-        ] == [line for line in observed_body.splitlines() if line.startswith("Evidence:")]
+        projected_body = projected["result_content"]
+        assert [line for line in projected_body.splitlines() if line.startswith("Evidence:")] == [
+            line for line in observed_body.splitlines() if line.startswith("Evidence:")
+        ]
         assert bridge._bound_native_delivery_scope(  # noqa: SLF001
             repository,
             token,

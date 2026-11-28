@@ -7023,9 +7023,10 @@ def _reviewed_correction_marker(
     expected_evidence = [
         line for line in expected_body.splitlines() if line.startswith("Evidence:")
     ]
-    if len(expected_evidence) != 1 or [
+    observed_evidence = [
         line for line in cast(str, formal[0]["body"]).splitlines() if line.startswith("Evidence:")
-    ] != expected_evidence:
+    ]
+    if len(expected_evidence) != 1 or observed_evidence != expected_evidence:
         return None
     owners = _frontier_application_decisions(decisions, replace(frontier, event=delivered))
     if len(owners) != 1:
