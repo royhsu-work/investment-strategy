@@ -24,8 +24,12 @@ finite result, and precise findings/evidence.
 
 ## SLICE_CHECKPOINT
 
-Use only after one implementation slice has passed its required VERIFY gates. Include completed
-task IDs, exact revision, gate evidence, and the remaining approved boundary.
+Historical accepted checkpoint effects retain their exact original format, source qualification and
+reconciliation. For an optional bounded progress report, identify the saved revision, relevant task
+IDs, actual verification status/evidence (including pending or failed), and remaining approved scope.
+A save requires no comment; this message does not establish PASS, task completion, formal delivery,
+routing, or Exit. For new formal delivery use the existing ACTION_RESULT and its qualified task,
+marker, exact gate and occurrence evidence; never require a separate checkpoint message.
 
 ## MERGE_RESULT
 
