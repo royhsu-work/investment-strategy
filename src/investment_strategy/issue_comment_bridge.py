@@ -6481,6 +6481,261 @@ def _native_strict_marker_evidence(
     return tuple(observed)
 
 
+def _bound_native_delivery_scope(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    frontier: CurrentFrontier,
+    event: FormalLifecycleEvent,
+    review: FormalLifecycleEvent,
+    scope: tuple[str, ...],
+    comments: tuple[Mapping[str, object], ...],
+    branch: str,
+    pr_number: int,
+    revision: str,
+    current_revision: str,
+    read: GitHubReader,
+) -> bool:
+    """Bind one historical formal delivery to its immutable accepted evidence."""
+    decisions = _application_decisions(comments)
+    owners = _frontier_application_decisions(decisions, replace(frontier, event=event))
+    if len(owners) != 1 or owners[0].disposition != "ACCEPTED":
+        return False
+    record = owners[0]
+    if (
+        sum(item.request_comment_id == record.request_comment_id for item in decisions) != 1
+        or _accepted_decision_sha256(record, comments) is None
+        or event.revision is None
+        or _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=record.authorization_revision,
+            current_revision=current_revision,
+            read=read,
+        )
+        is None
+        or _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=event.revision,
+            current_revision=revision,
+            read=read,
+        )
+        is None
+    ):
+        return False
+    original = _qualified_physical_original_accepted_effects(
+        record=record, source=source, repository=repository, token=token, read=read
+    )
+    raw = json.loads(record.raw_worker_result)
+    evidence = raw.get("_native_implementation_delivery") if isinstance(raw, dict) else None
+    if (
+        original is None
+        or original.effects
+        or not isinstance(evidence, Mapping)
+        or evidence.get("scope_task_ids") != list(scope)
+        or evidence.get("revision") != event.revision
+        or evidence.get("result_kind") != event.result_kind
+        or evidence.get("branch") != branch
+        or evidence.get("pr_number") != pr_number
+        or evidence.get("reviewed_revision") != review.revision
+        or evidence.get("review_comment_id") != review.comment_id
+    ):
+        return False
+    formal = [
+        comment
+        for comment in comments
+        if comment.get("id") == event.comment_id
+        and parse_formal_result(comment, current_revision=current_revision) == event
+    ]
+    digest = hashlib.sha256(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if len(formal) != 1 or not isinstance(formal[0].get("body"), str):
+        return False
+    body = cast(str, formal[0]["body"])
+    if [line for line in body.splitlines() if line.startswith("Evidence:")] != [
+        f"Evidence: native-delivery:{digest}"
+    ]:
+        return False
+    marker_id = _positive_int(evidence.get("marker_request_comment_id"))
+    marker_records = [item for item in decisions if item.request_comment_id == marker_id]
+    marker_revision = evidence.get("marker_revision")
+    marker_blob = evidence.get("marker_blob")
+    if (
+        marker_id is None
+        or len(marker_records) != 1
+        or not isinstance(marker_revision, str)
+        or _SHA.fullmatch(marker_revision) is None
+        or not isinstance(marker_blob, str)
+        or _SHA.fullmatch(marker_blob) is None
+    ):
+        return False
+    marker = marker_records[0]
+    if (
+        marker.disposition != "ACCEPTED"
+        or marker.change != record.change
+        or _accepted_decision_sha256(marker, comments)
+        != evidence.get("marker_accepted_decision_sha256")
+        or _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=marker_revision,
+            current_revision=event.revision,
+            read=read,
+        )
+        is None
+    ):
+        return False
+    physical = _qualified_physical_original_accepted_effects(
+        record=marker, source=source, repository=repository, token=token, read=read
+    )
+    if physical is None or not _implementation_development_save(physical):
+        return False
+    if _implementation_development_save(physical, include_task_markers=False):
+        return False
+    request = find_materialization_payload(json.loads(physical.effects[0].payload_json), source)
+    if request is None or request.branch != branch or request.pr_number != pr_number:
+        return False
+    file = request.files[0]
+    quality = evidence.get("quality")
+    strict = evidence.get("strict")
+    if (
+        not isinstance(quality, Mapping)
+        or quality.get("revision") != event.revision
+        or quality.get("branch") != branch
+        or not isinstance(strict, list)
+        or not strict
+    ):
+        return False
+    attempts = quality.get("attempts")
+    if (
+        not isinstance(attempts, list)
+        or not attempts
+        or any(
+            not isinstance(attempt, Mapping)
+            or attempt.get("outcome") != "PASS"
+            or attempt.get("checkout_revision") != event.revision
+            for attempt in attempts
+        )
+        or any(
+            not isinstance(reference, list)
+            or len(reference) != 3
+            or any(_positive_int(value) is None for value in reference)
+            for reference in strict
+        )
+    ):
+        return False
+    quality_id = _positive_int(quality.get("request_comment_id"))
+    quality_records = [item for item in decisions if item.request_comment_id == quality_id]
+    if (
+        quality_id is None
+        or len(quality_records) != 1
+        or quality_records[0].disposition != "ACCEPTED"
+        or (quality_records[0].issue_number, quality_records[0].role, quality_records[0].action)
+        != (source.issue_number, source.role, source.action)
+        or quality_records[0].change != record.change
+        or _accepted_decision_sha256(quality_records[0], comments)
+        != quality.get("accepted_decision_sha256")
+    ):
+        return False
+    return (
+        file.blob_sha == marker_blob
+        and _content_sha_at(repository, token, path=file.path, revision=marker_revision)
+        == marker_blob
+        and _content_sha_at(repository, token, path=file.path, revision=event.revision)
+        == marker_blob
+        and task_checkpoint_is_exact(
+            repository,
+            token,
+            expected_change=record.change,
+            base_sha=request.base_sha,
+            file=file,
+            completed_task_ids=scope,
+        )
+    )
+
+
+def _ordinary_implementation_scope(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    frontier: CurrentFrontier,
+    comments: tuple[Mapping[str, object], ...],
+    lifecycle: tuple[Mapping[str, object], ...],
+    slices: tuple[tuple[tuple[str, bool], ...], ...],
+    branch: str,
+    pr_number: int,
+    revision: str,
+    current_revision: str,
+    read: GitHubReader,
+) -> tuple[FormalLifecycleEvent, int] | None:
+    """Derive the first undelivered slice from the qualified formal history."""
+    event = frontier.event
+    if not isinstance(event, FormalLifecycleEvent) or not event.valid:
+        return None
+    qualification = build_qualification_input(
+        issue_number=source.issue_number,
+        change=frontier.change,
+        state="open",
+        current_routing=frontier.current_routing,
+        comments=comments,
+        current_revision=current_revision,
+        lifecycle_events=lifecycle,
+    )
+    if not qualification.events or qualification.events[-1] != event:
+        return None
+    deliveries: list[FormalLifecycleEvent] = []
+    review = None
+    for item in reversed(qualification.events):
+        if (
+            not item.valid
+            or item.issue_number != source.issue_number
+            or item.change != frontier.change
+        ):
+            return None
+        identity = (item.role, item.action, item.result_kind)
+        if identity == ("reviewer", "review-openspec", "pass"):
+            review = item
+            break
+        if identity != ("executor", "implement-change", "more-implementation-required"):
+            return None
+        deliveries.append(item)
+    if (
+        review is None
+        or review.revision is None
+        or len(deliveries) >= len(slices)
+        or not openspec_review_revision_applies(
+            repository,
+            token,
+            change=frontier.change,
+            reviewed_revision=review.revision,
+            head_revision=revision,
+        )
+    ):
+        return None
+    for group, delivery in zip(slices, reversed(deliveries), strict=False):
+        if not all(checked for _, checked in group) or not _bound_native_delivery_scope(
+            repository,
+            token,
+            source=source,
+            frontier=frontier,
+            event=delivery,
+            review=review,
+            scope=tuple(task_id for task_id, _ in group),
+            comments=comments,
+            branch=branch,
+            pr_number=pr_number,
+            revision=revision,
+            current_revision=current_revision,
+            read=read,
+        ):
+            return None
+    return review, len(deliveries)
+
+
 def qualify_initial_marker_save(
     repository: str,
     token: str,
@@ -6492,11 +6747,7 @@ def qualify_initial_marker_save(
     default_branch: str,
     read: GitHubReader = _github_json,
 ) -> bool:
-    """Qualify the first undelivered scope without a checkpoint publication.
-
-    Later delivery/correction occurrences require their own qualified scope;
-    neither checked boxes nor a prior saved-work PASS can select that scope.
-    """
+    """Qualify the first undelivered scope without a checkpoint publication."""
     if (
         request.pr_number is None
         or len(request.files) != 1
@@ -6579,27 +6830,31 @@ def qualify_initial_marker_save(
             current_revision=current_revision,
             read=read,
         )
-        event = None if frontier is None else frontier.event
-        if (
-            not qualified
-            or not isinstance(event, FormalLifecycleEvent)
-            or not event.valid
-            or (event.role, event.action, event.result_kind)
-            != ("reviewer", "review-openspec", "pass")
-            or event.revision is None
-            or not openspec_review_revision_applies(
-                repository,
-                token,
-                change=request.change,
-                reviewed_revision=event.revision,
-                head_revision=request.base_sha,
-            )
-        ):
+        if not qualified or frontier is None or frontier.change != request.change:
             return False
         file = request.files[0]
         content = _content_text_at(repository, token, path=file.path, revision=request.base_sha)
         slices = _task_slices(content)
-        if slices is None or any(checked for group in slices for _, checked in group):
+        if slices is None:
+            return False
+        scoped = _ordinary_implementation_scope(
+            repository,
+            token,
+            source=source,
+            frontier=frontier,
+            comments=comments,
+            lifecycle=lifecycle,
+            slices=slices,
+            branch=request.branch,
+            pr_number=request.pr_number,
+            revision=request.base_sha,
+            current_revision=current_revision,
+            read=read,
+        )
+        if scoped is None:
+            return False
+        _, index = scoped
+        if any(checked for group in slices[index:] for _, checked in group):
             return False
         return task_checkpoint_is_exact(
             repository,
@@ -6607,7 +6862,7 @@ def qualify_initial_marker_save(
             expected_change=request.change,
             base_sha=request.base_sha,
             file=file,
-            completed_task_ids=tuple(task_id for task_id, _ in slices[0]),
+            completed_task_ids=tuple(task_id for task_id, _ in slices[index]),
         ) and bool(
             _native_strict_marker_evidence(
                 repository,
