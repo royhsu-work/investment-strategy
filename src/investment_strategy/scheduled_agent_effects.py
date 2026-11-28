@@ -2027,8 +2027,8 @@ class GitHubEffectAdapter:
         ):
             return False
         carrier = qualify_implementation_carrier(
-            self.repository,
-            self.token,
+            repository=self.repository,
+            token=self.token,
             source=self.source,
             change=self.authorized_change,
             current_revision=current_revision,
