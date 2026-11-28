@@ -12320,6 +12320,41 @@ def test_repeated_finding_after_earlier_slice_delivery_keeps_original_scope(
     )
 
 
+@pytest.mark.parametrize(
+    "explanation",
+    [
+        "F1: Slice 1.1 needs correction; reference task 9.9 is incidental.",
+        "F1: 任務 1.1 需要修正，版本 9.9 並非任務範圍。",
+    ],
+)
+def test_reviewed_structured_scope_is_independent_of_finding_prose(
+    monkeypatch: pytest.MonkeyPatch, explanation: str
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-multi-earlier", "corrected", finding_explanation=explanation
+    )
+
+
+def test_reviewed_structured_scope_must_match_original_accepted_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-multi-earlier", "corrected", scope_conflict=True
+    )
+
+
+def test_reviewed_missing_structured_scope_does_not_default_to_only_slice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch,
+        "finding",
+        "corrected",
+        omit_scope=True,
+        finding_explanation="F1: Scope absent.",
+    )
+
+
 def _assert_next_slice_requires_bound_prior_native_delivery(
     monkeypatch: pytest.MonkeyPatch,
     prior_evidence: str,
@@ -12327,6 +12362,9 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     *,
     reconcile_phase_a: bool | None = None,
     repeat_finding: bool = False,
+    finding_explanation: str | None = None,
+    scope_conflict: bool = False,
+    omit_scope: bool = False,
 ) -> None:
     from investment_strategy import scheduled_agent_validation_resource as resources
 
@@ -12696,12 +12734,30 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             if evidence_only
             else f"F1: approved task {task_id} requires content correction."
         )
+        if finding_explanation is not None:
+            finding_content = finding_explanation
         finding_worker["result_content"] = finding_content
+        if not omit_scope:
+            finding_worker["reviewed_task_ids"] = ["2.1"] if scope_conflict else [task_id]
         finding_encoded = base64.b64encode(json.dumps(finding_worker).encode()).decode()
         finding_request["body"] = "\n".join(
             (finding_lines[0], finding_lines[1], f"Worker-Result-B64: {finding_encoded}")
         )
         finding_accepted = _application_decision_comment(finding_request, comment_id=135)
+        if scope_conflict:
+            projected_worker = {**finding_worker, "reviewed_task_ids": [task_id]}
+            encoded_projection = base64.b64encode(json.dumps(projected_worker).encode()).decode()
+            finding_projection = {
+                **finding_request,
+                "body": "\n".join(
+                    (finding_lines[0], finding_lines[1], f"Worker-Result-B64: {encoded_projection}")
+                ),
+            }
+            finding_accepted = _application_decision_comment(finding_projection, comment_id=135)
+            finding_accepted["body"] = cast(str, finding_accepted["body"]).replace(
+                hashlib.sha256(cast(str, finding_projection["body"]).encode()).hexdigest(),
+                hashlib.sha256(cast(str, finding_request["body"]).encode()).hexdigest(),
+            )
         finding_accepted["created_at"] = "2026-09-18T02:00:13Z"
         finding_accepted["updated_at"] = finding_accepted["created_at"]
         finding = _formal_frontier_comment(
@@ -13188,7 +13244,8 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
         original_finding = bridge._qualified_physical_original_accepted_effects(  # noqa: SLF001
             record=finding_record, source=reviewer, repository=repository, token=token, read=read
         )
-        assert original_finding is not None and not original_finding.effects
+        if not scope_conflict:
+            assert original_finding is not None and not original_finding.effects
         projected = json.loads(
             bridge._application_owned_worker_result(  # noqa: SLF001
                 finding_record.raw_worker_result,
@@ -13256,7 +13313,12 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             current_revision=REVISION,
             read=read,
         )
-        if prior_evidence != "finding-wrong-scope" and not multi_finding:
+        if (
+            prior_evidence != "finding-wrong-scope"
+            and not multi_finding
+            and not omit_scope
+            and not scope_conflict
+        ):
             assert historical_marker is not None
             assert historical_marker[1].request_comment_id == 30
 
@@ -13287,9 +13349,11 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             default_branch="main",
             read=read,
         )
-        if prior_evidence == "finding-wrong-scope" or operation in (
-            "evidence-only-fail",
-            "evidence-only-owned",
+        if (
+            prior_evidence == "finding-wrong-scope"
+            or scope_conflict
+            or omit_scope
+            or operation in ("evidence-only-fail", "evidence-only-owned")
         ):
             assert evidence_result is None
             return
