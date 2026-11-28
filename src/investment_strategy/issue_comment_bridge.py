@@ -6700,9 +6700,17 @@ def _ordinary_implementation_scope(
         if identity == ("reviewer", "review-openspec", "pass"):
             review = item
             break
-        if identity != ("executor", "implement-change", "more-implementation-required"):
-            return None
-        deliveries.append(item)
+        if identity == ("executor", "implement-change", "more-implementation-required"):
+            deliveries.append(item)
+            continue
+        # The canonical frontier has already qualified these transitions.
+        # A question, its resolution, or a blocked iteration can return to
+        # implementation without delivering another slice. Preserve the
+        # earlier scope and still require the reviewed plan to apply at HEAD.
+        iteration_routes = {("executor", "implement-change"), ("lead", "resolve-question")}
+        if (item.role, item.action) in iteration_routes and item.successor in iteration_routes:
+            continue
+        return None
     if (
         review is None
         or review.revision is None
