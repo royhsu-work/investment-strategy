@@ -12259,6 +12259,18 @@ def _assert_saved_development_frontier(
 def test_next_slice_requires_bound_prior_native_delivery(
     monkeypatch: pytest.MonkeyPatch, prior_evidence: str, operation: str
 ) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(monkeypatch, prior_evidence, operation)
+
+
+def test_reviewed_single_slice_correction_reuses_its_delivered_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(monkeypatch, "finding", "corrected")
+
+
+def _assert_next_slice_requires_bound_prior_native_delivery(
+    monkeypatch: pytest.MonkeyPatch, prior_evidence: str, operation: str
+) -> None:
     from investment_strategy import scheduled_agent_validation_resource as resources
 
     repository = "royhsu-work/investment-strategy"
@@ -12271,12 +12283,19 @@ def test_next_slice_requires_bound_prior_native_delivery(
     prior_marker_preimage = "6" * 40
     head = "b" * 40
     current_marker_base = "c" * 40
+    finding_correction = prior_evidence == "finding"
+    prior_result_kind = "ready" if finding_correction else "more-implementation-required"
     marker_head = "e" * 40 if operation == "corrected" else head
+    if finding_correction:
+        marker_head = prior_head
     publishing = operation != "marker"
     task_blob, candidate_blob = "1" * 40, "2" * 40
     path = f"openspec/changes/{change}/tasks.md"
     task_text = "## Slice 1\n- [x] 1.1 First\n\n## Slice 2\n- [ ] 2.1 Next\n"
     candidate = task_text.replace("- [ ] 2.1", "- [x] 2.1")
+    if finding_correction:
+        task_text = candidate = "## Slice 1\n- [x] 1.1 First\n"
+        candidate_blob = task_blob
     review = _formal_frontier_comment(
         10,
         action="review-openspec",
@@ -12329,7 +12348,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
         created_at="2026-09-18T02:00:06Z",
         action=source.action,
         role=source.role,
-        result_kind="more-implementation-required",
+        result_kind=prior_result_kind,
         change=change,
     )
     prior_request["user"] = {"login": "royhsu-work"}
@@ -12376,7 +12395,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
             "artifact_digest": "sha256:" + "1" * 64,
             "authorization_revision": REVISION,
         },
-        "result_kind": "more-implementation-required",
+        "result_kind": prior_result_kind,
     }
     original_body = cast(str, prior_request["body"])
     lines = original_body.splitlines()
@@ -12433,8 +12452,12 @@ def test_next_slice_requires_bound_prior_native_delivery(
         100,
         action=source.action,
         role=source.role,
-        result="more-implementation-required",
-        successor="Executor / implement-change",
+        result=prior_result_kind,
+        successor=(
+            "Reviewer / review-implementation"
+            if finding_correction
+            else "Executor / implement-change"
+        ),
         request_id=70,
         change=change,
     )
@@ -12475,8 +12498,52 @@ def test_next_slice_requires_bound_prior_native_delivery(
             comments = (review, accepted, observed_checkpoint, delivered)
     transitions: list[tuple[int, str, str | None]] = [
         (10, "review-openspec", "implement-change"),
-        (100, source.action, source.action),
+        (100, source.action, "review-implementation" if finding_correction else source.action),
     ]
+    finding_request = _effect_request_comment(
+        comment_id=130,
+        created_at="2026-09-18T02:00:12Z",
+        action="review-implementation",
+        role="reviewer",
+        result_kind="findings",
+        change=change,
+    )
+    if finding_correction:
+        finding_request["user"] = {"login": "royhsu-work"}
+        finding_request["issue_url"] = f"https://api.github.com/repos/{repository}/issues/140"
+        finding_request["updated_at"] = finding_request["created_at"]
+        finding_lines = cast(str, finding_request["body"]).splitlines()
+        finding_worker = json.loads(
+            base64.b64decode(finding_lines[2].removeprefix("Worker-Result-B64: "))
+        )
+        finding_worker["evidence_ref"] = f"https://github.com/{repository}/commit/{prior_head}"
+        finding_content = "F1: approved task 1.1 requires content correction."
+        finding_worker["result_content"] = finding_content
+        finding_encoded = base64.b64encode(json.dumps(finding_worker).encode()).decode()
+        finding_request["body"] = "\n".join(
+            (finding_lines[0], finding_lines[1], f"Worker-Result-B64: {finding_encoded}")
+        )
+        finding_accepted = _application_decision_comment(finding_request, comment_id=135)
+        finding_accepted["created_at"] = "2026-09-18T02:00:13Z"
+        finding_accepted["updated_at"] = finding_accepted["created_at"]
+        finding = _formal_frontier_comment(
+            140,
+            action="review-implementation",
+            role="reviewer",
+            result="findings",
+            successor="Executor / implement-change",
+            request_id=130,
+            change=change,
+        )
+        finding["body"] = (
+            cast(str, finding["body"])
+            .replace("ACTION_RESULT", "REVIEW_RESULT", 1)
+            .replace(f"\nRevision: {REVISION}\n", f"\nRevision: {prior_head}\n")
+            + f"\nEvidence: {finding_content}"
+        )
+        finding["updated_at"] = finding["created_at"]
+        comments = (*comments, finding_accepted, finding)
+        transitions.append((140, "review-implementation", source.action))
     if prior_evidence in ("returned", "returned-missing"):
         blocker = _formal_frontier_comment(
             120,
@@ -12514,6 +12581,8 @@ def test_next_slice_requires_bound_prior_native_delivery(
             return marker_request
         if api_path == "issues/comments/70":
             return prior_request
+        if api_path == "issues/comments/130" and finding_correction:
+            return finding_request
         if api_path == "issues/138":
             return issue
         if api_path.startswith("issues/138/comments?"):
@@ -12578,7 +12647,8 @@ def test_next_slice_requires_bound_prior_native_delivery(
     saved = _application_decision_comment(saved_request, comment_id=160)
     saved["created_at"] = "2026-09-18T02:00:17Z"
     saved["updated_at"] = saved["created_at"]
-    comments = (*comments, saved)
+    if not finding_correction:
+        comments = (*comments, saved)
     saved_record = bridge.parse_application_decision(saved["body"])
     assert saved_record is not None
     settled: tuple[bridge.ApplicationDecisionRecord, ...] = (saved_record,)
@@ -12620,7 +12690,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
         comments = (*comments, corrected)
         correction_record = bridge.parse_application_decision(corrected["body"])
         assert correction_record is not None
-        settled = (saved_record, correction_record)
+        settled = (correction_record,) if finding_correction else (saved_record, correction_record)
         latest = correction_record
         latest_comment = corrected
     completion = bridge.ApplicationCompletion(
@@ -12707,7 +12777,17 @@ def test_next_slice_requires_bound_prior_native_delivery(
             default_branch="main",
             read=read,
         )
-        if prior_evidence in ("valid", "returned", "legacy") and operation in (
+        if finding_correction:
+            assert evidence_result is not None
+            assert evidence_result["scope_task_ids"] == ["1.1"]
+            assert evidence_result["revision"] == head
+            assert evidence_result["result_kind"] == "ready"
+            assert evidence_result["marker_revision"] == prior_head
+            assert evidence_result["marker_request_comment_id"] == 30
+            quality = evidence_result["quality"]
+            assert isinstance(quality, dict)
+            assert quality["request_comment_id"] == latest.request_comment_id
+        elif prior_evidence in ("valid", "returned", "legacy") and operation in (
             "publish",
             "corrected",
         ):
