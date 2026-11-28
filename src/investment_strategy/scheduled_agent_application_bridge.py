@@ -6172,6 +6172,14 @@ def _accepted_recovery_boundary(
         and evidence.get("rejection") is None
     )
     if known_rejection and exact_frontier and exact_failure and not indexes:
+        if (
+            evidence.get("failed_effect_kind") == "issue-comment"
+            and evidence.get("operation_stage") == "BEFORE-WRITE"
+            and evidence.get("write_call_entered") is False
+        ):
+            # A rejected publication needs the original no-call witness.
+            # Never infer an intent-wide zero-write fact from this invocation.
+            return "READ_ONLY"
         return "ZERO_WRITE_REJECTION"
     if exact_frontier and exact_failure:
         if unattempted_exception or (known_rejection and indexes):
