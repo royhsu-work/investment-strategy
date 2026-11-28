@@ -11547,6 +11547,8 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
         ("ambiguous-order", "AMBIGUOUS"),
         ("latest-pending", "RESUMABLE"),
         ("latest-unknown", "INVALID"),
+        ("publication-pending", "RESUMABLE"),
+        ("publication-unknown", "INVALID"),
         ("invalidated-input", "AMBIGUOUS"),
         ("rollover", "COMPLETE"),
     ],
@@ -11573,6 +11575,7 @@ def _assert_saved_development_frontier(
     change = "native-quality"
     saved, producer = "a" * 40, "b" * 40
     prior_saved = "c" * 40
+    publication = history in ("publication-pending", "publication-unknown")
     branch = "agent/native-quality"
     shard_url = f"https://api.github.com/repos/{repository}/issues/142"
     request = _effect_request_comment(
@@ -11619,7 +11622,7 @@ def _assert_saved_development_frontier(
     prior_worker.pop("_native_development_dispatch")
     prior_worker.pop("_semantic_intent_version")
     prior_payload = {**payload, "base_sha": REVISION}
-    if history == "marker-red":
+    if history == "marker-red" or publication:
         prior_payload["files"] = [
             {
                 "path": f"openspec/changes/{change}/tasks.md",
@@ -11668,11 +11671,11 @@ def _assert_saved_development_frontier(
         "4" * 64,
         cast(str, prior["created_at"]),
         "main",
-        prior_saved if history == "latest-pending" else saved,
+        prior_saved if history == "latest-pending" or publication else saved,
         REVISION,
     )
     prior_verdict = bridge.NativeQualityAttempt(
-        57, 1, "PYTEST_STEP_FAILURE", 58, prior_saved, prior_saved, None
+        57, 1, "PASS" if publication else "PYTEST_STEP_FAILURE", 58, prior_saved, prior_saved, None
     )
     if history is not None and history != "missing":
         worker["_native_development_predecessor"] = {
@@ -11684,6 +11687,27 @@ def _assert_saved_development_frontier(
             "obligation_id": prior_obligation.obligation_id,
             "authorization_revision": REVISION,
             "attempts": [asdict(prior_verdict)],
+        }
+    if publication:
+        worker["requested_effects"] = []
+        raw_publication = {key: value for key, value in worker.items() if not key.startswith("_")}
+        encoded = base64.b64encode(json.dumps(raw_publication).encode()).decode()
+        request["body"] = "\n".join((lines[0], lines[1], f"Worker-Result-B64: {encoded}"))
+        worker["_native_implementation_delivery"] = {
+            "scope_task_ids": ["1.1"],
+            "revision": prior_saved,
+            "pr_number": 139,
+            "branch": branch,
+            "reviewed_revision": REVISION,
+            "review_comment_id": 500,
+            "marker_request_comment_id": 554,
+            "marker_accepted_decision_sha256": prior_digest,
+            "marker_revision": prior_saved,
+            "marker_blob": "8" * 40,
+            "quality": worker.pop("_native_development_predecessor"),
+            "strict": [[41, 1, 42]],
+            "dispatch": worker.pop("_native_development_dispatch"),
+            "result_kind": "more-implementation-required",
         }
     if history == "replay":
         worker["_native_development_dispatch"] = asdict(prior_receipt)
@@ -11826,7 +11850,7 @@ def _assert_saved_development_frontier(
                 "head_branch": branch,
                 "event": "push",
                 "status": "completed",
-                "conclusion": "failure",
+                "conclusion": "success" if publication else "failure",
             }
         if path == "actions/jobs/58":
             return {
@@ -11834,7 +11858,7 @@ def _assert_saved_development_frontier(
                 "id": 58,
                 "run_id": 57,
                 "head_sha": prior_saved,
-                "conclusion": "failure",
+                "conclusion": "success" if publication else "failure",
                 "started_at": "2026-09-18T00:35:00Z",
                 "completed_at": (
                     "2026-09-18T00:51:00Z" if history == "late" else "2026-09-18T00:45:00Z"
@@ -11886,9 +11910,9 @@ def _assert_saved_development_frontier(
         record = kw["record"]
         assert isinstance(record, bridge.ApplicationDecisionRecord)
         if record.request_comment_id == 654:
-            if history == "latest-pending":
+            if history in ("latest-pending", "publication-pending"):
                 return bridge.ApplicationCompletion("RESUMABLE", "pending-write", 654, job_id=81)
-            if history == "latest-unknown":
+            if history in ("latest-unknown", "publication-unknown"):
                 return bridge.ApplicationCompletion("INVALID", "unknown-write", 654)
         return bridge.ApplicationCompletion(
             "RESUMABLE",
@@ -11940,10 +11964,15 @@ def _assert_saved_development_frontier(
     if expected == "COMPLETE":
         assert completion.quality_obligation is None
         assert completion.request_comment_id == 654
-    elif history in ("latest-pending", "latest-unknown"):
+    elif history in (
+        "latest-pending",
+        "latest-unknown",
+        "publication-pending",
+        "publication-unknown",
+    ):
         assert completion.request_comment_id == 654
         assert completion.quality_obligation is None
-        if history == "latest-pending":
+        if history in ("latest-pending", "publication-pending"):
             assert completion.job_id == 81
     elif expected == "RESUMABLE":
         assert completion.quality_obligation == obligation
