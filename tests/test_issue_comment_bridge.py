@@ -13219,6 +13219,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     ) is (prior_evidence in ("valid", "returned", "legacy"))
 
 
+@pytest.mark.parametrize("task_state", ["ordinary", "earlier-correction", "stale-correction"])
 @pytest.mark.parametrize(
     ("verdict", "strict_pass"),
     [("PASS", True), ("CONFLICT", True), ("PENDING", True), ("PASS", False)],
@@ -13227,6 +13228,7 @@ def test_native_delivery_reobserves_quality_before_publication(
     monkeypatch: pytest.MonkeyPatch,
     verdict: Literal["PASS", "CONFLICT", "PENDING"],
     strict_pass: bool,
+    task_state: str,
 ) -> None:
     from investment_strategy import scheduled_agent_effects as effects
 
@@ -13286,6 +13288,12 @@ def test_native_delivery_reobserves_quality_before_publication(
         "strict": [[41, 1, 42]],
     }
 
+    current_blob = blob
+    if task_state != "ordinary":
+        evidence["current_task_blob"] = "d" * 40
+        if task_state == "earlier-correction":
+            current_blob = "d" * 40
+
     def read(_repo: str, _token: str, path: str) -> object:
         if path.startswith("issues/138/comments?"):
             return [accepted]
@@ -13318,7 +13326,7 @@ def test_native_delivery_reobserves_quality_before_publication(
         "qualify_implementation_carrier",
         lambda **kw: SimpleNamespace(disposition="QUALIFIED", branch=branch, head_sha=revision),
     )
-    monkeypatch.setattr(effects, "_content_sha_at", lambda *a, **kw: blob)
+    monkeypatch.setattr(effects, "_content_sha_at", lambda *a, **kw: current_blob)
     adapter = effects.GitHubEffectAdapter(
         repository,
         "test-token",  # noqa: S106 - synthetic test credential
@@ -13345,6 +13353,9 @@ def test_native_delivery_reobserves_quality_before_publication(
         kind="issue-comment",
         payload_json=json.dumps({"issue_number": 138, "body": formal["body"]}),
     )
+    if task_state == "stale-correction":
+        assert not adapter.validate_implementation_delivery(effect)
+        return
     assert adapter.validate_implementation_delivery(effect)
     assert adapter.guard(effect) is (verdict == "PASS" and strict_pass)
     if verdict != "PASS" or not strict_pass:
