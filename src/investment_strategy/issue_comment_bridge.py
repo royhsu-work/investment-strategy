@@ -7403,7 +7403,8 @@ def _native_delivery_never_called(
         and witness.target_index == 0
         and witness.accepted_decision_sha256 == digest
         and bool(witness.artifact_chain)
-        and witness.artifact_chain[0] == (artifact.run_id, artifact.run_attempt, artifact.artifact_id)
+        and witness.artifact_chain[0]
+        == (artifact.run_id, artifact.run_attempt, artifact.artifact_id)
     )
 
 
