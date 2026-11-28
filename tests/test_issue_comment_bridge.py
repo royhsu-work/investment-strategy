@@ -13381,7 +13381,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
         monkeypatch.setattr(
             effects.GitHubEffectAdapter,
             "observe_postcondition",
-            lambda self, effect: effect in applied
+            lambda self, effect: effect in applied,
         )
         monkeypatch.setattr(effects.GitHubEffectAdapter, "persist_application_decision", persist)
         if review_ingress == "guarded":
