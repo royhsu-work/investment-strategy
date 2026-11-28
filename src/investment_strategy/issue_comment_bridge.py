@@ -6581,7 +6581,8 @@ def qualify_initial_marker_save(
             not qualified
             or not isinstance(event, FormalLifecycleEvent)
             or not event.valid
-            or (event.role, event.action, event.result_kind) != ("reviewer", "review-openspec", "pass")
+            or (event.role, event.action, event.result_kind)
+            != ("reviewer", "review-openspec", "pass")
             or event.revision is None
             or not openspec_review_revision_applies(
                 repository,
