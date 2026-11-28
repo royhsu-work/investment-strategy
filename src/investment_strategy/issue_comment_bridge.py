@@ -7058,7 +7058,7 @@ def _reviewed_correction_marker(
     if not affected_indices:
         return None
     selected_index = min(affected_indices)
-    expected_kind = "more-implementation-required" if len(affected_indices) > 1 else "ready"
+    correction_kind = "more-implementation-required" if len(affected_indices) > 1 else "ready"
     finding_binding = {
         "finding_application_correlation": finding.application_correlation,
         "finding_accepted_decision_sha256": finding_digest,
@@ -7181,7 +7181,7 @@ def _reviewed_correction_marker(
         payload,
         evidence,
         latest_delivery,
-        expected_kind,
+        correction_kind,
         finding_binding,
     )
 
