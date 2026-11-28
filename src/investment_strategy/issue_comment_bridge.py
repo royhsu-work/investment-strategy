@@ -6899,6 +6899,167 @@ def _ordinary_implementation_scope(
     return review, len(deliveries)
 
 
+def _reviewed_correction_marker(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    frontier: CurrentFrontier,
+    comments: tuple[Mapping[str, object], ...],
+    lifecycle: tuple[Mapping[str, object], ...],
+    slices: tuple[tuple[tuple[str, bool], ...], ...],
+    branch: str,
+    revision: str,
+    current_revision: str,
+    read: GitHubReader,
+) -> (
+    tuple[
+        FormalLifecycleEvent, ApplicationDecisionRecord, MaterializationRequest, dict[str, object]
+    ]
+    | None
+):
+    """Reuse a delivered marker only when the correction has an unambiguous scope."""
+    finding = frontier.event
+    if (
+        len(slices) != 1
+        or not all(checked for _, checked in slices[0])
+        or not isinstance(finding, FormalLifecycleEvent)
+        or not finding.valid
+        or (finding.role, finding.action, finding.result_kind)
+        != ("reviewer", "review-implementation", "findings")
+        or finding.revision is None
+        or finding.default_branch_revision is None
+    ):
+        return None
+    qualification = build_qualification_input(
+        issue_number=source.issue_number,
+        change=frontier.change,
+        state="open",
+        current_routing=frontier.current_routing,
+        comments=comments,
+        current_revision=current_revision,
+        lifecycle_events=lifecycle,
+    )
+    events = qualification.events
+    if len(events) < 3 or events[-1] != finding:
+        return None
+    delivered = events[-2]
+    if (
+        not delivered.valid
+        or (delivered.role, delivered.action, delivered.result_kind)
+        != ("executor", "implement-change", "ready")
+        or delivered.revision != finding.revision
+    ):
+        return None
+    review = next(
+        (
+            event
+            for event in reversed(events[:-2])
+            if (event.role, event.action, event.result_kind)
+            == ("reviewer", "review-openspec", "pass")
+        ),
+        None,
+    )
+    if (
+        review is None
+        or not review.valid
+        or review.revision is None
+        or not openspec_review_revision_applies(
+            repository,
+            token,
+            change=frontier.change,
+            reviewed_revision=review.revision,
+            head_revision=revision,
+        )
+    ):
+        return None
+    decisions = _application_decisions(comments)
+    finding_owners = _frontier_application_decisions(decisions, frontier)
+    if len(finding_owners) != 1:
+        return None
+    finding_record = finding_owners[0]
+    reviewer = WorkerRequest(source.issue_number, "reviewer", "review-implementation")
+    if (
+        finding_record.disposition != "ACCEPTED"
+        or sum(item.request_comment_id == finding_record.request_comment_id for item in decisions)
+        != 1
+        or _accepted_decision_sha256(finding_record, comments) is None
+        or _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=finding_record.authorization_revision,
+            current_revision=current_revision,
+            read=read,
+        )
+        is None
+    ):
+        return None
+    original = _qualified_physical_original_accepted_effects(
+        record=finding_record, source=reviewer, repository=repository, token=token, read=read
+    )
+    if original is None or original.effects:
+        return None
+    projection = json.loads(
+        _application_owned_worker_result(
+            finding_record.raw_worker_result,
+            source=reviewer,
+            change=frontier.change,
+            current_revision=finding.default_branch_revision,
+            result_revision=finding.revision,
+            request_comment_id=finding_record.request_comment_id,
+        )
+    )
+    formal = [
+        comment
+        for comment in comments
+        if comment.get("id") == finding.comment_id
+        and parse_formal_result(comment, current_revision=current_revision) == finding
+    ]
+    if len(formal) != 1 or formal[0].get("body") != projection.get("result_content"):
+        return None
+    owners = _frontier_application_decisions(decisions, replace(frontier, event=delivered))
+    if len(owners) != 1:
+        return None
+    document = json.loads(owners[0].raw_worker_result)
+    evidence = (
+        document.get("_native_implementation_delivery") if isinstance(document, dict) else None
+    )
+    if not isinstance(evidence, Mapping):
+        return None
+    pr_number = _positive_int(evidence.get("pr_number"))
+    if pr_number is None or not _bound_native_delivery_scope(
+        repository,
+        token,
+        source=source,
+        frontier=frontier,
+        event=delivered,
+        review=review,
+        scope=tuple(task_id for task_id, _ in slices[0]),
+        comments=comments,
+        branch=branch,
+        pr_number=pr_number,
+        revision=revision,
+        current_revision=current_revision,
+        read=read,
+    ):
+        return None
+    marker_id = _positive_int(evidence.get("marker_request_comment_id"))
+    markers = [item for item in decisions if item.request_comment_id == marker_id]
+    if len(markers) != 1:
+        return None
+    marker = markers[0]
+    physical = _qualified_physical_original_accepted_effects(
+        record=marker, source=source, repository=repository, token=token, read=read
+    )
+    if physical is None or not _implementation_development_save(physical):
+        return None
+    payload = json.loads(physical.effects[0].payload_json)
+    request = find_materialization_payload(payload, source)
+    if request is None:
+        return None
+    return review, marker, request, payload
+
+
 def qualify_initial_marker_save(
     repository: str,
     token: str,
@@ -7136,28 +7297,49 @@ def qualify_initial_implementation_delivery(
             if request is None:
                 return None
             markers.append((record, request, payload))
-        if len(markers) != 1:
+        if not markers:
+            correction = _reviewed_correction_marker(
+                repository,
+                token,
+                source=source,
+                frontier=frontier,
+                comments=comments,
+                lifecycle=lifecycle,
+                slices=slices,
+                branch=obligation.branch,
+                revision=revision,
+                current_revision=current_revision,
+                read=read,
+            )
+            if correction is None:
+                return None
+            event, record, marker, payload = correction
+            index = 0
+        elif len(markers) == 1:
+            record, marker, payload = markers[0]
+            if marker.pr_number is None:
+                return None
+            scoped = _ordinary_implementation_scope(
+                repository,
+                token,
+                source=source,
+                frontier=frontier,
+                comments=comments,
+                lifecycle=lifecycle,
+                slices=slices,
+                branch=marker.branch,
+                pr_number=marker.pr_number,
+                revision=revision,
+                current_revision=current_revision,
+                read=read,
+            )
+            if scoped is None:
+                return None
+            event, index = scoped
+        else:
             return None
-        record, marker, payload = markers[0]
         if marker.pr_number is None or marker.branch != obligation.branch:
             return None
-        scoped = _ordinary_implementation_scope(
-            repository,
-            token,
-            source=source,
-            frontier=frontier,
-            comments=comments,
-            lifecycle=lifecycle,
-            slices=slices,
-            branch=marker.branch,
-            pr_number=marker.pr_number,
-            revision=revision,
-            current_revision=current_revision,
-            read=read,
-        )
-        if scoped is None:
-            return None
-        event, index = scoped
         if (
             not all(checked for _, checked in slices[index])
             or any(checked for group in slices[index + 1 :] for _, checked in group)
