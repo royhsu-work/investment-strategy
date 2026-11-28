@@ -10,7 +10,7 @@ Use the approved OpenSpec context to choose a caller-visible behavior and a publ
 ## One behavior at a time
 
 1. Select one small vertical behavior and derive an independent expected result from the contract or a worked example.
-2. Write its test first. Obtain actual repository-supported CI evidence on a revision without the target implementation. Qualify RED only if the test executes and fails for the intended missing or incorrect behavior. Static, syntax, import, fixture, setup and unrelated regressions do not qualify.
+2. Write its test first and request an authorized physical-only save through the implementation procedure. Obtain actual repository-supported static-first CI evidence on the saved revision without the target implementation. Qualify RED only if the test executes and fails for the intended missing or incorrect behavior. Static, syntax, import, fixture, setup and unrelated regressions do not qualify.
 3. Implement the minimum sufficient correct behavior and obtain GREEN for that test. Repeat for the next observable behavior, using what the preceding cycle taught you.
 
 Avoid horizontal batches of tests followed by implementation. Preserve the actual ordering of source revisions and CI evidence. A test written after its implementation is valuable coverage but cannot establish Test First. Do not replay verified behavior to manufacture RED.
@@ -25,4 +25,4 @@ Keep meaningful test coverage. When replacing or retiring affected tests, follow
 
 The behavior cycle ends at GREEN. Independent Implementation Review owns proactive refactoring assessment. Executor remains responsible for correct minimal implementation, genuine regressions and substantiated finding corrections.
 
-Use existing repository-supported CI and exact revision evidence. Follow the applicable runtime and quality contracts, including the approved static-first and CI-only delivery requirements where implemented; this Skill introduces no new CI mechanism. The cycle is smaller than a verified Slice. A Slice completes only after the existing full verification and checkpoint obligations are met.
+Use existing repository-supported CI and exact revision evidence. Follow the applicable runtime and quality contracts, including the approved static-first and CI-only delivery requirements where implemented; this Skill introduces no new CI mechanism. The cycle is smaller than a verified Slice. A saved revision may be pending or failed; it is not a completed Slice. Continue after a qualified verdict under fresh applicable authority. Formal Slice delivery requires satisfied task criteria, durable markers, current exact full gates and the existing formal consequence, not a checkpoint comment. Follow the implementation procedure for marker-head verification, correction and actual exit boundaries.
