@@ -12379,6 +12379,21 @@ def test_reviewed_affected_groups_continue_after_first_formal_delivery(
     )
 
 
+@pytest.mark.parametrize("wrapper", ["standard", "guarded"])
+@pytest.mark.parametrize("case", ["valid", "missing", "unknown", "mixed", "stale"])
+def test_native_review_scope_is_qualified_before_application(
+    monkeypatch: pytest.MonkeyPatch, wrapper: str, case: str
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch,
+        "finding-multi",
+        "evidence-only",
+        affected_groups=True,
+        review_ingress=wrapper,
+        review_case=case,
+    )
+
+
 def _assert_next_slice_requires_bound_prior_native_delivery(
     monkeypatch: pytest.MonkeyPatch,
     prior_evidence: str,
@@ -12392,6 +12407,8 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     affected_groups: bool = False,
     continued_correction: bool = False,
     invalid_binding: bool = False,
+    review_ingress: str | None = None,
+    review_case: str = "valid",
 ) -> None:
     from investment_strategy import scheduled_agent_validation_resource as resources
 
@@ -13296,6 +13313,108 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             else candidate
         ),
     )
+    if review_ingress is not None:
+        from investment_strategy import scheduled_agent_effects as effects
+        from investment_strategy import scheduled_agent_merge_acceptance as merge_acceptance
+
+        # Reconstruct the exact READY predecessor, before any finding acceptance.
+        reviewer = bridge.WorkerRequest(138, "reviewer", "review-implementation")
+        comments = comments[: comments.index(finding_accepted)]
+        lifecycle = tuple(_frontier_lifecycle(transitions[:-1]))
+        for item in lifecycle:
+            if item["id"] in (10, 1000, 1001):
+                item["created_at"] = cast(str, item["created_at"]).replace("02:00:", "01:59:")
+            elif item["id"] == 20:
+                item["created_at"] = "2026-09-18T01:59:10Z"
+        issue["labels"] = [{"name": "action:review-implementation"}]
+        raw = dict(finding_worker)
+        if review_case == "missing":
+            raw.pop("reviewed_task_ids")
+        elif review_case == "unknown":
+            raw["reviewed_task_ids"] = ["9.9"]
+        elif review_case == "mixed":
+            raw["reviewed_task_ids"] = ["1.1", "9.9"]
+        elif review_case == "stale":
+            raw["evidence_ref"] = f"https://github.com/{repository}/commit/{first_head}"
+        raw_result = bridge._application_owned_worker_result(  # noqa: SLF001
+            json.dumps(raw),
+            source=reviewer,
+            change=change,
+            current_revision=REVISION,
+            result_revision=prior_head,
+            request_comment_id=130,
+        )
+        preflight = acquire_dispatch_preflight(
+            observations=(
+                GitHubIssueObservation(
+                    issue_number=138,
+                    change=change,
+                    routing=("reviewer", "review-implementation"),
+                    state="open",
+                    created_order=1,
+                    authoritative=True,
+                ),
+            ),
+            source_total_count=1,
+            incomplete_results=False,
+            exhausted=True,
+            human_authorized=True,
+        )
+        applied: list[effects.StagedEffect] = []
+        dispositions: list[str] = []
+
+        def persist(*args: object, **kwargs: object) -> bool:
+            dispositions.append(cast(str, kwargs["disposition"]))
+            return True
+
+        for module in (effects, merge_acceptance):
+            monkeypatch.setattr(module, "acquire_current_github_preflight", lambda *a: preflight)
+        monkeypatch.setattr(effects, "_github_json", read)
+        monkeypatch.setattr(effects.GitHubEffectAdapter, "_default_branch", lambda self: "main")
+        monkeypatch.setattr(
+            effects.GitHubEffectAdapter, "_default_branch_still_current", lambda self: True
+        )
+        monkeypatch.setattr(effects.GitHubEffectAdapter, "guard", lambda self, effect: True)
+        monkeypatch.setattr(
+            effects.GitHubEffectAdapter, "apply", lambda self, effect: applied.append(effect)
+        )
+        monkeypatch.setattr(
+            effects.GitHubEffectAdapter,
+            "observe_postcondition",
+            lambda self, effect: effect in applied
+        )
+        monkeypatch.setattr(effects.GitHubEffectAdapter, "persist_application_decision", persist)
+        if review_ingress == "guarded":
+            _, result = merge_acceptance.run_guarded_effect_application(
+                raw_result,
+                source=reviewer,
+                repository=repository,
+                token=token,
+                current_revision=REVISION,
+                request_comment_id=130,
+                application_request_body=cast(str, finding_request["body"]),
+                authorization_revision=REVISION,
+            )
+        else:
+            _, result = effects.run_effect_application(
+                raw_result,
+                source=reviewer,
+                repository=repository,
+                token=token,
+                current_revision=REVISION,
+                request_comment_id=130,
+                authorization_revision=REVISION,
+            )
+        if review_case == "valid":
+            assert result.applied, result.reason
+            assert [effect.kind for effect in applied] == ["issue-comment", "routing-transition"]
+            if review_ingress == "guarded":
+                assert dispositions == ["ACCEPTED"]
+        else:
+            assert not result.applied
+            assert not applied
+            assert "ACCEPTED" not in dispositions
+        return
     if finding_correction:
         qualification = bridge.build_qualification_input(
             issue_number=source.issue_number,
