@@ -7072,39 +7072,65 @@ def _reviewed_correction_marker(
     if not isinstance(delivery_branch, str) or (branch is not None and branch != delivery_branch):
         return None
     branch = delivery_branch
-    if pr_number is None or not _bound_native_delivery_scope(
-        repository,
-        token,
-        source=source,
-        frontier=frontier,
-        event=delivered,
-        review=review,
-        scope=tuple(task_id for task_id, _ in slices[-1]),
-        comments=comments,
-        branch=branch,
-        pr_number=pr_number,
-        revision=revision,
-        current_revision=current_revision,
-        read=read,
-    ):
+    if pr_number is None:
         return None
-    earlier_deliveries = [
+    deliveries = [
         event
-        for event in events[events.index(review) + 1 : -2]
-        if (event.role, event.action, event.result_kind)
-        == ("executor", "implement-change", "more-implementation-required")
+        for event in events[events.index(review) + 1 : -1]
+        if (event.role, event.action) == ("executor", "implement-change")
+        and event.result_kind in ("ready", "more-implementation-required")
     ]
-    if len(earlier_deliveries) != len(slices) - 1:
+    if len(deliveries) < len(slices) or deliveries[-1] != delivered:
         return None
-    for group, earlier in zip(slices[:-1], earlier_deliveries, strict=True):
-        if not earlier.valid or not _bound_native_delivery_scope(
+    original_evidence: list[Mapping[str, object] | None] = []
+    for occurrence, delivery_event in enumerate(deliveries):
+        owners = _frontier_application_decisions(
+            decisions, replace(frontier, event=delivery_event)
+        )
+        if len(owners) != 1:
+            return None
+        raw = json.loads(owners[0].raw_worker_result)
+        occurrence_evidence = (
+            raw.get("_native_implementation_delivery") if isinstance(raw, dict) else None
+        )
+        if occurrence < len(slices):
+            scope_index = occurrence
+            expected_kind = (
+                "ready" if occurrence == len(slices) - 1 else "more-implementation-required"
+            )
+        else:
+            # Subsequent READY occurrences are reviewed corrections, not new
+            # positions in the original delivery sequence.
+            if not isinstance(occurrence_evidence, Mapping):
+                return None
+            matching = [
+                index
+                for index, group in enumerate(slices)
+                if [task_id for task_id, _ in group] == occurrence_evidence.get("scope_task_ids")
+            ]
+            if len(matching) != 1:
+                return None
+            scope_index = matching[0]
+            original = original_evidence[scope_index]
+            if original is None or any(
+                occurrence_evidence.get(key) != original.get(key)
+                for key in (
+                    "marker_request_comment_id",
+                    "marker_accepted_decision_sha256",
+                    "marker_revision",
+                    "marker_blob",
+                )
+            ):
+                return None
+            expected_kind = "ready"
+        if delivery_event.result_kind != expected_kind or not _bound_native_delivery_scope(
             repository,
             token,
             source=source,
             frontier=frontier,
-            event=earlier,
+            event=delivery_event,
             review=review,
-            scope=tuple(task_id for task_id, _ in group),
+            scope=tuple(task_id for task_id, _ in slices[scope_index]),
             comments=comments,
             branch=branch,
             pr_number=pr_number,
@@ -7113,17 +7139,13 @@ def _reviewed_correction_marker(
             read=read,
         ):
             return None
-    if selected_index < len(earlier_deliveries):
-        selected = earlier_deliveries[selected_index]
-        owners = _frontier_application_decisions(decisions, replace(frontier, event=selected))
-        if len(owners) != 1:
-            return None
-        document = json.loads(owners[0].raw_worker_result)
-        evidence = (
-            document.get("_native_implementation_delivery") if isinstance(document, dict) else None
-        )
-        if not isinstance(evidence, Mapping):
-            return None
+        if occurrence < len(slices):
+            original_evidence.append(
+                occurrence_evidence if isinstance(occurrence_evidence, Mapping) else None
+            )
+    evidence = original_evidence[selected_index]
+    if evidence is None:
+        return None
     marker_id = _positive_int(evidence.get("marker_request_comment_id"))
     markers = [item for item in decisions if item.request_comment_id == marker_id]
     if len(markers) != 1:
