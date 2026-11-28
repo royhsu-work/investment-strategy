@@ -11586,6 +11586,9 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
         ("publication-invalidated-pass", "RESUMABLE"),
         ("publication-invalidated-stale", "COMPLETE"),
         ("publication-invalidated-stale-unknown", "RESUMABLE"),
+        ("publication-invalidated-stale-republished", "RESUMABLE"),
+        ("publication-invalidated-stale-republished-partial", "AMBIGUOUS"),
+        ("publication-invalidated-republished", "AMBIGUOUS"),
         ("publication-invalidated-corrected", "COMPLETE"),
         ("publication-invalidated-corrected-without-negative", "AMBIGUOUS"),
         ("publication-invalidated-corrected-partial", "AMBIGUOUS"),
@@ -11626,6 +11629,8 @@ def _assert_saved_development_frontier(
     publication = history in ("publication-pending", "publication-unknown") or invalidated
     corrected = history is not None and history.startswith("publication-invalidated-corrected")
     stale = history is not None and history.startswith("publication-invalidated-stale")
+    republished = history is not None and "republished" in history
+    has_successor = corrected or republished
     current_main = "f" * 40 if stale else REVISION
     target = prior_saved if publication and not corrected else saved
     branch = "agent/native-quality"
@@ -11790,7 +11795,7 @@ def _assert_saved_development_frontier(
         prior_saved if history is not None and history != "wrong-base" else REVISION,
     )
     correction_receipt = bridge.DevelopmentDispatchSource(
-        701, 70, 1, 71, 72, "sha256:" + "3" * 64, REVISION
+        701, 70, 1, 71, 72, "sha256:" + "3" * 64, current_main
     )
     correction_verdict = bridge.NativeQualityAttempt(
         87, 1, "PYTEST_STEP_FAILURE", 88, prior_saved, prior_saved, None
@@ -11802,12 +11807,13 @@ def _assert_saved_development_frontier(
         "updated_at": "2026-09-18T01:56:00Z",
     }
     correction_worker = {key: value for key, value in worker.items() if not key.startswith("_")}
-    correction_worker["requested_effects"] = [
-        {"kind": "github-mutation", "payload_json": json.dumps(payload)}
-    ]
+    correction_worker["requested_effects"] = (
+        [] if republished else [{"kind": "github-mutation", "payload_json": json.dumps(payload)}]
+    )
     correction_raw = base64.b64encode(json.dumps(correction_worker).encode()).decode()
+    authorization_line = f"Authorization-Revision: {current_main}"
     correction_request["body"] = "\n".join(
-        (lines[0], lines[1], f"Worker-Result-B64: {correction_raw}")
+        (lines[0], authorization_line, f"Worker-Result-B64: {correction_raw}")
     )
     correction_worker["_semantic_intent_version"] = 2
     correction_worker["_native_development_dispatch"] = asdict(correction_receipt)
@@ -11821,10 +11827,23 @@ def _assert_saved_development_frontier(
             )
         ],
     }
+    if republished:
+        correction_worker.pop("_native_development_dispatch")
+        correction_worker.pop("_native_development_predecessor")
+        correction_worker["_native_implementation_delivery"] = {
+            **worker["_native_implementation_delivery"],
+            "quality": {
+                **worker["_native_implementation_delivery"]["quality"],
+                "authorization_revision": current_main,
+            },
+            "dispatch": asdict(correction_receipt),
+        }
     correction_encoded = base64.b64encode(json.dumps(correction_worker).encode()).decode()
     correction_projection = {
         **correction_request,
-        "body": "\n".join((lines[0], lines[1], f"Worker-Result-B64: {correction_encoded}")),
+        "body": "\n".join(
+            (lines[0], authorization_line, f"Worker-Result-B64: {correction_encoded}")
+        ),
     }
     correction_accepted = _application_decision_comment(correction_projection, comment_id=800)
     correction_accepted["body"] = cast(str, correction_accepted["body"]).replace(
@@ -11855,7 +11874,7 @@ def _assert_saved_development_frontier(
         if history != "rollover":
             shard.insert(0, prior_request)
         accepted_comments.insert(0, prior)
-    if corrected:
+    if has_successor:
         shard.insert(2, correction_request)
         accepted_comments.append(correction_accepted)
     global_comments = [*shard, *accepted_comments]
@@ -11975,6 +11994,7 @@ def _assert_saved_development_frontier(
                         **planner,
                         "id": 71,
                         "run_id": 70,
+                        "head_sha": current_main,
                         "status": "completed",
                         "conclusion": "success",
                         "started_at": "2026-09-18T01:54:00Z",
@@ -11998,7 +12018,7 @@ def _assert_saved_development_frontier(
                 "status": "completed",
                 "conclusion": "failure",
             }
-        if path == "actions/jobs/888" and corrected:
+        if path == "actions/jobs/888" and has_successor:
             return {
                 "id": 888,
                 "run_id": 777,
@@ -12060,6 +12080,8 @@ def _assert_saved_development_frontier(
     def observe_accepted(**kw: object) -> bridge.ApplicationCompletion:
         record = kw["record"]
         assert isinstance(record, bridge.ApplicationDecisionRecord)
+        if record.request_comment_id == 754 and republished:
+            return bridge.ApplicationCompletion("RESUMABLE", "pending-write", 754, job_id=81)
         if record.request_comment_id == 654:
             if history in ("latest-pending", "publication-pending"):
                 return bridge.ApplicationCompletion("RESUMABLE", "pending-write", 654, job_id=81)
@@ -12109,6 +12131,7 @@ def _assert_saved_development_frontier(
                             in (
                                 "publication-invalidated-partial",
                                 "publication-invalidated-corrected-partial",
+                                "publication-invalidated-stale-republished-partial",
                             )
                             else frontier_proof
                         ),
@@ -12191,6 +12214,13 @@ def _assert_saved_development_frontier(
             ) == (554, 754)
         else:
             assert completion.request_comment_id == 654
+    elif republished:
+        if expected == "RESUMABLE":
+            assert completion.request_comment_id == 754
+            assert completion.quality_obligation is None
+            assert completion.job_id == 81
+        else:
+            assert completion.request_comment_id is None
     elif corrected:
         assert completion.request_comment_id is None
     elif invalidated:
