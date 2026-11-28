@@ -12276,6 +12276,15 @@ def test_reviewed_multi_slice_correction_reuses_last_delivered_marker(
     )
 
 
+@pytest.mark.parametrize("phase_a", [False, True])
+def test_reviewed_earlier_slice_correction_preserves_later_markers(
+    monkeypatch: pytest.MonkeyPatch, phase_a: bool
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-multi-earlier", "corrected", reconcile_phase_a=phase_a
+    )
+
+
 def test_reviewed_correction_rejects_finding_outside_approved_task_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -12312,9 +12321,11 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     prior_marker_preimage = "6" * 40
     head = "b" * 40
     current_marker_base = "c" * 40
-    multi_finding = prior_evidence == "finding-multi"
+    earlier_finding = prior_evidence == "finding-multi-earlier"
+    multi_finding = earlier_finding or prior_evidence == "finding-multi"
     finding_correction = multi_finding or prior_evidence in ("finding", "finding-wrong-scope")
     prior_task = "2.1" if multi_finding else "1.1"
+    target_task = "1.1" if earlier_finding else prior_task
     first_head, first_base, first_preimage = "11" * 20, "12" * 20, "13" * 20
     prior_result_kind = "ready" if finding_correction else "more-implementation-required"
     marker_head = "e" * 40 if operation == "corrected" else head
@@ -12595,6 +12606,15 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
                 ],
             },
             "strict": [[33, 1, 34]],
+            "dispatch": {
+                "dispatch_request_comment_id": 15,
+                "run_id": 16,
+                "run_attempt": 1,
+                "job_id": 17,
+                "artifact_id": 18,
+                "artifact_digest": "sha256:" + "2" * 64,
+                "authorization_revision": REVISION,
+            },
             "result_kind": "more-implementation-required",
         }
         older_projected = {**older_original, "_native_implementation_delivery": older_evidence}
@@ -12650,7 +12670,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             base64.b64decode(finding_lines[2].removeprefix("Worker-Result-B64: "))
         )
         finding_worker["evidence_ref"] = f"https://github.com/{repository}/commit/{prior_head}"
-        task_id = "9.9" if prior_evidence == "finding-wrong-scope" else prior_task
+        task_id = "9.9" if prior_evidence == "finding-wrong-scope" else target_task
         finding_content = f"F1: approved task {task_id} requires content correction."
         finding_worker["result_content"] = finding_content
         finding_encoded = base64.b64encode(json.dumps(finding_worker).encode()).decode()
@@ -12975,6 +12995,22 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             current_revision=REVISION,
             read=read,
         )
+        if earlier_finding:
+            assert bridge._bound_native_delivery_scope(  # noqa: SLF001
+                repository,
+                token,
+                source=source,
+                frontier=frontier,
+                event=qualification.events[1],
+                review=reviewed,
+                scope=("1.1",),
+                comments=comments,
+                branch=branch,
+                pr_number=139,
+                revision=head,
+                current_revision=REVISION,
+                read=read,
+            )
         parsed_slices = bridge._task_slices(candidate)  # noqa: SLF001
         assert parsed_slices == (
             ((("1.1", True),), (("2.1", True),)) if multi_finding else ((("1.1", True),),)
@@ -13004,7 +13040,10 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
                 disposition="COMPLETE",
                 target=SimpleNamespace(revision=head, branch=branch, pr_number=139),
                 witness=SimpleNamespace(
-                    revision=marker_head, desired_blobs=((path, candidate_blob),)
+                    revision=first_head if earlier_finding else marker_head,
+                    desired_blobs=(
+                        (path, prior_marker_preimage if earlier_finding else candidate_blob),
+                    ),
                 ),
             ),
         )
@@ -13025,11 +13064,16 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             return
         if finding_correction:
             assert evidence_result is not None
-            assert evidence_result["scope_task_ids"] == [prior_task]
+            assert evidence_result["scope_task_ids"] == [target_task]
             assert evidence_result["revision"] == head
             assert evidence_result["result_kind"] == "ready"
-            assert evidence_result["marker_revision"] == prior_head
-            assert evidence_result["marker_request_comment_id"] == 30
+            assert evidence_result["marker_revision"] == (
+                first_head if earlier_finding else prior_head
+            )
+            assert evidence_result["marker_request_comment_id"] == (11 if earlier_finding else 30)
+            if earlier_finding:
+                assert evidence_result["marker_blob"] == prior_marker_preimage
+                assert evidence_result["current_task_blob"] == task_blob
             quality = evidence_result["quality"]
             assert isinstance(quality, dict)
             assert quality["request_comment_id"] == latest.request_comment_id
