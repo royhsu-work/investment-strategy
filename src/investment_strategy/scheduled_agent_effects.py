@@ -799,9 +799,7 @@ def _typed_application_plan(
         not accepted_intent
         and action == ModelAction.REVIEW_IMPLEMENTATION
         and typed_result.result.kind == ResultKind.FINDINGS
-        and (
-            validate_implementation_finding is None or not validate_implementation_finding(batch)
-        )
+        and (validate_implementation_finding is None or not validate_implementation_finding(batch))
     ):
         return (
             decision,
