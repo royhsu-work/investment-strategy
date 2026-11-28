@@ -7109,9 +7109,9 @@ def _reviewed_correction_marker(
             if len(matching) != 1:
                 return None
             scope_index = matching[0]
-            original = original_evidence[scope_index]
-            if original is None or any(
-                occurrence_evidence.get(key) != original.get(key)
+            original_scope = original_evidence[scope_index]
+            if original_scope is None or any(
+                occurrence_evidence.get(key) != original_scope.get(key)
                 for key in (
                     "marker_request_comment_id",
                     "marker_accepted_decision_sha256",
