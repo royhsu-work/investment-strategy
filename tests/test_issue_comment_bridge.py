@@ -12753,13 +12753,14 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             **json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: "))),
             "_native_implementation_delivery": repeated_evidence,
         }
+        repeated_encoded = base64.b64encode(json.dumps(repeated_worker).encode()).decode()
         repeated_projection = {
             **repeated_request,
             "body": "\n".join(
                 (
                     lines[0],
                     lines[1],
-                    f"Worker-Result-B64: {base64.b64encode(json.dumps(repeated_worker).encode()).decode()}",
+                    f"Worker-Result-B64: {repeated_encoded}",
                 )
             ),
         }
@@ -12815,7 +12816,10 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             second_finding,
         )
         transitions.extend(
-            [(180, source.action, "review-implementation"), (220, "review-implementation", source.action)]
+            [
+                (180, source.action, "review-implementation"),
+                (220, "review-implementation", source.action),
+            ]
         )
         older_requests.update(
             {
