@@ -12355,6 +12355,15 @@ def test_reviewed_missing_structured_scope_does_not_default_to_only_slice(
     )
 
 
+@pytest.mark.parametrize("operation", ["corrected", "evidence-only"])
+def test_reviewed_affected_groups_deliver_first_group_before_ready(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-multi-earlier", operation, affected_groups=True
+    )
+
+
 def _assert_next_slice_requires_bound_prior_native_delivery(
     monkeypatch: pytest.MonkeyPatch,
     prior_evidence: str,
@@ -12365,6 +12374,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     finding_explanation: str | None = None,
     scope_conflict: bool = False,
     omit_scope: bool = False,
+    affected_groups: bool = False,
 ) -> None:
     from investment_strategy import scheduled_agent_validation_resource as resources
 
@@ -12737,7 +12747,9 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
         if finding_explanation is not None:
             finding_content = finding_explanation
         finding_worker["result_content"] = finding_content
-        if not omit_scope:
+        if affected_groups:
+            finding_worker["reviewed_task_ids"] = ["2.1", "1.1"]
+        elif not omit_scope:
             finding_worker["reviewed_task_ids"] = ["2.1"] if scope_conflict else [task_id]
         finding_encoded = base64.b64encode(json.dumps(finding_worker).encode()).decode()
         finding_request["body"] = "\n".join(
@@ -13337,13 +13349,16 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
                 ),
             ),
         )
+        expected_kind = "more-implementation-required" if affected_groups else "ready"
         evidence_result = bridge.qualify_initial_implementation_delivery(
             repository,
             token,
             source=source,
             change=change,
             revision=head,
-            result_kind="more-implementation-required" if operation == "wrong-kind" else "ready",
+            result_kind=(
+                "more-implementation-required" if operation == "wrong-kind" else expected_kind
+            ),
             request_comment_id=200,
             current_revision=REVISION,
             default_branch="main",
@@ -13361,7 +13376,28 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             assert evidence_result is not None
             assert evidence_result["scope_task_ids"] == [target_task]
             assert evidence_result["revision"] == head
-            assert evidence_result["result_kind"] == "ready"
+            assert evidence_result["result_kind"] == expected_kind
+            if affected_groups:
+                assert evidence_result["finding_application_correlation"] == (
+                    f"application:130:138:{change}:reviewer:review-implementation:"
+                    f"findings:{REVISION}"
+                )
+                assert evidence_result["finding_accepted_decision_sha256"] == hashlib.sha256(
+                    cast(str, finding_accepted["body"]).encode()
+                ).hexdigest()
+                assert evidence_result["finding_revision"] == prior_head
+                assert bridge.qualify_initial_implementation_delivery(
+                    repository,
+                    token,
+                    source=source,
+                    change=change,
+                    revision=head,
+                    result_kind="ready",
+                    request_comment_id=200,
+                    current_revision=REVISION,
+                    default_branch="main",
+                    read=read,
+                ) is None
             assert evidence_result["marker_revision"] == (
                 first_head if earlier_finding else prior_head
             )
