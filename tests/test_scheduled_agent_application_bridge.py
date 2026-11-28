@@ -4324,6 +4324,35 @@ def test_raw_worker_result_transport_canonicalizes_from_current_machine_source()
     assert plan.request_comment_id == 102
 
 
+def test_raw_review_finding_preserves_structured_affected_task_union() -> None:
+    source = WorkerRequest(138, "reviewer", "review-implementation")
+    worker = _worker_result(action=source.action, role=source.role, result_kind="findings")
+    worker["change"] = _CHANGE
+    worker["evidence_ref"] = f"https://github.com/{_REPOSITORY}/commit/{'e' * 40}"
+    worker["result_content"] = "Two distinct defects in separate slices; version 9.9 is incidental."
+    worker["reviewed_task_ids"] = ["1.1", "2.1"]
+    raw = json.dumps(worker, sort_keys=True)
+    try:
+        request = bridge.canonicalize_raw_worker_result(
+            body=f"WORKER_RESULT\n{raw}\n",
+            source=source,
+            authorized_change=_CHANGE,
+            repository=_REPOSITORY,
+            current_revision=_REVISION,
+        )
+    except ValueError as exc:
+        pytest.fail(f"valid structured affected-task evidence was rejected: {exc}")
+
+    assert request.raw_worker_result == raw
+    assert json.loads(request.raw_worker_result)["reviewed_task_ids"] == ["1.1", "2.1"]
+    assert (
+        bridge.parse_application_request(
+            bridge.render_application_request(request, source=source, authorized_change=_CHANGE)
+        )
+        == request
+    )
+
+
 def test_raw_worker_result_cannot_enter_phase_a_without_creation_shard_proof() -> None:
     source = WorkerRequest(138, "lead", "explore-change")
     raw = json.dumps(_worker_result(), sort_keys=True)
