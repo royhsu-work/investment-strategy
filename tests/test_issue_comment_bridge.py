@@ -12312,12 +12312,21 @@ def test_reviewed_same_head_supplements_evidence_without_another_save(
     _assert_next_slice_requires_bound_prior_native_delivery(monkeypatch, prior_evidence, operation)
 
 
+def test_repeated_finding_after_earlier_slice_delivery_keeps_original_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-multi-earlier", "corrected", repeat_finding=True
+    )
+
+
 def _assert_next_slice_requires_bound_prior_native_delivery(
     monkeypatch: pytest.MonkeyPatch,
     prior_evidence: str,
     operation: str,
     *,
     reconcile_phase_a: bool | None = None,
+    repeat_finding: bool = False,
 ) -> None:
     from investment_strategy import scheduled_agent_validation_resource as resources
 
@@ -12713,6 +12722,107 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
         finding["updated_at"] = finding["created_at"]
         comments = (*comments, finding_accepted, finding)
         transitions.append((140, "review-implementation", source.action))
+    if repeat_finding:
+        # The first correction of an earlier slice was delivered at the same
+        # head. A second qualified finding must not reclassify it as Slice 2.
+        assert earlier_finding
+        repeated_evidence = {
+            **older_evidence,
+            "revision": prior_head,
+            "current_task_blob": task_blob,
+            "quality": evidence["quality"],
+            "strict": evidence["strict"],
+            "dispatch": {
+                "dispatch_request_comment_id": 151,
+                "run_id": 152,
+                "run_attempt": 1,
+                "job_id": 153,
+                "artifact_id": 154,
+                "artifact_digest": "sha256:" + "3" * 64,
+                "authorization_revision": REVISION,
+            },
+            "result_kind": "ready",
+        }
+        repeated_request = {
+            **prior_request,
+            "id": 155,
+            "created_at": "2026-09-18T02:00:16Z",
+            "updated_at": "2026-09-18T02:00:16Z",
+        }
+        repeated_worker = {
+            **json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: "))),
+            "_native_implementation_delivery": repeated_evidence,
+        }
+        repeated_projection = {
+            **repeated_request,
+            "body": "\n".join(
+                (
+                    lines[0],
+                    lines[1],
+                    f"Worker-Result-B64: {base64.b64encode(json.dumps(repeated_worker).encode()).decode()}",
+                )
+            ),
+        }
+        repeated_accepted = _application_decision_comment(repeated_projection, comment_id=165)
+        repeated_accepted["body"] = cast(str, repeated_accepted["body"]).replace(
+            hashlib.sha256(cast(str, repeated_projection["body"]).encode()).hexdigest(),
+            hashlib.sha256(cast(str, repeated_request["body"]).encode()).hexdigest(),
+        )
+        repeated_accepted["created_at"] = "2026-09-18T02:00:17Z"
+        repeated_accepted["updated_at"] = repeated_accepted["created_at"]
+        repeated_delivery = _formal_frontier_comment(
+            180,
+            action=source.action,
+            role=source.role,
+            result="ready",
+            successor="Reviewer / review-implementation",
+            request_id=155,
+            change=change,
+        )
+        repeated_digest = hashlib.sha256(
+            json.dumps(repeated_evidence, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        repeated_delivery["body"] = (
+            cast(str, repeated_delivery["body"]).replace(
+                f"\nRevision: {REVISION}\n", f"\nRevision: {prior_head}\n"
+            )
+            + f"\nEvidence: native-delivery:{repeated_digest}"
+        )
+        repeated_delivery["updated_at"] = repeated_delivery["created_at"]
+        second_finding_request = {
+            **finding_request,
+            "id": 210,
+            "created_at": "2026-09-18T02:00:20Z",
+            "updated_at": "2026-09-18T02:00:20Z",
+        }
+        second_finding_accepted = _application_decision_comment(
+            second_finding_request, comment_id=215
+        )
+        second_finding_accepted["created_at"] = "2026-09-18T02:00:21Z"
+        second_finding_accepted["updated_at"] = second_finding_accepted["created_at"]
+        second_finding = {
+            **finding,
+            "id": 220,
+            "created_at": "2026-09-18T02:00:22Z",
+            "updated_at": "2026-09-18T02:00:22Z",
+            "body": cast(str, finding["body"]).replace("application:130:", "application:210:"),
+        }
+        comments = (
+            *comments,
+            repeated_accepted,
+            repeated_delivery,
+            second_finding_accepted,
+            second_finding,
+        )
+        transitions.extend(
+            [(180, source.action, "review-implementation"), (220, "review-implementation", source.action)]
+        )
+        older_requests.update(
+            {
+                "issues/comments/155": repeated_request,
+                "issues/comments/210": second_finding_request,
+            }
+        )
     if prior_evidence in ("returned", "returned-missing"):
         blocker = _formal_frontier_comment(
             120,
@@ -12840,8 +12950,8 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
         correction_request = {
             **saved_request,
             "id": 190,
-            "created_at": "2026-09-18T02:00:18Z",
-            "updated_at": "2026-09-18T02:00:18Z",
+            "created_at": "2026-09-18T02:00:26Z" if repeat_finding else "2026-09-18T02:00:18Z",
+            "updated_at": "2026-09-18T02:00:26Z" if repeat_finding else "2026-09-18T02:00:18Z",
         }
         correction_lines = cast(str, correction_request["body"]).splitlines()
         correction_worker = json.loads(
@@ -12867,7 +12977,9 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             (correction_lines[0], correction_lines[1], f"Worker-Result-B64: {correction_encoded}")
         )
         corrected = _application_decision_comment(correction_request, comment_id=195)
-        corrected["created_at"] = "2026-09-18T02:00:19Z"
+        corrected["created_at"] = (
+            "2026-09-18T02:00:27Z" if repeat_finding else "2026-09-18T02:00:19Z"
+        )
         corrected["updated_at"] = corrected["created_at"]
         comments = (*comments, corrected)
         correction_record = bridge.parse_application_decision(corrected["body"])
@@ -13056,7 +13168,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             current_revision=REVISION,
             lifecycle_events=lifecycle,
         )
-        assert len(qualification.events) == (4 if multi_finding else 3)
+        assert len(qualification.events) == (6 if repeat_finding else 4 if multi_finding else 3)
         reviewed = qualification.events[0]
         historical, current_finding = qualification.events[-2:]
         assert current_finding == frontier.event
@@ -13099,7 +13211,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             frontier=frontier,
             event=historical,
             review=reviewed,
-            scope=(prior_task,),
+            scope=(target_task if repeat_finding else prior_task,),
             comments=comments,
             branch=branch,
             pr_number=139,
