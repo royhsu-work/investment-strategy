@@ -7964,8 +7964,9 @@ def test_original_322_pr_merge_review_gate_rejects_unreviewed_or_findings_head(
     ("zero_proven", "expected"),
     [(False, "INDETERMINATE"), (True, "COMPLETE")],
 )
+@pytest.mark.parametrize("formal_applied", [False, True])
 def test_s2b_read_only_zero_original_requires_physical_source_witness(
-    monkeypatch: pytest.MonkeyPatch, zero_proven: bool, expected: str
+    monkeypatch: pytest.MonkeyPatch, zero_proven: bool, expected: str, formal_applied: bool
 ) -> None:
     """R0/R2: an empty accepted semantic projection is not physical zero."""
     source = WorkerRequest(435, "executor", "implement-change")
@@ -8006,7 +8007,7 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
         ],
         "attempt_revision": _REVISION,
         "failed_effect_index": 0,
-        "write_call_entered": True,
+        "write_call_entered": formal_applied,
     }
     artifact = SimpleNamespace(document={"failure_evidence": checkpoint})
     monkeypatch.setattr(bridge, "_accepted_recovery_boundary", lambda _e: "READ_ONLY")
@@ -8026,7 +8027,9 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
     monkeypatch.setattr(
         bridge,
         "_read_accepted_never_called_evidence",
-        lambda **_k: bridge.CompleteNeverCalledWitness(6796616018, 1, "a" * 64, ((7001, 1, 7003),)),
+        lambda **_k: bridge.CompleteNeverCalledWitness(
+            6796616018, 1 if formal_applied else 0, "a" * 64, ((7001, 1, 7003),)
+        ),
     )
     zero_reads: list[int] = []
 
@@ -8044,7 +8047,7 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
             return True
 
         def observe_issue_comment_source_ref(self, _effect: StagedEffect) -> str | None:
-            return "issues/comments/992001"
+            return "issues/comments/992001" if formal_applied else None
 
     monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
     proof = bridge.classify_accepted_read_only_effects(
@@ -8059,6 +8062,11 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
     )
     assert proof.disposition == expected
     assert zero_reads == [record.request_comment_id]
+    if zero_proven and not formal_applied:
+        assert proof.pending_frontier_proof is not None
+        assert proof.pending_frontier_proof.disposition == "NOT_APPLIED"
+        assert proof.pending_frontier_proof.frontier_index == 0
+        assert proof.pending_frontier_proof.remaining_obligation == "FORMAL_RESULT"
 
 
 @pytest.mark.parametrize(
