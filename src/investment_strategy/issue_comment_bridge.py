@@ -7084,9 +7084,7 @@ def _reviewed_correction_marker(
         return None
     original_evidence: list[Mapping[str, object] | None] = []
     for occurrence, delivery_event in enumerate(deliveries):
-        owners = _frontier_application_decisions(
-            decisions, replace(frontier, event=delivery_event)
-        )
+        owners = _frontier_application_decisions(decisions, replace(frontier, event=delivery_event))
         if len(owners) != 1:
             return None
         raw = json.loads(owners[0].raw_worker_result)
