@@ -6267,6 +6267,10 @@ def _development_acceptance_source(
 ) -> DevelopmentDispatchSource | None:
     document = json.loads(record.raw_worker_result)
     stored = document.get("_native_development_dispatch") if isinstance(document, dict) else None
+    if stored is None and isinstance(document, Mapping):
+        delivery = document.get("_native_implementation_delivery")
+        if isinstance(delivery, Mapping):
+            stored = delivery.get("dispatch")
     if not isinstance(stored, Mapping):
         return None
     qualified = qualify_development_dispatch_source(
@@ -7376,6 +7380,7 @@ def _settled_development_prefix(
         for index, (stamp, record) in enumerate(ordered):
             completion = accepted_state(record, source)
             obligation = completion.quality_obligation
+            publication: Mapping[str, object] | None = None
             digest = _accepted_decision_sha256(record, issue_comments)
             if digest is None or completion.request_comment_id != record.request_comment_id:
                 return None
@@ -7392,16 +7397,45 @@ def _settled_development_prefix(
                 original = _qualified_physical_original_accepted_effects(
                     record=record, source=source, repository=repository, token=token, read=read
                 )
-                if original is None or not _implementation_development_save(original):
+                if original is None:
                     return None
-                materialization = find_materialization_payload(
-                    json.loads(original.effects[0].payload_json), source
-                )
-                if materialization is None:
-                    return None
-                carrier_branch = materialization.branch
-                carrier_base = materialization.base_sha
                 default_branch = prior[1].default_branch
+                if not original.effects:
+                    # A publication-only ACCEPT owns its formal Effect even
+                    # while pending or unknown; this is not write permission.
+                    document = json.loads(record.raw_worker_result)
+                    delivery = document.get("_native_implementation_delivery")
+                    if (
+                        not isinstance(delivery, Mapping)
+                        or delivery.get("revision") != prior[1].revision
+                        or delivery.get("branch") != prior[1].branch
+                        or delivery.get("result_kind") != record.result_kind
+                        or record.result_kind not in ("ready", "more-implementation-required")
+                    ):
+                        return None
+                    marker_id = _positive_int(delivery.get("marker_request_comment_id"))
+                    markers = [
+                        item for _, item in ordered[:index] if item.request_comment_id == marker_id
+                    ]
+                    if (
+                        len(markers) != 1
+                        or _accepted_decision_sha256(markers[0], issue_comments)
+                        != delivery.get("marker_accepted_decision_sha256")
+                    ):
+                        return None
+                    publication = delivery
+                    carrier_branch = prior[1].branch
+                    carrier_base = prior[1].revision
+                else:
+                    if not _implementation_development_save(original):
+                        return None
+                    materialization = find_materialization_payload(
+                        json.loads(original.effects[0].payload_json), source
+                    )
+                    if materialization is None:
+                        return None
+                    carrier_branch = materialization.branch
+                    carrier_base = materialization.base_sha
             else:
                 if (
                     completion.state != "RESUMABLE"
@@ -7444,9 +7478,24 @@ def _settled_development_prefix(
                 if boundary is None or not previous_stamp < boundary < ingress:
                     return None
                 document = json.loads(record.raw_worker_result)
-                evidence = document.get("_native_development_predecessor")
+                evidence = (
+                    publication.get("quality")
+                    if publication is not None
+                    else document.get("_native_development_predecessor")
+                )
                 if not isinstance(evidence, Mapping):
                     return None
+                if publication is not None:
+                    attempts = evidence.get("attempts")
+                    if (
+                        not isinstance(attempts, list)
+                        or not attempts
+                        or any(
+                            not isinstance(attempt, Mapping) or attempt.get("outcome") != "PASS"
+                            for attempt in attempts
+                        )
+                    ):
+                        return None
                 blob = _quality_workflow_blob(
                     repository, token, record.authorization_revision, read=read
                 )
