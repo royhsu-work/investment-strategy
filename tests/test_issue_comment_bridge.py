@@ -12928,9 +12928,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             "current occurrence observation",
         )
 
-        def observe_historical_job(
-            *args: object, **kwargs: object
-        ) -> bridge.ApplicationCompletion:
+        def observe_historical_job(*args: object, **kwargs: object) -> bridge.ApplicationCompletion:
             assert args[:3] == (repository, token, 30)
             assert kwargs["record"] == historical_quality_record
             assert kwargs["accepted_decision_sha256"] == marker_digest
@@ -12980,9 +12978,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
         monkeypatch.setattr(
             bridge,
             "_complete_workflow_runs",
-            lambda *a, **kw: (
-                {"display_title": bridge.render_dispatch_run_name(170)},
-            ),
+            lambda *a, **kw: ({"display_title": bridge.render_dispatch_run_name(170)},),
         )
         monkeypatch.setattr(
             bridge,
