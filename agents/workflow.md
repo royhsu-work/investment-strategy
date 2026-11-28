@@ -34,6 +34,16 @@ ordinary runnable queue winner, using stable creation order. Dependencies may be
 multiple, shared, nested or external; ordinary coordination requires no reserved Human
 approval. Existing result/effect authority and independent review are unchanged.
 
+## Saved work and delivery
+
+A checkpoint is a durable partial-work save, not a result or exit boundary. The current
+Application/Carrier owns physical saves and reconstruction; exact applicable native verification
+and the existing task/occurrence owner qualify formal delivery. A slice may span multiple
+authorized saves and fresh wakes. The current marker-bearing head must satisfy its own gates;
+the formal result, not a checkpoint comment, supplies the existing consequence. Continue
+legitimate same-Action work until a real governed boundary; never execute a successor in the same
+wake. See agents/AGENTS.md for authority and historical reconciliation.
+
 ## Transport
 
 The Asia/Taipei daily shard is bounded transport only: one request, one Actions run, one structured
