@@ -11945,25 +11945,65 @@ def test_next_slice_marker_requires_bound_prior_native_delivery(
     from investment_strategy import scheduled_agent_validation_resource as resources
 
     repository = "royhsu-work/investment-strategy"
+    token = "token"  # noqa: S105 - synthetic test credential
     source = bridge.WorkerRequest(138, "executor", "implement-change")
     change = "native-next-slice"
     branch = f"agent/{change}"
     prior_head = "d" * 40
+    prior_marker_base = "a" * 40
+    prior_marker_preimage = "6" * 40
     head = "b" * 40
     task_blob, candidate_blob = "1" * 40, "2" * 40
     path = f"openspec/changes/{change}/tasks.md"
     task_text = "## Slice 1\n- [x] 1.1 First\n\n## Slice 2\n- [ ] 2.1 Next\n"
     candidate = task_text.replace("- [ ] 2.1", "- [x] 2.1")
     review = _formal_frontier_comment(
-        40,
+        10,
         action="review-openspec",
         role="reviewer",
         result="pass",
         successor="Executor / implement-change",
-        request_id=30,
+        request_id=9,
         change=change,
     )
     review["body"] = cast(str, review["body"]).replace("ACTION_RESULT", "REVIEW_RESULT", 1)
+    marker_request = _effect_request_comment(
+        comment_id=30,
+        created_at="2026-09-18T02:00:03Z",
+        action=source.action,
+        role=source.role,
+        result_kind="more-implementation-required",
+        change=change,
+    )
+    marker_request["user"] = {"login": "royhsu-work"}
+    marker_request["issue_url"] = f"https://api.github.com/repos/{repository}/issues/140"
+    marker_request["updated_at"] = marker_request["created_at"]
+    marker_lines = cast(str, marker_request["body"]).splitlines()
+    marker_worker = json.loads(
+        base64.b64decode(marker_lines[2].removeprefix("Worker-Result-B64: "))
+    )
+    marker_payload = {
+        "operation": "application-materialize",
+        "issue_number": source.issue_number,
+        "expected_change": change,
+        "change": change,
+        "pr_number": 139,
+        "branch": branch,
+        "base_sha": prior_marker_base,
+        "message": "Save first verified markers",
+        "files": [{"path": path, "expected_sha": prior_marker_preimage, "blob_sha": task_blob}],
+    }
+    marker_worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(marker_payload)}
+    ]
+    marker_encoded = base64.b64encode(json.dumps(marker_worker).encode()).decode()
+    marker_request["body"] = "\n".join(
+        (marker_lines[0], marker_lines[1], f"Worker-Result-B64: {marker_encoded}")
+    )
+    marker_accepted = _application_decision_comment(marker_request, comment_id=40)
+    marker_accepted["created_at"] = "2026-09-18T02:00:04Z"
+    marker_accepted["updated_at"] = marker_accepted["created_at"]
+    marker_digest = hashlib.sha256(cast(str, marker_accepted["body"]).encode()).hexdigest()
     prior_request = _effect_request_comment(
         comment_id=70,
         created_at="2026-09-18T02:00:06Z",
@@ -11981,14 +12021,41 @@ def test_next_slice_marker_requires_bound_prior_native_delivery(
         "pr_number": 139,
         "branch": branch,
         "reviewed_revision": REVISION,
-        "review_comment_id": 40,
-        "marker_request_comment_id": 60,
-        "marker_accepted_decision_sha256": "3" * 64,
+        "review_comment_id": 10,
+        "marker_request_comment_id": 30,
+        "marker_accepted_decision_sha256": marker_digest,
         "marker_revision": prior_head,
         "marker_blob": task_blob,
-        "quality": {"revision": prior_head},
+        "quality": {
+            "request_comment_id": 30,
+            "accepted_decision_sha256": marker_digest,
+            "revision": prior_head,
+            "branch": branch,
+            "workflow_blob": "4" * 40,
+            "obligation_id": "5" * 64,
+            "authorization_revision": REVISION,
+            "attempts": [
+                {
+                    "run_id": 43,
+                    "run_attempt": 1,
+                    "outcome": "PASS",
+                    "job_id": 44,
+                    "checkout_revision": prior_head,
+                    "definition_revision": prior_head,
+                    "source_comment_id": None,
+                }
+            ],
+        },
         "strict": [[41, 1, 42]],
-        "dispatch": {"dispatch_request_comment_id": 50},
+        "dispatch": {
+            "dispatch_request_comment_id": 50,
+            "run_id": 51,
+            "run_attempt": 1,
+            "job_id": 52,
+            "artifact_id": 53,
+            "artifact_digest": "sha256:" + "1" * 64,
+            "authorization_revision": REVISION,
+        },
         "result_kind": "more-implementation-required",
     }
     original_body = cast(str, prior_request["body"])
@@ -12028,10 +12095,11 @@ def test_next_slice_marker_requires_bound_prior_native_delivery(
         )
         + f"\nEvidence: native-delivery:{evidence_digest}"
     )
-    comments = (review, accepted, delivered)
+    delivered["updated_at"] = delivered["created_at"]
+    comments = (review, marker_accepted, accepted, delivered)
     lifecycle = tuple(
         _frontier_lifecycle(
-            [(40, "review-openspec", "implement-change"), (100, source.action, source.action)]
+            [(10, "review-openspec", "implement-change"), (100, source.action, source.action)]
         )
     )
     issue = {
@@ -12043,6 +12111,8 @@ def test_next_slice_marker_requires_bound_prior_native_delivery(
     def read(_repository: str, _token: str, api_path: str) -> object:
         if api_path == "issues/comments/200":
             return {"id": 200, "issue_url": f"https://api.github.com/repos/{repository}/issues/140"}
+        if api_path == "issues/comments/30":
+            return marker_request
         if api_path == "issues/comments/70":
             return prior_request
         if api_path == "issues/138":
@@ -12057,7 +12127,7 @@ def test_next_slice_marker_requires_bound_prior_native_delivery(
 
     frontier, qualified = bridge._derive_frontier(  # noqa: SLF001
         repository=repository,
-        token="token",
+        token=token,
         source=source,
         current_issue=issue,
         issue_comments=comments,
@@ -12069,9 +12139,11 @@ def test_next_slice_marker_requires_bound_prior_native_delivery(
     record = bridge.parse_application_decision(accepted["body"])
     assert record is not None
     assert bridge._qualified_physical_original_accepted_effects(  # noqa: SLF001
-        record=record, source=source, repository=repository, token="token", read=read
+        record=record, source=source, repository=repository, token=token, read=read
     ) is not None
-    receipt = bridge.DevelopmentDispatchSource(170, 171, 1, 172, 173, "sha256:" + "1" * 64, REVISION)
+    receipt = bridge.DevelopmentDispatchSource(
+        170, 171, 1, 172, 173, "sha256:" + "1" * 64, REVISION
+    )
     saved_request = _effect_request_comment(
         comment_id=150,
         created_at="2026-09-18T02:00:11Z",
@@ -12106,10 +12178,20 @@ def test_next_slice_marker_requires_bound_prior_native_delivery(
     )
     monkeypatch.setattr(bridge, "openspec_review_revision_applies", lambda *a, **kw: True)
     monkeypatch.setattr(bridge, "_native_strict_marker_evidence", lambda *a, **kw: ((182, 1, 183),))
+    def content_sha(*args: object, revision: str, **kwargs: object) -> str:
+        return prior_marker_preimage if revision == prior_marker_base else task_blob
+
+    def content_text(*args: object, revision: str, **kwargs: object) -> str:
+        if revision == prior_marker_base:
+            return task_text.replace("- [x] 1.1", "- [ ] 1.1")
+        return task_text
+
     for module in (bridge, resources):
-        monkeypatch.setattr(module, "_content_sha_at", lambda *a, **kw: task_blob)
-        monkeypatch.setattr(module, "_content_text_at", lambda *a, **kw: task_text)
-    monkeypatch.setattr(resources, "_blob_text", lambda *a, **kw: candidate)
+        monkeypatch.setattr(module, "_content_sha_at", content_sha)
+        monkeypatch.setattr(module, "_content_text_at", content_text)
+    monkeypatch.setattr(
+        resources, "_blob_text", lambda *a: task_text if a[-1] == task_blob else candidate
+    )
     request = bridge.MaterializationRequest(
         138,
         change,
@@ -12122,7 +12204,7 @@ def test_next_slice_marker_requires_bound_prior_native_delivery(
     )
     assert bridge.qualify_initial_marker_save(
         repository,
-        "token",
+        token,
         request=request,
         source=source,
         request_comment_id=200,
