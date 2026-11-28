@@ -847,6 +847,7 @@ def run_effect_application(
             observe_postcondition=adapter.observe_postcondition,
             current_revision=current_revision,
             validate_implementation_checkpoint=adapter.validate_implementation_checkpoint,
+        validate_implementation_delivery=getattr(adapter, "validate_implementation_delivery", None),
             apply_derived=apply_derived,
             defer_issue_comments=defer_issue_comments,
             allow_pending_continuation=allow_pending_continuation,

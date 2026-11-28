@@ -121,6 +121,7 @@ from investment_strategy.scheduled_agent_runtime import (
 )
 from investment_strategy.scheduled_agent_validation_resource import (
     NativeQualityAttempt,
+    _content_sha_at,
     _content_text_at,
     _task_slices,
     native_quality_setup_failure_index,
@@ -234,6 +235,7 @@ class ApplicationCompletion:
     quality_obligation: NativeQualityObligation | None = None
     quality_observation: NativeQualityObservation | None = None
     settled_quality_obligation: NativeQualityObligation | None = None
+    settled_development_records: tuple[ApplicationDecisionRecord, ...] = ()
 
 
 # The canonical proof owns permission. This Bridge-only table preserves the
@@ -6364,7 +6366,7 @@ def development_predecessor_evidence(
     }
 
 
-def _native_strict_pass_for_marker(
+def _native_strict_marker_evidence(
     repository: str,
     token: str,
     *,
@@ -6372,7 +6374,7 @@ def _native_strict_pass_for_marker(
     branch: str,
     current_revision: str,
     read: GitHubReader,
-) -> bool:
+) -> tuple[tuple[int, int, int], ...]:
     """Qualify an ordinary native strict PASS, including the executed checkout."""
     path = ".github/workflows/openspec-validate.yml"
     definitions = [
@@ -6387,12 +6389,12 @@ def _native_strict_pass_for_marker(
         or _SHA.fullmatch(item["sha"]) is None
         for item in definitions
     ):
-        return False
+        return ()
     if (
         cast(Mapping[str, object], definitions[0])["sha"]
         != cast(Mapping[str, object], definitions[1])["sha"]
     ):
-        return False
+        return ()
     required_steps = (
         "Checkout validation target",
         "Verify exact checkout revision",
@@ -6403,7 +6405,7 @@ def _native_strict_pass_for_marker(
         "Show active changes",
         "Validate all OpenSpec artifacts",
     )
-    observed = False
+    observed: list[tuple[int, int, int]] = []
     for event in ("push", "pull_request"):
         runs = _complete_workflow_runs(
             repository,
@@ -6415,18 +6417,18 @@ def _native_strict_pass_for_marker(
             require_count=True,
         )
         if runs is None:
-            return False
+            return ()
         for run in runs:
             if run.get("head_branch") != branch:
                 continue
             run_id = _positive_int(run.get("id"))
             attempt = _positive_int(run.get("run_attempt"))
             if run_id is None or attempt is None:
-                return False
+                return ()
             for number in range(1, attempt + 1):
                 row = read(repository, token, f"actions/runs/{run_id}/attempts/{number}")
                 if not isinstance(row, Mapping):
-                    return False
+                    return ()
                 repo = row.get("repository")
                 head_repo = row.get("head_repository")
                 if (
@@ -6443,12 +6445,12 @@ def _native_strict_pass_for_marker(
                     or row.get("status") != "completed"
                     or row.get("conclusion") != "success"
                 ):
-                    return False
+                    return ()
                 jobs = github_complete_job_inventory(
                     repository, token, run_id=run_id, run_attempt=number, read=read
                 )
                 if jobs is None or len(jobs) != 1:
-                    return False
+                    return ()
                 job = jobs[0]
                 job_id = _positive_int(job.get("id"))
                 steps = job.get("steps")
@@ -6462,7 +6464,7 @@ def _native_strict_pass_for_marker(
                     or job.get("conclusion") != "success"
                     or not isinstance(steps, list)
                 ):
-                    return False
+                    return ()
                 executed = tuple(
                     step.get("name")
                     for step in steps
@@ -6474,9 +6476,9 @@ def _native_strict_pass_for_marker(
                 if executed != required_steps or not _recovery_review_log_proves_checkout(
                     _github_job_log(repository, token, job_id), repository, revision
                 ):
-                    return False
-                observed = True
-    return observed
+                    return ()
+                observed.append((run_id, number, job_id))
+    return tuple(observed)
 
 
 def qualify_initial_marker_save(
@@ -6606,16 +6608,206 @@ def qualify_initial_marker_save(
             base_sha=request.base_sha,
             file=file,
             completed_task_ids=tuple(task_id for task_id, _ in slices[0]),
-        ) and _native_strict_pass_for_marker(
-            repository,
-            token,
-            revision=request.base_sha,
-            branch=request.branch,
-            current_revision=current_revision,
-            read=read,
+        ) and bool(
+            _native_strict_marker_evidence(
+                repository,
+                token,
+                revision=request.base_sha,
+                branch=request.branch,
+                current_revision=current_revision,
+                read=read,
+            )
         )
     except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
         return False
+
+
+def qualify_initial_implementation_delivery(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    change: str,
+    revision: str,
+    result_kind: str,
+    request_comment_id: int,
+    current_revision: str,
+    default_branch: str,
+    read: GitHubReader = _github_json,
+) -> dict[str, object] | None:
+    """Derive initial-scope delivery from the proven physical prefix and exact gates."""
+    try:
+        receipt = qualify_development_dispatch_source(
+            repository,
+            token,
+            source=source,
+            request_comment_id=request_comment_id,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            read=read,
+        )
+        ingress = read(repository, token, f"issues/comments/{request_comment_id}")
+        prefix = github_repository_api_url(repository, "issues/")
+        url = ingress.get("issue_url") if isinstance(ingress, Mapping) else None
+        if receipt is None or not isinstance(url, str) or not url.startswith(prefix):
+            return None
+        shard = _positive_int_string(url.removeprefix(prefix))
+        if shard is None:
+            return None
+        completion = qualify_application_completion(
+            repository,
+            token,
+            source=source,
+            current_revision=current_revision,
+            read=read,
+            current_dispatch_request_comment_id=receipt.dispatch_request_comment_id,
+            current_dispatch_issue_number=shard,
+            phase_a_request_comment_id=request_comment_id,
+        )
+        obligation = completion.settled_quality_obligation
+        quality = development_predecessor_evidence(completion, current_revision)
+        if (
+            obligation is None
+            or obligation.revision != revision
+            or obligation.carrier_revision != revision
+            or obligation.default_branch != default_branch
+            or completion.quality_observation is None
+            or completion.quality_observation.outcome != "PASS"
+            or quality is None
+            or not completion.settled_development_records
+        ):
+            return None
+        issue = read(repository, token, f"issues/{source.issue_number}")
+        if not isinstance(issue, Mapping):
+            return None
+        comments = _paged_list(
+            repository, token, f"issues/{source.issue_number}/comments", read=read
+        )
+        lifecycle = _paged_list(
+            repository, token, f"issues/{source.issue_number}/timeline", read=read
+        )
+        frontier, qualified = _derive_frontier(
+            repository=repository,
+            token=token,
+            source=source,
+            current_issue=issue,
+            issue_comments=comments,
+            lifecycle_events=lifecycle,
+            current_revision=current_revision,
+            read=read,
+        )
+        event = None if frontier is None else frontier.event
+        if (
+            not qualified
+            or not isinstance(event, FormalLifecycleEvent)
+            or not event.valid
+            or event.change != change
+            or (event.role, event.action, event.result_kind)
+            != ("reviewer", "review-openspec", "pass")
+            or event.revision is None
+            or not openspec_review_revision_applies(
+                repository,
+                token,
+                change=change,
+                reviewed_revision=event.revision,
+                head_revision=revision,
+            )
+        ):
+            return None
+        path = f"openspec/changes/{change}/tasks.md"
+        content = _content_text_at(repository, token, path=path, revision=revision)
+        slices = _task_slices(content)
+        if (
+            slices is None
+            or not all(checked for _, checked in slices[0])
+            or any(checked for group in slices[1:] for _, checked in group)
+            or result_kind != ("ready" if len(slices) == 1 else "more-implementation-required")
+        ):
+            return None
+        scope = tuple(task_id for task_id, _ in slices[0])
+        markers: list[tuple[ApplicationDecisionRecord, MaterializationRequest, dict[str, object]]]
+        markers = []
+        for record in completion.settled_development_records:
+            if record.change != change:
+                return None
+            batch = parse_effect_batch(record.raw_worker_result, source, authorized_change=change)
+            if not _implementation_development_save(batch):
+                return None
+            if _implementation_development_save(batch, include_task_markers=False):
+                continue
+            payload = json.loads(batch.effects[0].payload_json)
+            request = find_materialization_payload(payload, source)
+            if request is None:
+                return None
+            markers.append((record, request, payload))
+        if len(markers) != 1:
+            return None
+        record, marker, payload = markers[0]
+        file = marker.files[0]
+        digest = _accepted_decision_sha256(record, comments)
+        if (
+            digest is None
+            or marker.pr_number is None
+            or marker.branch != obligation.branch
+            or file.expected_sha == file.blob_sha
+            or _content_sha_at(repository, token, path=path, revision=revision) != file.blob_sha
+            or not task_checkpoint_is_exact(
+                repository,
+                token,
+                expected_change=change,
+                base_sha=marker.base_sha,
+                file=file,
+                completed_task_ids=scope,
+            )
+        ):
+            return None
+        proof = prove_materialization(
+            payload,
+            source,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            accepted_authorization_revision=record.authorization_revision,
+            accepted_intent=True,
+        )
+        if (
+            proof.disposition != "COMPLETE"
+            or proof.target is None
+            or proof.witness is None
+            or proof.target.revision != revision
+            or proof.target.branch != marker.branch
+            or proof.witness.desired_blobs != ((path, file.blob_sha),)
+        ):
+            return None
+        strict = _native_strict_marker_evidence(
+            repository,
+            token,
+            revision=revision,
+            branch=marker.branch,
+            current_revision=current_revision,
+            read=read,
+        )
+        if not strict:
+            return None
+        return {
+            "scope_task_ids": list(scope),
+            "revision": revision,
+            "pr_number": marker.pr_number,
+            "branch": marker.branch,
+            "reviewed_revision": event.revision,
+            "review_comment_id": event.comment_id,
+            "marker_request_comment_id": record.request_comment_id,
+            "marker_accepted_decision_sha256": digest,
+            "marker_revision": proof.witness.revision,
+            "marker_blob": file.blob_sha,
+            "quality": quality,
+            "strict": [list(attempt) for attempt in strict],
+            "dispatch": asdict(receipt),
+            "result_kind": result_kind,
+        }
+    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+        return None
 
 
 def _historical_development_verdict(
@@ -6909,7 +7101,10 @@ def _settled_development_prefix(
             prior = record, obligation, digest, stamp
         if prior is None or prior[1].revision != prior[1].carrier_revision:
             return None
-        return record, completion
+        return record, replace(
+            completion,
+            settled_development_records=tuple(item for _, item in ordered),
+        )
     except (OSError, RuntimeError, TypeError, ValueError, LookupError):
         return None
 
@@ -7049,6 +7244,7 @@ def _current_development_completion(
             quality_obligation=None,
             quality_observation=observation,
             settled_quality_obligation=obligation,
+            settled_development_records=completion.settled_development_records or (record,),
             accepted_record=record,
             accepted_decision_sha256=accepted_decision_sha256,
         )
