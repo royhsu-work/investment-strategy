@@ -15,6 +15,7 @@ The local Skill carries upstream Propose responsibility for creating the proposa
 - Persistent Change activation, single-active admission checks, and combined pre-activation queue handling.
 - `Lead / resolve-question` for Reviewer/specification findings and Human-reserved clarification.
 - Exact-revision validation readiness, non-closing PR linkage, and durable cross-role handoff evidence.
+- Shared authorized artifact save/reconstruct semantics and input-qualified reuse; full artifact-specific preactivation ingress and local verification/reporting remain required under #473.
 - Consumption of the repository-owned substantive Human-input freshness/disposition invariant before consequential specification/readiness/resolution results and ownership transfers.
 - For Explore-originated Propose, exact durable `PROPOSAL_READY` Explore-result provenance plus faithful preservation of its still-applicable material decided boundary; direct-to-Propose remains exempt from any synthetic Explore reference.
 
@@ -40,4 +41,4 @@ Maintenance implication: if upstream moves semantic checks into Propose, evaluat
 
 Reason: repository role separation and at-least-once execution require durable authority, revision, newer-material-input, and pre-Propose semantic-boundary preservation beyond the upstream single-agent flow.
 
-Maintenance implication: future upstream revisions must be compared responsibility-by-responsibility so role decomposition, shared consequential-boundary consumption, and Explore-result preservation are preserved intentionally rather than appearing as drift.
+Maintenance implication: future upstream revisions must be compared responsibility-by-responsibility so role decomposition, shared consequential-boundary consumption, and Explore-result preservation are preserved intentionally rather than appearing as drift. Shared persistence is not new activation authority or semantic acceptance.

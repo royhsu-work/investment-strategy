@@ -12,12 +12,12 @@ The local Skill preserves the upstream Apply responsibility of implementing appr
 
 ## Added responsibilities
 
-- Per-behavior Test First via the TDD Skill and verified vertical-slice task/checkpoint persistence.
+- Per-behavior Test First via the TDD Skill, authorized partial-work persistence, exact native verification, and separate formal slice delivery.
 - Exact CI/OpenSpec evidence handling, constrained branch-integration recovery, and Draft-to-Ready ownership.
 - Explicit routing to Lead when implementation would require new specification meaning.
 - Consumption of the repository-owned substantive Human-input freshness/disposition invariant immediately before implementation `READY` and review handoff.
 
-Reason: repository quality policy and at-least-once scheduled execution require durable implementation checkpoints, strict role boundaries, and prevention of READY/handoff from silently skipping newer material Human input.
+Reason: repository quality policy and at-least-once scheduled execution require durable revisable saved work, strict role boundaries, and prevention of READY/handoff from silently skipping newer material Human input.
 
 Maintenance implication: preserve these Executor-owned verification, recovery, and consequential-boundary integrations when assessing upstream Apply updates; they are not incidental prose. The Human-input classifier itself remains owned by shared repository governance rather than this Skill.
 
@@ -34,10 +34,10 @@ Maintenance implication: upstream Apply behavior that combines these responsibil
 
 ## Modified responsibilities
 
-- Upstream task application is restricted to a reconstructable closed Apply context and verified slice checkpoints.
+- Upstream task application is restricted to a reconstructable closed Apply context and the shared save/reconstruct boundary and independently verified formal slice delivery.
 - Completion is a revision-aware handoff to independent review rather than an implicit end of the workflow.
 - Completion now consumes shared current coordination-Issue Human-input freshness/disposition evidence before `READY`; the Skill does not independently define provenance classification or Human authority.
 
 Reason: scheduled execution must resume safely after interruption, preserve exact-review boundaries, and avoid consuming stale completion assumptions after newer material Human input.
 
-Maintenance implication: future upstream task/progress semantics must be reconciled with verified-slice durability and the repository-owned consequential-boundary invariant rather than copied as live progress or duplicated classifier state.
+Maintenance implication: future upstream task/progress semantics must be reconciled with saved-work durability, verified formal delivery and the repository-owned consequential-boundary invariant rather than copied as live progress or duplicated classifier state.
