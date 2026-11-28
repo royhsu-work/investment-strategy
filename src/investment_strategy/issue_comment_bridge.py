@@ -6388,9 +6388,10 @@ def _native_strict_pass_for_marker(
         for item in definitions
     ):
         return False
-    if cast(Mapping[str, object], definitions[0])["sha"] != cast(
-        Mapping[str, object], definitions[1]
-    )["sha"]:
+    if (
+        cast(Mapping[str, object], definitions[0])["sha"]
+        != cast(Mapping[str, object], definitions[1])["sha"]
+    ):
         return False
     required_steps = (
         "Checkout validation target",
