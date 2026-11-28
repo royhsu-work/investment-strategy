@@ -4255,6 +4255,7 @@ def _application_job(
         and failure_evidence.get("unfinished_boundary")
         in {
             "effect-reconciliation",
+            "effect-precondition",
             "effect-precondition-exception",
         }
     ):
