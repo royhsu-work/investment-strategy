@@ -8407,6 +8407,8 @@ def test_archive_findings_require_exact_carrier_identity(
         "settled-predecessor",
         "wrong-predecessor-base",
         "marker-pass",
+        "marker-fail",
+        "marker-no-proof",
     ],
 )
 def test_development_phase_a_requalifies_native_source_and_shared_frontier(
@@ -8431,7 +8433,7 @@ def test_development_phase_a_requalifies_native_source_and_shared_frontier(
             {
                 "path": (
                     f"openspec/changes/{_CHANGE}/tasks.md"
-                    if case == "marker-pass"
+                    if case.startswith("marker-")
                     else "tests/test_scheduled_agent_application_bridge.py"
                 ),
                 "blob_sha": "c" * 40,
@@ -8522,7 +8524,7 @@ def test_development_phase_a_requalifies_native_source_and_shared_frontier(
             return dispatch.ApplicationCompletion("RESUMABLE", "verification-obligation-pending")
         if case == "competing-ingress":
             return dispatch.ApplicationCompletion("AMBIGUOUS", "competing-ingress")
-        if case in {"settled-predecessor", "wrong-predecessor-base", "marker-pass"}:
+        if case in {"settled-predecessor", "wrong-predecessor-base", "marker-pass", "marker-fail"}:
             return dispatch.ApplicationCompletion(
                 "COMPLETE",
                 "settled",
