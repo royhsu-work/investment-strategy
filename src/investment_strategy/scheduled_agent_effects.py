@@ -1998,12 +1998,14 @@ class GitHubEffectAdapter:
         revision = evidence.get("revision")
         branch = evidence.get("branch")
         marker_blob = evidence.get("marker_blob")
+        current_task_blob = evidence.get("current_task_blob", marker_blob)
         pr_number = evidence.get("pr_number")
         if (
             not isinstance(revision, str)
             or not _valid_sha(revision)
             or not isinstance(branch, str)
             or not _valid_sha(marker_blob)
+            or not _valid_sha(current_task_blob)
             or not isinstance(pr_number, int)
             or isinstance(pr_number, bool)
             or pr_number <= 0
@@ -2028,7 +2030,7 @@ class GitHubEffectAdapter:
                 path=f"openspec/changes/{self.authorized_change}/tasks.md",
                 revision=revision,
             )
-            == marker_blob
+            == current_task_blob
         )
 
     def _delivery_gates_are_current(self) -> bool:
