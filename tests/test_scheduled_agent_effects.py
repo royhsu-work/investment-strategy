@@ -1250,7 +1250,9 @@ def test_verified_publication_only_uses_native_delivery_guard(
         merge_acceptance, "acquire_current_github_preflight", lambda *_args: _preflight()
     )
     monkeypatch.setattr(GitHubEffectAdapter, "guard", lambda _adapter, _effect: True)
-    monkeypatch.setattr(GitHubEffectAdapter, "apply", lambda _adapter, effect: applied.append(effect))
+    monkeypatch.setattr(
+        GitHubEffectAdapter, "apply", lambda _adapter, effect: applied.append(effect)
+    )
     monkeypatch.setattr(
         GitHubEffectAdapter, "observe_postcondition", lambda _adapter, effect: effect in applied
     )
