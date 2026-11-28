@@ -6890,7 +6890,7 @@ def qualify_initial_implementation_delivery(
     default_branch: str,
     read: GitHubReader = _github_json,
 ) -> dict[str, object] | None:
-    """Derive initial-scope delivery from the proven physical prefix and exact gates."""
+    """Derive ordinary delivery from the qualified scope and exact native gates."""
     try:
         receipt = qualify_development_dispatch_source(
             repository,
@@ -6951,35 +6951,13 @@ def qualify_initial_implementation_delivery(
             current_revision=current_revision,
             read=read,
         )
-        event = None if frontier is None else frontier.event
-        if (
-            not qualified
-            or not isinstance(event, FormalLifecycleEvent)
-            or not event.valid
-            or event.change != change
-            or (event.role, event.action, event.result_kind)
-            != ("reviewer", "review-openspec", "pass")
-            or event.revision is None
-            or not openspec_review_revision_applies(
-                repository,
-                token,
-                change=change,
-                reviewed_revision=event.revision,
-                head_revision=revision,
-            )
-        ):
+        if not qualified or frontier is None or frontier.change != change:
             return None
         path = f"openspec/changes/{change}/tasks.md"
         content = _content_text_at(repository, token, path=path, revision=revision)
         slices = _task_slices(content)
-        if (
-            slices is None
-            or not all(checked for _, checked in slices[0])
-            or any(checked for group in slices[1:] for _, checked in group)
-            or result_kind != ("ready" if len(slices) == 1 else "more-implementation-required")
-        ):
+        if slices is None:
             return None
-        scope = tuple(task_id for task_id, _ in slices[0])
         markers: list[tuple[ApplicationDecisionRecord, MaterializationRequest, dict[str, object]]]
         markers = []
         for record in completion.settled_development_records:
@@ -6998,12 +6976,37 @@ def qualify_initial_implementation_delivery(
         if len(markers) != 1:
             return None
         record, marker, payload = markers[0]
+        if marker.pr_number is None or marker.branch != obligation.branch:
+            return None
+        scoped = _ordinary_implementation_scope(
+            repository,
+            token,
+            source=source,
+            frontier=frontier,
+            comments=comments,
+            lifecycle=lifecycle,
+            slices=slices,
+            branch=marker.branch,
+            pr_number=marker.pr_number,
+            revision=revision,
+            current_revision=current_revision,
+            read=read,
+        )
+        if scoped is None:
+            return None
+        event, index = scoped
+        if (
+            not all(checked for _, checked in slices[index])
+            or any(checked for group in slices[index + 1 :] for _, checked in group)
+            or result_kind
+            != ("ready" if index == len(slices) - 1 else "more-implementation-required")
+        ):
+            return None
+        scope = tuple(task_id for task_id, _ in slices[index])
         file = marker.files[0]
         digest = _accepted_decision_sha256(record, comments)
         if (
             digest is None
-            or marker.pr_number is None
-            or marker.branch != obligation.branch
             or file.expected_sha == file.blob_sha
             or _content_sha_at(repository, token, path=path, revision=revision) != file.blob_sha
             or not task_checkpoint_is_exact(
