@@ -554,6 +554,7 @@ def canonicalize_raw_worker_result(
         "evidence_ref",
         "result_content",
         "requested_effects",
+        "reviewed_task_ids",
     }
     if set(parsed) - allowed_fields:
         raise ValueError("WORKER_RESULT contains unknown JSON fields")
