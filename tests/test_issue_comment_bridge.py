@@ -12364,7 +12364,7 @@ def test_reviewed_affected_groups_deliver_first_group_before_ready(
     )
 
 
-@pytest.mark.parametrize("operation", ["corrected", "evidence-only"])
+@pytest.mark.parametrize("operation", ["corrected", "evidence-only", "evidence-only-owned"])
 @pytest.mark.parametrize("invalid_binding", [False, True])
 def test_reviewed_affected_groups_continue_after_first_formal_delivery(
     monkeypatch: pytest.MonkeyPatch, operation: str, invalid_binding: bool
@@ -13166,6 +13166,14 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             "RESUMABLE" if operation == "evidence-only-owned" else "NONE",
             "current occurrence observation",
         )
+        if continued_correction:
+            # Same-Action Phase A may observe the already completed formal
+            # predecessor, not NONE. An unsettled owner still blocks progress.
+            completion = bridge.ApplicationCompletion(
+                "RESUMABLE" if operation == "evidence-only-owned" else "COMPLETE",
+                "application-completion-complete",
+                request_comment_id=155,
+            )
 
         def observe_historical_job(*args: object, **kwargs: object) -> bridge.ApplicationCompletion:
             assert args[:3] == (repository, token, 30)
