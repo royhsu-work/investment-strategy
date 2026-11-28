@@ -7326,7 +7326,9 @@ def _observe_same_head_correction_quality(
         return None
     quality_id = _positive_int(historical_quality.get("request_comment_id"))
     records = [
-        record for record in _application_decisions(comments) if record.request_comment_id == quality_id
+        record
+        for record in _application_decisions(comments)
+        if record.request_comment_id == quality_id
     ]
     if len(records) != 1:
         return None
