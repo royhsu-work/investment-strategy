@@ -7455,10 +7455,7 @@ def _settled_development_prefix(
                 # The final accepted owner may still have an incomplete or
                 # unknown effect. Qualify its exact Original and intended
                 # carrier preimage, not an invented completed write.
-                if (
-                    prior is None
-                    or completion.state not in ("RESUMABLE", "INVALID")
-                ):
+                if prior is None or completion.state not in ("RESUMABLE", "INVALID"):
                     return None
                 original = _qualified_physical_original_accepted_effects(
                     record=record, source=source, repository=repository, token=token, read=read
@@ -7620,9 +7617,7 @@ def _settled_development_prefix(
                     attempts = evidence.get("attempts")
                     job = read(repository, token, f"actions/jobs/{artifact.job_id}")
                     completed = (
-                        _quality_time(job.get("completed_at"))
-                        if isinstance(job, Mapping)
-                        else None
+                        _quality_time(job.get("completed_at")) if isinstance(job, Mapping) else None
                     )
                     if (
                         publication is not None
