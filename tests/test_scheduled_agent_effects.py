@@ -752,12 +752,6 @@ def test_accepted_intent_does_not_reverify_candidate_during_phase_b() -> None:
     )
     applied: list[StagedEffect] = []
 
-    def forbidden_verification(
-        _request: effects.MaterializationRequest,
-        _task_ids: tuple[str, ...],
-    ) -> bool:
-        raise AssertionError("Phase B must not re-run the Phase-A candidate gate")
-
     result = apply_effect_batch(
         batch,
         fresh_preflight=_preflight,
@@ -765,7 +759,6 @@ def test_accepted_intent_does_not_reverify_candidate_during_phase_b() -> None:
         apply_effect=applied.append,
         observe_postcondition=lambda _effect: True,
         current_revision=_REVISION,
-        validate_implementation_checkpoint=forbidden_verification,
         accepted_intent=True,
         durable_checkpoint_revision=_REVISION,
     )
@@ -1051,13 +1044,6 @@ def test_carrier_required_is_a_hard_invocation_exit_before_successor_effects() -
     assert observed == []
 
 
-def _accept_checkpoint(
-    _request: effects.MaterializationRequest,
-    _task_ids: tuple[str, ...],
-) -> bool:
-    return True
-
-
 def _implementation_checkpoint_effects(
     result_kind: str = "more-implementation-required",
 ) -> list[dict[str, str]]:
@@ -1203,7 +1189,9 @@ def test_marker_only_save_uses_shared_guard_without_formal_delivery(
     monkeypatch.setattr(GitHubEffectAdapter, "guard", guard)
     monkeypatch.setattr(GitHubEffectAdapter, "apply", apply)
     monkeypatch.setattr(GitHubEffectAdapter, "observe_postcondition", observe)
-    monkeypatch.setattr(GitHubEffectAdapter, "validate_implementation_checkpoint", forbidden)
+    monkeypatch.setattr(
+        GitHubEffectAdapter, "validate_implementation_checkpoint", forbidden, raising=False
+    )
     runner = (
         effects.run_effect_application
         if wrapper == "standard"
@@ -1256,7 +1244,9 @@ def test_verified_publication_only_uses_native_delivery_guard(
     monkeypatch.setattr(
         GitHubEffectAdapter, "observe_postcondition", lambda _adapter, effect: effect in applied
     )
-    monkeypatch.setattr(GitHubEffectAdapter, "validate_implementation_checkpoint", forbidden)
+    monkeypatch.setattr(
+        GitHubEffectAdapter, "validate_implementation_checkpoint", forbidden, raising=False
+    )
     monkeypatch.setattr(
         GitHubEffectAdapter, "validate_implementation_delivery", validate, raising=False
     )
@@ -1309,7 +1299,9 @@ def test_fresh_delivery_rejects_legacy_bundled_checkpoint(
     monkeypatch.setattr(
         GitHubEffectAdapter, "observe_postcondition", lambda _adapter, effect: effect in applied
     )
-    monkeypatch.setattr(GitHubEffectAdapter, "validate_implementation_checkpoint", legacy_overlay)
+    monkeypatch.setattr(
+        GitHubEffectAdapter, "validate_implementation_checkpoint", legacy_overlay, raising=False
+    )
     runner = (
         effects.run_effect_application
         if wrapper == "standard"
@@ -1390,7 +1382,7 @@ def test_implement_completion_rejects_incomplete_checkpoint_effects(
         ("ready", "review-implementation"),
     ),
 )
-def test_implement_completion_derives_successor_after_task_then_checkpoint(
+def test_historical_completion_derives_successor_after_durable_task_and_checkpoint(
     result_kind: str,
     successor: str,
 ) -> None:
@@ -1408,18 +1400,14 @@ def test_implement_completion_derives_successor_after_task_then_checkpoint(
         fresh_preflight=_preflight,
         effect_guard=lambda _effect: True,
         apply_effect=applied.append,
-        observe_postcondition=lambda _effect: True,
+        observe_postcondition=lambda effect: effect in batch.effects[:2] or effect in applied,
         current_revision=_REVISION,
-        validate_implementation_checkpoint=_accept_checkpoint,
+        accepted_intent=True,
+        durable_checkpoint_revision=_REVISION,
     )
 
     assert result.applied
-    assert [effect.kind for effect in applied] == [
-        "github-mutation",
-        "issue-comment",
-        "issue-comment",
-        "routing-transition",
-    ]
+    assert [effect.kind for effect in applied] == ["issue-comment", "routing-transition"]
     assert applied[-1].derived
     assert json.loads(applied[-1].payload_json) == {
         "issue_number": 138,
@@ -1427,7 +1415,7 @@ def test_implement_completion_derives_successor_after_task_then_checkpoint(
     }
 
 
-def test_implement_completion_accepts_code_and_task_checkpoint_in_one_manifest() -> None:
+def test_historical_mixed_manifest_preserves_already_durable_materialization() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     requested_effects = _implementation_checkpoint_effects()
     materialization = json.loads(requested_effects[0]["payload_json"])
@@ -1457,18 +1445,14 @@ def test_implement_completion_accepts_code_and_task_checkpoint_in_one_manifest()
         fresh_preflight=_preflight,
         effect_guard=lambda _effect: True,
         apply_effect=applied.append,
-        observe_postcondition=lambda _effect: True,
+        observe_postcondition=lambda effect: effect in batch.effects[:2] or effect in applied,
         current_revision=_REVISION,
-        validate_implementation_checkpoint=_accept_checkpoint,
+        accepted_intent=True,
+        durable_checkpoint_revision=_REVISION,
     )
 
     assert result.applied
-    assert [effect.kind for effect in applied] == [
-        "github-mutation",
-        "issue-comment",
-        "issue-comment",
-        "routing-transition",
-    ]
+    assert [effect.kind for effect in applied] == ["issue-comment", "routing-transition"]
 
 
 def test_implement_completion_rejects_reordered_or_duplicate_checkpoint_effects() -> None:
@@ -1498,6 +1482,8 @@ def test_implement_completion_rejects_reordered_or_duplicate_checkpoint_effects(
             apply_effect=applied.append,
             observe_postcondition=lambda _effect: True,
             current_revision=_REVISION,
+            accepted_intent=True,
+            durable_checkpoint_revision=_REVISION,
         )
         assert not result.applied
         assert "implementation-checkpoint-incomplete" in result.reason
@@ -1532,8 +1518,8 @@ def _checkpoint_effects_with_body(body: str) -> list[dict[str, str]]:
 
 def _apply_completion_effects(
     requested_effects: list[dict[str, str]],
-    validate_checkpoint: Callable[[effects.MaterializationRequest, tuple[str, ...]], bool]
-    | None = None,
+    *,
+    accepted_intent: bool = False,
 ) -> tuple[effects.ApplyResult, list[StagedEffect]]:
     source = WorkerRequest(138, "executor", "implement-change")
     batch = parse_effect_batch(
@@ -1548,7 +1534,8 @@ def _apply_completion_effects(
         apply_effect=applied.append,
         observe_postcondition=lambda _effect: True,
         current_revision=_REVISION,
-        validate_implementation_checkpoint=validate_checkpoint,
+        accepted_intent=accepted_intent,
+        durable_checkpoint_revision=_REVISION if accepted_intent else None,
     )
     return result, applied
 
@@ -1578,14 +1565,16 @@ def _invalid_checkpoint_bodies() -> tuple[str, ...]:
 
 @pytest.mark.parametrize("body", _invalid_checkpoint_bodies())
 def test_implement_completion_rejects_ambiguous_checkpoint_body(body: str) -> None:
-    result, applied = _apply_completion_effects(_checkpoint_effects_with_body(body))
+    result, applied = _apply_completion_effects(
+        _checkpoint_effects_with_body(body), accepted_intent=True
+    )
 
     assert not result.applied
     assert "implementation-checkpoint-incomplete" in result.reason
     assert applied == []
 
 
-def test_implement_completion_requires_executable_slice_validator() -> None:
+def test_fresh_implementation_completion_rejects_old_bundle() -> None:
     result, applied = _apply_completion_effects(_implementation_checkpoint_effects())
 
     assert not result.applied
@@ -1593,14 +1582,13 @@ def test_implement_completion_requires_executable_slice_validator() -> None:
     assert applied == []
 
 
-def test_implement_completion_rejects_multiple_slice_task_ids_at_application_boundary() -> None:
+def test_fresh_implementation_rejects_legacy_multiple_slice_bundle() -> None:
     body = _complete_checkpoint_body().replace(
         "Completed-Tasks: 2.1, 2.2",
         "Completed-Tasks: 2.1, 2.2, 3.1",
     )
     result, applied = _apply_completion_effects(
         _checkpoint_effects_with_body(body),
-        lambda _request, task_ids: task_ids == ("2.1", "2.2"),
     )
 
     assert not result.applied
@@ -1619,7 +1607,8 @@ def test_durable_task_markers_without_checkpoint_do_not_advance() -> None:
 
 def test_checkpoint_before_task_does_not_advance() -> None:
     result, applied = _apply_completion_effects(
-        list(reversed(_checkpoint_effects_with_body(_complete_checkpoint_body())))
+        list(reversed(_checkpoint_effects_with_body(_complete_checkpoint_body()))),
+        accepted_intent=True,
     )
 
     assert not result.applied
@@ -1627,7 +1616,7 @@ def test_checkpoint_before_task_does_not_advance() -> None:
     assert applied == []
 
 
-def test_carrier_recovery_durably_checkpoints_exact_slice_on_later_wake() -> None:
+def test_historical_carrier_recovery_preserves_original_checkpoint_effects() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     requested_effects = _implementation_checkpoint_effects()
     batch = parse_effect_batch(
@@ -1658,7 +1647,7 @@ def test_carrier_recovery_durably_checkpoints_exact_slice_on_later_wake() -> Non
 
     def first_observe(effect: StagedEffect) -> bool:
         first_observed.append(effect)
-        return True
+        return False
 
     with pytest.raises(CarrierRequired):
         apply_effect_batch(
@@ -1668,69 +1657,55 @@ def test_carrier_recovery_durably_checkpoints_exact_slice_on_later_wake() -> Non
             apply_effect=first_apply,
             observe_postcondition=first_observe,
             current_revision=_REVISION,
-            validate_implementation_checkpoint=_accept_checkpoint,
+            accepted_intent=True,
+            defer_issue_comments=True,
         )
 
     assert [effect.kind for effect in first_applied] == ["github-mutation"]
-    assert first_observed == []
+    assert first_observed and all(effect == batch.effects[0] for effect in first_observed)
 
     second_applied: list[StagedEffect] = []
-    validation_calls: list[tuple[str, tuple[str, ...]]] = []
-
-    def validate_checkpoint(
-        request: effects.MaterializationRequest,
-        task_ids: tuple[str, ...],
-    ) -> bool:
-        validation_calls.append((request.base_sha, task_ids))
-        return request.base_sha == _REVISION and task_ids == ("2.1", "2.2")
 
     result = apply_effect_batch(
         batch,
         fresh_preflight=_preflight,
         effect_guard=lambda _effect: True,
         apply_effect=second_applied.append,
-        observe_postcondition=lambda _effect: True,
+        observe_postcondition=lambda effect: effect == batch.effects[0] or effect in second_applied,
         current_revision=_REVISION,
-        validate_implementation_checkpoint=validate_checkpoint,
+        accepted_intent=True,
+        durable_checkpoint_revision=_REVISION,
     )
 
     assert result.applied
     assert [effect.kind for effect in second_applied] == [
-        "github-mutation",
         "issue-comment",
         "issue-comment",
         "routing-transition",
     ]
-    assert validation_calls == [(_REVISION, ("2.1", "2.2"))]
 
 
-def test_replay_accepts_already_durable_checkpoint_effects() -> None:
-    requested_effects = _checkpoint_effects_with_body(_complete_checkpoint_body())
-    durable: set[tuple[str, str]] = set()
-
-    def apply_once(effect: StagedEffect) -> None:
-        durable.add((effect.kind, effect.payload_json))
-
-    first, _ = _apply_completion_effects(requested_effects, _accept_checkpoint)
-    second = apply_effect_batch(
-        parse_effect_batch(
-            _raw(
-                result_kind="more-implementation-required",
-                requested_effects=requested_effects,
-            ),
-            WorkerRequest(138, "executor", "implement-change"),
+def test_historical_checkpoint_already_durable_is_not_replayed() -> None:
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=_checkpoint_effects_with_body(_complete_checkpoint_body()),
         ),
+        WorkerRequest(138, "executor", "implement-change"),
+    )
+    result = apply_effect_batch(
+        batch,
         fresh_preflight=_preflight,
-        effect_guard=lambda _effect: True,
-        apply_effect=apply_once,
+        effect_guard=lambda _effect: pytest.fail("durable historical effect guarded again"),
+        apply_effect=lambda _effect: pytest.fail("durable historical effect replayed"),
         observe_postcondition=lambda _effect: True,
         current_revision=_REVISION,
-        validate_implementation_checkpoint=_accept_checkpoint,
+        accepted_intent=True,
+        durable_checkpoint_revision=_REVISION,
     )
 
-    assert first.applied
-    assert second.applied
-    assert len(durable) == 4
+    assert result.applied
+    assert result.reason == "already-durable"
 
 
 def test_terminal_result_derives_closed_terminal_effect() -> None:

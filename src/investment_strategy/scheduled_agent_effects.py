@@ -84,9 +84,6 @@ from investment_strategy.scheduled_agent_runtime import (
 from investment_strategy.scheduled_agent_validation_resource import (
     ValidationResourceTarget,
     _content_sha_at,
-    completed_task_bookkeeping_is_current,
-    task_checkpoint_is_exact,
-    verify_implementation_candidate,
     work_product_path_allowed,
 )
 from investment_strategy.scheduled_agent_wire import (
@@ -307,7 +304,6 @@ EffectRejectionProvider = Callable[[], ApplicationRejection | None]
 EffectApplier = Callable[[StagedEffect], None]
 PostconditionObserver = Callable[[StagedEffect], bool]
 CarrierPlanProvider = Callable[[StagedEffect], CarrierPlan | None]
-ImplementationCheckpointValidator = Callable[[MaterializationRequest, tuple[str, ...]], bool]
 
 
 def parse_effect_batch(
@@ -522,20 +518,13 @@ def _implementation_development_save(
 def _implementation_checkpoint_effects_complete(
     batch: EffectBatch,
     decision: ActionApplicationDecision,
-    validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
     accepted_intent: bool,
     durable_checkpoint_revision: str | None = None,
     defer_issue_comments: bool = False,
     observe_postcondition: PostconditionObserver | None = None,
     original_322_recovery: bool = False,
 ) -> bool:
-    """Require exact task/checkpoint effects before a new intent advances.
-
-    Executable candidate verification is a Phase-A gate.  A durable ACCEPTED
-    intent is already past that linearization point, so Phase B must reconcile
-    its immutable effects and postconditions without requalifying or
-    semantically downgrading the intent.
-    """
+    """Reconcile an immutable historical completion bundle, never admit a new one."""
 
     if (
         batch.source.role != "executor"
@@ -543,6 +532,8 @@ def _implementation_checkpoint_effects_complete(
         or decision.result.result.kind not in _IMPLEMENTATION_COMPLETION_RESULTS
     ):
         return True
+    if not accepted_intent:
+        return False
     if original_322_recovery:
         # The #322 caller has qualified the accepted authority, current
         # consequence and effect-relevant I/R/M/S/F pre-formal predicates.
@@ -636,21 +627,17 @@ def _implementation_checkpoint_effects_complete(
         or checkpoint_indexes[0] >= formal_result_indexes[0]
     ):
         return False
-    if accepted_intent:
-        # On lost response, completed materialization and checkpoint effects
-        # may be proven by fresh reads without replaying their physical plan.
-        return (
-            defer_issue_comments
-            or durable_checkpoint_revision is not None
-            or (
-                observe_postcondition is not None
-                and observe_postcondition(batch.effects[task_index])
-                and observe_postcondition(batch.effects[checkpoint_indexes[0]])
-            )
+    # On lost response, completed materialization and checkpoint effects
+    # may be proven by fresh reads without replaying their physical plan.
+    return (
+        defer_issue_comments
+        or durable_checkpoint_revision is not None
+        or (
+            observe_postcondition is not None
+            and observe_postcondition(batch.effects[task_index])
+            and observe_postcondition(batch.effects[checkpoint_indexes[0]])
         )
-    if validate_implementation_checkpoint is None:
-        return False
-    return validate_implementation_checkpoint(request, completed_task_ids)
+    )
 
 
 def _pending_continuation_is_eligible(
@@ -697,7 +684,6 @@ def _typed_application_plan(
     batch: EffectBatch,
     preflight: DispatchPreflight,
     current_revision: str | None,
-    validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
     allow_pending_continuation: bool,
     accepted_intent: bool,
     durable_checkpoint_revision: str | None = None,
@@ -831,7 +817,6 @@ def _typed_application_plan(
         and not _implementation_checkpoint_effects_complete(
             batch,
             decision,
-            validate_implementation_checkpoint,
             accepted_intent,
             durable_checkpoint_revision,
             defer_issue_comments,
@@ -1376,7 +1361,6 @@ def apply_effect_batch(
     apply_effect: EffectApplier,
     observe_postcondition: PostconditionObserver,
     current_revision: str | None = None,
-    validate_implementation_checkpoint: ImplementationCheckpointValidator | None = None,
     apply_derived: bool = True,
     defer_issue_comments: bool = False,
     allow_pending_continuation: bool = False,
@@ -1400,7 +1384,6 @@ def apply_effect_batch(
         batch,
         current_preflight,
         current_revision,
-        validate_implementation_checkpoint,
         allow_pending_continuation,
         accepted_intent,
         durable_checkpoint_revision,
@@ -2145,86 +2128,6 @@ class GitHubEffectAdapter:
             return self._delivery_carrier_matches()
         except (OSError, RuntimeError, TypeError, ValueError):
             return False
-
-    def validate_implementation_checkpoint(
-        self,
-        request: MaterializationRequest,
-        completed_task_ids: tuple[str, ...],
-    ) -> bool:
-        """Validate one checkpoint against the canonical carrier decision and task slice."""
-
-        if not _valid_sha(self.current_revision):
-            return False
-        if request.pr_number is None:
-            candidate_ref = self._default_branch()
-            if (
-                candidate_ref is None
-                or request.base_sha != self.current_revision
-                or not qualify_supersession_branch(
-                    repository=self.repository,
-                    token=self.token,
-                    issue_number=self.source.issue_number,
-                    change=request.change,
-                    branch=request.branch,
-                    current_revision=cast(str, self.current_revision),
-                    read=_github_json,
-                )
-            ):
-                return False
-        else:
-            candidate_ref = request.branch
-            decision = qualify_implementation_carrier(
-                repository=self.repository,
-                token=self.token,
-                source=self.source,
-                change=request.change,
-                pr_number=request.pr_number,
-                current_revision=cast(str, self.current_revision),
-                read=_github_json,
-            )
-            if (
-                decision.disposition
-                not in {"QUALIFIED", "RECONCILIATION_REQUIRED", "HISTORICAL_MERGED"}
-                or decision.branch != request.branch
-                or decision.head_sha is None
-                or request.base_sha != decision.head_sha
-            ):
-                return False
-            if decision.disposition == "HISTORICAL_MERGED" and (
-                request.base_sha != decision.head_sha
-                or not completed_task_bookkeeping_is_current(
-                    self.repository,
-                    self.token,
-                    change=request.change,
-                    revision=decision.head_sha,
-                    files=request.files,
-                )
-            ):
-                return False
-        task_files = tuple(
-            file
-            for file in request.files
-            if file.path == f"openspec/changes/{request.change}/tasks.md"
-        )
-        if len(task_files) != 1:
-            return False
-        if not task_checkpoint_is_exact(
-            self.repository,
-            self.token,
-            expected_change=request.change,
-            base_sha=request.base_sha,
-            file=task_files[0],
-            completed_task_ids=completed_task_ids,
-        ):
-            return False
-        return verify_implementation_candidate(
-            self.repository,
-            self.token,
-            base_sha=request.base_sha,
-            base_ref=candidate_ref,
-            current_revision=cast(str, self.current_revision),
-            files=request.files,
-        )
 
     def effect_rejection(self) -> ApplicationRejection | None:
         return self._last_rejection
@@ -4963,7 +4866,6 @@ def run_effect_application(
         apply_effect=adapter.apply,
         observe_postcondition=adapter.observe_postcondition,
         current_revision=current_revision,
-        validate_implementation_checkpoint=adapter.validate_implementation_checkpoint,
         validate_implementation_delivery=getattr(adapter, "validate_implementation_delivery", None),
         apply_derived=apply_derived,
         defer_issue_comments=defer_issue_comments,

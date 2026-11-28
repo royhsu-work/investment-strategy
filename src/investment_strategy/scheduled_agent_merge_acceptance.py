@@ -846,7 +846,6 @@ def run_effect_application(
             apply_effect=apply_with_fresh_guard,
             observe_postcondition=adapter.observe_postcondition,
             current_revision=current_revision,
-            validate_implementation_checkpoint=adapter.validate_implementation_checkpoint,
             validate_implementation_delivery=getattr(
                 adapter, "validate_implementation_delivery", None
             ),
