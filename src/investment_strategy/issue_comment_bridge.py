@@ -7032,6 +7032,14 @@ def _reviewed_correction_marker(
     ]
     if len(expected_evidence) != 1 or observed_evidence != expected_evidence:
         return None
+    # Even a unique delivered slice cannot override an explicit, incompatible
+    # task reference in the qualified finding. This is a consistency check,
+    # not a new source of correction authority.
+    referenced_tasks = set(
+        re.findall(r"\btask\s+`?(\d+(?:\.\d+)+)\b", expected_evidence[0], re.IGNORECASE)
+    )
+    if not referenced_tasks.issubset(task_id for task_id, _ in slices[0]):
+        return None
     owners = _frontier_application_decisions(decisions, replace(frontier, event=delivered))
     if len(owners) != 1:
         return None
