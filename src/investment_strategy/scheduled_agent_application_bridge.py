@@ -7750,7 +7750,12 @@ def classify_accepted_read_only_effects(
             if attempted_proof.disposition == "SATISFIED"
             else "accepted unattempted suffix qualified",
             original_effect_proof=original_effect_proof,
-            pending_frontier_proof=historical_proof,
+            # Only the zero-Original, first-Formal never-called witness can
+            # prove this entire publication intent has no executed Effects.
+            # Preserve the existing completed-prefix projection elsewhere.
+            pending_frontier_proof=(
+                historical_proof if not original.effects and historical_frontier == 0 else None
+            ),
         )
     except OSError:
         # Only an expected transport/read failure is re-observable. Invalid
