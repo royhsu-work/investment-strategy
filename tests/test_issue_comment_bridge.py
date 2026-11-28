@@ -12454,10 +12454,14 @@ def test_next_slice_requires_bound_prior_native_delivery(
     ) is (prior_evidence in ("valid", "returned", "legacy"))
 
 
-@pytest.mark.parametrize("verdict", ["PASS", "CONFLICT", "PENDING"])
+@pytest.mark.parametrize(
+    ("verdict", "strict_pass"),
+    [("PASS", True), ("CONFLICT", True), ("PENDING", True), ("PASS", False)],
+)
 def test_native_delivery_reobserves_quality_before_publication(
     monkeypatch: pytest.MonkeyPatch,
     verdict: Literal["PASS", "CONFLICT", "PENDING"],
+    strict_pass: bool,
 ) -> None:
     from investment_strategy import scheduled_agent_effects as effects
 
@@ -12538,7 +12542,9 @@ def test_native_delivery_reobserves_quality_before_publication(
         bridge, "qualify_initial_implementation_delivery", lambda *a, **kw: evidence
     )
     monkeypatch.setattr(bridge, "plan_native_quality_verification", observe)
-    monkeypatch.setattr(bridge, "_native_strict_marker_evidence", lambda *a, **kw: ((41, 1, 42),))
+    monkeypatch.setattr(
+        bridge, "_native_strict_marker_evidence", lambda *a, **kw: ((41, 1, 42),) if strict_pass else ()
+    )
     monkeypatch.setattr(effects, "_github_json", read)
     monkeypatch.setattr(
         effects,
@@ -12573,4 +12579,4 @@ def test_native_delivery_reobserves_quality_before_publication(
         payload_json=json.dumps({"issue_number": 138, "body": formal["body"]}),
     )
     assert adapter.validate_implementation_delivery(effect)
-    assert adapter.guard(effect) is (verdict == "PASS")
+    assert adapter.guard(effect) is (verdict == "PASS" and strict_pass)
