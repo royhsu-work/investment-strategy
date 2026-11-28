@@ -140,6 +140,34 @@ Stale, concurrent, duplicated, incomplete, ambiguous, contradictory, or provenan
 observations fail closed. A rejection is evidence and never authorizes a weaker plan or automatic
 retry. No write is used as a read, permission probe, or fallback.
 
+## Saved work, verification, and formal delivery
+
+Checkpoint is durable partial-work persistence, not verification, review, formal completion,
+routing, merge authority, Invocation Exit, or a freeze on current content. Use the existing
+Application/Carrier authorization, exact preimages and physical readback to save and reconstruct
+work. Preserve the original saved revision and historical evidence; later authorized corrections
+may revise its content. Reuse valid work and requalify affected inputs. Unknown, partial or
+competing effects retain original ownership and require reconciliation, not replay.
+
+For implementation, separate physical-only development saves and applicable native exact-revision
+verification from formal delivery. A marker-only save requires the prior implementation head's
+qualified gates and satisfied task criteria; the actual marker-bearing head must pass its own
+applicable gates before publication. Formal delivery derives the current task/occurrence from
+approved tasks, valid markers and qualified formal evidence, and requires current exact gates,
+fresh authority and one effective formal consequence. A new checkpoint comment is not a gate or
+required effect. Historical accepted checkpoint effects retain their original reconciliation and
+deduplication protections.
+
+For authorized artifact work, use the same persistence boundary with applicable artifact inputs,
+dependency identities and validation/readback. This does not authorize partial preactivation
+Propose ingress or remove its full authoring and final independent review obligations.
+
+Continue the same Action while legitimate authority and execution opportunity remain. Save/report
+and an initial nonterminal observation do not themselves authorize Exit. Preserve durable work at
+the existing actual qualified asynchronous, CarrierRequired or authority/transport boundary;
+a new accepted operation needing fresh dispatch and any successor remain subject to the existing
+one-wake boundary. No second checkpoint state or progress registry.
+
 ## Human authority and freshness
 
 Reserved Human decisions require their exact provenance-bound comment and qualifying repository event;
