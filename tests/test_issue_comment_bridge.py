@@ -11584,6 +11584,9 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
         ("publication-invalidated-pending", "RESUMABLE"),
         ("publication-invalidated-partial", "RESUMABLE"),
         ("publication-invalidated-pass", "RESUMABLE"),
+        ("publication-invalidated-corrected", "COMPLETE"),
+        ("publication-invalidated-corrected-without-negative", "AMBIGUOUS"),
+        ("publication-invalidated-corrected-partial", "AMBIGUOUS"),
         ("invalidated-input", "AMBIGUOUS"),
         ("rollover", "COMPLETE"),
     ],
@@ -11617,7 +11620,8 @@ def _assert_saved_development_frontier(
     prior_saved = "c" * 40
     invalidated = history is not None and history.startswith("publication-invalidated")
     publication = history in ("publication-pending", "publication-unknown") or invalidated
-    target = prior_saved if publication else saved
+    corrected = history is not None and history.startswith("publication-invalidated-corrected")
+    target = prior_saved if publication and not corrected else saved
     branch = "agent/native-quality"
     shard_url = f"https://api.github.com/repos/{repository}/issues/142"
     request = _effect_request_comment(
@@ -11713,7 +11717,7 @@ def _assert_saved_development_frontier(
         "4" * 64,
         cast(str, prior["created_at"]),
         "main",
-        prior_saved if history == "latest-pending" or publication else saved,
+        prior_saved if history == "latest-pending" or (publication and not corrected) else saved,
         REVISION,
     )
     prior_verdict = bridge.NativeQualityAttempt(
@@ -11779,6 +11783,53 @@ def _assert_saved_development_frontier(
         saved,
         prior_saved if history is not None and history != "wrong-base" else REVISION,
     )
+    correction_receipt = bridge.DevelopmentDispatchSource(
+        701, 70, 1, 71, 72, "sha256:" + "3" * 64, REVISION
+    )
+    correction_verdict = bridge.NativeQualityAttempt(
+        87, 1, "PYTEST_STEP_FAILURE", 88, prior_saved, prior_saved, None
+    )
+    correction_request = {
+        **request,
+        "id": 754,
+        "created_at": "2026-09-18T01:56:00Z",
+        "updated_at": "2026-09-18T01:56:00Z",
+    }
+    correction_worker = {key: value for key, value in worker.items() if not key.startswith("_")}
+    correction_worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(payload)}
+    ]
+    correction_raw = base64.b64encode(json.dumps(correction_worker).encode()).decode()
+    correction_request["body"] = "\n".join(
+        (lines[0], lines[1], f"Worker-Result-B64: {correction_raw}")
+    )
+    correction_worker["_semantic_intent_version"] = 2
+    correction_worker["_native_development_dispatch"] = asdict(correction_receipt)
+    correction_worker["_native_development_predecessor"] = {
+        **worker.get("_native_implementation_delivery", {}).get("quality", {}),
+        "attempts": [
+            asdict(
+                prior_verdict
+                if history == "publication-invalidated-corrected-without-negative"
+                else correction_verdict
+            )
+        ],
+    }
+    correction_encoded = base64.b64encode(json.dumps(correction_worker).encode()).decode()
+    correction_projection = {
+        **correction_request,
+        "body": "\n".join((lines[0], lines[1], f"Worker-Result-B64: {correction_encoded}")),
+    }
+    correction_accepted = _application_decision_comment(correction_projection, comment_id=800)
+    correction_accepted["body"] = cast(str, correction_accepted["body"]).replace(
+        hashlib.sha256(cast(str, correction_projection["body"]).encode()).hexdigest(),
+        hashlib.sha256(cast(str, correction_request["body"]).encode()).hexdigest(),
+    )
+    correction_accepted["created_at"] = "2026-09-18T01:58:00Z"
+    correction_accepted["updated_at"] = correction_accepted["created_at"]
+    correction_accepted["issue_url"] = f"https://api.github.com/repos/{repository}/issues/138"
+    if corrected:
+        obligation = replace(obligation, accepted_at=cast(str, correction_accepted["created_at"]))
     dispatch = {
         **request,
         "id": 987,
@@ -11798,6 +11849,9 @@ def _assert_saved_development_frontier(
         if history != "rollover":
             shard.insert(0, prior_request)
         accepted_comments.insert(0, prior)
+    if corrected:
+        shard.insert(2, correction_request)
+        accepted_comments.append(correction_accepted)
     global_comments = [*shard, *accepted_comments]
     if history == "rollover":
         global_comments.insert(0, prior_request)
@@ -11906,6 +11960,46 @@ def _assert_saved_development_frontier(
                     "2026-09-18T00:51:00Z" if history == "late" else "2026-09-18T00:45:00Z"
                 ),
             }
+        if path == "actions/runs/70/attempts/1/jobs":
+            return {
+                "total_count": 1,
+                "jobs": [
+                    {
+                        **planner,
+                        "id": 71,
+                        "run_id": 70,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "started_at": "2026-09-18T01:54:00Z",
+                        "completed_at": "2026-09-18T01:55:50Z",
+                        "steps": [
+                            {
+                                "name": "Plan exact correlated machine dispatch decision",
+                                "started_at": "2026-09-18T01:55:00Z",
+                            }
+                        ],
+                    }
+                ],
+            }
+        if path == "actions/runs/87/attempts/1" and corrected:
+            return {
+                **run,
+                "id": 87,
+                "head_sha": prior_saved,
+                "head_branch": branch,
+                "event": "push",
+                "status": "completed",
+                "conclusion": "failure",
+            }
+        if path == "actions/jobs/888" and corrected:
+            return {
+                "id": 888,
+                "run_id": 777,
+                "run_attempt": 1,
+                "status": "completed",
+                "conclusion": "failure",
+                "completed_at": "2026-09-18T01:52:00Z",
+            }
         if path == "actions/runs/77/attempts/1/jobs":
             return {"total_count": 1, "jobs": [planner]}
         if path in ("actions/runs/77", "actions/runs/77/attempts/1"):
@@ -11913,9 +12007,15 @@ def _assert_saved_development_frontier(
         if path == "actions/jobs/78":
             return planner
         if path == "actions/jobs/88":
+            if corrected:
+                return {**quality_job, "head_sha": prior_saved, "conclusion": "failure"}
             return quality_job
         if path == "actions/jobs/89":
-            return {**quality_job, "id": 89, "run_id": 90, "conclusion": "success"}
+            job = {**quality_job, "id": 89, "run_id": 90, "conclusion": "success"}
+            if corrected:
+                job["started_at"] = "2026-09-18T01:58:10Z"
+                job["completed_at"] = "2026-09-18T01:59:50Z"
+            return job
         if path == "":
             return {"full_name": repository, "default_branch": "main"}
         if path == "git/ref/heads/main":
@@ -11995,7 +12095,12 @@ def _assert_saved_development_frontier(
                         "COMPLETE",
                         "fresh accepted proof",
                         pending_frontier_proof=(
-                            None if history == "publication-invalidated-partial" else frontier_proof
+                            None
+                            if history in (
+                                "publication-invalidated-partial",
+                                "publication-invalidated-corrected-partial",
+                            )
+                            else frontier_proof
                         ),
                     ),
                     accepted_record=record,
@@ -12027,13 +12132,15 @@ def _assert_saved_development_frontier(
         lambda *_a, **kw: (
             prior_receipt
             if kw["request_comment_id"] == 554 or history == "replay"
+            else correction_receipt
+            if kw["request_comment_id"] == 754
             else original_receipt
         ),
     )
     monkeypatch.setattr(
         bridge,
         "read_native_quality_attempt",
-        lambda *_a, **_kw: prior_verdict,
+        lambda *_a, **kw: correction_verdict if kw["run_id"] == 87 else prior_verdict,
     )
     monkeypatch.setattr(bridge, "plan_native_quality_verification", observe)
     if invalidated:
@@ -12065,8 +12172,17 @@ def _assert_saved_development_frontier(
             assert tuple(
                 item.request_comment_id for item in completion.settled_development_records
             ) == (554,)
+        elif corrected:
+            assert completion.request_comment_id == 754
+            assert completion.quality_observation is not None
+            assert completion.quality_observation.outcome == "PASS"
+            assert tuple(
+                item.request_comment_id for item in completion.settled_development_records
+            ) == (554, 754)
         else:
             assert completion.request_comment_id == 654
+    elif corrected:
+        assert completion.request_comment_id is None
     elif invalidated:
         assert completion.request_comment_id == 654
         assert completion.quality_obligation is None
