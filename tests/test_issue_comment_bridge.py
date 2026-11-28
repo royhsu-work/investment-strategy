@@ -11950,7 +11950,17 @@ def _assert_saved_development_frontier(
 
 
 @pytest.mark.parametrize(
-    "prior_evidence", ["valid", "missing", "wrong-hash", "returned", "returned-missing"]
+    "prior_evidence",
+    [
+        "valid",
+        "missing",
+        "wrong-hash",
+        "returned",
+        "returned-missing",
+        "legacy",
+        "legacy-missing-checkpoint",
+        "legacy-wrong-scope",
+    ],
 )
 @pytest.mark.parametrize(
     "operation", ["marker", "publish", "wrong-kind", "wrong-head", "fail", "corrected", "pending"]
@@ -12080,7 +12090,41 @@ def test_next_slice_requires_bound_prior_native_delivery(
     original_body = cast(str, prior_request["body"])
     lines = original_body.splitlines()
     worker = json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: ")))
-    if prior_evidence not in ("missing", "returned-missing"):
+    legacy = prior_evidence.startswith("legacy")
+    checkpoint_body = "\n".join(
+        (
+            "SLICE_CHECKPOINT",
+            "Workflow: #138",
+            f"Change: {change}",
+            "Action: implement-change",
+            "Role: executor",
+            "Completed-Tasks: 1.1",
+            f"Revision: {prior_marker_base}",
+            "Application-Correlation: pending-application-binding",
+            "Gate-Evidence: historical accepted candidate verifier",
+            "Remaining-Approved-Boundary: Slice 2",
+        )
+    )
+    if legacy:
+        worker["requested_effects"] = [
+            {
+                "kind": "github-mutation",
+                "payload_json": json.dumps(marker_payload),
+            },
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps({"issue_number": 138, "body": checkpoint_body}),
+            },
+        ]
+        original_body = "\n".join(
+            (
+                lines[0],
+                lines[1],
+                f"Worker-Result-B64: {base64.b64encode(json.dumps(worker).encode()).decode()}",
+            )
+        )
+        prior_request["body"] = original_body
+    elif prior_evidence not in ("missing", "returned-missing"):
         worker["_native_implementation_delivery"] = evidence
     encoded = base64.b64encode(json.dumps(worker).encode()).decode()
     projected_request = {
@@ -12116,6 +12160,28 @@ def test_next_slice_requires_bound_prior_native_delivery(
     )
     delivered["updated_at"] = delivered["created_at"]
     comments: tuple[dict[str, object], ...] = (review, marker_accepted, accepted, delivered)
+    if legacy:
+        correlation = (
+            f"application:70:138:{change}:executor:implement-change:"
+            f"more-implementation-required:{REVISION}"
+        )
+        observed_checkpoint = {
+            **delivered,
+            "id": 90,
+            "created_at": "2026-09-18T02:00:09Z",
+            "updated_at": "2026-09-18T02:00:09Z",
+            "body": checkpoint_body.replace(
+                f"Revision: {prior_marker_base}", f"Revision: {prior_head}"
+            ).replace("pending-application-binding", correlation),
+        }
+        if prior_evidence == "legacy-wrong-scope":
+            observed_checkpoint["body"] = cast(str, observed_checkpoint["body"]).replace(
+                "Completed-Tasks: 1.1", "Completed-Tasks: 2.1"
+            )
+        delivered["body"] = cast(str, delivered["body"]).split("\nEvidence:", 1)[0]
+        comments = (review, accepted, delivered)
+        if prior_evidence != "legacy-missing-checkpoint":
+            comments = (review, accepted, observed_checkpoint, delivered)
     transitions: list[tuple[int, str, str | None]] = [
         (10, "review-openspec", "implement-change"),
         (100, source.action, source.action),
@@ -12350,7 +12416,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
             default_branch="main",
             read=read,
         )
-        if prior_evidence in ("valid", "returned") and operation in ("publish", "corrected"):
+        if prior_evidence in ("valid", "returned", "legacy") and operation in ("publish", "corrected"):
             assert evidence_result is not None
             assert evidence_result["scope_task_ids"] == ["2.1"]
             assert evidence_result["revision"] == head
@@ -12382,4 +12448,4 @@ def test_next_slice_requires_bound_prior_native_delivery(
         current_revision=REVISION,
         default_branch="main",
         read=read,
-    ) is (prior_evidence in ("valid", "returned"))
+    ) is (prior_evidence in ("valid", "returned", "legacy"))
