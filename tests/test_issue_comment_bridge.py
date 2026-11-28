@@ -11584,6 +11584,8 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
         ("publication-invalidated-pending", "RESUMABLE"),
         ("publication-invalidated-partial", "RESUMABLE"),
         ("publication-invalidated-pass", "RESUMABLE"),
+        ("publication-invalidated-stale", "COMPLETE"),
+        ("publication-invalidated-stale-unknown", "RESUMABLE"),
         ("publication-invalidated-corrected", "COMPLETE"),
         ("publication-invalidated-corrected-without-negative", "AMBIGUOUS"),
         ("publication-invalidated-corrected-partial", "AMBIGUOUS"),
@@ -11599,6 +11601,8 @@ def test_development_frontier_retires_only_causal_saved_prefix(
         case = "conflict"
     elif history == "publication-invalidated-pending":
         case = "pending"
+    elif history == "publication-invalidated-stale-unknown":
+        case = "unknown"
     _assert_saved_development_frontier(monkeypatch, phase_a, case, expected, history)
 
 
@@ -11621,6 +11625,8 @@ def _assert_saved_development_frontier(
     invalidated = history is not None and history.startswith("publication-invalidated")
     publication = history in ("publication-pending", "publication-unknown") or invalidated
     corrected = history is not None and history.startswith("publication-invalidated-corrected")
+    stale = history is not None and history.startswith("publication-invalidated-stale")
+    current_main = "f" * 40 if stale else REVISION
     target = prior_saved if publication and not corrected else saved
     branch = "agent/native-quality"
     shard_url = f"https://api.github.com/repos/{repository}/issues/142"
@@ -11865,7 +11871,7 @@ def _assert_saved_development_frontier(
         "run_attempt": 1,
         "status": "completed" if phase_a else "in_progress",
         "conclusion": "success" if phase_a else None,
-        "head_sha": REVISION,
+        "head_sha": current_main,
         "head_branch": "main",
         "repository": {"full_name": repository},
         "head_repository": {"full_name": repository},
@@ -11879,7 +11885,7 @@ def _assert_saved_development_frontier(
         "id": 78,
         "run_id": 77,
         "run_attempt": 1,
-        "head_sha": REVISION,
+        "head_sha": current_main,
         "name": "bridge",
         "status": run["status"],
         "conclusion": run["conclusion"],
@@ -11925,6 +11931,7 @@ def _assert_saved_development_frontier(
                         **planner,
                         "id": 61,
                         "run_id": 60,
+                        "head_sha": REVISION,
                         "status": "completed",
                         "conclusion": "success",
                         "started_at": "2026-09-18T00:49:00Z",
@@ -12019,7 +12026,9 @@ def _assert_saved_development_frontier(
         if path == "":
             return {"full_name": repository, "default_branch": "main"}
         if path == "git/ref/heads/main":
-            return {"object": {"sha": REVISION}}
+            return {"object": {"sha": current_main}}
+        if stale and path == f"compare/{REVISION}...{current_main}":
+            return {"status": "ahead", "base_commit": {"sha": REVISION}}
         if path.startswith("contents/"):
             return {"sha": producer, "type": "file", "path": ".github/workflows/quality.yml"}
         raise AssertionError(path)
@@ -12156,7 +12165,7 @@ def _assert_saved_development_frontier(
         repository,
         token,
         source=source,
-        current_revision=REVISION,
+        current_revision=current_main,
         current_dispatch_request_comment_id=987,
         current_dispatch_issue_number=142,
         phase_a_request_comment_id=989 if phase_a else None,
@@ -12166,10 +12175,10 @@ def _assert_saved_development_frontier(
     assert completion.state == expected
     if expected == "COMPLETE":
         assert completion.quality_obligation is None
-        if history == "publication-invalidated":
+        if history in ("publication-invalidated", "publication-invalidated-stale"):
             assert completion.request_comment_id == 554
             assert completion.quality_observation is not None
-            assert completion.quality_observation.outcome == "CONFLICT"
+            assert completion.quality_observation.outcome == ("PASS" if stale else "CONFLICT")
             assert tuple(
                 item.request_comment_id for item in completion.settled_development_records
             ) == (554,)
