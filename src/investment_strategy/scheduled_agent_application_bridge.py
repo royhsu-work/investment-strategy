@@ -7750,6 +7750,7 @@ def classify_accepted_read_only_effects(
             if attempted_proof.disposition == "SATISFIED"
             else "accepted unattempted suffix qualified",
             original_effect_proof=original_effect_proof,
+            pending_frontier_proof=historical_proof,
         )
     except OSError:
         # Only an expected transport/read failure is re-observable. Invalid
