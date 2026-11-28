@@ -6970,11 +6970,11 @@ def qualify_initial_implementation_finding(
     ready_index = len(events) - 1
     while ready_index >= 0:
         event = events[ready_index]
-        if (
-            (event.role, event.action, event.result_kind)
-            != ("reviewer", "review-implementation", "blocked")
-            or event.successor != ("reviewer", "review-implementation")
-        ):
+        if (event.role, event.action, event.result_kind) != (
+            "reviewer",
+            "review-implementation",
+            "blocked",
+        ) or event.successor != ("reviewer", "review-implementation"):
             break
         ready_index -= 1
     if ready_index < 1:
