@@ -95,6 +95,7 @@ from investment_strategy.scheduled_agent_effects import (
     EffectBatch,
     StagedEffect,
     _implementation_development_save,
+    _slice_checkpoint_completed_task_ids,
     consequence_postconditions_complete,
     merged_pr_readiness_complete,
     parse_application_decision,
@@ -6481,6 +6482,131 @@ def _native_strict_marker_evidence(
     return tuple(observed)
 
 
+def _bound_legacy_delivery_scope(
+    repository: str,
+    token: str,
+    *,
+    original: EffectBatch,
+    record: ApplicationDecisionRecord,
+    event: FormalLifecycleEvent,
+    review: FormalLifecycleEvent,
+    formal_comment: Mapping[str, object],
+    scope: tuple[str, ...],
+    comments: tuple[Mapping[str, object], ...],
+    branch: str,
+    pr_number: int,
+) -> bool:
+    """Read a completed legacy bundle; never authorize or replay its effects."""
+    if (
+        event.revision is None
+        or event.application_correlation is None
+        or review.revision is None
+        or len(original.effects) != 2
+        or original.effects[0].kind != "github-mutation"
+        or original.effects[1].kind != "issue-comment"
+    ):
+        return False
+    request = find_materialization_payload(
+        json.loads(original.effects[0].payload_json), original.source
+    )
+    checkpoint = json.loads(original.effects[1].payload_json)
+    if (
+        request is None
+        or request.expected_change != record.change
+        or request.change != record.change
+        or request.branch != branch
+        or request.pr_number != pr_number
+        or not isinstance(checkpoint, dict)
+        or checkpoint.get("issue_number") != record.issue_number
+        or not isinstance(checkpoint.get("body"), str)
+    ):
+        return False
+    body = cast(str, checkpoint["body"])
+    if (
+        _slice_checkpoint_completed_task_ids(
+            body, source=original.source, change=record.change, request=request
+        )
+        != scope
+    ):
+        return False
+    lines = body.splitlines()
+    correlation_line = next(line for line in lines if line.startswith("Application-Correlation: "))
+    if correlation_line not in (
+        "Application-Correlation: pending-application-binding",
+        f"Application-Correlation: {event.application_correlation}",
+    ):
+        return False
+    expected = "\n".join(
+        f"Revision: {event.revision}"
+        if line.startswith("Revision: ")
+        else f"Application-Correlation: {event.application_correlation}"
+        if line == correlation_line
+        else line
+        for line in lines
+    ) + ("\n" if body.endswith("\n") else "")
+    checkpoint_comments = [
+        comment
+        for comment in comments
+        if is_github_actions_comment(comment)
+        and isinstance(comment.get("body"), str)
+        and cast(str, comment["body"]).startswith("SLICE_CHECKPOINT\n")
+        and f"Application-Correlation: {event.application_correlation}"
+        in cast(str, comment["body"]).splitlines()
+    ]
+    accepted_comments = [
+        comment
+        for comment in comments
+        if is_github_actions_comment(comment)
+        and parse_application_decision(comment.get("body")) == record
+    ]
+    if (
+        len(checkpoint_comments) != 1
+        or checkpoint_comments[0].get("body") != expected
+        or len(accepted_comments) != 1
+    ):
+        return False
+    ordered = (accepted_comments[0], checkpoint_comments[0], formal_comment)
+    stamps = tuple(_quality_time(comment.get("created_at")) for comment in ordered)
+    if (
+        any(
+            comment.get("created_at") != comment.get("updated_at")
+            or _positive_int(comment.get("id")) is None
+            for comment in ordered
+        )
+        or stamps[0] is None
+        or stamps[1] is None
+        or stamps[2] is None
+        or not stamps[0] < stamps[1] < stamps[2]
+    ):
+        return False
+    files = tuple(
+        file for file in request.files if file.path == f"openspec/changes/{record.change}/tasks.md"
+    )
+    return (
+        len(files) == 1
+        and all(
+            _content_sha_at(repository, token, path=file.path, revision=event.revision)
+            == file.blob_sha
+            for file in request.files
+        )
+        and openspec_review_revision_applies(
+            repository,
+            token,
+            change=record.change,
+            reviewed_revision=review.revision,
+            head_revision=event.revision,
+        )
+        and task_checkpoint_is_exact(
+            repository,
+            token,
+            expected_change=record.change,
+            base_sha=request.base_sha,
+            file=files[0],
+            completed_task_ids=scope,
+        )
+    )
+
+
 def _bound_native_delivery_scope(
     repository: str,
     token: str,
@@ -6530,9 +6656,30 @@ def _bound_native_delivery_scope(
     )
     raw = json.loads(record.raw_worker_result)
     evidence = raw.get("_native_implementation_delivery") if isinstance(raw, dict) else None
+    formal = [
+        comment
+        for comment in comments
+        if comment.get("id") == event.comment_id
+        and parse_formal_result(comment, current_revision=current_revision) == event
+    ]
+    if original is None or len(formal) != 1 or not isinstance(formal[0].get("body"), str):
+        return False
+    if evidence is None and original.effects:
+        return _bound_legacy_delivery_scope(
+            repository,
+            token,
+            original=original,
+            record=record,
+            event=event,
+            review=review,
+            formal_comment=formal[0],
+            scope=scope,
+            comments=comments,
+            branch=branch,
+            pr_number=pr_number,
+        )
     if (
-        original is None
-        or original.effects
+        original.effects
         or not isinstance(evidence, Mapping)
         or evidence.get("scope_task_ids") != list(scope)
         or evidence.get("revision") != event.revision
@@ -6543,17 +6690,9 @@ def _bound_native_delivery_scope(
         or evidence.get("review_comment_id") != review.comment_id
     ):
         return False
-    formal = [
-        comment
-        for comment in comments
-        if comment.get("id") == event.comment_id
-        and parse_formal_result(comment, current_revision=current_revision) == event
-    ]
     digest = hashlib.sha256(
         json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    if len(formal) != 1 or not isinstance(formal[0].get("body"), str):
-        return False
     body = cast(str, formal[0]["body"])
     if [line for line in body.splitlines() if line.startswith("Evidence:")] != [
         f"Evidence: native-delivery:{digest}"
