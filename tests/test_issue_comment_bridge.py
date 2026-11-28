@@ -5845,9 +5845,19 @@ def test_read_only_reconciliation_reobserves_later_complete_without_replay(
         read_count[0] += 1
         if observed["conflict"]:
             return application.AcceptedPostEffectProof("UNSAFE", "immutable checkpoint conflicts")
+        frontier = None
+        if first_publication_rejected and observed["complete"]:
+            frontier = application.RecoveryProofResult(
+                "NOT_APPLIED",
+                "FORMAL_RESULT",
+                application.CompleteNeverCalledWitness(90, 0, "a" * 64, ((777, 1, 999),)),
+                "FORMAL_RESULT",
+                0,
+            )
         return application.AcceptedPostEffectProof(
             "COMPLETE" if observed["complete"] else "INDETERMINATE",
             "fresh accepted proof",
+            pending_frontier_proof=frontier,
         )
 
     monkeypatch.setattr(bridge, "classify_accepted_read_only_effects", observe)
@@ -5882,6 +5892,10 @@ def test_read_only_reconciliation_reobserves_later_complete_without_replay(
     assert third.state == "RESUMABLE"
     assert third.reason == "application-completion-continuation-required"
     assert third.recovery_artifact is recovery
+    if first_publication_rejected:
+        assert third.accepted_proof is not None
+        assert third.accepted_proof.pending_frontier_proof is not None
+        assert third.accepted_proof.pending_frontier_proof.frontier_index == 0
     assert read_count[0] == 3
     # An actual contradiction cannot be mislabeled as a transient GET.
     # This does not select a new semantic Action or replay an Effect.
@@ -11566,6 +11580,10 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
         ("latest-unknown", "INVALID"),
         ("publication-pending", "RESUMABLE"),
         ("publication-unknown", "INVALID"),
+        ("publication-invalidated", "COMPLETE"),
+        ("publication-invalidated-pending", "RESUMABLE"),
+        ("publication-invalidated-partial", "RESUMABLE"),
+        ("publication-invalidated-pass", "RESUMABLE"),
         ("invalidated-input", "AMBIGUOUS"),
         ("rollover", "COMPLETE"),
     ],
@@ -11573,7 +11591,12 @@ def test_current_saved_development_verdict_qualifies_shared_frontier(
 def test_development_frontier_retires_only_causal_saved_prefix(
     monkeypatch: pytest.MonkeyPatch, phase_a: bool, history: str, expected: str
 ) -> None:
-    _assert_saved_development_frontier(monkeypatch, phase_a, "pass", expected, history)
+    case = "pass"
+    if history in ("publication-invalidated", "publication-invalidated-partial"):
+        case = "conflict"
+    elif history == "publication-invalidated-pending":
+        case = "pending"
+    _assert_saved_development_frontier(monkeypatch, phase_a, case, expected, history)
 
 
 def _assert_saved_development_frontier(
@@ -11592,7 +11615,9 @@ def _assert_saved_development_frontier(
     change = "native-quality"
     saved, producer = "a" * 40, "b" * 40
     prior_saved = "c" * 40
-    publication = history in ("publication-pending", "publication-unknown")
+    invalidated = history is not None and history.startswith("publication-invalidated")
+    publication = history in ("publication-pending", "publication-unknown") or invalidated
+    target = prior_saved if publication else saved
     branch = "agent/native-quality"
     shard_url = f"https://api.github.com/repos/{repository}/issues/142"
     request = _effect_request_comment(
@@ -11817,7 +11842,7 @@ def _assert_saved_development_frontier(
         "id": 88,
         "run_id": 87,
         "run_attempt": 1,
-        "head_sha": saved,
+        "head_sha": target,
         "name": "quality",
         "status": "completed",
         "conclusion": "success" if case == "pass" else "failure",
@@ -11900,8 +11925,8 @@ def _assert_saved_development_frontier(
         raise AssertionError(path)
 
     def observe(*_args: object, **_kwargs: object) -> bridge.NativeQualityObservation:
-        red = bridge.NativeQualityAttempt(87, 1, "PYTEST_STEP_FAILURE", 88, saved, saved, None)
-        green = bridge.NativeQualityAttempt(90, 1, "PASS", 89, saved, saved, None)
+        red = bridge.NativeQualityAttempt(87, 1, "PYTEST_STEP_FAILURE", 88, target, target, None)
+        green = bridge.NativeQualityAttempt(90, 1, "PASS", 89, target, target, None)
         if case == "red":
             return bridge.NativeQualityObservation("FAIL", (red,))
         if case == "pass":
@@ -11931,6 +11956,53 @@ def _assert_saved_development_frontier(
                 return bridge.ApplicationCompletion("RESUMABLE", "pending-write", 654, job_id=81)
             if history in ("latest-unknown", "publication-unknown"):
                 return bridge.ApplicationCompletion("INVALID", "unknown-write", 654)
+            if invalidated:
+                digest = hashlib.sha256(cast(str, accepted["body"]).encode()).hexdigest()
+                recovery = replace(
+                    _qualified_recovery_fixture(continuation_eligible=True),
+                    request_comment_id=654,
+                    accepted_decision_sha256=digest,
+                    document={
+                        "failure_evidence": {
+                            "unfinished_boundary": "effect-precondition",
+                            "mutation_status": "not-complete",
+                            "failed_effect_index": 0,
+                            "failed_effect_kind": "issue-comment",
+                            "failed_effect_sha256": "b" * 64,
+                            "completed_effect_indexes": [],
+                            "completed_effect_sha256": [],
+                            "operation_stage": "BEFORE-WRITE",
+                            "write_call_entered": False,
+                            "rejection": {
+                                "classification": "effect-precondition-unsatisfied",
+                                "expected": "fresh native implementation delivery gates",
+                            },
+                        }
+                    },
+                )
+                witness = application.CompleteNeverCalledWitness(
+                    654, 0, digest, ((recovery.run_id, recovery.run_attempt, recovery.artifact_id),)
+                )
+                frontier_proof = application.RecoveryProofResult(
+                    "NOT_APPLIED", "FORMAL_RESULT", witness, "FORMAL_RESULT", 0
+                )
+                return bridge.ApplicationCompletion(
+                    "RESUMABLE",
+                    "application-completion-continuation-required",
+                    654,
+                    recovery_artifact=recovery,
+                    accepted_proof=application.AcceptedPostEffectProof(
+                        "COMPLETE",
+                        "fresh accepted proof",
+                        pending_frontier_proof=(
+                            None
+                            if history == "publication-invalidated-partial"
+                            else frontier_proof
+                        ),
+                    ),
+                    accepted_record=record,
+                    accepted_decision_sha256=digest,
+                )
         return bridge.ApplicationCompletion(
             "RESUMABLE",
             "verification-obligation-pending",
@@ -11966,6 +12038,14 @@ def _assert_saved_development_frontier(
         lambda *_a, **_kw: prior_verdict,
     )
     monkeypatch.setattr(bridge, "plan_native_quality_verification", observe)
+    if invalidated:
+        monkeypatch.setattr(
+            bridge,
+            "qualify_implementation_carrier",
+            lambda **_kw: SimpleNamespace(
+                disposition="QUALIFIED", branch=branch, head_sha=prior_saved
+            ),
+        )
     completion = bridge.qualify_application_completion(
         repository,
         token,
@@ -11980,7 +12060,18 @@ def _assert_saved_development_frontier(
     assert completion.state == expected
     if expected == "COMPLETE":
         assert completion.quality_obligation is None
+        if history == "publication-invalidated":
+            assert completion.request_comment_id == 554
+            assert completion.quality_observation is not None
+            assert completion.quality_observation.outcome == "CONFLICT"
+            assert tuple(
+                item.request_comment_id for item in completion.settled_development_records
+            ) == (554,)
+        else:
+            assert completion.request_comment_id == 654
+    elif invalidated:
         assert completion.request_comment_id == 654
+        assert completion.quality_obligation is None
     elif history in (
         "latest-pending",
         "latest-unknown",
