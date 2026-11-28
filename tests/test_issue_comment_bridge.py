@@ -11949,7 +11949,9 @@ def _assert_saved_development_frontier(
         assert completion.quality_obligation == obligation
 
 
-@pytest.mark.parametrize("prior_evidence", ["valid", "missing", "wrong-hash"])
+@pytest.mark.parametrize(
+    "prior_evidence", ["valid", "missing", "wrong-hash", "returned", "returned-missing"]
+)
 @pytest.mark.parametrize(
     "operation", ["marker", "publish", "wrong-kind", "wrong-head", "fail", "corrected", "pending"]
 )
@@ -12078,7 +12080,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
     original_body = cast(str, prior_request["body"])
     lines = original_body.splitlines()
     worker = json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: ")))
-    if prior_evidence != "missing":
+    if prior_evidence not in ("missing", "returned-missing"):
         worker["_native_implementation_delivery"] = evidence
     encoded = base64.b64encode(json.dumps(worker).encode()).decode()
     projected_request = {
@@ -12114,11 +12116,34 @@ def test_next_slice_requires_bound_prior_native_delivery(
     )
     delivered["updated_at"] = delivered["created_at"]
     comments: tuple[dict[str, object], ...] = (review, marker_accepted, accepted, delivered)
-    lifecycle = tuple(
-        _frontier_lifecycle(
-            [(10, "review-openspec", "implement-change"), (100, source.action, source.action)]
+    transitions = [
+        (10, "review-openspec", "implement-change"),
+        (100, source.action, source.action),
+    ]
+    if prior_evidence in ("returned", "returned-missing"):
+        blocker = _formal_frontier_comment(
+            120,
+            action=source.action,
+            role=source.role,
+            result="spec-blocker",
+            successor="Lead / resolve-question",
+            request_id=110,
+            change=change,
         )
-    )
+        resolution = _formal_frontier_comment(
+            140,
+            action="resolve-question",
+            role="lead",
+            result="ready",
+            successor="Executor / implement-change",
+            request_id=130,
+            change=change,
+        )
+        comments = (*comments, blocker, resolution)
+        transitions.extend(
+            [(120, source.action, "resolve-question"), (140, "resolve-question", source.action)]
+        )
+    lifecycle = tuple(_frontier_lifecycle(transitions))
     issue = {
         **_current_source_issue(),
         "labels": [{"name": "action:implement-change"}],
@@ -12166,7 +12191,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
     )
     saved_request = _effect_request_comment(
         comment_id=150,
-        created_at="2026-09-18T02:00:11Z",
+        created_at="2026-09-18T02:00:16Z",
         action=source.action,
         role=source.role,
         result_kind="more-implementation-required",
@@ -12194,7 +12219,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
             (saved_lines[0], saved_lines[1], f"Worker-Result-B64: {saved_encoded}")
         )
     saved = _application_decision_comment(saved_request, comment_id=160)
-    saved["created_at"] = "2026-09-18T02:00:12Z"
+    saved["created_at"] = "2026-09-18T02:00:17Z"
     saved["updated_at"] = saved["created_at"]
     comments = (*comments, saved)
     saved_record = bridge.parse_application_decision(saved["body"])
@@ -12206,8 +12231,8 @@ def test_next_slice_requires_bound_prior_native_delivery(
         correction_request = {
             **saved_request,
             "id": 190,
-            "created_at": "2026-09-18T02:00:13Z",
-            "updated_at": "2026-09-18T02:00:13Z",
+            "created_at": "2026-09-18T02:00:18Z",
+            "updated_at": "2026-09-18T02:00:18Z",
         }
         correction_lines = cast(str, correction_request["body"]).splitlines()
         correction_worker = json.loads(
@@ -12233,7 +12258,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
             (correction_lines[0], correction_lines[1], f"Worker-Result-B64: {correction_encoded}")
         )
         corrected = _application_decision_comment(correction_request, comment_id=195)
-        corrected["created_at"] = "2026-09-18T02:00:14Z"
+        corrected["created_at"] = "2026-09-18T02:00:19Z"
         corrected["updated_at"] = corrected["created_at"]
         comments = (*comments, corrected)
         correction_record = bridge.parse_application_decision(corrected["body"])
@@ -12254,7 +12279,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
             branch,
             "4" * 40,
             "5" * 64,
-            "2026-09-18T02:00:12Z",
+            "2026-09-18T02:00:17Z",
             "main",
             head,
             prior_head,
@@ -12325,7 +12350,7 @@ def test_next_slice_requires_bound_prior_native_delivery(
             default_branch="main",
             read=read,
         )
-        if prior_evidence == "valid" and operation in ("publish", "corrected"):
+        if prior_evidence in ("valid", "returned") and operation in ("publish", "corrected"):
             assert evidence_result is not None
             assert evidence_result["scope_task_ids"] == ["2.1"]
             assert evidence_result["revision"] == head
@@ -12357,4 +12382,4 @@ def test_next_slice_requires_bound_prior_native_delivery(
         current_revision=REVISION,
         default_branch="main",
         read=read,
-    ) is (prior_evidence == "valid")
+    ) is (prior_evidence in ("valid", "returned"))
