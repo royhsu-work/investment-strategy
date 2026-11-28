@@ -7417,11 +7417,9 @@ def _settled_development_prefix(
                     markers = [
                         item for _, item in ordered[:index] if item.request_comment_id == marker_id
                     ]
-                    if (
-                        len(markers) != 1
-                        or _accepted_decision_sha256(markers[0], issue_comments)
-                        != delivery.get("marker_accepted_decision_sha256")
-                    ):
+                    if len(markers) != 1 or _accepted_decision_sha256(
+                        markers[0], issue_comments
+                    ) != delivery.get("marker_accepted_decision_sha256"):
                         return None
                     publication = delivery
                     carrier_branch = prior[1].branch
