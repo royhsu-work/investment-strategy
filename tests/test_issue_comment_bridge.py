@@ -12897,9 +12897,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
                 publication_body = cast(str, publication_request["body"])
                 publication_lines = publication_body.splitlines()
                 publication_worker = json.loads(
-                    base64.b64decode(
-                        publication_lines[2].removeprefix("Worker-Result-B64: ")
-                    )
+                    base64.b64decode(publication_lines[2].removeprefix("Worker-Result-B64: "))
                 )
                 publication_worker["_native_implementation_delivery"] = evidence_result
                 publication_encoded = base64.b64encode(
