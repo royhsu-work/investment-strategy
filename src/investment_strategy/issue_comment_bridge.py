@@ -6902,6 +6902,260 @@ def _ordinary_implementation_scope(
     return review, len(deliveries)
 
 
+def _reviewed_task_group_indices(
+    slices: tuple[tuple[tuple[str, bool], ...], ...],
+    task_ids: tuple[str, ...] | None,
+) -> set[int] | None:
+    """Map every affected task exactly once; distinct groups are not ambiguity."""
+    if not task_ids or len(set(task_ids)) != len(task_ids):
+        return None
+    indices: set[int] = set()
+    for task_id in task_ids:
+        matches = [
+            index
+            for index, group in enumerate(slices)
+            for approved_id, _ in group
+            if approved_id == task_id
+        ]
+        if len(matches) != 1:
+            return None
+        indices.add(matches[0])
+    return indices
+
+
+def qualify_initial_implementation_finding(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    change: str,
+    evidence_ref: str | None,
+    reviewed_task_ids: tuple[str, ...] | None,
+    formal_body: str,
+    current_revision: str,
+    read: GitHubReader = _github_json,
+) -> bool:
+    """Qualify a fresh native finding on its exact accepted READY carrier."""
+    if (source.role, source.action) != ("reviewer", "review-implementation"):
+        return False
+    issue = read(repository, token, f"issues/{source.issue_number}")
+    if not isinstance(issue, Mapping) or issue.get("state") != "open":
+        return False
+    comments = _paged_list(repository, token, f"issues/{source.issue_number}/comments", read=read)
+    lifecycle = _paged_list(repository, token, f"issues/{source.issue_number}/timeline", read=read)
+    frontier, qualified = _derive_frontier(
+        repository=repository,
+        token=token,
+        source=source,
+        current_issue=issue,
+        issue_comments=comments,
+        lifecycle_events=lifecycle,
+        current_revision=current_revision,
+        read=read,
+    )
+    if not qualified or frontier is None or frontier.change != change:
+        return False
+    qualification = build_qualification_input(
+        issue_number=source.issue_number,
+        change=change,
+        state="open",
+        current_routing=frontier.current_routing,
+        comments=comments,
+        current_revision=current_revision,
+        lifecycle_events=lifecycle,
+    )
+    if not qualification.events or qualification.events[-1] != frontier.event:
+        return False
+    events = qualification.events
+    ready_index = len(events) - 1
+    while ready_index >= 0:
+        event = events[ready_index]
+        if (
+            (event.role, event.action, event.result_kind)
+            != ("reviewer", "review-implementation", "blocked")
+            or event.successor != ("reviewer", "review-implementation")
+        ):
+            break
+        ready_index -= 1
+    if ready_index < 1:
+        return False
+    ready = events[ready_index]
+    if (
+        not ready.valid
+        or (ready.role, ready.action, ready.result_kind)
+        != ("executor", "implement-change", "ready")
+        or ready.successor != ("reviewer", "review-implementation")
+        or ready.revision is None
+    ):
+        return False
+    executor = WorkerRequest(source.issue_number, "executor", "implement-change")
+    decisions = _application_decisions(comments)
+    owners = _frontier_application_decisions(decisions, replace(frontier, event=ready))
+    if len(owners) != 1:
+        return False
+    owner = owners[0]
+    original = _qualified_physical_original_accepted_effects(
+        record=owner, source=executor, repository=repository, token=token, read=read
+    )
+    if (
+        owner.disposition != "ACCEPTED"
+        or original is None
+        or _accepted_decision_sha256(owner, comments) is None
+        or _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=owner.authorization_revision,
+            current_revision=current_revision,
+            read=read,
+        )
+        is None
+    ):
+        return False
+    document = json.loads(owner.raw_worker_result)
+    evidence = (
+        document.get("_native_implementation_delivery") if isinstance(document, dict) else None
+    )
+    if evidence is None:
+        # An independently proven original legacy materialization remains on its
+        # existing reconciliation path. Missing native evidence is not legacy.
+        return any(
+            effect.kind == "github-mutation"
+            and find_materialization_payload(json.loads(effect.payload_json), executor) is not None
+            for effect in original.effects
+        )
+    if not isinstance(evidence, Mapping) or original.effects:
+        return False
+    pr_number = _positive_int(evidence.get("pr_number"))
+    branch = evidence.get("branch")
+    revision = ready.revision
+    if (
+        pr_number is None
+        or not isinstance(branch, str)
+        or evidence.get("revision") != revision
+        or evidence_ref != f"https://github.com/{repository}/commit/{revision}"
+        or [line for line in formal_body.splitlines() if line.startswith("Revision: ")]
+        != [f"Revision: {revision}"]
+    ):
+        return False
+    carrier = qualify_implementation_carrier(
+        repository=repository,
+        token=token,
+        source=source,
+        change=change,
+        pr_number=pr_number,
+        current_revision=current_revision,
+        read=read,
+    )
+    if carrier.branch != branch or carrier.head_sha != revision:
+        return False
+    if carrier.disposition == "HISTORICAL_MERGED":
+        return True
+    if carrier.disposition not in {"QUALIFIED", "RECONCILIATION_REQUIRED"}:
+        return False
+    path = f"openspec/changes/{change}/tasks.md"
+    task_blob = _content_sha_at(repository, token, path=path, revision=revision)
+    if task_blob is None or task_blob != evidence.get(
+        "current_task_blob", evidence.get("marker_blob")
+    ):
+        return False
+    content = _content_text_at(repository, token, path=path, revision=revision)
+    slices = _task_slices(content)
+    if not slices or not all(checked for group in slices for _, checked in group):
+        return False
+    affected = _reviewed_task_group_indices(slices, reviewed_task_ids)
+    if affected is None:
+        return False
+    review = next(
+        (
+            event
+            for event in reversed(events[:ready_index])
+            if (event.role, event.action, event.result_kind)
+            == ("reviewer", "review-openspec", "pass")
+        ),
+        None,
+    )
+    if (
+        review is None
+        or not review.valid
+        or review.revision is None
+        or not openspec_review_revision_applies(
+            repository,
+            token,
+            change=change,
+            reviewed_revision=review.revision,
+            head_revision=revision,
+        )
+    ):
+        return False
+    deliveries = [
+        event
+        for event in events[events.index(review) + 1 : ready_index + 1]
+        if (event.role, event.action) == ("executor", "implement-change")
+        and event.result_kind in ("ready", "more-implementation-required")
+    ]
+    if len(deliveries) < len(slices) or deliveries[-1] != ready:
+        return False
+    for index, group in enumerate(slices):
+        delivery = deliveries[index]
+        if delivery.result_kind != (
+            "ready" if index == len(slices) - 1 else "more-implementation-required"
+        ):
+            return False
+        if not _bound_native_delivery_scope(
+            repository,
+            token,
+            source=executor,
+            frontier=frontier,
+            event=delivery,
+            review=review,
+            scope=tuple(task_id for task_id, _ in group),
+            comments=comments,
+            branch=branch,
+            pr_number=pr_number,
+            revision=revision,
+            current_revision=current_revision,
+            read=read,
+        ):
+            return False
+        if index in affected:
+            delivery_owners = _frontier_application_decisions(
+                decisions, replace(frontier, event=delivery)
+            )
+            if len(delivery_owners) != 1:
+                return False
+            raw = json.loads(delivery_owners[0].raw_worker_result)
+            if not isinstance(raw, dict) or not isinstance(
+                raw.get("_native_implementation_delivery"), Mapping
+            ):
+                return False
+    if len(deliveries) > len(slices):
+        latest_scope = next(
+            (
+                tuple(task_id for task_id, _ in group)
+                for group in slices
+                if [task_id for task_id, _ in group] == evidence.get("scope_task_ids")
+            ),
+            None,
+        )
+        if latest_scope is None or not _bound_native_delivery_scope(
+            repository,
+            token,
+            source=executor,
+            frontier=frontier,
+            event=ready,
+            review=review,
+            scope=latest_scope,
+            comments=comments,
+            branch=branch,
+            pr_number=pr_number,
+            revision=revision,
+            current_revision=current_revision,
+            read=read,
+        ):
+            return False
+    return True
+
+
 def _reviewed_correction_marker(
     repository: str,
     token: str,
@@ -7059,18 +7313,9 @@ def _reviewed_correction_marker(
     # The immutable accepted finding, already matched to its original
     # request, owns the structured scope. Prose is evidence, never selection.
     finding_worker = _application_worker_for_record(finding_record, reviewer)
-    if finding_worker is None or finding_worker.reviewed_task_ids is None:
+    if finding_worker is None:
         return None
-    affected_indices: set[int] = set()
-    for affected_task in finding_worker.reviewed_task_ids:
-        matches = [
-            index
-            for index, group in enumerate(slices)
-            if any(task_id == affected_task for task_id, _ in group)
-        ]
-        if len(matches) != 1:
-            return None
-        affected_indices.add(matches[0])
+    affected_indices = _reviewed_task_group_indices(slices, finding_worker.reviewed_task_ids)
     if not affected_indices:
         return None
     remaining_indices = sorted(affected_indices)

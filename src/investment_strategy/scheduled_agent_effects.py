@@ -151,6 +151,7 @@ class EffectBatch:
     source: WorkerRequest
     effects: tuple[StagedEffect, ...]
     typed_result: BoundedActionResult | None = None
+    reviewed_task_ids: tuple[str, ...] | None = None
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -322,6 +323,7 @@ def parse_effect_batch(
             for effect in result.requested_effects
         ),
         typed_result=result.typed_result,
+        reviewed_task_ids=result.reviewed_task_ids,
     )
 
 
@@ -691,6 +693,7 @@ def _typed_application_plan(
     observe_postcondition: PostconditionObserver | None = None,
     original_322_recovery: bool = False,
     validate_implementation_delivery: Callable[[StagedEffect], bool] | None = None,
+    validate_implementation_finding: Callable[[EffectBatch], bool] | None = None,
 ) -> tuple[ActionApplicationDecision | None, StagedEffect | None, ApplyResult | None]:
     typed_result = batch.typed_result
     if typed_result is None:
@@ -790,6 +793,20 @@ def _typed_application_plan(
                 f"typed application rejected:{classification}",
                 rejection=rejection,
             ),
+        )
+
+    if (
+        not accepted_intent
+        and action == ModelAction.REVIEW_IMPLEMENTATION
+        and typed_result.result.kind == ResultKind.FINDINGS
+        and (
+            validate_implementation_finding is None or not validate_implementation_finding(batch)
+        )
+    ):
+        return (
+            decision,
+            None,
+            ApplyResult(False, "typed application rejected:implementation-finding-scope"),
         )
 
     qualified_delivery = False
@@ -1376,6 +1393,7 @@ def apply_effect_batch(
     ) = None,
     original_322_recovery: bool = False,
     validate_implementation_delivery: Callable[[StagedEffect], bool] | None = None,
+    validate_implementation_finding: Callable[[EffectBatch], bool] | None = None,
 ) -> ApplyResult:
     """Apply one typed batch after fresh source reauthorization."""
 
@@ -1391,6 +1409,7 @@ def apply_effect_batch(
         observe_postcondition,
         original_322_recovery,
         validate_implementation_delivery,
+        validate_implementation_finding,
     )
     if typed_rejection is not None:
         if (
@@ -2149,6 +2168,44 @@ class GitHubEffectAdapter:
                     current_revision=current_revision,
                     read=_github_json,
                 )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return False
+
+    def validate_implementation_finding(self, batch: EffectBatch) -> bool:
+        """Qualify the new native review scope before the immutable ACCEPT."""
+        from investment_strategy.issue_comment_bridge import (
+            qualify_initial_implementation_finding,
+        )
+
+        typed = batch.typed_result
+        revision = self.current_revision
+        if (
+            typed is None
+            or revision is None
+            or not _valid_sha(revision)
+            or len(batch.effects) != 1
+            or batch.effects[0].kind != "issue-comment"
+            or batch.effects[0].derived
+        ):
+            return False
+        payload = _effect_payload(batch.effects[0])
+        body = payload.get("body") if payload is not None else None
+        if not isinstance(body, str):
+            return False
+        try:
+            if not self._default_branch_still_current():
+                return False
+            return qualify_initial_implementation_finding(
+                self.repository,
+                self.token,
+                source=self.source,
+                change=self.authorized_change,
+                evidence_ref=typed.result.evidence_ref,
+                reviewed_task_ids=batch.reviewed_task_ids,
+                formal_body=body,
+                current_revision=revision,
+                read=_github_json,
             )
         except (OSError, RuntimeError, TypeError, ValueError):
             return False
@@ -4998,6 +5055,7 @@ def run_effect_application(
         observe_postcondition=adapter.observe_postcondition,
         current_revision=current_revision,
         validate_implementation_delivery=getattr(adapter, "validate_implementation_delivery", None),
+        validate_implementation_finding=getattr(adapter, "validate_implementation_finding", None),
         apply_derived=apply_derived,
         defer_issue_comments=defer_issue_comments,
         allow_pending_continuation=allow_pending_continuation,

@@ -849,6 +849,9 @@ def run_effect_application(
             validate_implementation_delivery=getattr(
                 adapter, "validate_implementation_delivery", None
             ),
+            validate_implementation_finding=getattr(
+                adapter, "validate_implementation_finding", None
+            ),
             apply_derived=apply_derived,
             defer_issue_comments=defer_issue_comments,
             allow_pending_continuation=allow_pending_continuation,
