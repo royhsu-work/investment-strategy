@@ -10,6 +10,9 @@ on:
       - ".github/scripts/openspec_archive.py"
       - ".github/workflows/openspec-archive.yml"
       - ".github/workflows/quality.yml"
+      - ".github/workflows/scheduled-agent-bridge.yml"
+      - ".github/workflows/scheduled-agent-application.yml"
+      - "openspec/changes/*/tasks.md"
       - "README.md"
       - "agents/**"
   pull_request:
@@ -21,20 +24,103 @@ on:
       - ".github/scripts/openspec_archive.py"
       - ".github/workflows/openspec-archive.yml"
       - ".github/workflows/quality.yml"
+      - ".github/workflows/scheduled-agent-bridge.yml"
+      - ".github/workflows/scheduled-agent-application.yml"
+      - "openspec/changes/*/tasks.md"
       - "README.md"
       - "agents/**"
 
+  workflow_call:
+    inputs:
+      target_repository:
+        required: true
+        type: string
+      target_revision:
+        required: true
+        type: string
+      definition_revision:
+        required: true
+        type: string
+      verification_correlation:
+        required: true
+        type: string
+      source_comment_id:
+        required: true
+        type: string
+      run_id:
+        required: true
+        type: string
+      run_attempt:
+        required: true
+        type: string
+
 jobs:
   quality:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.target_revision || github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prove exact quality checkout
+        id: quality_checkout
+        shell: bash
+        env:
+          EXPECTED_QUALITY_SHA: ${{ inputs.target_revision || github.event.pull_request.head.sha || github.sha }}
+          QUALITY_CALL_REPOSITORY: ${{ inputs.target_repository }}
+          QUALITY_CALL_TARGET: ${{ inputs.target_revision }}
+          QUALITY_CALL_DEFINITION: ${{ inputs.definition_revision }}
+          QUALITY_CALL_CORRELATION: ${{ inputs.verification_correlation }}
+          QUALITY_CALL_SOURCE: ${{ inputs.source_comment_id }}
+          QUALITY_EVENT_SOURCE: ${{ github.event.comment.id }}
+          QUALITY_CALL_RUN_ID: ${{ inputs.run_id }}
+          QUALITY_CALL_RUN_ATTEMPT: ${{ inputs.run_attempt }}
+        run: |
+          actual_sha=$(git rev-parse HEAD)
+          called=false
+          call_inputs="${QUALITY_CALL_REPOSITORY:-}${QUALITY_CALL_TARGET:-}${QUALITY_CALL_DEFINITION:-}${QUALITY_CALL_CORRELATION:-}${QUALITY_CALL_SOURCE:-}${QUALITY_CALL_RUN_ID:-}${QUALITY_CALL_RUN_ATTEMPT:-}"
+          if [[ "${GITHUB_EVENT_NAME:-}" == "issue_comment" || -n "$call_inputs" ]]; then
+            called=true
+            if [[ "${GITHUB_EVENT_NAME:-}" != "issue_comment" ||
+                  "${QUALITY_CALL_REPOSITORY:-}" != "$GITHUB_REPOSITORY" ||
+                  ! "${QUALITY_CALL_TARGET:-}" =~ ^[0-9a-f]{40}$ ||
+                  "$QUALITY_CALL_TARGET" != "$EXPECTED_QUALITY_SHA" ||
+                  ! "${QUALITY_CALL_DEFINITION:-}" =~ ^[0-9a-f]{40}$ ||
+                  "$QUALITY_CALL_DEFINITION" != "$GITHUB_WORKFLOW_SHA" ||
+                  ! "${QUALITY_CALL_CORRELATION:-}" =~ ^[0-9a-f]{64}$ ||
+                  ! "${QUALITY_CALL_SOURCE:-}" =~ ^[1-9][0-9]*$ ||
+                  "$QUALITY_CALL_SOURCE" != "${QUALITY_EVENT_SOURCE:-}" ||
+                  ! "${QUALITY_CALL_RUN_ID:-}" =~ ^[1-9][0-9]*$ ||
+                  "$QUALITY_CALL_RUN_ID" != "$GITHUB_RUN_ID" ||
+                  ! "${QUALITY_CALL_RUN_ATTEMPT:-}" =~ ^[1-9][0-9]*$ ||
+                  "$QUALITY_CALL_RUN_ATTEMPT" != "$GITHUB_RUN_ATTEMPT" ]]; then
+              printf 'Python Quality call identity mismatch\n' >&2
+              exit 1
+            fi
+          fi
+          if [[ "$actual_sha" != "$EXPECTED_QUALITY_SHA" ]]; then
+            printf 'Python Quality checkout mismatch: expected %s, got %s\n' "$EXPECTED_QUALITY_SHA" "$actual_sha" >&2
+            exit 1
+          fi
+          printf '%s\n' \
+            "quality_repository=$GITHUB_REPOSITORY" \
+            "quality_target_sha=$EXPECTED_QUALITY_SHA" \
+            "quality_checkout_sha=$actual_sha" \
+            "quality_definition_sha=$GITHUB_WORKFLOW_SHA" \
+            "quality_run_id=$GITHUB_RUN_ID" \
+            "quality_run_attempt=$GITHUB_RUN_ATTEMPT"
+          if [[ "$called" == "true" ]]; then
+            printf '%s\n' \
+              "quality_source_comment_id=$QUALITY_CALL_SOURCE" \
+              "quality_verification_correlation=$QUALITY_CALL_CORRELATION"
+          fi
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.10.0"
-          enable-cache: true
+          enable-cache: ${{ github.event_name != 'issue_comment' }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"

@@ -4324,6 +4324,35 @@ def test_raw_worker_result_transport_canonicalizes_from_current_machine_source()
     assert plan.request_comment_id == 102
 
 
+def test_raw_review_finding_preserves_structured_affected_task_union() -> None:
+    source = WorkerRequest(138, "reviewer", "review-implementation")
+    worker = _worker_result(action=source.action, role=source.role, result_kind="findings")
+    worker["change"] = _CHANGE
+    worker["evidence_ref"] = f"https://github.com/{_REPOSITORY}/commit/{'e' * 40}"
+    worker["result_content"] = "Two distinct defects in separate slices; version 9.9 is incidental."
+    worker["reviewed_task_ids"] = ["1.1", "2.1"]
+    raw = json.dumps(worker, sort_keys=True)
+    try:
+        request = bridge.canonicalize_raw_worker_result(
+            body=f"WORKER_RESULT\n{raw}\n",
+            source=source,
+            authorized_change=_CHANGE,
+            repository=_REPOSITORY,
+            current_revision=_REVISION,
+        )
+    except ValueError as exc:
+        pytest.fail(f"valid structured affected-task evidence was rejected: {exc}")
+
+    assert request.raw_worker_result == raw
+    assert json.loads(request.raw_worker_result)["reviewed_task_ids"] == ["1.1", "2.1"]
+    assert (
+        bridge.parse_application_request(
+            bridge.render_application_request(request, source=source, authorized_change=_CHANGE)
+        )
+        == request
+    )
+
+
 def test_raw_worker_result_cannot_enter_phase_a_without_creation_shard_proof() -> None:
     source = WorkerRequest(138, "lead", "explore-change")
     raw = json.dumps(_worker_result(), sort_keys=True)
@@ -6059,6 +6088,64 @@ def test_main_exits_at_carrier_boundary_before_formal_continuation(
     assert "SLICE_CHECKPOINT" not in output
 
 
+def test_fresh_ingress_keeps_development_save_physical_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    head = "b" * 40
+    materialization = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": head,
+        "message": "Save partial test work",
+        "pr_number": 178,
+        "files": [
+            {
+                "path": "tests/test_scheduled_agent_application_bridge.py",
+                "blob_sha": "c" * 40,
+                "expected_sha": "d" * 40,
+            }
+        ],
+    }
+    worker = _worker_result(
+        action=source.action, role=source.role, result_kind="more-implementation-required"
+    )
+    worker["change"] = _CHANGE
+    worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(materialization)}
+    ]
+    request = bridge.canonicalize_raw_worker_result(
+        body="WORKER_RESULT\n" + json.dumps(worker) + "\n",
+        source=source,
+        authorized_change=_CHANGE,
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: SimpleNamespace(recognized=True, default_branch="main", head_sha=head),
+    )
+    projected = bridge._fresh_application_worker_result(
+        request.raw_worker_result,
+        source=source,
+        change=_CHANGE,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+        request_comment_id=777,
+    )
+    batch = bridge.parse_effect_batch(projected, source, authorized_change=_CHANGE)
+
+    assert len(batch.effects) == 1
+    assert batch.effects[0].kind == "github-mutation"
+    assert json.loads(batch.effects[0].payload_json) == materialization
+
+
 def test_application_owns_formal_result_after_other_worker_effects() -> None:
     source = WorkerRequest(138, "lead", "explore-change")
     worker = _worker_result()
@@ -7606,16 +7693,17 @@ def test_accepted_checkpoint_and_formal_projection_rebind_only_after_proven_targ
 
 
 @pytest.mark.parametrize("materialized", [False, True])
-@pytest.mark.parametrize("result_kind", ["ready", "blocked"])
-def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proof(
+@pytest.mark.parametrize("result_kind", ["ready", "blocked", "more-implementation-required"])
+def test_accepted_implementation_uses_fresh_carrier_proof_for_its_effects(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     materialized: bool,
     result_kind: str,
 ) -> None:
-    """Phase B first creates its carrier, then binds a checkpoint on a fresh wake."""
+    """A physical-only save re-observes its carrier without formal result evidence."""
     source = WorkerRequest(138, "executor", "implement-change")
     revision = "b" * 40
+    physical_only = result_kind == "more-implementation-required"
     materialization = {
         "issue_number": 138,
         "operation": "application-materialize",
@@ -7627,7 +7715,11 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
         "pr_number": 178,
         "files": [
             {
-                "path": f"openspec/changes/{_CHANGE}/tasks.md",
+                "path": (
+                    "tests/test_scheduled_agent_application_bridge.py"
+                    if physical_only
+                    else f"openspec/changes/{_CHANGE}/tasks.md"
+                ),
                 "blob_sha": "c" * 40,
                 "expected_sha": "a" * 40,
             }
@@ -7734,9 +7826,18 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
             },
         )(),
     )
-    monkeypatch.setattr(bridge, "_accepted_checkpoint_already_durable", lambda *_a, **_k: False)
-    # This scenario is explicitly precommit; no authoritative formal result exists.
-    monkeypatch.setattr(bridge, "_qualified_committed_implementation_result", lambda **_kw: None)
+
+    def formal_result(**_kwargs: object) -> None:
+        if physical_only:
+            pytest.fail("Physical save depends on an unavailable formal result lookup")
+
+    def checkpoint_status(*_args: object, **_kwargs: object) -> bool:
+        if physical_only:
+            pytest.fail("Physical save depends on legacy checkpoint evidence")
+        return False
+
+    monkeypatch.setattr(bridge, "_accepted_checkpoint_already_durable", checkpoint_status)
+    monkeypatch.setattr(bridge, "_qualified_committed_implementation_result", formal_result)
     calls: list[dict[str, object]] = []
 
     def fake_apply(raw_result: str, **kwargs: object) -> tuple[EffectBatch, bridge.ApplyResult]:
@@ -7748,8 +7849,8 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
     assert len(calls) == 1
     call = calls[0]
     assert call["accepted_intent"] is True
-    assert call["apply_derived"] is materialized
-    assert call["defer_issue_comments"] is (not materialized)
+    assert call["apply_derived"] is (materialized and not physical_only)
+    assert call["defer_issue_comments"] is (not materialized and not physical_only)
     assert call["validated_materialization_revision"] == (revision if materialized else None)
     projected = cast(dict[str, object], call["raw"])
     projected_effects = cast(list[dict[str, str]], projected["requested_effects"])
@@ -7761,7 +7862,7 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
     if result_kind == "ready":
         assert (f"Revision: {revision}" in bodies[0].splitlines()) is materialized
     else:
-        # Accepted BLOCKED materialization does not require SLICE_CHECKPOINT.
+        # Neither of these fixtures carries a checkpoint comment.
         assert bodies == []
         assert len(projected_effects) == 1
         assert projected_effects[0]["kind"] == "github-mutation"
@@ -7892,8 +7993,9 @@ def test_original_322_pr_merge_review_gate_rejects_unreviewed_or_findings_head(
     ("zero_proven", "expected"),
     [(False, "INDETERMINATE"), (True, "COMPLETE")],
 )
+@pytest.mark.parametrize("formal_applied", [False, True])
 def test_s2b_read_only_zero_original_requires_physical_source_witness(
-    monkeypatch: pytest.MonkeyPatch, zero_proven: bool, expected: str
+    monkeypatch: pytest.MonkeyPatch, zero_proven: bool, expected: str, formal_applied: bool
 ) -> None:
     """R0/R2: an empty accepted semantic projection is not physical zero."""
     source = WorkerRequest(435, "executor", "implement-change")
@@ -7934,7 +8036,7 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
         ],
         "attempt_revision": _REVISION,
         "failed_effect_index": 0,
-        "write_call_entered": True,
+        "write_call_entered": formal_applied,
     }
     artifact = SimpleNamespace(document={"failure_evidence": checkpoint})
     monkeypatch.setattr(bridge, "_accepted_recovery_boundary", lambda _e: "READ_ONLY")
@@ -7954,7 +8056,9 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
     monkeypatch.setattr(
         bridge,
         "_read_accepted_never_called_evidence",
-        lambda **_k: bridge.CompleteNeverCalledWitness(6796616018, 1, "a" * 64, ((7001, 1, 7003),)),
+        lambda **_k: bridge.CompleteNeverCalledWitness(
+            6796616018, 1 if formal_applied else 0, "a" * 64, ((7001, 1, 7003),)
+        ),
     )
     zero_reads: list[int] = []
 
@@ -7972,7 +8076,7 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
             return True
 
         def observe_issue_comment_source_ref(self, _effect: StagedEffect) -> str | None:
-            return "issues/comments/992001"
+            return "issues/comments/992001" if formal_applied else None
 
     monkeypatch.setattr(bridge, "GitHubEffectAdapter", Observer)
     proof = bridge.classify_accepted_read_only_effects(
@@ -7987,6 +8091,11 @@ def test_s2b_read_only_zero_original_requires_physical_source_witness(
     )
     assert proof.disposition == expected
     assert zero_reads == [record.request_comment_id]
+    if zero_proven and not formal_applied:
+        assert proof.pending_frontier_proof is not None
+        assert proof.pending_frontier_proof.disposition == "NOT_APPLIED"
+        assert proof.pending_frontier_proof.frontier_index == 0
+        assert proof.pending_frontier_proof.remaining_obligation == "FORMAL_RESULT"
 
 
 @pytest.mark.parametrize(
@@ -8323,3 +8432,189 @@ def test_archive_findings_require_exact_carrier_identity(
     formal = bridge._formal_result_body(result, source=source)
     assert formal is not None
     assert bridge._field(formal, "Revision") == head
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "exact",
+        "missing-source",
+        "pending-save",
+        "competing-ingress",
+        "settled-predecessor",
+        "wrong-predecessor-base",
+        "marker-pass",
+        "marker-fail",
+        "marker-no-proof",
+    ],
+)
+def test_development_phase_a_requalifies_native_source_and_shared_frontier(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: str
+) -> None:
+    from dataclasses import asdict
+
+    from investment_strategy import issue_comment_bridge as dispatch
+
+    source = WorkerRequest(138, "executor", "implement-change")
+    head = "b" * 40
+    materialization = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": head,
+        "message": "Save partial test work",
+        "pr_number": 178,
+        "files": [
+            {
+                "path": (
+                    f"openspec/changes/{_CHANGE}/tasks.md"
+                    if case.startswith("marker-")
+                    else "tests/test_scheduled_agent_application_bridge.py"
+                ),
+                "blob_sha": "c" * 40,
+                "expected_sha": "d" * 40,
+            }
+        ],
+    }
+    worker = _worker_result(
+        action=source.action, role=source.role, result_kind="more-implementation-required"
+    )
+    worker["change"] = _CHANGE
+    worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(materialization)}
+    ]
+    body = "WORKER_RESULT\n" + json.dumps(worker, sort_keys=True) + "\n"
+    event_path = tmp_path / "development-event.json"
+    event_path.write_text(json.dumps(_event(body)), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", _REVISION)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled_agent_application_bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+        ],
+    )
+    monkeypatch.setattr(bridge, "_fresh_event_observation", lambda *_args: False)
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_args: _preflight(action=source.action, change=_CHANGE),
+    )
+    monkeypatch.setattr(
+        bridge, "_find_application_decision_from_current_frontier", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        bridge,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: SimpleNamespace(recognized=True, default_branch="main", head_sha=head),
+    )
+    receipt = dispatch.DevelopmentDispatchSource(
+        101, 77, 1, 78, 79, "sha256:" + "1" * 64, _REVISION
+    )
+    prior_record = _accepted_record(
+        json.dumps(worker),
+        body,
+        source=source,
+        change=_CHANGE,
+        result_kind="more-implementation-required",
+        request_comment_id=100,
+    )
+    prior_digest = "1" * 64
+    prior_obligation = dispatch.NativeQualityObligation(
+        "a" * 40 if case == "wrong-predecessor-base" else head,
+        f"agent/{_CHANGE}",
+        "2" * 40,
+        "3" * 64,
+        "2026-09-03T00:00:00Z",
+        "main",
+        head,
+        _REVISION,
+    )
+    prior_attempt = dispatch.NativeQualityAttempt(
+        66, 1, "PASS" if case == "marker-pass" else "PYTEST_STEP_FAILURE", 67, head, head, None
+    )
+    seen: list[str] = []
+
+    def native_source(*_args: object, **kwargs: object) -> object:
+        assert kwargs["source"] == source
+        assert kwargs["request_comment_id"] == 102
+        assert kwargs["current_revision"] == _REVISION
+        seen.append("native-source")
+        return None if case == "missing-source" else receipt
+
+    def shared_frontier(*_args: object, **kwargs: object) -> dispatch.ApplicationCompletion:
+        assert kwargs["source"] == source
+        assert kwargs["current_dispatch_request_comment_id"] == 101
+        assert kwargs["current_dispatch_issue_number"] == 142
+        assert kwargs["phase_a_request_comment_id"] == 102
+        seen.append("shared-frontier")
+        if case == "pending-save":
+            return dispatch.ApplicationCompletion("RESUMABLE", "verification-obligation-pending")
+        if case == "competing-ingress":
+            return dispatch.ApplicationCompletion("AMBIGUOUS", "competing-ingress")
+        if case in {"settled-predecessor", "wrong-predecessor-base", "marker-pass", "marker-fail"}:
+            return dispatch.ApplicationCompletion(
+                "COMPLETE",
+                "settled",
+                100,
+                accepted_record=prior_record,
+                accepted_decision_sha256=prior_digest,
+                quality_observation=dispatch.NativeQualityObservation(
+                    "PASS" if case == "marker-pass" else "FAIL", (prior_attempt,)
+                ),
+                settled_quality_obligation=prior_obligation,
+            )
+        return dispatch.ApplicationCompletion("NONE", "application-completion-none")
+
+    class AcceptBoundaryReached(Exception):
+        pass
+
+    def accept(raw: str, **_kwargs: object) -> object:
+        assert case in {
+            "exact",
+            "settled-predecessor",
+            "marker-pass",
+        }, "unqualified ingress reached ACCEPT"
+        document = json.loads(raw)
+        if case == "marker-pass":
+            assert _kwargs["apply_derived"] is False, "marker save must not derive routing"
+            assert document["requested_effects"] == worker["requested_effects"]
+        assert document["_native_development_dispatch"] == asdict(receipt)
+        if case in {"settled-predecessor", "marker-pass"}:
+            assert document["_native_development_predecessor"] == {
+                "request_comment_id": 100,
+                "accepted_decision_sha256": prior_digest,
+                "revision": head,
+                "branch": f"agent/{_CHANGE}",
+                "workflow_blob": "2" * 40,
+                "obligation_id": "3" * 64,
+                "authorization_revision": _REVISION,
+                "attempts": [asdict(prior_attempt)],
+            }
+        else:
+            assert "_native_development_predecessor" not in document
+        seen.append("accept")
+        raise AcceptBoundaryReached
+
+    monkeypatch.setattr(dispatch, "qualify_development_dispatch_source", native_source)
+    monkeypatch.setattr(dispatch, "qualify_application_completion", shared_frontier)
+    monkeypatch.setattr(bridge, "run_guarded_effect_application", accept)
+    if case in {"exact", "settled-predecessor", "marker-pass"}:
+        with pytest.raises(AcceptBoundaryReached):
+            bridge._main_unprotected(bridge.ApplicationExceptionContext())
+        assert seen == ["native-source", "shared-frontier", "accept"]
+    else:
+        with pytest.raises(ValueError, match="development ingress"):
+            bridge._main_unprotected(bridge.ApplicationExceptionContext())
+        assert seen == (
+            ["native-source"] if case == "missing-source" else ["native-source", "shared-frontier"]
+        )

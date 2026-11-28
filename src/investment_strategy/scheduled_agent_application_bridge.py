@@ -85,6 +85,7 @@ from investment_strategy.scheduled_agent_effects import (
     StagedEffect,
     _archive_branch,
     _archive_ref,
+    _implementation_development_save,
     _references_issue,
     _source_branch,
     archive_branch_matches_current_source,
@@ -553,6 +554,7 @@ def canonicalize_raw_worker_result(
         "evidence_ref",
         "result_content",
         "requested_effects",
+        "reviewed_task_ids",
     }
     if set(parsed) - allowed_fields:
         raise ValueError("WORKER_RESULT contains unknown JSON fields")
@@ -1210,11 +1212,11 @@ def _application_decision_comment_for_request(
 
 def _worker_semantic_projection(
     raw_worker_result: str, source: WorkerRequest, *, change: str
-) -> tuple[BoundedActionResult, str]:
+) -> tuple[BoundedActionResult, str, tuple[str, ...] | None]:
     """Use the canonical typed parser, not optional wire-field presence, as identity."""
 
     worker = parse_worker_result(raw_worker_result, source, authorized_change=change)
-    return worker.typed_result, worker.result_content
+    return worker.typed_result, worker.result_content, worker.reviewed_task_ids
 
 
 def _read_accepted_original_request(
@@ -2109,7 +2111,7 @@ def _application_owned_worker_result(
     result_revision: str | None = None,
     request_comment_id: int | None = None,
 ) -> str:
-    """Require one application-owned formal result after worker effects."""
+    """Bind worker effects and project a formal result only for formal delivery."""
 
     if change is None:
         # Compatibility-only path for callers that predate the machine-owned
@@ -2121,6 +2123,24 @@ def _application_owned_worker_result(
         source,
         authorized_change=change,
     )
+    decoded = json.loads(raw_worker_result)
+    if not isinstance(decoded, dict):
+        raise RuntimeError("worker result must be a JSON object")
+    requested = decoded.get("requested_effects", [])
+    if not isinstance(requested, list):
+        raise RuntimeError("worker result requested effects are invalid")
+
+    # Carry the exact machine envelope forward once, after fresh application
+    # authorization.  These fields are never sourced from the semantic worker.
+    decoded["issue_number"] = source.issue_number
+    decoded["role"] = source.role
+    decoded["action"] = source.action
+    decoded["change"] = change
+    if _implementation_development_save(
+        parse_effect_batch(raw_worker_result, source, authorized_change=change)
+    ):
+        return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
+
     # Formal headers, routing, revisions, and successor text are application
     # protocol, not semantic-worker output.  Preserve only bounded semantic
     # evidence and rebuild the canonical result from fresh machine identity.
@@ -2181,13 +2201,6 @@ def _application_owned_worker_result(
     body_lines.append(f"Evidence: {evidence}")
     body = "\n".join(body_lines)
 
-    decoded = json.loads(raw_worker_result)
-    if not isinstance(decoded, dict):
-        raise RuntimeError("worker result must be a JSON object")
-    requested = decoded.get("requested_effects", [])
-    if not isinstance(requested, list):
-        raise RuntimeError("worker result requested effects are invalid")
-
     ordered: list[object] = []
     for raw_effect in requested:
         if not isinstance(raw_effect, Mapping) or raw_effect.get("kind") != "issue-comment":
@@ -2216,12 +2229,6 @@ def _application_owned_worker_result(
             ),
         }
     )
-    # Carry the exact machine envelope forward once, after fresh application
-    # authorization.  These fields are never sourced from the semantic worker.
-    decoded["issue_number"] = source.issue_number
-    decoded["role"] = source.role
-    decoded["action"] = source.action
-    decoded["change"] = change
     decoded["result_content"] = body
     decoded["requested_effects"] = ordered
     return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
@@ -3025,6 +3032,11 @@ def _fresh_application_worker_result(
     decoded = json.loads(application_raw)
     if not isinstance(decoded, dict):
         raise RuntimeError("application worker result is not an object")
+    if _implementation_development_save(
+        parse_effect_batch(application_raw, source, authorized_change=change)
+    ):
+        decoded["_semantic_intent_version"] = 2
+        return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
     worker = parse_worker_result(application_raw, source, authorized_change=change)
     semantic_effects: list[dict[str, str]] = []
     control_candidates = [
@@ -6161,6 +6173,14 @@ def _accepted_recovery_boundary(
         and evidence.get("rejection") is None
     )
     if known_rejection and exact_frontier and exact_failure and not indexes:
+        if (
+            evidence.get("failed_effect_kind") == "issue-comment"
+            and evidence.get("operation_stage") == "BEFORE-WRITE"
+            and evidence.get("write_call_entered") is False
+        ):
+            # A rejected publication needs the original no-call witness.
+            # Never infer an intent-wide zero-write fact from this invocation.
+            return "READ_ONLY"
         return "ZERO_WRITE_REJECTION"
     if exact_frontier and exact_failure:
         if unattempted_exception or (known_rejection and indexes):
@@ -7731,6 +7751,12 @@ def classify_accepted_read_only_effects(
             if attempted_proof.disposition == "SATISFIED"
             else "accepted unattempted suffix qualified",
             original_effect_proof=original_effect_proof,
+            # Only the zero-Original, first-Formal never-called witness can
+            # prove this entire publication intent has no executed Effects.
+            # Preserve the existing completed-prefix projection elsewhere.
+            pending_frontier_proof=(
+                historical_proof if not original.effects and historical_frontier == 0 else None
+            ),
         )
     except OSError:
         # Only an expected transport/read failure is re-observable. Invalid
@@ -8646,6 +8672,13 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     )
     if len(materializations) > 1:
         raise RuntimeError("EFFECT_REQUEST contains ambiguous materialization effects")
+    projected_batch = parse_effect_batch(
+        application_worker_result, plan.source, authorized_change=plan.change
+    )
+    physical_only = _implementation_development_save(projected_batch)
+    marker_only = physical_only and not _implementation_development_save(
+        projected_batch, include_task_markers=False
+    )
     materialization = None if not materializations else materializations[0]
     parsed_materialization = None
     first_activation = False
@@ -8666,10 +8699,8 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             parsed_materialization, plan.source
         )
 
-    # Post-ACCEPT Executor slices have already passed candidate verification,
-    # but their checkpoint is a distinct non-idempotent, revision-bound effect.
-    # First construct the exact carrier without comments or routing; only a
-    # later fresh proof of its actual head may bind and persist the checkpoint.
+    # Re-observe the accepted carrier for both physical saves and historical
+    # completion bundles. Only the latter can carry a formal result obligation.
     defer_accepted_checkpoint = False
     historical_formal_only = False
     if (
@@ -8679,15 +8710,17 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         and materialization is not None
         and not requires_validation
     ):
-        committed_result = _qualified_committed_implementation_result(
-            repository=repository,
-            token=token,
-            source=plan.source,
-            worker_result=worker_result,
-            change=effective_change,
-            current_revision=args.revision,
-            request_comment_id=plan.request_comment_id,
-        )
+        committed_result = None
+        if not physical_only:
+            committed_result = _qualified_committed_implementation_result(
+                repository=repository,
+                token=token,
+                source=plan.source,
+                worker_result=worker_result,
+                change=effective_change,
+                current_revision=args.revision,
+                request_comment_id=plan.request_comment_id,
+            )
         checkpoint_proof = prove_materialization(
             materialization,
             plan.source,
@@ -8736,7 +8769,8 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 _write_validation_outputs(None)
                 return 0
         elif (
-            continuation is not None
+            not physical_only
+            and continuation is not None
             and checkpoint_proof.historical_witness is not None
             and consequence_spec_for(
                 plan.source.action, worker_result.typed_result.result.kind
@@ -8745,7 +8779,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         ):
             historical_formal_only = True
         elif checkpoint_proof.disposition == "INCOMPLETE" and committed_result is None:
-            defer_accepted_checkpoint = True
+            defer_accepted_checkpoint = not physical_only
         else:
             raise RuntimeError(
                 checkpoint_proof.reason
@@ -8818,7 +8852,7 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         raise RuntimeError("EFFECT_REQUEST validation completion has no materialization")
 
     checkpoint_already_durable = False
-    if target is not None:
+    if target is not None and not physical_only:
         if (
             accepted_intent is not None
             and plan.source.role == "executor"
@@ -9061,6 +9095,60 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         and _fresh_event_observation(event, body, repository, token)
     ):
         raise ValueError("WORKER_RESULT comment changed before Phase-A ACCEPT")
+    if physical_only and accepted_intent is None:
+        from dataclasses import asdict
+
+        from investment_strategy import issue_comment_bridge as development_dispatch
+
+        ingress_issue = _as_mapping(event.get("issue"))
+        ingress_shard = _positive_int(
+            None if ingress_issue is None else ingress_issue.get("number")
+        )
+        if ingress_shard is None or plan.request_comment_id != event_comment_id:
+            raise ValueError("development ingress identity is unavailable")
+        receipt = development_dispatch.qualify_development_dispatch_source(
+            repository,
+            token,
+            source=plan.source,
+            request_comment_id=plan.request_comment_id,
+            current_revision=args.revision,
+            default_branch=args.default_branch,
+        )
+        if receipt is None:
+            raise ValueError("development ingress lacks exact native dispatch authority")
+        frontier = development_dispatch.qualify_application_completion(
+            repository,
+            token,
+            source=plan.source,
+            current_revision=args.revision,
+            current_dispatch_request_comment_id=receipt.dispatch_request_comment_id,
+            current_dispatch_issue_number=ingress_shard,
+            phase_a_request_comment_id=plan.request_comment_id,
+        )
+        if frontier.state not in ("NONE", "COMPLETE", "ABORTED", "REJECTED"):
+            raise ValueError("development ingress has an unsettled or competing predecessor")
+        if marker_only and (
+            frontier.settled_quality_obligation is None
+            or frontier.quality_observation is None
+            or frontier.quality_observation.outcome != "PASS"
+        ):
+            raise ValueError("development ingress lacks exact native marker GREEN")
+        document = json.loads(application_worker_result)
+        document["_native_development_dispatch"] = asdict(receipt)
+        if frontier.settled_quality_obligation is not None:
+            predecessor = development_dispatch.development_predecessor_evidence(
+                frontier, args.revision
+            )
+            if (
+                predecessor is None
+                or parsed_materialization is None
+                or parsed_materialization.base_sha != frontier.settled_quality_obligation.revision
+                or parsed_materialization.branch != frontier.settled_quality_obligation.branch
+            ):
+                raise ValueError("development ingress lacks exact settled predecessor")
+            document["_native_development_predecessor"] = predecessor
+        application_worker_result = json.dumps(document, sort_keys=True, separators=(",", ":"))
+
     try:
         if missing_pr_only_plan is not None:
             # Native carrier actuator is the mutation boundary and rechecks
@@ -9077,7 +9165,8 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             token=token,
             current_revision=args.revision,
             apply_derived=(
-                not activation_validated
+                not physical_only
+                and not activation_validated
                 and (not requires_validation or args.validation_passed)
                 and not defer_accepted_checkpoint
             ),

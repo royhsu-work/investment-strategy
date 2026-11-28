@@ -18,6 +18,17 @@ concurrency:
 jobs:
   bridge:
     runs-on: ubuntu-latest
+    outputs:
+      quality_target_repository: ${{ steps.handler.outputs.quality_target_repository }}
+      quality_target_revision: ${{ steps.handler.outputs.quality_target_revision }}
+      quality_definition_revision: ${{ steps.handler.outputs.quality_definition_revision }}
+      quality_verification_correlation: ${{ steps.handler.outputs.quality_verification_correlation }}
+      quality_source_comment_id: ${{ steps.handler.outputs.quality_source_comment_id }}
+      quality_run_id: ${{ steps.handler.outputs.quality_run_id }}
+      quality_run_attempt: ${{ steps.handler.outputs.quality_run_attempt }}
+      quality_call: ${{ steps.handler.outputs.quality_call }}
+      quality_result: ${{ steps.handler.outputs.quality_result }}
+      checked_out_revision: ${{ steps.revision.outputs.sha }}
     steps:
       - name: Check out authoritative default branch
         uses: actions/checkout@v4
@@ -73,3 +84,30 @@ jobs:
           archive: false
           if-no-files-found: error
           retention-days: 7
+
+  verify_quality:
+    needs: bridge
+    if: >-
+      ${{ needs.bridge.result == 'success'
+      && needs.bridge.outputs.quality_call == 'true'
+      && needs.bridge.outputs.quality_result == 'verification-obligation-pending'
+      && needs.bridge.outputs.quality_target_repository == github.repository
+      && needs.bridge.outputs.quality_target_revision != ''
+      && needs.bridge.outputs.quality_verification_correlation != ''
+      && needs.bridge.outputs.quality_definition_revision == needs.bridge.outputs.checked_out_revision
+      && needs.bridge.outputs.quality_definition_revision == github.workflow_sha
+      && needs.bridge.outputs.quality_definition_revision == github.sha
+      && needs.bridge.outputs.quality_source_comment_id == format('{0}', github.event.comment.id)
+      && needs.bridge.outputs.quality_run_id == github.run_id
+      && needs.bridge.outputs.quality_run_attempt == github.run_attempt }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/quality.yml
+    with:
+      target_repository: ${{ needs.bridge.outputs.quality_target_repository }}
+      target_revision: ${{ needs.bridge.outputs.quality_target_revision }}
+      definition_revision: ${{ needs.bridge.outputs.quality_definition_revision }}
+      verification_correlation: ${{ needs.bridge.outputs.quality_verification_correlation }}
+      source_comment_id: ${{ needs.bridge.outputs.quality_source_comment_id }}
+      run_id: ${{ needs.bridge.outputs.quality_run_id }}
+      run_attempt: ${{ needs.bridge.outputs.quality_run_attempt }}

@@ -13,7 +13,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, cast
@@ -35,6 +35,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     ApplicationExceptionArtifact,
     ApplicationRecoveryArtifact,
     ApplicationRequest,
+    CompleteNeverCalledWitness,
     RecoveryEvidenceNode,
     RecoveryProofResult,
     TypedEvidenceError,
@@ -63,8 +64,10 @@ from investment_strategy.scheduled_agent_application_bridge import (
 from investment_strategy.scheduled_agent_application_carrier import qualify_implementation_carrier
 from investment_strategy.scheduled_agent_application_materialization import (
     MaterializationProof,
+    MaterializationRequest,
     _proof_witness,
     find_materialization_payload,
+    prove_materialization,
 )
 from investment_strategy.scheduled_agent_carrier import (
     CarrierOutcomeReport,
@@ -72,6 +75,7 @@ from investment_strategy.scheduled_agent_carrier import (
     QualifiedApplicationJob,
     QualifiedCarrierPlan,
     github_comment_has_app_provenance,
+    github_complete_job_inventory,
     github_complete_run_jobs,
     github_original_request_matches,
     github_paginated_mappings,
@@ -91,9 +95,12 @@ from investment_strategy.scheduled_agent_effects import (
     ApplyResult,
     EffectBatch,
     StagedEffect,
+    _implementation_development_save,
+    _slice_checkpoint_completed_task_ids,
     consequence_postconditions_complete,
     merged_pr_readiness_complete,
     parse_application_decision,
+    parse_effect_batch,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     CurrentFrontier,
@@ -114,6 +121,19 @@ from investment_strategy.scheduled_agent_runtime import (
     is_github_actions_comment,
     normalize_github_issue,
 )
+from investment_strategy.scheduled_agent_validation_resource import (
+    NativeQualityAttempt,
+    _content_sha_at,
+    _content_text_at,
+    _task_slices,
+    native_quality_setup_failure_index,
+    native_quality_witness_matches,
+    openspec_review_revision_applies,
+    qualify_native_quality_job,
+    read_native_quality_attempt,
+    reduce_native_quality_attempts,
+    task_checkpoint_is_exact,
+)
 from investment_strategy.scheduled_agent_wire import RUNTIME_REPAIR_REQUEST_WIRE
 from investment_strategy.scheduled_agent_worker import (
     WorkerActionResult,
@@ -133,6 +153,7 @@ APPLICATION_RUN_NAME_PREFIX = "Scheduled Agent Application "
 DISPATCH_RESULT_SCHEMA = "scheduled-agent-dispatch-result/v1"
 _APPLICATION_WORKFLOW = "scheduled-agent-application.yml"
 _DISPATCH_WORKFLOW = "scheduled-agent-bridge.yml"
+_QUALITY_WORKFLOW = "quality.yml"
 _APPLICATION_DECISION_PROTOCOL_REVISION = "e874b4bdfc866649c0e7e61c151991d124d5c0c6"
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
@@ -170,6 +191,34 @@ class BridgePlan:
     issue_number: int | None = None
     request_comment_id: int | None = None
     result_body: str | None = None
+    quality_call: dict[str, str] | None = None
+
+
+@dataclass(frozen=True)
+class DevelopmentDispatchSource:
+    """One native authorization bound to its actual ingress boundary."""
+
+    dispatch_request_comment_id: int
+    run_id: int
+    run_attempt: int
+    job_id: int
+    artifact_id: int
+    artifact_digest: str
+    authorization_revision: str
+
+
+@dataclass(frozen=True)
+class NativeQualityObligation:
+    """Exact saved-work gate; never a new durable lifecycle state."""
+
+    revision: str
+    branch: str
+    workflow_blob: str
+    obligation_id: str
+    accepted_at: str
+    default_branch: str
+    carrier_revision: str
+    carrier_base: str
 
 
 @dataclass(frozen=True)
@@ -185,6 +234,10 @@ class ApplicationCompletion:
     # Application-owned exact accepted-source proof, not Bridge-local history.
     accepted_record: ApplicationDecisionRecord | None = None
     accepted_decision_sha256: str | None = None
+    quality_obligation: NativeQualityObligation | None = None
+    quality_observation: NativeQualityObservation | None = None
+    settled_quality_obligation: NativeQualityObligation | None = None
+    settled_development_records: tuple[ApplicationDecisionRecord, ...] = ()
 
 
 # The canonical proof owns permission. This Bridge-only table preserves the
@@ -2157,13 +2210,16 @@ def _complete_workflow_runs(
     workflow: str,
     *,
     read: GitHubReader,
+    event: str = "issue_comment",
+    head_sha: str | None = None,
+    require_count: bool = False,
 ) -> tuple[Mapping[str, object], ...] | None:
     """Read one complete workflow-run history with a single counted-page proof.
 
-    Event-filtered GitHub searches are capped at 1,000 runs. When the count
-    exceeds that cap, switch to unfiltered pages and require native event
-    provenance before selecting issue_comment runs. A failed/inconsistent
-    observation never proves absence.
+    Exact-head searches require counted pages and confirmed event and head
+    metadata. At the search cap, use the unfiltered history (which is not
+    capped) and reapply the filters. Preserve the legacy issue-comment reader
+    contract when no exact head is requested.
     """
 
     path = f"actions/workflows/{quote(workflow, safe='')}/runs"
@@ -2171,7 +2227,9 @@ def _complete_workflow_runs(
     def page(number: int, *, filtered: bool) -> Mapping[str, object] | None:
         params: dict[str, str | int] = {"per_page": 100, "page": number}
         if filtered:
-            params = {"event": "issue_comment", **params}
+            params = {"event": event, **params}
+            if head_sha is not None:
+                params["head_sha"] = head_sha
         payload = read(repository, token, f"{path}?{urlencode(params)}")
         if not isinstance(payload, Mapping) or not isinstance(payload.get("workflow_runs"), list):
             return None
@@ -2185,7 +2243,10 @@ def _complete_workflow_runs(
         return None
 
     if type(total_count) is int:
-        filtered = total_count <= 1000
+        reported_count = total_count
+        filtered = total_count < 1000 or (
+            head_sha is None and not require_count and total_count == 1000
+        )
         if not filtered:
             unfiltered_first = page(1, filtered=False)
             if unfiltered_first is None:
@@ -2216,12 +2277,34 @@ def _complete_workflow_runs(
                     or (not filtered and not isinstance(run.get("event"), str))
                 ):
                     return None
+                if head_sha is not None:
+                    revision = run.get("head_sha")
+                    if (
+                        not isinstance(revision, str)
+                        or _SHA.fullmatch(revision) is None
+                        or (filtered and (revision != head_sha or run.get("event") != event))
+                    ):
+                        return None
                 runs.append(cast(Mapping[str, object], run))
         ids = [cast(int, run["id"]) for run in runs]
         if len(ids) != len(set(ids)):
             return None
-        return tuple(run for run in runs if filtered or run.get("event") == "issue_comment")
+        if filtered:
+            return tuple(runs)
+        matching = tuple(
+            run
+            for run in runs
+            if run.get("event") == event and (head_sha is None or run.get("head_sha") == head_sha)
+        )
+        if head_sha is not None and (
+            len(matching) < reported_count
+            or (reported_count > 1000 and len(matching) != reported_count)
+        ):
+            return None
+        return matching
 
+    if head_sha is not None or require_count:
+        return None
     # Historical injected readers without total_count retain a bounded
     # short-page terminator; do not trust a filtered 1,000-result cap.
     legacy_runs: list[Mapping[str, object]] = []
@@ -2243,6 +2326,1087 @@ def _complete_workflow_runs(
         if next_page is None:
             return None
         current = next_page
+
+
+def read_native_quality_runs(
+    repository: str,
+    token: str,
+    revision: str,
+    *,
+    read: GitHubReader = _github_json,
+) -> tuple[Mapping[str, object], ...] | None:
+    """Read push/PR candidates for one exact head before qualifying their jobs."""
+    if _SHA.fullmatch(revision) is None:
+        return None
+
+    eligible: list[Mapping[str, object]] = []
+    seen: set[int] = set()
+    for event in ("push", "pull_request"):
+        try:
+            runs = _complete_workflow_runs(
+                repository, token, _QUALITY_WORKFLOW, read=read, event=event, head_sha=revision
+            )
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if runs is None:
+            return None
+        for run in runs:
+            run_id = _positive_int(run.get("id"))
+            run_repo = run.get("repository")
+            head_repo = run.get("head_repository")
+            origin = head_repo.get("full_name") if isinstance(head_repo, Mapping) else None
+            if (
+                run_id is None
+                or run_id in seen
+                or _positive_int(run.get("run_attempt")) is None
+                or run.get("path") != f".github/workflows/{_QUALITY_WORKFLOW}"
+                or not isinstance(run_repo, Mapping)
+                or run_repo.get("full_name") != repository
+                or not isinstance(origin, str)
+                or not origin
+            ):
+                return None
+            seen.add(run_id)
+            if origin == repository:
+                eligible.append(run)
+    return tuple(eligible)
+
+
+def read_native_quality_history(
+    repository: str,
+    token: str,
+    revision: str,
+    *,
+    branch: str,
+    workflow_blob: str,
+    read: GitHubReader = _github_json,
+    log_read: Callable[[str, str, int], str] = _github_job_log,
+) -> tuple[NativeQualityAttempt, ...] | None:
+    """Reconstruct all ordinary quality attempts for one qualified gate.
+
+    Reruns cannot erase historical verdicts. Compare two complete inventories
+    around the exact attempt reads; an intervening run or rerun requires fresh
+    observation. An empty ordinary history alone does not authorize a call,
+    since the existing bridge-call history must also be qualified.
+    """
+    if (
+        not branch
+        or branch != branch.strip()
+        or _SHA.fullmatch(revision) is None
+        or _SHA.fullmatch(workflow_blob) is None
+    ):
+        return None
+
+    def snapshot() -> tuple[tuple[int, int, str, str, str | None], ...] | None:
+        runs = read_native_quality_runs(repository, token, revision, read=read)
+        if runs is None:
+            return None
+        rows: list[tuple[int, int, str, str, str | None]] = []
+        for run in runs:
+            observed_branch = run.get("head_branch")
+            if not isinstance(observed_branch, str) or not observed_branch:
+                return None
+            if observed_branch != branch:
+                continue
+            run_id = _positive_int(run.get("id"))
+            latest = _positive_int(run.get("run_attempt"))
+            event = run.get("event")
+            status, conclusion = run.get("status"), run.get("conclusion")
+            if (
+                run_id is None
+                or latest is None
+                or not isinstance(event, str)
+                or event not in ("push", "pull_request")
+                or not isinstance(status, str)
+                or (conclusion is not None and not isinstance(conclusion, str))
+            ):
+                return None
+            rows.append((run_id, latest, event, status, conclusion))
+        return tuple(sorted(rows, key=lambda row: row[0]))
+
+    def qualify(
+        row: tuple[int, int, str, str, str | None], number: int
+    ) -> NativeQualityAttempt | None:
+        run_id, latest, event, status, conclusion = row
+        endpoint = f"actions/runs/{run_id}/attempts/{number}"
+        try:
+            observed = read(repository, token, endpoint)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            observed = None
+        if (
+            number == latest
+            and isinstance(observed, Mapping)
+            and (observed.get("status"), observed.get("conclusion")) != (status, conclusion)
+        ):
+            return None
+
+        def exact_read(repo: str, credential: str, path: str) -> object:
+            # Bind the classifier to the same exact source used for comparison,
+            # not a second potentially different read of that attempt.
+            if path == endpoint:
+                return observed
+            return read(repo, credential, path)
+
+        attempt = read_native_quality_attempt(
+            repository,
+            token,
+            revision=revision,
+            branch=branch,
+            workflow_blob=workflow_blob,
+            run_id=run_id,
+            run_attempt=number,
+            event=event,
+            read=exact_read,
+            log_read=log_read,
+        )
+        if number < latest and attempt.outcome == "PENDING":
+            return None
+        return attempt
+
+    first = snapshot()
+    if first is None:
+        return None
+    attempts: list[NativeQualityAttempt] = []
+    for row in first:
+        for number in range(1, row[1] + 1):
+            attempt = qualify(row, number)
+            if attempt is None:
+                return None
+            attempts.append(attempt)
+    return tuple(attempts) if snapshot() == first else None
+
+
+_QualityOutcome = Literal["PASS", "FAIL", "CONFLICT", "NO_VERDICT", "PENDING", "INDETERMINATE"]
+
+
+@dataclass(frozen=True)
+class NativeQualityObservation:
+    """Invocation-local verification evidence; never semantic dispatch authority."""
+
+    outcome: _QualityOutcome
+    attempts: tuple[NativeQualityAttempt, ...] | None = None
+    call: dict[str, str] | None = None
+
+
+def _quality_call_fields(
+    repository: str,
+    revision: str,
+    definition: str,
+    obligation: str,
+    source_id: int,
+    run_id: int,
+    attempt: int,
+) -> dict[str, str]:
+    correlation = hashlib.sha256(
+        f"{obligation}:{definition}:{source_id}:{run_id}:{attempt}".encode()
+    ).hexdigest()
+    return {
+        "quality_obligation": obligation,
+        "quality_target_repository": repository,
+        "quality_target_revision": revision,
+        "quality_definition_revision": definition,
+        "quality_verification_correlation": correlation,
+        "quality_source_comment_id": str(source_id),
+        "quality_run_id": str(run_id),
+        "quality_run_attempt": str(attempt),
+        "quality_call": "true",
+        "quality_result": "verification-obligation-pending",
+    }
+
+
+def _quality_time(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _quality_workflow_blob(
+    repository: str, token: str, revision: str, *, read: GitHubReader
+) -> str | None:
+    path = f".github/workflows/{_QUALITY_WORKFLOW}"
+    file = read(repository, token, f"contents/{path}?{urlencode({'ref': revision})}")
+    if not isinstance(file, Mapping) or file.get("type") != "file" or file.get("path") != path:
+        return None
+    sha = file.get("sha")
+    return sha if isinstance(sha, str) and _SHA.fullmatch(sha) is not None else None
+
+
+def _quality_dispatch_requests(
+    repository: str, token: str, accepted_at: str, *, read: GitHubReader
+) -> dict[int, str] | None:
+    boundary = _quality_time(accepted_at)
+    if boundary is None:
+        return None
+    query = urlencode({"sort": "created", "direction": "asc", "since": accepted_at})
+    rows = _paged_list(repository, token, f"issues/comments?{query}", read=read)
+    requests: dict[int, str] = {}
+    for comment in rows:
+        body = comment.get("body")
+        if (
+            not isinstance(body, str)
+            or body.splitlines()[:1] != [REQUEST_MARKER]
+            or not _trusted_connector_comment(comment, repository.split("/", 1)[0])
+        ):
+            continue
+        stamp = _quality_time(comment.get("created_at"))
+        if stamp is None or stamp == boundary:
+            return None
+        if stamp < boundary:
+            continue
+        source_id = _positive_int(comment.get("id"))
+        issue_url = comment.get("issue_url")
+        prefix = github_repository_api_url(repository, "issues/")
+        if (
+            source_id is None
+            or source_id in requests
+            or not isinstance(issue_url, str)
+            or not issue_url.startswith(prefix)
+            or comment.get("updated_at") != comment.get("created_at")
+            or parse_dispatch_request(body) is None
+        ):
+            return None
+        issue_id = _positive_int_string(issue_url.removeprefix(prefix))
+        if issue_id is None:
+            return None
+        observed = read(repository, token, f"issues/comments/{source_id}")
+        if (
+            not isinstance(observed, Mapping)
+            or not _trusted_connector_comment(observed, repository.split("/", 1)[0])
+            or any(
+                observed.get(key) != comment.get(key)
+                for key in ("id", "body", "issue_url", "created_at", "updated_at")
+            )
+        ):
+            return None
+        issue = read(repository, token, f"issues/{issue_id}")
+        if (
+            not isinstance(issue, Mapping)
+            or issue.get("number") != issue_id
+            or not is_runtime_checkin_issue(issue)
+        ):
+            return None
+        requests[source_id] = cast(str, comment["created_at"])
+    return requests
+
+
+def _quality_bridge_run(
+    run: Mapping[str, object], repository: str, default_branch: str, source: int
+) -> tuple[int, int, str, str, str | None] | None:
+    run_id, attempt = _positive_int(run.get("id")), _positive_int(run.get("run_attempt"))
+    repo, head = run.get("repository"), run.get("head_repository")
+    definition, status, conclusion = run.get("head_sha"), run.get("status"), run.get("conclusion")
+    if (
+        run_id is None
+        or attempt is None
+        or not isinstance(repo, Mapping)
+        or repo.get("full_name") != repository
+        or not isinstance(head, Mapping)
+        or head.get("full_name") != repository
+        or run.get("event") != "issue_comment"
+        or run.get("path") != f".github/workflows/{_DISPATCH_WORKFLOW}"
+        or run.get("head_branch") != default_branch
+        or run.get("display_title") != render_dispatch_run_name(source)
+        or not isinstance(definition, str)
+        or _SHA.fullmatch(definition) is None
+        or not isinstance(status, str)
+        or (conclusion is not None and not isinstance(conclusion, str))
+    ):
+        return None
+    return run_id, attempt, definition, status, conclusion
+
+
+_QUALITY_ACTIVE = ("queued", "in_progress", "requested", "waiting", "pending")
+_QUALITY_NO_VERDICT = (
+    "cancelled",
+    "skipped",
+    "timed_out",
+    "action_required",
+    "startup_failure",
+    "stale",
+    "neutral",
+)
+
+
+def _quality_bridge_attempt(
+    repository: str,
+    token: str,
+    *,
+    source: int,
+    row: tuple[int, int, str, str, str | None],
+    obligation_id: str | None,
+    revision: str | None,
+    workflow_blob: str,
+    read: GitHubReader,
+    log_read: Callable[[str, str, int], str],
+    audit_result_sha256: str | None = None,
+) -> NativeQualityAttempt:
+    run_id, attempt, definition, status, conclusion = row
+    unknown = NativeQualityAttempt(run_id, attempt, "INDETERMINATE")
+    absent = NativeQualityAttempt(run_id, attempt, "NO_VERDICT")
+    if obligation_id is None:
+        if (
+            revision is not None
+            or audit_result_sha256 is None
+            or re.fullmatch(r"[0-9a-f]{64}", audit_result_sha256) is None
+        ):
+            return unknown
+    elif revision is None or audit_result_sha256 is not None:
+        return unknown
+    if status in _QUALITY_ACTIVE:
+        return NativeQualityAttempt(run_id, attempt, "PENDING") if conclusion is None else unknown
+    if status != "completed" or conclusion not in ("success", "failure", *_QUALITY_NO_VERDICT):
+        return unknown
+    jobs = github_complete_job_inventory(
+        repository, token, run_id=run_id, run_attempt=attempt, read=read
+    )
+    if jobs is None:
+        return unknown
+    by_name: dict[str, Mapping[str, object]] = {}
+    for job in jobs:
+        name = job.get("name")
+        if (
+            not isinstance(name, str)
+            or name not in ("bridge", "verify_quality / quality", "verify_quality")
+            or name in by_name
+            or job.get("run_id") != run_id
+            or job.get("run_attempt") != attempt
+            or job.get("head_sha") != definition
+            or job.get("status") != "completed"
+            or _positive_int(job.get("id")) is None
+        ):
+            return unknown
+        by_name[name] = job
+    planner = by_name.pop("bridge", None)
+    if len(by_name) > 1:
+        return unknown
+    quality = next(iter(by_name.values()), None)
+    not_called = quality is None or quality.get("conclusion") == "skipped"
+    if planner is None or planner.get("conclusion") != "success":
+        # An unsuccessful/missing planner cannot authorize a dependent job.
+        return absent if not_called and conclusion != "success" else unknown
+    planner_steps = planner.get("steps")
+    if not isinstance(planner_steps, list):
+        return unknown
+    required = (
+        "Check out authoritative default branch",
+        "Record exact checked-out default-branch revision",
+        "Plan exact correlated machine dispatch decision",
+        "Upload exact run-scoped machine dispatch result",
+    )
+    observed = [
+        step for step in planner_steps if isinstance(step, Mapping) and step.get("name") in required
+    ]
+    if tuple(step.get("name") for step in observed) != required or any(
+        step.get("status") != "completed" or step.get("conclusion") != "success"
+        for step in observed
+    ):
+        return unknown
+    lines = [
+        re.sub(r"^\d{4}-\d\d-\d\dT\S+Z ", "", raw)
+        for raw in log_read(repository, token, cast(int, planner["id"])).splitlines()
+    ]
+    if audit_result_sha256 is not None:
+        result_prefix = "native_quality_result_sha256="
+        result_receipts = [
+            line.removeprefix(result_prefix) for line in lines if line.startswith(result_prefix)
+        ]
+        if result_receipts != [audit_result_sha256]:
+            return unknown
+    prefix = "native_quality_plan="
+    receipts = [line.removeprefix(prefix) for line in lines if line.startswith(prefix)]
+    if len(receipts) != 1:
+        return unknown
+    if receipts[0] == "none":
+        return absent if not_called and conclusion in ("success", *_QUALITY_NO_VERDICT) else unknown
+    plan = json.loads(receipts[0])
+    if not isinstance(plan, dict):
+        return unknown
+    gate, target = plan.get("quality_obligation"), plan.get("quality_target_revision")
+    if (
+        not isinstance(gate, str)
+        or re.fullmatch(r"[0-9a-f]{64}", gate) is None
+        or not isinstance(target, str)
+        or _SHA.fullmatch(target) is None
+        or plan
+        != _quality_call_fields(repository, target, definition, gate, source, run_id, attempt)
+        or (gate == obligation_id and target != revision)
+    ):
+        return unknown
+    blob = _quality_workflow_blob(repository, token, definition, read=read)
+    if blob is None or ((obligation_id is None or gate == obligation_id) and blob != workflow_blob):
+        return unknown
+    if quality is None or quality.get("conclusion") == "skipped":
+        # A recorded plan may be skipped by the native dependency/identity guard.
+        return absent if conclusion in ("success", *_QUALITY_NO_VERDICT) else unknown
+    job_conclusion = quality.get("conclusion")
+    if job_conclusion in _QUALITY_NO_VERDICT:
+        return absent if conclusion == job_conclusion else unknown
+    if job_conclusion not in ("success", "failure") or conclusion != job_conclusion:
+        return unknown
+    if quality.get("name") != "verify_quality / quality":
+        return unknown
+    failed = native_quality_setup_failure_index(quality)
+    if failed is not None and failed < 2:
+        return absent
+    log = log_read(repository, token, cast(int, quality["id"]))
+    if failed is not None:
+        if failed > 2 and native_quality_witness_matches(
+            log,
+            repository=repository,
+            revision=target,
+            definition_sha=definition,
+            run_id=run_id,
+            run_attempt=attempt,
+            source_comment_id=source,
+            verification_correlation=plan["quality_verification_correlation"],
+        ):
+            return absent
+        return unknown
+    verdict = qualify_native_quality_job(
+        quality,
+        log,
+        repository=repository,
+        revision=target,
+        definition_sha=definition,
+        run_id=run_id,
+        run_attempt=attempt,
+        job_id=cast(int, quality["id"]),
+        job_name="verify_quality / quality",
+        source_comment_id=source,
+        verification_correlation=plan["quality_verification_correlation"],
+    )
+    if verdict is None:
+        return unknown
+    if obligation_id is None or gate == obligation_id:
+        return NativeQualityAttempt(
+            run_id,
+            attempt,
+            verdict,
+            job_id=cast(int, quality["id"]),
+            checkout_revision=target,
+            definition_revision=definition,
+            source_comment_id=source,
+        )
+    return absent
+
+
+def qualify_failed_native_quality_audit(
+    repository: str,
+    token: str,
+    *,
+    run: Mapping[str, object],
+    request_comment_id: int,
+    current_revision: str,
+    artifact_sha256: str,
+    read: GitHubReader,
+    log_read: Callable[[str, str, int], str],
+) -> bool:
+    """Read-only failed-caller audit; never establish an accepted work gate."""
+    try:
+        repo = read(repository, token, "")
+        default_branch = repo.get("default_branch") if isinstance(repo, Mapping) else None
+        if (
+            not isinstance(repo, Mapping)
+            or repo.get("full_name") != repository
+            or not isinstance(default_branch, str)
+            or not default_branch
+        ):
+            return False
+
+        def main_is_current() -> bool:
+            ref = read(repository, token, f"git/ref/heads/{quote(default_branch, safe='/')}")
+            obj = ref.get("object") if isinstance(ref, Mapping) else None
+            return isinstance(obj, Mapping) and obj.get("sha") == current_revision
+
+        row = _quality_bridge_run(run, repository, default_branch, request_comment_id)
+        if row is None or row[2:] != (current_revision, "completed", "failure"):
+            return False
+        if not main_is_current():
+            return False
+        run_id, attempt = row[:2]
+        source_path = f"issues/comments/{request_comment_id}"
+        comment = read(repository, token, source_path)
+        if not isinstance(comment, Mapping):
+            return False
+        body, issue_url = comment.get("body"), comment.get("issue_url")
+        prefix = github_repository_api_url(repository, "issues/")
+        created = _quality_time(comment.get("created_at"))
+        started = _quality_time(run.get("created_at"))
+        if (
+            _positive_int(comment.get("id")) != request_comment_id
+            or not _trusted_connector_comment(comment, repository.split("/", 1)[0])
+            or not isinstance(body, str)
+            or parse_dispatch_request(body) is None
+            or not isinstance(issue_url, str)
+            or not issue_url.startswith(prefix)
+            or comment.get("updated_at") != comment.get("created_at")
+            or created is None
+            or started is None
+            or started < created
+        ):
+            return False
+        issue_id = _positive_int_string(issue_url.removeprefix(prefix))
+        if issue_id is None:
+            return False
+        issue = read(repository, token, f"issues/{issue_id}")
+        if (
+            not isinstance(issue, Mapping)
+            or issue.get("number") != issue_id
+            or not is_runtime_checkin_issue(issue)
+        ):
+            return False
+        raw_attempt = read(repository, token, f"actions/runs/{run_id}/attempts/{attempt}")
+        if (
+            not isinstance(raw_attempt, Mapping)
+            or _quality_bridge_run(raw_attempt, repository, default_branch, request_comment_id)
+            != row
+        ):
+            return False
+        blob = _quality_workflow_blob(repository, token, current_revision, read=read)
+        if blob is None:
+            return False
+        evidence = _quality_bridge_attempt(
+            repository,
+            token,
+            source=request_comment_id,
+            row=row,
+            obligation_id=None,
+            revision=None,
+            workflow_blob=blob,
+            read=read,
+            log_read=log_read,
+            audit_result_sha256=artifact_sha256,
+        )
+        latest = read(repository, token, f"actions/runs/{run_id}")
+        return (
+            evidence.outcome in ("STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE")
+            and isinstance(latest, Mapping)
+            and _quality_bridge_run(latest, repository, default_branch, request_comment_id) == row
+            and read(repository, token, source_path) == comment
+            and main_is_current()
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _quality_verdicts_precede(
+    repository: str,
+    token: str,
+    *,
+    attempts: tuple[NativeQualityAttempt, ...],
+    boundary: datetime,
+    accepted_at: str,
+    read: GitHubReader,
+) -> bool:
+    """Qualify the actual job event, not a later observation of its verdict."""
+    accepted = _quality_time(accepted_at)
+    if accepted is None or accepted >= boundary:
+        return False
+    for attempt in attempts:
+        if attempt.outcome not in ("PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"):
+            continue
+        if attempt.job_id is None:
+            return False
+        job = read(repository, token, f"actions/jobs/{attempt.job_id}")
+        if not isinstance(job, Mapping):
+            return False
+        started = _quality_time(job.get("started_at"))
+        completed = _quality_time(job.get("completed_at"))
+        expected_head = (
+            attempt.checkout_revision
+            if attempt.source_comment_id is None
+            else attempt.definition_revision
+        )
+        if (
+            job.get("id") != attempt.job_id
+            or job.get("run_id") != attempt.run_id
+            or job.get("run_attempt") != attempt.run_attempt
+            or job.get("head_sha") != expected_head
+            or job.get("status") != "completed"
+            or job.get("conclusion") != ("success" if attempt.outcome == "PASS" else "failure")
+            or started is None
+            or completed is None
+            or not accepted < started <= completed < boundary
+        ):
+            return False
+    return True
+
+
+def plan_native_quality_verification(
+    repository: str,
+    token: str,
+    *,
+    revision: str,
+    branch: str,
+    workflow_blob: str,
+    obligation_id: str,
+    accepted_at: str,
+    current_revision: str,
+    default_branch: str,
+    request_comment_id: int,
+    run_id: int,
+    run_attempt: int,
+    read: GitHubReader = _github_json,
+    log_read: Callable[[str, str, int], str] = _github_job_log,
+    observe_only: bool = False,
+    verdict_before: datetime | None = None,
+) -> NativeQualityObservation:
+    """Observe both native producers before admitting one read-only local call.
+
+    The Application supplies the exact outstanding gate and its immutable
+    acceptance boundary. A fresh dispatch is not an execution retry token.
+    Observe-only mode requires the exact successful completed dispatcher and
+    cannot issue a verification call; its consumer still qualifies authority.
+    """
+    unknown = NativeQualityObservation("INDETERMINATE")
+    if (
+        _SHA.fullmatch(revision) is None
+        or _SHA.fullmatch(current_revision) is None
+        or _SHA.fullmatch(workflow_blob) is None
+        or re.fullmatch(r"[0-9a-f]{64}", obligation_id) is None
+        or any(_positive_int(n) is None for n in (request_comment_id, run_id, run_attempt))
+        or not default_branch
+        or not branch
+    ):
+        return unknown
+
+    def main_is_current() -> bool:
+        repo = read(repository, token, "")
+        ref = read(repository, token, f"git/ref/heads/{quote(default_branch, safe='/')}")
+        obj = ref.get("object") if isinstance(ref, Mapping) else None
+        return (
+            isinstance(repo, Mapping)
+            and repo.get("full_name") == repository
+            and repo.get("default_branch") == default_branch
+            and isinstance(obj, Mapping)
+            and obj.get("sha") == current_revision
+        )
+
+    def snapshot() -> dict[int, tuple[int, int, str, str, str | None]] | None:
+        boundary = _quality_time(accepted_at)
+        requests = _quality_dispatch_requests(repository, token, accepted_at, read=read)
+        if boundary is None or requests is None or request_comment_id not in requests:
+            return None
+        runs = _complete_workflow_runs(
+            repository, token, _DISPATCH_WORKFLOW, read=read, require_count=True
+        )
+        if runs is None:
+            return None
+        found: dict[int, tuple[int, int, str, str, str | None]] = {}
+        for run in runs:
+            title = run.get("display_title")
+            source = parse_dispatch_run_name(title) if isinstance(title, str) else None
+            if source is None:
+                continue
+            row = _quality_bridge_run(run, repository, default_branch, source)
+            created = _quality_time(run.get("created_at"))
+            if source not in requests:
+                if row is None or created is None:
+                    return None
+                if created < boundary:
+                    continue
+                # A run that outlived its source must not disappear from the
+                # inventory merely because the current request list omits it.
+                comment = read(repository, token, f"issues/comments/{source}")
+                if not isinstance(comment, Mapping):
+                    return None
+                requested = _quality_time(comment.get("created_at"))
+                body, issue_url = comment.get("body"), comment.get("issue_url")
+                prefix = github_repository_api_url(repository, "issues/")
+                if (
+                    _positive_int(comment.get("id")) != source
+                    or requested is None
+                    or requested > created
+                    or comment.get("updated_at") != comment.get("created_at")
+                    or not isinstance(issue_url, str)
+                    or not issue_url.startswith(prefix)
+                    or _positive_int_string(issue_url.removeprefix(prefix)) is None
+                    or not isinstance(body, str)
+                ):
+                    return None
+                if requested < boundary:
+                    continue
+                if requested == boundary or body.splitlines()[:1] == [REQUEST_MARKER]:
+                    return None
+                continue
+            requested = _quality_time(requests[source])
+            if row is None or source in found or created is None or requested is None:
+                return None
+            if created < requested:
+                return None
+            found[source] = row
+        return found if set(found) == set(requests) else None
+
+    def ordinary_history(blob: str) -> tuple[NativeQualityAttempt, ...] | None:
+        return read_native_quality_history(
+            repository,
+            token,
+            revision,
+            branch=branch,
+            workflow_blob=blob,
+            read=read,
+            log_read=log_read,
+        )
+
+    try:
+        if not main_is_current():
+            return unknown
+        if _quality_workflow_blob(repository, token, current_revision, read=read) != workflow_blob:
+            return unknown
+        target_blob = _quality_workflow_blob(repository, token, revision, read=read)
+        if target_blob is None:
+            return unknown
+        ordinary = ordinary_history(target_blob)
+        first = snapshot()
+        if ordinary is None or first is None:
+            return unknown
+        own = first[request_comment_id]
+        own_state_qualified = (
+            own[3:] == ("completed", "success")
+            if observe_only
+            else own[3] in _QUALITY_ACTIVE and own[4] is None
+        )
+        if own[:3] != (run_id, run_attempt, current_revision) or not own_state_qualified:
+            return unknown
+        called: list[NativeQualityAttempt] = []
+        for source, latest in first.items():
+            observed_run, last, definition, _, _ = latest
+            ancestry = _authorization_ancestry(
+                repository,
+                token,
+                authorization_revision=definition,
+                current_revision=current_revision,
+                read=read,
+            )
+            if ancestry is None:
+                return unknown
+            for attempt in range(1, last + 1):
+                raw = read(repository, token, f"actions/runs/{observed_run}/attempts/{attempt}")
+                if not isinstance(raw, Mapping):
+                    return unknown
+                row = _quality_bridge_run(raw, repository, default_branch, source)
+                if (
+                    row is None
+                    or row[:3] != (observed_run, attempt, definition)
+                    or (attempt == last and row != latest)
+                ):
+                    return unknown
+                if source == request_comment_id and attempt == run_attempt:
+                    continue
+                result = _quality_bridge_attempt(
+                    repository,
+                    token,
+                    source=source,
+                    row=row,
+                    obligation_id=obligation_id,
+                    revision=revision,
+                    workflow_blob=workflow_blob,
+                    read=read,
+                    log_read=log_read,
+                )
+                if attempt < last and result.outcome == "PENDING":
+                    return unknown
+                called.append(result)
+        if (
+            snapshot() != first
+            or ordinary_history(target_blob) != ordinary
+            or not main_is_current()
+        ):
+            return unknown
+        if verdict_before is not None and not _quality_verdicts_precede(
+            repository,
+            token,
+            attempts=(*ordinary, *called),
+            boundary=verdict_before,
+            accepted_at=accepted_at,
+            read=read,
+        ):
+            return unknown
+        if target_blob == workflow_blob:
+            history = (*ordinary, *called)
+            outcome = reduce_native_quality_attempts(history)
+        else:
+            # A B-owned call cannot establish candidate-producer correctness.
+            candidate = reduce_native_quality_attempts(ordinary)
+            history = (*ordinary, *called)
+            outcome = reduce_native_quality_attempts(tuple(called))
+            if candidate in ("FAIL", "CONFLICT", "PENDING", "INDETERMINATE"):
+                return NativeQualityObservation(candidate, ordinary)
+            if outcome == "PASS" and candidate != "PASS":
+                return unknown
+        call = (
+            _quality_call_fields(
+                repository,
+                revision,
+                current_revision,
+                obligation_id,
+                request_comment_id,
+                run_id,
+                run_attempt,
+            )
+            if outcome == "NO_VERDICT" and not observe_only
+            else None
+        )
+        return NativeQualityObservation(outcome, history, call)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return unknown
+
+
+def qualify_development_dispatch_source(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    request_comment_id: int,
+    current_revision: str,
+    default_branch: str,
+    read: GitHubReader = _github_json,
+    expected_source: Mapping[str, object] | None = None,
+) -> DevelopmentDispatchSource | None:
+    """Qualify the original native dispatch for one physical development ingress.
+
+    Comment IDs are identities, not timestamps. A second ingress cannot reuse
+    the same dispatch. The original shard can be closed after its ingress.
+    """
+    owner = repository.split("/", 1)[0]
+    prefix = github_repository_api_url(repository, "issues/")
+    if (
+        _positive_int(request_comment_id) is None
+        or _SHA.fullmatch(current_revision) is None
+        or not default_branch
+        or (source.role, source.action) != ("executor", "implement-change")
+    ):
+        return None
+
+    def same_comment(left: Mapping[str, object], right: Mapping[str, object]) -> bool:
+        return _trusted_connector_comment(right, owner) and all(
+            left.get(key) == right.get(key)
+            for key in ("id", "body", "issue_url", "created_at", "updated_at")
+        )
+
+    try:
+        ingress = read(repository, token, f"issues/comments/{request_comment_id}")
+        if (
+            not isinstance(ingress, Mapping)
+            or ingress.get("id") != request_comment_id
+            or not _trusted_connector_comment(ingress, owner)
+            or ingress.get("updated_at") != ingress.get("created_at")
+        ):
+            return None
+        body, issue_url = ingress.get("body"), ingress.get("issue_url")
+        ingress_at = _quality_time(ingress.get("created_at"))
+        if (
+            ingress_at is None
+            or not isinstance(body, str)
+            or body.splitlines()[:1] not in (["WORKER_RESULT"], ["EFFECT_REQUEST"])
+            or not isinstance(issue_url, str)
+            or not issue_url.startswith(prefix)
+        ):
+            return None
+        shard = _positive_int_string(issue_url.removeprefix(prefix))
+        if shard is None:
+            return None
+        issue = read(repository, token, f"issues/{shard}")
+        if (
+            not isinstance(issue, Mapping)
+            or issue.get("number") != shard
+            or not is_runtime_checkin_issue(issue)
+        ):
+            return None
+        comments = _paged_list(
+            repository,
+            token,
+            f"issues/{shard}/comments?sort=created&direction=asc",
+            read=read,
+        )
+        own = [item for item in comments if item.get("id") == request_comment_id]
+        if len(own) != 1 or not same_comment(ingress, own[0]):
+            return None
+        prior: list[tuple[datetime, Mapping[str, object]]] = []
+        for item in comments:
+            candidate_body = item.get("body")
+            if (
+                item.get("id") == request_comment_id
+                or not _trusted_connector_comment(item, owner)
+                or not isinstance(candidate_body, str)
+                or candidate_body.splitlines()[:1]
+                not in ([REQUEST_MARKER], ["WORKER_RESULT"], ["EFFECT_REQUEST"])
+            ):
+                continue
+            stamp = _quality_time(item.get("created_at"))
+            if stamp is None or stamp == ingress_at:
+                return None
+            if stamp < ingress_at:
+                prior.append((stamp, item))
+        if not prior:
+            return None
+        requested_at = max(stamp for stamp, _ in prior)
+        latest = [item for stamp, item in prior if stamp == requested_at]
+        if len(latest) != 1:
+            return None
+        dispatch = latest[0]
+        dispatch_id = _positive_int(dispatch.get("id"))
+        dispatch_body = dispatch.get("body")
+        if (
+            dispatch_id is None
+            or dispatch.get("issue_url") != issue_url
+            or dispatch.get("updated_at") != dispatch.get("created_at")
+            or not isinstance(dispatch_body, str)
+            or parse_dispatch_request(dispatch_body) is None
+        ):
+            return None
+        observed = read(repository, token, f"issues/comments/{dispatch_id}")
+        if not isinstance(observed, Mapping) or not same_comment(dispatch, observed):
+            return None
+        runs = _complete_workflow_runs(
+            repository, token, _DISPATCH_WORKFLOW, read=read, require_count=True
+        )
+        if runs is None:
+            return None
+        matching = [
+            item
+            for item in runs
+            if item.get("display_title") == render_dispatch_run_name(dispatch_id)
+        ]
+        if len(matching) != 1:
+            return None
+        run = matching[0]
+        latest_row = _quality_bridge_run(run, repository, default_branch, dispatch_id)
+        if latest_row is None or latest_row[2] != current_revision:
+            return None
+        run_id, latest_attempt = latest_row[:2]
+        attempt = latest_attempt
+        if expected_source is not None:
+            expected_attempt = _positive_int(expected_source.get("run_attempt"))
+            if (
+                expected_source.get("run_id") != run_id
+                or expected_attempt is None
+                or expected_attempt > latest_attempt
+            ):
+                return None
+            attempt = expected_attempt
+        row = (run_id, attempt, current_revision, "completed", "success")
+        attempt_run = read(repository, token, f"actions/runs/{run_id}/attempts/{attempt}")
+        if (
+            not isinstance(attempt_run, Mapping)
+            or _quality_bridge_run(attempt_run, repository, default_branch, dispatch_id) != row
+            or (
+                attempt == latest_attempt
+                and (
+                    latest_row != row
+                    or any(
+                        attempt_run.get(key) != run.get(key) for key in ("created_at", "updated_at")
+                    )
+                )
+            )
+        ):
+            return None
+        created = _quality_time(attempt_run.get("created_at"))
+        completed = _quality_time(attempt_run.get("updated_at"))
+        if (
+            created is None
+            or completed is None
+            or not requested_at <= created < completed < ingress_at
+        ):
+            return None
+        jobs = github_complete_job_inventory(
+            repository, token, run_id=run_id, run_attempt=attempt, read=read
+        )
+        if jobs is None:
+            return None
+        planners = [item for item in jobs if item.get("name") == "bridge"]
+        if len(planners) != 1:
+            return None
+        job = planners[0]
+        job_id = _positive_int(job.get("id"))
+        started = _quality_time(job.get("started_at"))
+        finished = _quality_time(job.get("completed_at"))
+        if (
+            job_id is None
+            or job.get("run_id") != run_id
+            or job.get("run_attempt") != attempt
+            or job.get("head_sha") != current_revision
+            or job.get("status") != "completed"
+            or job.get("conclusion") != "success"
+            or started is None
+            or finished is None
+            or not created <= started <= finished <= completed
+        ):
+            return None
+        steps = job.get("steps")
+        required = (
+            "Check out authoritative default branch",
+            "Record exact checked-out default-branch revision",
+            "Plan exact correlated machine dispatch decision",
+            "Upload exact run-scoped machine dispatch result",
+        )
+        if not isinstance(steps, list):
+            return None
+        witnessed = [
+            step for step in steps if isinstance(step, Mapping) and step.get("name") in required
+        ]
+        if tuple(step.get("name") for step in witnessed) != required or any(
+            step.get("status") != "completed" or step.get("conclusion") != "success"
+            for step in witnessed
+        ):
+            return None
+        if expected_source is None:
+            artifact = _single_run_artifact(
+                read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100"),
+                name="dispatch-result.json",
+            )
+        else:
+            expected_artifact = _positive_int(expected_source.get("artifact_id"))
+            if expected_artifact is None:
+                return None
+            observed_artifact = read(repository, token, f"actions/artifacts/{expected_artifact}")
+            artifact = (
+                observed_artifact
+                if isinstance(observed_artifact, Mapping)
+                and observed_artifact.get("name") == "dispatch-result.json"
+                else None
+            )
+        if artifact is None:
+            return None
+        identity = github_run_artifact_identity(
+            artifact, run_id=run_id, run_head_sha=current_revision
+        )
+        uploaded = _quality_time(artifact.get("created_at"))
+        if identity is None or uploaded is None or not started <= uploaded <= finished:
+            return None
+        artifact_id, digest = identity
+        raw = read_github_artifact_bytes(repository, token, f"actions/artifacts/{artifact_id}/zip")
+        if "sha256:" + hashlib.sha256(raw).hexdigest() != digest:
+            return None
+        result = parse_dispatch_result_document(raw)
+        if (
+            result.request_comment_id != dispatch_id
+            or result.default_branch_revision != current_revision
+            or result.disposition != "AUTHORIZE"
+            or (result.issue_number, result.role, result.action)
+            != (source.issue_number, source.role, source.action)
+        ):
+            return None
+        current_run = read(repository, token, f"actions/runs/{run_id}")
+        if (
+            not isinstance(current_run, Mapping)
+            or _quality_bridge_run(current_run, repository, default_branch, dispatch_id)
+            != latest_row
+            or current_run.get("updated_at") != run.get("updated_at")
+        ):
+            return None
+        qualified = DevelopmentDispatchSource(
+            dispatch_id, run_id, attempt, job_id, artifact_id, digest, current_revision
+        )
+        if expected_source is not None and asdict(qualified) != expected_source:
+            return None
+        return qualified
+    except (OSError, RuntimeError, TypeError, ValueError, LookupError):
+        return None
 
 
 def _prior_dispatch_handoff_reason(
@@ -2531,6 +3695,132 @@ def _qualified_unapplied_terminal_carrier_effect(
     return identity_matches
 
 
+def _saved_development_quality_obligation(
+    repository: str,
+    token: str,
+    *,
+    record: ApplicationDecisionRecord,
+    accepted_decision_sha256: str,
+    issue_comments: tuple[Mapping[str, object], ...],
+    current_revision: str,
+    run: Mapping[str, object],
+    job: QualifiedApplicationJob,
+    read: GitHubReader,
+) -> NativeQualityObligation | None:
+    """Use the existing physical Original and canonical materialization witness."""
+    source = WorkerRequest(record.issue_number, record.role, record.action)
+    if (
+        job.status != "completed"
+        or job.conclusion not in ("success", "failure", *_QUALITY_NO_VERDICT)
+        or run.get("status") != "completed"
+        or run.get("conclusion") != job.conclusion
+        or run.get("path") != f".github/workflows/{_APPLICATION_WORKFLOW}"
+        or run.get("event") != "issue_comment"
+        or run.get("head_sha") != record.authorization_revision
+    ):
+        return None
+    repo = read(repository, token, "")
+    origin, head = run.get("repository"), run.get("head_repository")
+    default_branch = repo.get("default_branch") if isinstance(repo, Mapping) else None
+    if (
+        not isinstance(repo, Mapping)
+        or repo.get("full_name") != repository
+        or not isinstance(default_branch, str)
+        or not default_branch
+        or run.get("head_branch") != default_branch
+        or not isinstance(origin, Mapping)
+        or origin.get("full_name") != repository
+        or not isinstance(head, Mapping)
+        or head.get("full_name") != repository
+    ):
+        return None
+    matches = [
+        comment
+        for comment in issue_comments
+        if is_github_actions_comment(comment)
+        and isinstance(comment.get("body"), str)
+        and parse_application_decision(cast(str, comment["body"])) == record
+    ]
+    if len(matches) != 1:
+        return None
+    comment = matches[0]
+    accepted_at = comment.get("created_at")
+    comment_id = _positive_int(comment.get("id"))
+    if (
+        not isinstance(accepted_at, str)
+        or _quality_time(accepted_at) is None
+        or comment.get("updated_at") != accepted_at
+        or comment_id is None
+        or comment.get("issue_url")
+        != github_repository_api_url(repository, f"issues/{record.issue_number}")
+    ):
+        return None
+    observed = read(repository, token, f"issues/comments/{comment_id}")
+    if (
+        not isinstance(observed, Mapping)
+        or not is_github_actions_comment(observed)
+        or any(
+            observed.get(key) != comment.get(key)
+            for key in ("id", "body", "issue_url", "created_at", "updated_at")
+        )
+        or hashlib.sha256(cast(str, comment["body"]).encode()).hexdigest()
+        != accepted_decision_sha256
+    ):
+        return None
+    original = _qualified_physical_original_accepted_effects(
+        record=record, source=source, repository=repository, token=token, read=read
+    )
+    if original is None or not _implementation_development_save(original):
+        return None
+    payload = json.loads(original.effects[0].payload_json)
+    proof = prove_materialization(
+        payload,
+        source,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+        default_branch=default_branch,
+        accepted_authorization_revision=record.authorization_revision,
+        accepted_intent=True,
+    )
+    target, witness = proof.target, proof.witness
+    if (
+        proof.disposition != "COMPLETE"
+        or target is None
+        or witness is None
+        or target.repository != repository
+        or target.change != record.change
+        or target.branch is None
+    ):
+        return None
+    blob = _quality_workflow_blob(repository, token, current_revision, read=read)
+    if blob is None:
+        return None
+    identity = json.dumps(
+        [
+            repository,
+            record.issue_number,
+            record.change,
+            record.request_comment_id,
+            accepted_decision_sha256,
+            witness.revision,
+            target.branch,
+            blob,
+        ],
+        separators=(",", ":"),
+    )
+    return NativeQualityObligation(
+        witness.revision,
+        target.branch,
+        blob,
+        hashlib.sha256(identity.encode()).hexdigest(),
+        accepted_at,
+        default_branch,
+        target.revision,
+        witness.revisions.carrier_base,
+    )
+
+
 def _application_job(
     repository: str,
     token: str,
@@ -2543,6 +3833,7 @@ def _application_job(
     recent_comments: tuple[Mapping[str, object], ...] = (),
     current_dispatch_request_comment_id: int | None = None,
     current_revision: str | None = None,
+    issue_comments: tuple[Mapping[str, object], ...] = (),
 ) -> ApplicationCompletion:
     """Locate one exact application run and prefer its durable carrier handoff."""
 
@@ -2598,6 +3889,44 @@ def _application_job(
             request_comment_id=request_comment_id,
         )
     job_id = job.id
+
+    # A physical-only accepted save has no formal consequence to replay.
+    # Only a terminal native Application plus the canonical write witness can
+    # expose its outstanding verification gate; unknown writes stay in the
+    # existing recovery path.
+    if record is not None and accepted_decision_sha256 is not None and current_revision:
+        try:
+            source = WorkerRequest(record.issue_number, record.role, record.action)
+            batch = parse_effect_batch(
+                record.raw_worker_result, source, authorized_change=record.change
+            )
+            if _implementation_development_save(batch):
+                obligation = _saved_development_quality_obligation(
+                    repository,
+                    token,
+                    record=record,
+                    accepted_decision_sha256=accepted_decision_sha256,
+                    issue_comments=issue_comments,
+                    current_revision=current_revision,
+                    run=run,
+                    job=job,
+                    read=read,
+                )
+                if obligation is not None:
+                    return ApplicationCompletion(
+                        "RESUMABLE",
+                        (
+                            "verification-obligation-pending"
+                            if obligation.carrier_revision == obligation.revision
+                            else "application-completion-historical-save-unsettled"
+                        ),
+                        request_comment_id=request_comment_id,
+                        job_id=job_id,
+                        quality_obligation=obligation,
+                    )
+        except (HTTPError, OSError, RuntimeError, TypeError, ValueError):
+            # Failure to prove the saved work is never a verification target.
+            pass
 
     # Reconcile the final durable Effect for a terminal no-carrier run before
     # considering optional recovery/diagnostic artifacts. Error text is not a
@@ -2927,6 +4256,7 @@ def _application_job(
         and failure_evidence.get("unfinished_boundary")
         in {
             "effect-reconciliation",
+            "effect-precondition",
             "effect-precondition-exception",
         }
     ):
@@ -2978,6 +4308,16 @@ def _application_job(
         )
         if unresolved is not None:
             return unresolved
+        if proof.pending_frontier_proof is not None:
+            return ApplicationCompletion(
+                "RESUMABLE",
+                "application-completion-continuation-required",
+                request_comment_id=request_comment_id,
+                recovery_artifact=recovery_artifact,
+                accepted_proof=proof,
+                accepted_record=record,
+                accepted_decision_sha256=accepted_decision_sha256,
+            )
     return ApplicationCompletion(
         "RESUMABLE",
         "application-completion-continuation-required",
@@ -3770,6 +5110,7 @@ def _accepted_application_state(
             recent_comments=recent_comments,
             current_dispatch_request_comment_id=current_dispatch_request_comment_id,
             current_revision=current_revision,
+            issue_comments=issue_comments,
         )
 
     # New semantic envelopes resume Phase B even with zero worker Effects.
@@ -4927,6 +6268,2481 @@ def _application_continuation_body(
     return body
 
 
+def _development_acceptance_source(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    record: ApplicationDecisionRecord,
+    default_branch: str,
+    read: GitHubReader,
+) -> DevelopmentDispatchSource | None:
+    document = json.loads(record.raw_worker_result)
+    stored = document.get("_native_development_dispatch") if isinstance(document, dict) else None
+    if stored is None and isinstance(document, Mapping):
+        delivery = document.get("_native_implementation_delivery")
+        if isinstance(delivery, Mapping):
+            stored = delivery.get("dispatch")
+    if not isinstance(stored, Mapping):
+        return None
+    qualified = qualify_development_dispatch_source(
+        repository,
+        token,
+        source=source,
+        request_comment_id=record.request_comment_id,
+        current_revision=record.authorization_revision,
+        default_branch=default_branch,
+        read=read,
+        expected_source=stored,
+    )
+    return qualified if qualified is not None and asdict(qualified) == stored else None
+
+
+def _development_planning_boundary(
+    repository: str,
+    token: str,
+    *,
+    receipt: DevelopmentDispatchSource,
+    read: GitHubReader,
+) -> datetime | None:
+    jobs = github_complete_job_inventory(
+        repository, token, run_id=receipt.run_id, run_attempt=receipt.run_attempt, read=read
+    )
+    if jobs is None:
+        return None
+    planners = [job for job in jobs if job.get("name") == "bridge"]
+    if len(planners) != 1:
+        return None
+    planner = planners[0]
+    steps = planner.get("steps")
+    if (
+        planner.get("id") != receipt.job_id
+        or planner.get("run_id") != receipt.run_id
+        or planner.get("run_attempt") != receipt.run_attempt
+        or planner.get("head_sha") != receipt.authorization_revision
+        or planner.get("status") != "completed"
+        or planner.get("conclusion") != "success"
+        or not isinstance(steps, list)
+    ):
+        return None
+    planning = [
+        step
+        for step in steps
+        if isinstance(step, Mapping)
+        and step.get("name") == "Plan exact correlated machine dispatch decision"
+    ]
+    if len(planning) != 1:
+        return None
+    started = _quality_time(planner.get("started_at"))
+    boundary = _quality_time(planning[0].get("started_at"))
+    completed = _quality_time(planner.get("completed_at"))
+    if (
+        started is None
+        or boundary is None
+        or completed is None
+        or not started <= boundary <= completed
+    ):
+        return None
+    return boundary
+
+
+def development_predecessor_evidence(
+    completion: ApplicationCompletion, authorization_revision: str
+) -> dict[str, object] | None:
+    """Project the shared settled proof into the existing immutable ACCEPT intent."""
+    obligation = completion.settled_quality_obligation
+    observation = completion.quality_observation
+    record = completion.accepted_record
+    digest = completion.accepted_decision_sha256
+    if (
+        completion.state != "COMPLETE"
+        or obligation is None
+        or observation is None
+        or record is None
+        or digest is None
+        or observation.outcome not in ("PASS", "FAIL", "CONFLICT")
+        or observation.attempts is None
+    ):
+        return None
+    attempts = [
+        asdict(attempt)
+        for attempt in observation.attempts
+        if attempt.outcome in ("PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE")
+    ]
+    if not attempts:
+        return None
+    return {
+        "request_comment_id": record.request_comment_id,
+        "accepted_decision_sha256": digest,
+        "revision": obligation.revision,
+        "branch": obligation.branch,
+        "workflow_blob": obligation.workflow_blob,
+        "obligation_id": obligation.obligation_id,
+        "authorization_revision": authorization_revision,
+        "attempts": attempts,
+    }
+
+
+def _native_strict_marker_evidence(
+    repository: str,
+    token: str,
+    *,
+    revision: str,
+    branch: str,
+    current_revision: str,
+    read: GitHubReader,
+) -> tuple[tuple[int, int, int], ...]:
+    """Qualify an ordinary native strict PASS, including the executed checkout."""
+    path = ".github/workflows/openspec-validate.yml"
+    definitions = [
+        read(repository, token, f"contents/{path}?{urlencode({'ref': ref})}")
+        for ref in (current_revision, revision)
+    ]
+    if any(
+        not isinstance(item, Mapping)
+        or item.get("type") != "file"
+        or item.get("path") != path
+        or not isinstance(item.get("sha"), str)
+        or _SHA.fullmatch(item["sha"]) is None
+        for item in definitions
+    ):
+        return ()
+    if (
+        cast(Mapping[str, object], definitions[0])["sha"]
+        != cast(Mapping[str, object], definitions[1])["sha"]
+    ):
+        return ()
+    required_steps = (
+        "Checkout validation target",
+        "Verify exact checkout revision",
+        "Run actions/setup-node@v4",
+        "Install qualified OpenSpec baseline",
+        "Show OpenSpec version",
+        "Qualify executable compatibility",
+        "Show active changes",
+        "Validate all OpenSpec artifacts",
+    )
+    observed: list[tuple[int, int, int]] = []
+    for event in ("push", "pull_request"):
+        runs = _complete_workflow_runs(
+            repository,
+            token,
+            "openspec-validate.yml",
+            read=read,
+            event=event,
+            head_sha=revision,
+            require_count=True,
+        )
+        if runs is None:
+            return ()
+        for run in runs:
+            if run.get("head_branch") != branch:
+                continue
+            run_id = _positive_int(run.get("id"))
+            attempt = _positive_int(run.get("run_attempt"))
+            if run_id is None or attempt is None:
+                return ()
+            for number in range(1, attempt + 1):
+                row = read(repository, token, f"actions/runs/{run_id}/attempts/{number}")
+                if not isinstance(row, Mapping):
+                    return ()
+                repo = row.get("repository")
+                head_repo = row.get("head_repository")
+                if (
+                    row.get("id") != run_id
+                    or row.get("run_attempt") != number
+                    or row.get("path") != path
+                    or row.get("event") != event
+                    or row.get("head_sha") != revision
+                    or row.get("head_branch") != branch
+                    or not isinstance(repo, Mapping)
+                    or repo.get("full_name") != repository
+                    or not isinstance(head_repo, Mapping)
+                    or head_repo.get("full_name") != repository
+                    or row.get("status") != "completed"
+                    or row.get("conclusion") != "success"
+                ):
+                    return ()
+                jobs = github_complete_job_inventory(
+                    repository, token, run_id=run_id, run_attempt=number, read=read
+                )
+                if jobs is None or len(jobs) != 1:
+                    return ()
+                job = jobs[0]
+                job_id = _positive_int(job.get("id"))
+                steps = job.get("steps")
+                if (
+                    job_id is None
+                    or job.get("name") != "validate"
+                    or job.get("run_id") != run_id
+                    or job.get("run_attempt") != number
+                    or job.get("head_sha") != revision
+                    or job.get("status") != "completed"
+                    or job.get("conclusion") != "success"
+                    or not isinstance(steps, list)
+                ):
+                    return ()
+                executed = tuple(
+                    step.get("name")
+                    for step in steps
+                    if isinstance(step, Mapping)
+                    and step.get("name") in required_steps
+                    and step.get("status") == "completed"
+                    and step.get("conclusion") == "success"
+                )
+                if executed != required_steps or not _recovery_review_log_proves_checkout(
+                    _github_job_log(repository, token, job_id), repository, revision
+                ):
+                    return ()
+                observed.append((run_id, number, job_id))
+    return tuple(observed)
+
+
+def _bound_legacy_delivery_scope(
+    repository: str,
+    token: str,
+    *,
+    original: EffectBatch,
+    record: ApplicationDecisionRecord,
+    event: FormalLifecycleEvent,
+    review: FormalLifecycleEvent,
+    formal_comment: Mapping[str, object],
+    scope: tuple[str, ...],
+    comments: tuple[Mapping[str, object], ...],
+    branch: str,
+    pr_number: int,
+) -> bool:
+    """Read a completed legacy bundle; never authorize or replay its effects."""
+    if (
+        event.revision is None
+        or event.application_correlation is None
+        or review.revision is None
+        or len(original.effects) != 2
+        or original.effects[0].kind != "github-mutation"
+        or original.effects[1].kind != "issue-comment"
+    ):
+        return False
+    request = find_materialization_payload(
+        json.loads(original.effects[0].payload_json), original.source
+    )
+    checkpoint = json.loads(original.effects[1].payload_json)
+    if (
+        request is None
+        or request.expected_change != record.change
+        or request.change != record.change
+        or request.branch != branch
+        or request.pr_number != pr_number
+        or not isinstance(checkpoint, dict)
+        or checkpoint.get("issue_number") != record.issue_number
+        or not isinstance(checkpoint.get("body"), str)
+    ):
+        return False
+    body = cast(str, checkpoint["body"])
+    if (
+        _slice_checkpoint_completed_task_ids(
+            body, source=original.source, change=record.change, request=request
+        )
+        != scope
+    ):
+        return False
+    lines = body.splitlines()
+    correlation_line = next(line for line in lines if line.startswith("Application-Correlation: "))
+    if correlation_line not in (
+        "Application-Correlation: pending-application-binding",
+        f"Application-Correlation: {event.application_correlation}",
+    ):
+        return False
+    expected = "\n".join(
+        f"Revision: {event.revision}"
+        if line.startswith("Revision: ")
+        else f"Application-Correlation: {event.application_correlation}"
+        if line == correlation_line
+        else line
+        for line in lines
+    ) + ("\n" if body.endswith("\n") else "")
+    checkpoint_comments = [
+        comment
+        for comment in comments
+        if is_github_actions_comment(comment)
+        and isinstance(comment.get("body"), str)
+        and cast(str, comment["body"]).startswith("SLICE_CHECKPOINT\n")
+        and f"Application-Correlation: {event.application_correlation}"
+        in cast(str, comment["body"]).splitlines()
+    ]
+    accepted_comments = [
+        comment
+        for comment in comments
+        if is_github_actions_comment(comment)
+        and parse_application_decision(comment.get("body")) == record
+    ]
+    if (
+        len(checkpoint_comments) != 1
+        or checkpoint_comments[0].get("body") != expected
+        or len(accepted_comments) != 1
+    ):
+        return False
+    ordered = (accepted_comments[0], checkpoint_comments[0], formal_comment)
+    stamps = tuple(_quality_time(comment.get("created_at")) for comment in ordered)
+    if (
+        any(
+            comment.get("created_at") != comment.get("updated_at")
+            or _positive_int(comment.get("id")) is None
+            for comment in ordered
+        )
+        or stamps[0] is None
+        or stamps[1] is None
+        or stamps[2] is None
+        or not stamps[0] < stamps[1] < stamps[2]
+    ):
+        return False
+    files = tuple(
+        file for file in request.files if file.path == f"openspec/changes/{record.change}/tasks.md"
+    )
+    return (
+        len(files) == 1
+        and all(
+            _content_sha_at(repository, token, path=file.path, revision=event.revision)
+            == file.blob_sha
+            for file in request.files
+        )
+        and openspec_review_revision_applies(
+            repository,
+            token,
+            change=record.change,
+            reviewed_revision=review.revision,
+            head_revision=event.revision,
+        )
+        and task_checkpoint_is_exact(
+            repository,
+            token,
+            expected_change=record.change,
+            base_sha=request.base_sha,
+            file=files[0],
+            completed_task_ids=scope,
+        )
+    )
+
+
+def _bound_native_delivery_scope(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    frontier: CurrentFrontier,
+    event: FormalLifecycleEvent,
+    review: FormalLifecycleEvent,
+    scope: tuple[str, ...],
+    comments: tuple[Mapping[str, object], ...],
+    branch: str,
+    pr_number: int,
+    revision: str,
+    current_revision: str,
+    read: GitHubReader,
+) -> bool:
+    """Bind one historical formal delivery to its immutable accepted evidence."""
+    decisions = _application_decisions(comments)
+    owners = _frontier_application_decisions(decisions, replace(frontier, event=event))
+    if len(owners) != 1 or owners[0].disposition != "ACCEPTED":
+        return False
+    record = owners[0]
+    if (
+        sum(item.request_comment_id == record.request_comment_id for item in decisions) != 1
+        or _accepted_decision_sha256(record, comments) is None
+        or event.revision is None
+        or _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=record.authorization_revision,
+            current_revision=current_revision,
+            read=read,
+        )
+        is None
+        or _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=event.revision,
+            current_revision=revision,
+            read=read,
+        )
+        is None
+    ):
+        return False
+    original = _qualified_physical_original_accepted_effects(
+        record=record, source=source, repository=repository, token=token, read=read
+    )
+    raw = json.loads(record.raw_worker_result)
+    evidence = raw.get("_native_implementation_delivery") if isinstance(raw, dict) else None
+    formal = [
+        comment
+        for comment in comments
+        if comment.get("id") == event.comment_id
+        and parse_formal_result(comment, current_revision=current_revision) == event
+    ]
+    if original is None or len(formal) != 1 or not isinstance(formal[0].get("body"), str):
+        return False
+    if evidence is None and original.effects:
+        return _bound_legacy_delivery_scope(
+            repository,
+            token,
+            original=original,
+            record=record,
+            event=event,
+            review=review,
+            formal_comment=formal[0],
+            scope=scope,
+            comments=comments,
+            branch=branch,
+            pr_number=pr_number,
+        )
+    if (
+        original.effects
+        or not isinstance(evidence, Mapping)
+        or evidence.get("scope_task_ids") != list(scope)
+        or evidence.get("revision") != event.revision
+        or evidence.get("result_kind") != event.result_kind
+        or evidence.get("branch") != branch
+        or evidence.get("pr_number") != pr_number
+        or evidence.get("reviewed_revision") != review.revision
+        or evidence.get("review_comment_id") != review.comment_id
+    ):
+        return False
+    digest = hashlib.sha256(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    body = cast(str, formal[0]["body"])
+    if [line for line in body.splitlines() if line.startswith("Evidence:")] != [
+        f"Evidence: native-delivery:{digest}"
+    ]:
+        return False
+    marker_id = _positive_int(evidence.get("marker_request_comment_id"))
+    marker_records = [item for item in decisions if item.request_comment_id == marker_id]
+    marker_revision = evidence.get("marker_revision")
+    marker_blob = evidence.get("marker_blob")
+    current_task_blob = evidence.get("current_task_blob", marker_blob)
+    if (
+        marker_id is None
+        or len(marker_records) != 1
+        or not isinstance(marker_revision, str)
+        or _SHA.fullmatch(marker_revision) is None
+        or not isinstance(marker_blob, str)
+        or _SHA.fullmatch(marker_blob) is None
+        or not isinstance(current_task_blob, str)
+        or _SHA.fullmatch(current_task_blob) is None
+    ):
+        return False
+    marker = marker_records[0]
+    if (
+        marker.disposition != "ACCEPTED"
+        or marker.change != record.change
+        or _accepted_decision_sha256(marker, comments)
+        != evidence.get("marker_accepted_decision_sha256")
+        or _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=marker_revision,
+            current_revision=event.revision,
+            read=read,
+        )
+        is None
+    ):
+        return False
+    physical = _qualified_physical_original_accepted_effects(
+        record=marker, source=source, repository=repository, token=token, read=read
+    )
+    if physical is None or not _implementation_development_save(physical):
+        return False
+    if _implementation_development_save(physical, include_task_markers=False):
+        return False
+    request = find_materialization_payload(json.loads(physical.effects[0].payload_json), source)
+    if request is None or request.branch != branch or request.pr_number != pr_number:
+        return False
+    file = request.files[0]
+    quality = evidence.get("quality")
+    strict = evidence.get("strict")
+    if (
+        not isinstance(quality, Mapping)
+        or quality.get("revision") != event.revision
+        or quality.get("branch") != branch
+        or not isinstance(strict, list)
+        or not strict
+    ):
+        return False
+    attempts = quality.get("attempts")
+    if (
+        not isinstance(attempts, list)
+        or not attempts
+        or any(
+            not isinstance(attempt, Mapping)
+            or attempt.get("outcome") != "PASS"
+            or attempt.get("checkout_revision") != event.revision
+            for attempt in attempts
+        )
+        or any(
+            not isinstance(reference, list)
+            or len(reference) != 3
+            or any(_positive_int(value) is None for value in reference)
+            for reference in strict
+        )
+    ):
+        return False
+    quality_id = _positive_int(quality.get("request_comment_id"))
+    quality_records = [item for item in decisions if item.request_comment_id == quality_id]
+    if (
+        quality_id is None
+        or len(quality_records) != 1
+        or quality_records[0].disposition != "ACCEPTED"
+        or (quality_records[0].issue_number, quality_records[0].role, quality_records[0].action)
+        != (source.issue_number, source.role, source.action)
+        or quality_records[0].change != record.change
+        or _accepted_decision_sha256(quality_records[0], comments)
+        != quality.get("accepted_decision_sha256")
+    ):
+        return False
+    return (
+        file.blob_sha == marker_blob
+        and _content_sha_at(repository, token, path=file.path, revision=marker_revision)
+        == marker_blob
+        and _content_sha_at(repository, token, path=file.path, revision=event.revision)
+        == current_task_blob
+        and task_checkpoint_is_exact(
+            repository,
+            token,
+            expected_change=record.change,
+            base_sha=request.base_sha,
+            file=file,
+            completed_task_ids=scope,
+        )
+    )
+
+
+def _ordinary_implementation_scope(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    frontier: CurrentFrontier,
+    comments: tuple[Mapping[str, object], ...],
+    lifecycle: tuple[Mapping[str, object], ...],
+    slices: tuple[tuple[tuple[str, bool], ...], ...],
+    branch: str,
+    pr_number: int,
+    revision: str,
+    current_revision: str,
+    read: GitHubReader,
+) -> tuple[FormalLifecycleEvent, int] | None:
+    """Derive the first undelivered slice from the qualified formal history."""
+    event = frontier.event
+    if not isinstance(event, FormalLifecycleEvent) or not event.valid:
+        return None
+    qualification = build_qualification_input(
+        issue_number=source.issue_number,
+        change=frontier.change,
+        state="open",
+        current_routing=frontier.current_routing,
+        comments=comments,
+        current_revision=current_revision,
+        lifecycle_events=lifecycle,
+    )
+    if not qualification.events or qualification.events[-1] != event:
+        return None
+    deliveries: list[FormalLifecycleEvent] = []
+    review = None
+    for item in reversed(qualification.events):
+        if (
+            not item.valid
+            or item.issue_number != source.issue_number
+            or item.change != frontier.change
+        ):
+            return None
+        identity = (item.role, item.action, item.result_kind)
+        if identity == ("reviewer", "review-openspec", "pass"):
+            review = item
+            break
+        if identity == ("executor", "implement-change", "more-implementation-required"):
+            deliveries.append(item)
+            continue
+        # The canonical frontier has already qualified these transitions.
+        # A question, its resolution, or a blocked iteration can return to
+        # implementation without delivering another slice. Preserve the
+        # earlier scope and still require the reviewed plan to apply at HEAD.
+        iteration_routes = {("executor", "implement-change"), ("lead", "resolve-question")}
+        if (item.role, item.action) in iteration_routes and item.successor in iteration_routes:
+            continue
+        return None
+    if (
+        review is None
+        or review.revision is None
+        or len(deliveries) >= len(slices)
+        or not openspec_review_revision_applies(
+            repository,
+            token,
+            change=frontier.change,
+            reviewed_revision=review.revision,
+            head_revision=revision,
+        )
+    ):
+        return None
+    for group, delivery in zip(slices, reversed(deliveries), strict=False):
+        if not all(checked for _, checked in group) or not _bound_native_delivery_scope(
+            repository,
+            token,
+            source=source,
+            frontier=frontier,
+            event=delivery,
+            review=review,
+            scope=tuple(task_id for task_id, _ in group),
+            comments=comments,
+            branch=branch,
+            pr_number=pr_number,
+            revision=revision,
+            current_revision=current_revision,
+            read=read,
+        ):
+            return None
+    return review, len(deliveries)
+
+
+def _reviewed_task_group_indices(
+    slices: tuple[tuple[tuple[str, bool], ...], ...],
+    task_ids: tuple[str, ...] | None,
+) -> set[int] | None:
+    """Map every affected task exactly once; distinct groups are not ambiguity."""
+    if not task_ids or len(set(task_ids)) != len(task_ids):
+        return None
+    indices: set[int] = set()
+    for task_id in task_ids:
+        matches = [
+            index
+            for index, group in enumerate(slices)
+            for approved_id, _ in group
+            if approved_id == task_id
+        ]
+        if len(matches) != 1:
+            return None
+        indices.add(matches[0])
+    return indices
+
+
+def qualify_initial_implementation_finding(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    change: str,
+    evidence_ref: str | None,
+    reviewed_task_ids: tuple[str, ...] | None,
+    formal_body: str,
+    current_revision: str,
+    read: GitHubReader = _github_json,
+) -> bool:
+    """Qualify a fresh native finding on its exact accepted READY carrier."""
+    if (source.role, source.action) != ("reviewer", "review-implementation"):
+        return False
+    issue = read(repository, token, f"issues/{source.issue_number}")
+    if not isinstance(issue, Mapping) or issue.get("state") != "open":
+        return False
+    comments = _paged_list(repository, token, f"issues/{source.issue_number}/comments", read=read)
+    lifecycle = _paged_list(repository, token, f"issues/{source.issue_number}/timeline", read=read)
+    frontier, qualified = _derive_frontier(
+        repository=repository,
+        token=token,
+        source=source,
+        current_issue=issue,
+        issue_comments=comments,
+        lifecycle_events=lifecycle,
+        current_revision=current_revision,
+        read=read,
+    )
+    if not qualified or frontier is None or frontier.change != change:
+        return False
+    qualification = build_qualification_input(
+        issue_number=source.issue_number,
+        change=change,
+        state="open",
+        current_routing=frontier.current_routing,
+        comments=comments,
+        current_revision=current_revision,
+        lifecycle_events=lifecycle,
+    )
+    if not qualification.events or qualification.events[-1] != frontier.event:
+        return False
+    events = qualification.events
+    ready_index = len(events) - 1
+    while ready_index >= 0:
+        event = events[ready_index]
+        if (event.role, event.action, event.result_kind) != (
+            "reviewer",
+            "review-implementation",
+            "blocked",
+        ) or event.successor != ("reviewer", "review-implementation"):
+            break
+        ready_index -= 1
+    if ready_index < 1:
+        return False
+    ready = events[ready_index]
+    if (
+        not ready.valid
+        or (ready.role, ready.action, ready.result_kind)
+        != ("executor", "implement-change", "ready")
+        or ready.successor != ("reviewer", "review-implementation")
+        or ready.revision is None
+    ):
+        return False
+    executor = WorkerRequest(source.issue_number, "executor", "implement-change")
+    decisions = _application_decisions(comments)
+    owners = _frontier_application_decisions(decisions, replace(frontier, event=ready))
+    if len(owners) != 1:
+        return False
+    owner = owners[0]
+    original = _qualified_physical_original_accepted_effects(
+        record=owner, source=executor, repository=repository, token=token, read=read
+    )
+    if (
+        owner.disposition != "ACCEPTED"
+        or original is None
+        or _accepted_decision_sha256(owner, comments) is None
+        or _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=owner.authorization_revision,
+            current_revision=current_revision,
+            read=read,
+        )
+        is None
+    ):
+        return False
+    document = json.loads(owner.raw_worker_result)
+    evidence = (
+        document.get("_native_implementation_delivery") if isinstance(document, dict) else None
+    )
+    if evidence is None:
+        # An independently proven original legacy materialization remains on its
+        # existing reconciliation path. Missing native evidence is not legacy.
+        return any(
+            effect.kind == "github-mutation"
+            and find_materialization_payload(json.loads(effect.payload_json), executor) is not None
+            for effect in original.effects
+        )
+    if not isinstance(evidence, Mapping) or original.effects:
+        return False
+    pr_number = _positive_int(evidence.get("pr_number"))
+    branch = evidence.get("branch")
+    revision = ready.revision
+    if (
+        pr_number is None
+        or not isinstance(branch, str)
+        or evidence.get("revision") != revision
+        or evidence_ref != f"https://github.com/{repository}/commit/{revision}"
+        or [line for line in formal_body.splitlines() if line.startswith("Revision: ")]
+        != [f"Revision: {revision}"]
+    ):
+        return False
+    carrier = qualify_implementation_carrier(
+        repository=repository,
+        token=token,
+        source=source,
+        change=change,
+        pr_number=pr_number,
+        current_revision=current_revision,
+        read=read,
+    )
+    if carrier.branch != branch or carrier.head_sha != revision:
+        return False
+    if carrier.disposition == "HISTORICAL_MERGED":
+        return True
+    if carrier.disposition not in {"QUALIFIED", "RECONCILIATION_REQUIRED"}:
+        return False
+    path = f"openspec/changes/{change}/tasks.md"
+    task_blob = _content_sha_at(repository, token, path=path, revision=revision)
+    if task_blob is None or task_blob != evidence.get(
+        "current_task_blob", evidence.get("marker_blob")
+    ):
+        return False
+    content = _content_text_at(repository, token, path=path, revision=revision)
+    slices = _task_slices(content)
+    if not slices or not all(checked for group in slices for _, checked in group):
+        return False
+    affected = _reviewed_task_group_indices(slices, reviewed_task_ids)
+    if affected is None:
+        return False
+    review = next(
+        (
+            event
+            for event in reversed(events[:ready_index])
+            if (event.role, event.action, event.result_kind)
+            == ("reviewer", "review-openspec", "pass")
+        ),
+        None,
+    )
+    if (
+        review is None
+        or not review.valid
+        or review.revision is None
+        or not openspec_review_revision_applies(
+            repository,
+            token,
+            change=change,
+            reviewed_revision=review.revision,
+            head_revision=revision,
+        )
+    ):
+        return False
+    deliveries = [
+        event
+        for event in events[events.index(review) + 1 : ready_index + 1]
+        if (event.role, event.action) == ("executor", "implement-change")
+        and event.result_kind in ("ready", "more-implementation-required")
+    ]
+    if len(deliveries) < len(slices) or deliveries[-1] != ready:
+        return False
+    for index, group in enumerate(slices):
+        delivery = deliveries[index]
+        if delivery.result_kind != (
+            "ready" if index == len(slices) - 1 else "more-implementation-required"
+        ):
+            return False
+        if not _bound_native_delivery_scope(
+            repository,
+            token,
+            source=executor,
+            frontier=frontier,
+            event=delivery,
+            review=review,
+            scope=tuple(task_id for task_id, _ in group),
+            comments=comments,
+            branch=branch,
+            pr_number=pr_number,
+            revision=revision,
+            current_revision=current_revision,
+            read=read,
+        ):
+            return False
+        if index in affected:
+            delivery_owners = _frontier_application_decisions(
+                decisions, replace(frontier, event=delivery)
+            )
+            if len(delivery_owners) != 1:
+                return False
+            raw = json.loads(delivery_owners[0].raw_worker_result)
+            if not isinstance(raw, dict) or not isinstance(
+                raw.get("_native_implementation_delivery"), Mapping
+            ):
+                return False
+    if len(deliveries) > len(slices):
+        latest_scope = next(
+            (
+                tuple(task_id for task_id, _ in group)
+                for group in slices
+                if [task_id for task_id, _ in group] == evidence.get("scope_task_ids")
+            ),
+            None,
+        )
+        if latest_scope is None or not _bound_native_delivery_scope(
+            repository,
+            token,
+            source=executor,
+            frontier=frontier,
+            event=ready,
+            review=review,
+            scope=latest_scope,
+            comments=comments,
+            branch=branch,
+            pr_number=pr_number,
+            revision=revision,
+            current_revision=current_revision,
+            read=read,
+        ):
+            return False
+    return True
+
+
+def _reviewed_correction_marker(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    frontier: CurrentFrontier,
+    comments: tuple[Mapping[str, object], ...],
+    lifecycle: tuple[Mapping[str, object], ...],
+    slices: tuple[tuple[tuple[str, bool], ...], ...],
+    branch: str | None,
+    revision: str,
+    current_revision: str,
+    read: GitHubReader,
+) -> (
+    tuple[
+        FormalLifecycleEvent,
+        ApplicationDecisionRecord,
+        MaterializationRequest,
+        dict[str, object],
+        Mapping[str, object],
+        Mapping[str, object],
+        str,
+        Mapping[str, object],
+    ]
+    | None
+):
+    """Reuse the next affected approved group's delivered marker."""
+    if (
+        not slices
+        or not all(checked for group in slices for _, checked in group)
+        or not isinstance(frontier.event, FormalLifecycleEvent)
+        or not frontier.event.valid
+    ):
+        return None
+    qualification = build_qualification_input(
+        issue_number=source.issue_number,
+        change=frontier.change,
+        state="open",
+        current_routing=frontier.current_routing,
+        comments=comments,
+        current_revision=current_revision,
+        lifecycle_events=lifecycle,
+    )
+    events = qualification.events
+    if len(events) < 3 or events[-1] != frontier.event:
+        return None
+    finding_index = len(events) - 1
+    while finding_index > 0:
+        event = events[finding_index]
+        if (
+            not event.valid
+            or (event.role, event.action, event.result_kind)
+            != ("executor", "implement-change", "more-implementation-required")
+            or event.successor != ("executor", "implement-change")
+        ):
+            break
+        finding_index -= 1
+    finding = events[finding_index]
+    if (
+        finding_index < 2
+        or not finding.valid
+        or (finding.role, finding.action, finding.result_kind)
+        != ("reviewer", "review-implementation", "findings")
+        or finding.revision is None
+        or finding.default_branch_revision is None
+    ):
+        return None
+    delivered = events[finding_index - 1]
+    if (
+        not delivered.valid
+        or (delivered.role, delivered.action, delivered.result_kind)
+        != ("executor", "implement-change", "ready")
+        or delivered.revision != finding.revision
+    ):
+        return None
+    review = next(
+        (
+            event
+            for event in reversed(events[: finding_index - 1])
+            if (event.role, event.action, event.result_kind)
+            == ("reviewer", "review-openspec", "pass")
+        ),
+        None,
+    )
+    if (
+        review is None
+        or not review.valid
+        or review.revision is None
+        or not openspec_review_revision_applies(
+            repository,
+            token,
+            change=frontier.change,
+            reviewed_revision=review.revision,
+            head_revision=revision,
+        )
+    ):
+        return None
+    decisions = _application_decisions(comments)
+    finding_owners = _frontier_application_decisions(decisions, replace(frontier, event=finding))
+    if len(finding_owners) != 1:
+        return None
+    finding_record = finding_owners[0]
+    reviewer = WorkerRequest(source.issue_number, "reviewer", "review-implementation")
+    finding_digest = _accepted_decision_sha256(finding_record, comments)
+    if (
+        finding_record.disposition != "ACCEPTED"
+        or sum(item.request_comment_id == finding_record.request_comment_id for item in decisions)
+        != 1
+        or finding_digest is None
+        or finding.application_correlation is None
+        or _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=finding_record.authorization_revision,
+            current_revision=current_revision,
+            read=read,
+        )
+        is None
+    ):
+        return None
+    original = _qualified_physical_original_accepted_effects(
+        record=finding_record, source=reviewer, repository=repository, token=token, read=read
+    )
+    if original is None or original.effects:
+        return None
+    projection = json.loads(
+        _application_owned_worker_result(
+            finding_record.raw_worker_result,
+            source=reviewer,
+            change=frontier.change,
+            current_revision=finding.default_branch_revision,
+            result_revision=finding.revision,
+            request_comment_id=finding_record.request_comment_id,
+        )
+    )
+    formal = [
+        comment
+        for comment in comments
+        if comment.get("id") == finding.comment_id
+        and parse_formal_result(comment, current_revision=current_revision) == finding
+    ]
+    if len(formal) != 1 or not isinstance(formal[0].get("body"), str):
+        return None
+    expected_body = projection.get("result_content")
+    if not isinstance(expected_body, str):
+        return None
+    expected_evidence = [
+        line for line in expected_body.splitlines() if line.startswith("Evidence:")
+    ]
+    observed_evidence = [
+        line for line in cast(str, formal[0]["body"]).splitlines() if line.startswith("Evidence:")
+    ]
+    if len(expected_evidence) != 1 or observed_evidence != expected_evidence:
+        return None
+    # The immutable accepted finding, already matched to its original
+    # request, owns the structured scope. Prose is evidence, never selection.
+    finding_worker = _application_worker_for_record(finding_record, reviewer)
+    if finding_worker is None:
+        return None
+    affected_indices = _reviewed_task_group_indices(slices, finding_worker.reviewed_task_ids)
+    if not affected_indices:
+        return None
+    remaining_indices = sorted(affected_indices)
+    finding_binding = {
+        "finding_application_correlation": finding.application_correlation,
+        "finding_accepted_decision_sha256": finding_digest,
+        "finding_revision": finding.revision,
+    }
+    # The reviewed task plan and all later markers must survive correction.
+    path = f"openspec/changes/{frontier.change}/tasks.md"
+    current_blob = _content_sha_at(repository, token, path=path, revision=revision)
+    if current_blob is None or current_blob != _content_sha_at(
+        repository, token, path=path, revision=finding.revision
+    ):
+        return None
+    owners = _frontier_application_decisions(decisions, replace(frontier, event=delivered))
+    if len(owners) != 1:
+        return None
+    document = json.loads(owners[0].raw_worker_result)
+    evidence = (
+        document.get("_native_implementation_delivery") if isinstance(document, dict) else None
+    )
+    if not isinstance(evidence, Mapping):
+        return None
+    latest_delivery = evidence
+    pr_number = _positive_int(evidence.get("pr_number"))
+    delivery_branch = evidence.get("branch")
+    if not isinstance(delivery_branch, str) or (branch is not None and branch != delivery_branch):
+        return None
+    branch = delivery_branch
+    if pr_number is None:
+        return None
+    deliveries = [
+        event
+        for event in events[events.index(review) + 1 : finding_index]
+        if (event.role, event.action) == ("executor", "implement-change")
+        and event.result_kind in ("ready", "more-implementation-required")
+    ]
+    if len(deliveries) < len(slices) or deliveries[-1] != delivered:
+        return None
+    prior_count = len(deliveries)
+    deliveries.extend(events[finding_index + 1 :])
+    last_correction_revision = finding.revision
+    original_evidence: list[Mapping[str, object] | None] = []
+    for occurrence, delivery_event in enumerate(deliveries):
+        owners = _frontier_application_decisions(decisions, replace(frontier, event=delivery_event))
+        if len(owners) != 1:
+            return None
+        raw = json.loads(owners[0].raw_worker_result)
+        occurrence_evidence = (
+            raw.get("_native_implementation_delivery") if isinstance(raw, dict) else None
+        )
+        if occurrence < len(slices):
+            scope_index = occurrence
+            expected_kind = (
+                "ready" if occurrence == len(slices) - 1 else "more-implementation-required"
+            )
+        else:
+            # Subsequent READY occurrences are reviewed corrections, not new
+            # positions in the original delivery sequence.
+            if not isinstance(occurrence_evidence, Mapping):
+                return None
+            matching = [
+                index
+                for index, group in enumerate(slices)
+                if [task_id for task_id, _ in group] == occurrence_evidence.get("scope_task_ids")
+            ]
+            if len(matching) != 1:
+                return None
+            scope_index = matching[0]
+            original_scope = original_evidence[scope_index]
+            if original_scope is None or any(
+                occurrence_evidence.get(key) != original_scope.get(key)
+                for key in (
+                    "marker_request_comment_id",
+                    "marker_accepted_decision_sha256",
+                    "marker_revision",
+                    "marker_blob",
+                )
+            ):
+                return None
+            expected_kind = "ready"
+            if occurrence >= prior_count:
+                if (
+                    len(remaining_indices) <= 1
+                    or scope_index != remaining_indices[0]
+                    or any(
+                        occurrence_evidence.get(key) != value
+                        for key, value in finding_binding.items()
+                    )
+                    or delivery_event.revision is None
+                    or _authorization_ancestry(
+                        repository,
+                        token,
+                        authorization_revision=last_correction_revision,
+                        current_revision=delivery_event.revision,
+                        read=read,
+                    )
+                    is None
+                ):
+                    return None
+                expected_kind = "more-implementation-required"
+                remaining_indices.pop(0)
+                latest_delivery = occurrence_evidence
+                last_correction_revision = delivery_event.revision
+        if delivery_event.result_kind != expected_kind or not _bound_native_delivery_scope(
+            repository,
+            token,
+            source=source,
+            frontier=frontier,
+            event=delivery_event,
+            review=review,
+            scope=tuple(task_id for task_id, _ in slices[scope_index]),
+            comments=comments,
+            branch=branch,
+            pr_number=pr_number,
+            revision=revision,
+            current_revision=current_revision,
+            read=read,
+        ):
+            return None
+        if occurrence < len(slices):
+            original_evidence.append(
+                occurrence_evidence if isinstance(occurrence_evidence, Mapping) else None
+            )
+    if any(original_evidence[index] is None for index in affected_indices):
+        return None
+    correction_kind = "more-implementation-required" if len(remaining_indices) > 1 else "ready"
+    evidence = original_evidence[remaining_indices[0]]
+    if evidence is None:
+        return None
+    marker_id = _positive_int(evidence.get("marker_request_comment_id"))
+    markers = [item for item in decisions if item.request_comment_id == marker_id]
+    if len(markers) != 1:
+        return None
+    marker = markers[0]
+    physical = _qualified_physical_original_accepted_effects(
+        record=marker, source=source, repository=repository, token=token, read=read
+    )
+    if physical is None or not _implementation_development_save(physical):
+        return None
+    payload = json.loads(physical.effects[0].payload_json)
+    request = find_materialization_payload(payload, source)
+    if request is None:
+        return None
+    return (
+        review,
+        marker,
+        request,
+        payload,
+        evidence,
+        latest_delivery,
+        correction_kind,
+        finding_binding,
+    )
+
+
+def qualify_initial_marker_save(
+    repository: str,
+    token: str,
+    *,
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    request_comment_id: int,
+    current_revision: str,
+    default_branch: str,
+    read: GitHubReader = _github_json,
+) -> bool:
+    """Qualify the first undelivered scope without a checkpoint publication."""
+    if (
+        request.pr_number is None
+        or len(request.files) != 1
+        or request.files[0].path != f"openspec/changes/{request.change}/tasks.md"
+        or request.files[0].expected_sha is None
+        or request.files[0].expected_sha == request.files[0].blob_sha
+    ):
+        return False
+    try:
+        receipt = qualify_development_dispatch_source(
+            repository,
+            token,
+            source=source,
+            request_comment_id=request_comment_id,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            read=read,
+        )
+        ingress = read(repository, token, f"issues/comments/{request_comment_id}")
+        prefix = github_repository_api_url(repository, "issues/")
+        url = ingress.get("issue_url") if isinstance(ingress, Mapping) else None
+        if receipt is None or not isinstance(url, str) or not url.startswith(prefix):
+            return False
+        shard = _positive_int_string(url.removeprefix(prefix))
+        if shard is None:
+            return False
+        completion = qualify_application_completion(
+            repository,
+            token,
+            source=source,
+            current_revision=current_revision,
+            read=read,
+            current_dispatch_request_comment_id=receipt.dispatch_request_comment_id,
+            current_dispatch_issue_number=shard,
+            phase_a_request_comment_id=request_comment_id,
+        )
+        obligation = completion.settled_quality_obligation
+        if (
+            obligation is None
+            or obligation.revision != request.base_sha
+            or obligation.carrier_revision != request.base_sha
+            or obligation.branch != request.branch
+            or obligation.default_branch != default_branch
+            or completion.quality_observation is None
+            or completion.quality_observation.outcome != "PASS"
+            or development_predecessor_evidence(completion, current_revision) is None
+        ):
+            return False
+        carrier = qualify_implementation_carrier(
+            repository=repository,
+            token=token,
+            source=source,
+            change=request.change,
+            pr_number=request.pr_number,
+            current_revision=current_revision,
+            read=read,
+        )
+        if (
+            carrier.disposition != "QUALIFIED"
+            or carrier.branch != request.branch
+            or carrier.head_sha != request.base_sha
+        ):
+            return False
+        issue = read(repository, token, f"issues/{source.issue_number}")
+        if not isinstance(issue, Mapping):
+            return False
+        comments = _paged_list(
+            repository, token, f"issues/{source.issue_number}/comments", read=read
+        )
+        lifecycle = _paged_list(
+            repository, token, f"issues/{source.issue_number}/timeline", read=read
+        )
+        frontier, qualified = _derive_frontier(
+            repository=repository,
+            token=token,
+            source=source,
+            current_issue=issue,
+            issue_comments=comments,
+            lifecycle_events=lifecycle,
+            current_revision=current_revision,
+            read=read,
+        )
+        if not qualified or frontier is None or frontier.change != request.change:
+            return False
+        file = request.files[0]
+        content = _content_text_at(repository, token, path=file.path, revision=request.base_sha)
+        slices = _task_slices(content)
+        if slices is None:
+            return False
+        scoped = _ordinary_implementation_scope(
+            repository,
+            token,
+            source=source,
+            frontier=frontier,
+            comments=comments,
+            lifecycle=lifecycle,
+            slices=slices,
+            branch=request.branch,
+            pr_number=request.pr_number,
+            revision=request.base_sha,
+            current_revision=current_revision,
+            read=read,
+        )
+        if scoped is None:
+            return False
+        _, index = scoped
+        if any(checked for group in slices[index:] for _, checked in group):
+            return False
+        return task_checkpoint_is_exact(
+            repository,
+            token,
+            expected_change=request.change,
+            base_sha=request.base_sha,
+            file=file,
+            completed_task_ids=tuple(task_id for task_id, _ in slices[index]),
+        ) and bool(
+            _native_strict_marker_evidence(
+                repository,
+                token,
+                revision=request.base_sha,
+                branch=request.branch,
+                current_revision=current_revision,
+                read=read,
+            )
+        )
+    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+
+
+def _observe_same_head_correction_quality(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    frontier: CurrentFrontier,
+    comments: tuple[Mapping[str, object], ...],
+    historical_delivery: Mapping[str, object],
+    marker: MaterializationRequest,
+    revision: str,
+    current_revision: str,
+    default_branch: str,
+    receipt: DevelopmentDispatchSource,
+    read: GitHubReader,
+) -> ApplicationCompletion | None:
+    """Reobserve the original physical witness, not a new current-occurrence write."""
+    finding = frontier.event
+    if (
+        not isinstance(finding, FormalLifecycleEvent)
+        or finding.revision != revision
+        or historical_delivery.get("revision") != revision
+        or marker.pr_number is None
+    ):
+        return None
+    carrier = qualify_implementation_carrier(
+        repository=repository,
+        token=token,
+        source=source,
+        change=frontier.change,
+        pr_number=marker.pr_number,
+        current_revision=current_revision,
+        read=read,
+    )
+    if (
+        carrier.disposition != "QUALIFIED"
+        or carrier.branch != marker.branch
+        or carrier.head_sha != revision
+    ):
+        return None
+    historical_quality = historical_delivery.get("quality")
+    if not isinstance(historical_quality, Mapping):
+        return None
+    quality_id = _positive_int(historical_quality.get("request_comment_id"))
+    records = [
+        record
+        for record in _application_decisions(comments)
+        if record.request_comment_id == quality_id
+    ]
+    if len(records) != 1:
+        return None
+    record = records[0]
+    digest = _accepted_decision_sha256(record, comments)
+    if digest is None or digest != historical_quality.get("accepted_decision_sha256"):
+        return None
+    observed = _application_job(
+        repository,
+        token,
+        record.request_comment_id,
+        read=read,
+        record=record,
+        accepted_decision_sha256=digest,
+        current_revision=current_revision,
+        issue_comments=comments,
+    )
+    obligation = observed.quality_obligation
+    if (
+        observed.state != "RESUMABLE"
+        or obligation is None
+        or obligation.revision != revision
+        or obligation.carrier_revision != revision
+        or obligation.branch != marker.branch
+        or obligation.default_branch != default_branch
+    ):
+        return None
+    return _current_development_completion(
+        repository,
+        token,
+        source=source,
+        record=record,
+        completion=observed,
+        current_revision=current_revision,
+        dispatch_request_id=receipt.dispatch_request_comment_id,
+        phase_a=True,
+        accepted_decision_sha256=digest,
+        read=read,
+    )
+
+
+def qualify_initial_implementation_delivery(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    change: str,
+    revision: str,
+    result_kind: str,
+    request_comment_id: int,
+    current_revision: str,
+    default_branch: str,
+    read: GitHubReader = _github_json,
+) -> dict[str, object] | None:
+    """Derive ordinary delivery from the qualified scope and exact native gates."""
+    try:
+        receipt = qualify_development_dispatch_source(
+            repository,
+            token,
+            source=source,
+            request_comment_id=request_comment_id,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            read=read,
+        )
+        ingress = read(repository, token, f"issues/comments/{request_comment_id}")
+        prefix = github_repository_api_url(repository, "issues/")
+        url = ingress.get("issue_url") if isinstance(ingress, Mapping) else None
+        if receipt is None or not isinstance(url, str) or not url.startswith(prefix):
+            return None
+        shard = _positive_int_string(url.removeprefix(prefix))
+        if shard is None:
+            return None
+        completion = qualify_application_completion(
+            repository,
+            token,
+            source=source,
+            current_revision=current_revision,
+            read=read,
+            current_dispatch_request_comment_id=receipt.dispatch_request_comment_id,
+            current_dispatch_issue_number=shard,
+            phase_a_request_comment_id=request_comment_id,
+        )
+        obligation = completion.settled_quality_obligation
+        completed_predecessor = (
+            completion.state == "COMPLETE"
+            and obligation is None
+            and not completion.settled_development_records
+        )
+        evidence_only = completion.state in ("NONE", "REJECTED") or completed_predecessor
+        if evidence_only:
+            if (
+                completion.accepted_record is not None
+                or completion.quality_obligation is not None
+                or obligation is not None
+                or completion.settled_development_records
+            ):
+                return None
+        elif obligation is None or not completion.settled_development_records:
+            return None
+        issue = read(repository, token, f"issues/{source.issue_number}")
+        if not isinstance(issue, Mapping):
+            return None
+        comments = _paged_list(
+            repository, token, f"issues/{source.issue_number}/comments", read=read
+        )
+        lifecycle = _paged_list(
+            repository, token, f"issues/{source.issue_number}/timeline", read=read
+        )
+        frontier, qualified = _derive_frontier(
+            repository=repository,
+            token=token,
+            source=source,
+            current_issue=issue,
+            issue_comments=comments,
+            lifecycle_events=lifecycle,
+            current_revision=current_revision,
+            read=read,
+        )
+        if not qualified or frontier is None or frontier.change != change:
+            return None
+        if completed_predecessor:
+            owners = _frontier_application_decisions(_application_decisions(comments), frontier)
+            if (
+                len(owners) != 1
+                or owners[0].disposition != "ACCEPTED"
+                or owners[0].request_comment_id != completion.request_comment_id
+                or (owners[0].role, owners[0].action, owners[0].result_kind)
+                != ("executor", "implement-change", "more-implementation-required")
+            ):
+                return None
+        path = f"openspec/changes/{change}/tasks.md"
+        content = _content_text_at(repository, token, path=path, revision=revision)
+        slices = _task_slices(content)
+        if slices is None:
+            return None
+        markers: list[tuple[ApplicationDecisionRecord, MaterializationRequest, dict[str, object]]]
+        markers = []
+        for record in completion.settled_development_records:
+            if record.change != change:
+                return None
+            batch = parse_effect_batch(record.raw_worker_result, source, authorized_change=change)
+            if not _implementation_development_save(batch):
+                return None
+            if _implementation_development_save(batch, include_task_markers=False):
+                continue
+            payload = json.loads(batch.effects[0].payload_json)
+            request = find_materialization_payload(payload, source)
+            if request is None:
+                return None
+            markers.append((record, request, payload))
+        reviewed_correction = not markers
+        expected_kind = "ready"
+        finding_binding: Mapping[str, object] = {}
+        if not markers:
+            correction = _reviewed_correction_marker(
+                repository,
+                token,
+                source=source,
+                frontier=frontier,
+                comments=comments,
+                lifecycle=lifecycle,
+                slices=slices,
+                branch=obligation.branch if obligation is not None else None,
+                revision=revision,
+                current_revision=current_revision,
+                read=read,
+            )
+            if correction is None:
+                return None
+            (
+                event,
+                record,
+                marker,
+                payload,
+                historical,
+                latest_delivery,
+                expected_kind,
+                finding_binding,
+            ) = correction
+            if evidence_only:
+                observed = _observe_same_head_correction_quality(
+                    repository,
+                    token,
+                    source=source,
+                    frontier=frontier,
+                    comments=comments,
+                    historical_delivery=latest_delivery,
+                    marker=marker,
+                    revision=revision,
+                    current_revision=current_revision,
+                    default_branch=default_branch,
+                    receipt=receipt,
+                    read=read,
+                )
+                if observed is None:
+                    return None
+                completion = observed
+                obligation = completion.settled_quality_obligation
+            matching_indices = [
+                i
+                for i, group in enumerate(slices)
+                if [task_id for task_id, _ in group] == historical.get("scope_task_ids")
+            ]
+            if len(matching_indices) != 1:
+                return None
+            index = matching_indices[0]
+        elif len(markers) == 1:
+            record, marker, payload = markers[0]
+            if marker.pr_number is None:
+                return None
+            scoped = _ordinary_implementation_scope(
+                repository,
+                token,
+                source=source,
+                frontier=frontier,
+                comments=comments,
+                lifecycle=lifecycle,
+                slices=slices,
+                branch=marker.branch,
+                pr_number=marker.pr_number,
+                revision=revision,
+                current_revision=current_revision,
+                read=read,
+            )
+            if scoped is None:
+                return None
+            event, index = scoped
+            expected_kind = "ready" if index == len(slices) - 1 else "more-implementation-required"
+        else:
+            return None
+        quality = development_predecessor_evidence(completion, current_revision)
+        if (
+            obligation is None
+            or obligation.revision != revision
+            or obligation.carrier_revision != revision
+            or obligation.default_branch != default_branch
+            or completion.quality_observation is None
+            or completion.quality_observation.outcome != "PASS"
+            or quality is None
+            or marker.pr_number is None
+            or marker.branch != obligation.branch
+        ):
+            return None
+        if (
+            not all(checked for _, checked in slices[index])
+            or (
+                not reviewed_correction
+                and any(checked for group in slices[index + 1 :] for _, checked in group)
+            )
+            or result_kind != expected_kind
+        ):
+            return None
+        scope = tuple(task_id for task_id, _ in slices[index])
+        file = marker.files[0]
+        digest = _accepted_decision_sha256(record, comments)
+        current_task_blob = _content_sha_at(repository, token, path=path, revision=revision)
+        if (
+            digest is None
+            or file.expected_sha == file.blob_sha
+            or current_task_blob is None
+            or (not reviewed_correction and current_task_blob != file.blob_sha)
+            or not task_checkpoint_is_exact(
+                repository,
+                token,
+                expected_change=change,
+                base_sha=marker.base_sha,
+                file=file,
+                completed_task_ids=scope,
+            )
+        ):
+            return None
+        proof = prove_materialization(
+            payload,
+            source,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            accepted_authorization_revision=record.authorization_revision,
+            accepted_intent=True,
+        )
+        if (
+            proof.disposition != "COMPLETE"
+            or proof.target is None
+            or proof.witness is None
+            or proof.target.revision != revision
+            or proof.target.branch != marker.branch
+            or proof.witness.desired_blobs != ((path, file.blob_sha),)
+        ):
+            return None
+        strict = _native_strict_marker_evidence(
+            repository,
+            token,
+            revision=revision,
+            branch=marker.branch,
+            current_revision=current_revision,
+            read=read,
+        )
+        if not strict:
+            return None
+        return {
+            **finding_binding,
+            "scope_task_ids": list(scope),
+            "revision": revision,
+            "pr_number": marker.pr_number,
+            "branch": marker.branch,
+            "reviewed_revision": event.revision,
+            "review_comment_id": event.comment_id,
+            "marker_request_comment_id": record.request_comment_id,
+            "marker_accepted_decision_sha256": digest,
+            "marker_revision": proof.witness.revision,
+            "marker_blob": file.blob_sha,
+            **(
+                {"current_task_blob": current_task_blob}
+                if current_task_blob != file.blob_sha
+                else {}
+            ),
+            "quality": quality,
+            "strict": [list(attempt) for attempt in strict],
+            "dispatch": asdict(receipt),
+            "result_kind": result_kind,
+        }
+    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def _historical_development_verdict(
+    repository: str,
+    token: str,
+    *,
+    obligation: NativeQualityObligation,
+    evidence: Mapping[str, object],
+    boundary: datetime,
+    read: GitHubReader,
+) -> bool:
+    """Requalify the exact terminal attempts actually used, not the latest verdict."""
+    references = evidence.get("attempts")
+    blob = evidence.get("workflow_blob")
+    gate = evidence.get("obligation_id")
+    authorization = evidence.get("authorization_revision")
+    if (
+        not isinstance(references, list)
+        or not references
+        or not isinstance(blob, str)
+        or not isinstance(gate, str)
+        or not isinstance(authorization, str)
+    ):
+        return False
+    target_blob = _quality_workflow_blob(repository, token, obligation.revision, read=read)
+    if target_blob is None:
+        return False
+    attempts: list[NativeQualityAttempt] = []
+    ordinary: list[NativeQualityAttempt] = []
+    called: list[NativeQualityAttempt] = []
+    for reference in references:
+        if not isinstance(reference, Mapping):
+            return False
+        run_id = _positive_int(reference.get("run_id"))
+        number = _positive_int(reference.get("run_attempt"))
+        if (
+            run_id is None
+            or number is None
+            or reference.get("checkout_revision") != obligation.revision
+        ):
+            return False
+        run = read(repository, token, f"actions/runs/{run_id}/attempts/{number}")
+        if not isinstance(run, Mapping):
+            return False
+        source_id = reference.get("source_comment_id")
+        if source_id is None:
+            event = run.get("event")
+            if not isinstance(event, str) or event not in ("push", "pull_request"):
+                return False
+            attempt = read_native_quality_attempt(
+                repository,
+                token,
+                revision=obligation.revision,
+                branch=obligation.branch,
+                workflow_blob=target_blob,
+                run_id=run_id,
+                run_attempt=number,
+                event=event,
+                read=read,
+                log_read=_github_job_log,
+            )
+            ordinary.append(attempt)
+        else:
+            source_number = _positive_int(source_id)
+            if source_number is None:
+                return False
+            row = _quality_bridge_run(run, repository, obligation.default_branch, source_number)
+            comment = read(repository, token, f"issues/comments/{source_number}")
+            requested = _quality_time(
+                comment.get("created_at") if isinstance(comment, Mapping) else None
+            )
+            created = _quality_time(run.get("created_at"))
+            accepted = _quality_time(obligation.accepted_at)
+            if (
+                row is None
+                or row[:2] != (run_id, number)
+                or not isinstance(comment, Mapping)
+                or comment.get("id") != source_number
+                or not _trusted_connector_comment(comment, repository.split("/", 1)[0])
+                or comment.get("updated_at") != comment.get("created_at")
+                or not isinstance(comment.get("body"), str)
+                or parse_dispatch_request(cast(str, comment["body"])) is None
+                or requested is None
+                or created is None
+                or accepted is None
+                or not accepted < requested <= created
+                or _authorization_ancestry(
+                    repository,
+                    token,
+                    authorization_revision=row[2],
+                    current_revision=authorization,
+                    read=read,
+                )
+                is None
+            ):
+                return False
+            attempt = _quality_bridge_attempt(
+                repository,
+                token,
+                source=source_number,
+                row=row,
+                obligation_id=gate,
+                revision=obligation.revision,
+                workflow_blob=blob,
+                read=read,
+                log_read=_github_job_log,
+            )
+            called.append(attempt)
+        if asdict(attempt) != reference or attempt.outcome not in (
+            "PASS",
+            "STATIC_STEP_FAILURE",
+            "PYTEST_STEP_FAILURE",
+        ):
+            return False
+        attempts.append(attempt)
+    combined = tuple(attempts)
+    outcome = reduce_native_quality_attempts(combined)
+    if outcome not in ("PASS", "FAIL", "CONFLICT"):
+        return False
+    if outcome == "PASS" and target_blob != blob and (not ordinary or not called):
+        return False
+    return _quality_verdicts_precede(
+        repository,
+        token,
+        attempts=combined,
+        boundary=boundary,
+        accepted_at=obligation.accepted_at,
+        read=read,
+    )
+
+
+def _native_delivery_never_called(
+    record: ApplicationDecisionRecord,
+    completion: ApplicationCompletion,
+    digest: str,
+) -> bool:
+    """Qualify the existing first-Formal no-call proof, not a gate verdict."""
+    proof = completion.accepted_proof
+    artifact = completion.recovery_artifact
+    if (
+        completion.state != "RESUMABLE"
+        or completion.accepted_record != record
+        or completion.accepted_decision_sha256 != digest
+        or proof is None
+        or proof.disposition != "COMPLETE"
+        or not isinstance(artifact, ApplicationRecoveryArtifact)
+        or artifact.request_comment_id != record.request_comment_id
+        or artifact.accepted_decision_sha256 != digest
+    ):
+        return False
+    frontier = proof.pending_frontier_proof
+    failure = artifact.document.get("failure_evidence")
+    rejection = failure.get("rejection") if isinstance(failure, Mapping) else None
+    if (
+        frontier is None
+        or frontier.disposition != "NOT_APPLIED"
+        or frontier.obligation != "FORMAL_RESULT"
+        or frontier.remaining_obligation != "FORMAL_RESULT"
+        or frontier.frontier_index != 0
+        or not isinstance(frontier.witness, CompleteNeverCalledWitness)
+        or not isinstance(failure, Mapping)
+        or _accepted_recovery_boundary(failure) != "READ_ONLY"
+        or failure.get("unfinished_boundary") != "effect-precondition"
+        or failure.get("failed_effect_index") != 0
+        or not isinstance(rejection, Mapping)
+        or rejection.get("expected") != "fresh native implementation delivery gates"
+    ):
+        return False
+    witness = frontier.witness
+    return (
+        witness.request_comment_id == record.request_comment_id
+        and witness.target_index == 0
+        and witness.accepted_decision_sha256 == digest
+        and bool(witness.artifact_chain)
+        and witness.artifact_chain[0]
+        == (artifact.run_id, artifact.run_attempt, artifact.artifact_id)
+    )
+
+
+def _settled_development_prefix(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    accepted: list[ApplicationDecisionRecord],
+    decision_times: Mapping[int, str | None],
+    ingress_times: Mapping[int, str | None],
+    issue_comments: tuple[Mapping[str, object], ...],
+    accepted_state: Callable[[ApplicationDecisionRecord, WorkerRequest], ApplicationCompletion],
+    current_revision: str,
+    dispatch_request_id: int | None,
+    phase_a: bool,
+    current_issue: Mapping[str, object],
+    lifecycle_events: tuple[Mapping[str, object], ...],
+    read: GitHubReader,
+) -> tuple[ApplicationDecisionRecord, ApplicationCompletion] | None:
+    """Retire only a fully proven causal prefix of physical saves."""
+    if (source.role, source.action) != ("executor", "implement-change"):
+        return None
+    ordered: list[tuple[datetime, ApplicationDecisionRecord]] = []
+    for record in accepted:
+        stamp = _quality_time(decision_times.get(record.request_comment_id))
+        if stamp is None:
+            return None
+        ordered.append((stamp, record))
+    if len({stamp for stamp, _ in ordered}) != len(ordered):
+        return None
+    ordered.sort(key=lambda item: item[0])
+    prior: tuple[ApplicationDecisionRecord, NativeQualityObligation, str, datetime] | None = None
+    prior_completion: ApplicationCompletion | None = None
+    settled_records: list[ApplicationDecisionRecord] = []
+    retired_publication: tuple[datetime, ApplicationRecoveryArtifact, str] | None = None
+    seen_dispatch: set[int] = set()
+    seen_revisions: set[str] = set()
+    try:
+        for index, (stamp, record) in enumerate(ordered):
+            completion = accepted_state(record, source)
+            obligation = completion.quality_obligation
+            publication: Mapping[str, object] | None = None
+            digest = _accepted_decision_sha256(record, issue_comments)
+            if digest is None or completion.request_comment_id != record.request_comment_id:
+                return None
+            if obligation is None:
+                # The final accepted owner may still have an incomplete or
+                # unknown effect. Qualify its exact Original and intended
+                # carrier preimage, not an invented completed write.
+                if prior is None or completion.state not in ("RESUMABLE", "INVALID"):
+                    return None
+                original = _qualified_physical_original_accepted_effects(
+                    record=record, source=source, repository=repository, token=token, read=read
+                )
+                if original is None:
+                    return None
+                default_branch = prior[1].default_branch
+                if not original.effects:
+                    # A publication-only ACCEPT owns its formal Effect even
+                    # while pending or unknown; this is not write permission.
+                    document = json.loads(record.raw_worker_result)
+                    delivery = document.get("_native_implementation_delivery")
+                    if (
+                        not isinstance(delivery, Mapping)
+                        or delivery.get("revision") != prior[1].revision
+                        or delivery.get("branch") != prior[1].branch
+                        or delivery.get("result_kind") != record.result_kind
+                        or record.result_kind not in ("ready", "more-implementation-required")
+                    ):
+                        return None
+                    marker_id = _positive_int(delivery.get("marker_request_comment_id"))
+                    markers = [
+                        item for item in settled_records if item.request_comment_id == marker_id
+                    ]
+                    if not markers:
+                        # A reviewed correction may bind a previously delivered
+                        # marker without writing it again in this occurrence.
+                        frontier, qualified = _derive_frontier(
+                            repository=repository,
+                            token=token,
+                            source=source,
+                            current_issue=current_issue,
+                            issue_comments=issue_comments,
+                            lifecycle_events=lifecycle_events,
+                            current_revision=current_revision,
+                            read=read,
+                        )
+                        if not qualified or frontier is None or frontier.change != record.change:
+                            return None
+                        path = f"openspec/changes/{record.change}/tasks.md"
+                        content = _content_text_at(
+                            repository, token, path=path, revision=prior[1].revision
+                        )
+                        slices = _task_slices(content)
+                        if slices is None:
+                            return None
+                        correction = _reviewed_correction_marker(
+                            repository,
+                            token,
+                            source=source,
+                            frontier=frontier,
+                            comments=issue_comments,
+                            lifecycle=lifecycle_events,
+                            slices=slices,
+                            branch=prior[1].branch,
+                            revision=prior[1].revision,
+                            current_revision=current_revision,
+                            read=read,
+                        )
+                        if correction is None:
+                            return None
+                        (
+                            _,
+                            historical_marker,
+                            _,
+                            _,
+                            historical,
+                            _,
+                            expected_kind,
+                            finding_binding,
+                        ) = correction
+                        if record.result_kind != expected_kind:
+                            return None
+                        # A historical single-group READY may predate the binding.
+                        # A partial correction always belongs to the original finding.
+                        has_binding = any(key in delivery for key in finding_binding)
+                        if (has_binding or expected_kind != "ready") and any(
+                            delivery.get(key) != value for key, value in finding_binding.items()
+                        ):
+                            return None
+                        if any(
+                            delivery.get(key) != historical.get(key)
+                            for key in (
+                                "scope_task_ids",
+                                "pr_number",
+                                "branch",
+                                "reviewed_revision",
+                                "review_comment_id",
+                                "marker_request_comment_id",
+                                "marker_accepted_decision_sha256",
+                                "marker_revision",
+                                "marker_blob",
+                            )
+                        ):
+                            return None
+                        if delivery.get("current_task_blob", delivery.get("marker_blob")) != (
+                            _content_sha_at(
+                                repository, token, path=path, revision=prior[1].revision
+                            )
+                        ):
+                            return None
+                        markers = [historical_marker]
+                    if len(markers) != 1 or _accepted_decision_sha256(
+                        markers[0], issue_comments
+                    ) != delivery.get("marker_accepted_decision_sha256"):
+                        return None
+                    publication = delivery
+                    carrier_branch = prior[1].branch
+                    carrier_base = prior[1].revision
+                else:
+                    if index != len(ordered) - 1 or not _implementation_development_save(original):
+                        return None
+                    materialization = find_materialization_payload(
+                        json.loads(original.effects[0].payload_json), source
+                    )
+                    if materialization is None:
+                        return None
+                    carrier_branch = materialization.branch
+                    carrier_base = materialization.base_sha
+            else:
+                if (
+                    completion.state != "RESUMABLE"
+                    or _quality_time(obligation.accepted_at) != stamp
+                    or obligation.revision in seen_revisions
+                ):
+                    return None
+                carrier_branch = obligation.branch
+                carrier_base = obligation.carrier_base
+                default_branch = obligation.default_branch
+            receipt = _development_acceptance_source(
+                repository,
+                token,
+                source=source,
+                record=record,
+                default_branch=default_branch,
+                read=read,
+            )
+            ingress = _quality_time(ingress_times.get(record.request_comment_id))
+            if receipt is None or receipt.dispatch_request_comment_id in seen_dispatch:
+                return None
+            if ingress is None or ingress >= stamp:
+                return None
+            if prior is not None:
+                previous, old, previous_digest, previous_stamp = prior
+                if (
+                    previous.change != record.change
+                    or old.branch != carrier_branch
+                    or old.default_branch != default_branch
+                    or (
+                        obligation is not None
+                        and old.carrier_revision != obligation.carrier_revision
+                    )
+                    or carrier_base != old.revision
+                ):
+                    return None
+                boundary = _development_planning_boundary(
+                    repository, token, receipt=receipt, read=read
+                )
+                if boundary is None or not previous_stamp < boundary < ingress:
+                    return None
+                document = json.loads(record.raw_worker_result)
+                evidence = (
+                    publication.get("quality")
+                    if publication is not None
+                    else document.get("_native_development_predecessor")
+                )
+                if not isinstance(evidence, Mapping):
+                    return None
+                if publication is not None:
+                    attempts = evidence.get("attempts")
+                    if (
+                        not isinstance(attempts, list)
+                        or not attempts
+                        or any(
+                            not isinstance(attempt, Mapping) or attempt.get("outcome") != "PASS"
+                            for attempt in attempts
+                        )
+                    ):
+                        return None
+                blob = _quality_workflow_blob(
+                    repository, token, record.authorization_revision, read=read
+                )
+                if (
+                    blob is None
+                    or _authorization_ancestry(
+                        repository,
+                        token,
+                        authorization_revision=record.authorization_revision,
+                        current_revision=current_revision,
+                        read=read,
+                    )
+                    is None
+                ):
+                    return None
+                # The historical producer, not a later main's producer,
+                # determines the gate actually used for successor admission.
+                gate = old.obligation_id
+                if blob != old.workflow_blob:
+                    identity = json.dumps(
+                        [
+                            repository,
+                            previous.issue_number,
+                            previous.change,
+                            previous.request_comment_id,
+                            previous_digest,
+                            old.revision,
+                            old.branch,
+                            blob,
+                        ],
+                        separators=(",", ":"),
+                    )
+                    gate = hashlib.sha256(identity.encode()).hexdigest()
+                expected = {
+                    "request_comment_id": previous.request_comment_id,
+                    "accepted_decision_sha256": previous_digest,
+                    "revision": old.revision,
+                    "branch": old.branch,
+                    "workflow_blob": blob,
+                    "obligation_id": gate,
+                    "authorization_revision": record.authorization_revision,
+                    "attempts": evidence.get("attempts"),
+                }
+                if evidence != expected or not _historical_development_verdict(
+                    repository,
+                    token,
+                    obligation=old,
+                    evidence=evidence,
+                    boundary=boundary,
+                    read=read,
+                ):
+                    return None
+                if retired_publication is not None:
+                    # A later accepted correction must independently prove the
+                    # negative verdict at its own planning boundary. A fresh
+                    # verdict today cannot authorize an old successor.
+                    retired_at, artifact, retired_authority = retired_publication
+                    attempts = evidence.get("attempts")
+                    stale_successor = (
+                        retired_authority != record.authorization_revision
+                        and _authorization_ancestry(
+                            repository,
+                            token,
+                            authorization_revision=retired_authority,
+                            current_revision=record.authorization_revision,
+                            read=read,
+                        )
+                        is not None
+                    )
+                    job = read(repository, token, f"actions/jobs/{artifact.job_id}")
+                    completed = (
+                        _quality_time(job.get("completed_at")) if isinstance(job, Mapping) else None
+                    )
+                    if (
+                        not isinstance(attempts, list)
+                        or (publication is not None and not stale_successor)
+                        or (
+                            not stale_successor
+                            and not any(
+                                isinstance(attempt, Mapping)
+                                and attempt.get("outcome")
+                                in ("STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE")
+                                for attempt in attempts
+                            )
+                        )
+                        or not isinstance(job, Mapping)
+                        or job.get("id") != artifact.job_id
+                        or job.get("run_id") != artifact.run_id
+                        or job.get("run_attempt") != artifact.run_attempt
+                        or job.get("status") != "completed"
+                        or job.get("conclusion") != "failure"
+                        or completed is None
+                        or not retired_at < completed < boundary
+                    ):
+                        return None
+                    retired_publication = None
+                if publication is not None and index != len(ordered) - 1:
+                    candidate_artifact = completion.recovery_artifact
+                    if not (
+                        isinstance(candidate_artifact, ApplicationRecoveryArtifact)
+                        and _native_delivery_never_called(record, completion, digest)
+                    ):
+                        return None
+                    # Preserve the immutable ACCEPT as history, without
+                    # attributing either a save or a formal consequence to it.
+                    retired_publication = stamp, candidate_artifact, record.authorization_revision
+                    seen_dispatch.add(receipt.dispatch_request_comment_id)
+                    continue
+                if (
+                    publication is not None
+                    and prior_completion is not None
+                    and _native_delivery_never_called(record, completion, digest)
+                ):
+                    settled = _current_development_completion(
+                        repository,
+                        token,
+                        source=source,
+                        record=previous,
+                        completion=replace(
+                            prior_completion,
+                            settled_development_records=tuple(settled_records),
+                        ),
+                        current_revision=current_revision,
+                        dispatch_request_id=dispatch_request_id,
+                        phase_a=phase_a,
+                        accepted_decision_sha256=previous_digest,
+                        read=read,
+                    )
+                    observation = settled.quality_observation
+                    stale_authority = record.authorization_revision != current_revision
+                    if (
+                        settled.state == "COMPLETE"
+                        and observation is not None
+                        and (
+                            observation.outcome in ("FAIL", "CONFLICT")
+                            or (stale_authority and observation.outcome == "PASS")
+                        )
+                    ):
+                        pr_number = _positive_int(publication.get("pr_number"))
+                        if pr_number is None:
+                            return None
+                        carrier = qualify_implementation_carrier(
+                            repository=repository,
+                            token=token,
+                            source=source,
+                            change=record.change,
+                            pr_number=pr_number,
+                            current_revision=current_revision,
+                            read=read,
+                        )
+                        ref = read(
+                            repository, token, f"git/ref/heads/{quote(default_branch, safe='/')}"
+                        )
+                        obj = ref.get("object") if isinstance(ref, Mapping) else None
+                        if (
+                            isinstance(obj, Mapping)
+                            and obj.get("sha") == current_revision
+                            and carrier.disposition == "QUALIFIED"
+                            and carrier.branch == old.branch
+                            and carrier.head_sha == old.revision
+                            and read(repository, token, f"issues/{source.issue_number}")
+                            == current_issue
+                            and _paged_list(
+                                repository,
+                                token,
+                                f"issues/{source.issue_number}/comments?sort=created&direction=asc",
+                                read=read,
+                            )
+                            == issue_comments
+                            and _paged_list(
+                                repository,
+                                token,
+                                f"issues/{source.issue_number}/timeline",
+                                read=read,
+                            )
+                            == lifecycle_events
+                        ):
+                            return previous, settled
+                    if (
+                        settled.state != "COMPLETE"
+                        or observation is None
+                        or observation.outcome != "PASS"
+                        or stale_authority
+                    ):
+                        return record, replace(
+                            completion, reason="application-completion-read-only-observing"
+                        )
+            if obligation is None:
+                return record, completion
+            seen_dispatch.add(receipt.dispatch_request_comment_id)
+            seen_revisions.add(obligation.revision)
+            prior = record, obligation, digest, stamp
+            prior_completion = completion
+            settled_records.append(record)
+        if (
+            retired_publication is not None
+            or prior is None
+            or prior[1].revision != prior[1].carrier_revision
+        ):
+            return None
+        return record, replace(
+            completion,
+            settled_development_records=tuple(settled_records),
+        )
+    except (OSError, RuntimeError, TypeError, ValueError, LookupError):
+        return None
+
+
+def _current_development_completion(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    record: ApplicationDecisionRecord,
+    completion: ApplicationCompletion,
+    current_revision: str,
+    dispatch_request_id: int | None,
+    phase_a: bool,
+    accepted_decision_sha256: str | None,
+    read: GitHubReader,
+) -> ApplicationCompletion:
+    """Re-observe a saved W's own verdict at the shared authorization boundary."""
+    obligation = completion.quality_obligation
+    if (
+        obligation is None
+        or obligation.carrier_revision != obligation.revision
+        or dispatch_request_id is None
+    ):
+        return completion
+    unknown = replace(completion, quality_observation=NativeQualityObservation("INDETERMINATE"))
+    try:
+        original_source = _development_acceptance_source(
+            repository,
+            token,
+            source=source,
+            record=record,
+            default_branch=obligation.default_branch,
+            read=read,
+        )
+        if (
+            original_source is None
+            or original_source.dispatch_request_comment_id == dispatch_request_id
+            or accepted_decision_sha256 is None
+        ):
+            return replace(
+                unknown,
+                state="INVALID",
+                reason="application-completion-development-source-invalid",
+            )
+        runs = _complete_workflow_runs(
+            repository, token, _DISPATCH_WORKFLOW, read=read, require_count=True
+        )
+        if runs is None:
+            return unknown
+        matching = [
+            run
+            for run in runs
+            if run.get("display_title") == render_dispatch_run_name(dispatch_request_id)
+        ]
+        if len(matching) != 1:
+            return unknown
+        run = matching[0]
+        row = _quality_bridge_run(run, repository, obligation.default_branch, dispatch_request_id)
+        if row is None or row[2] != current_revision:
+            return unknown
+        run_id, attempt, _, status, conclusion = row
+        if phase_a:
+            if (status, conclusion) != ("completed", "success"):
+                return unknown
+        elif status not in _QUALITY_ACTIVE or conclusion is not None:
+            return unknown
+        jobs = github_complete_job_inventory(
+            repository, token, run_id=run_id, run_attempt=attempt, read=read
+        )
+        if jobs is None:
+            return unknown
+        planners = [job for job in jobs if job.get("name") == "bridge"]
+        if len(planners) != 1:
+            return unknown
+        planner = planners[0]
+        steps = planner.get("steps")
+        if (
+            planner.get("run_id") != run_id
+            or planner.get("run_attempt") != attempt
+            or planner.get("head_sha") != current_revision
+            or not isinstance(steps, list)
+        ):
+            return unknown
+        planning = [
+            step
+            for step in steps
+            if isinstance(step, Mapping)
+            and step.get("name") == "Plan exact correlated machine dispatch decision"
+        ]
+        if len(planning) != 1:
+            return unknown
+        boundary = _quality_time(planning[0].get("started_at"))
+        started = _quality_time(planner.get("started_at"))
+        if boundary is None or started is None or boundary < started:
+            return unknown
+        observation = plan_native_quality_verification(
+            repository,
+            token,
+            revision=obligation.revision,
+            branch=obligation.branch,
+            workflow_blob=obligation.workflow_blob,
+            obligation_id=obligation.obligation_id,
+            accepted_at=obligation.accepted_at,
+            current_revision=current_revision,
+            default_branch=obligation.default_branch,
+            request_comment_id=dispatch_request_id,
+            run_id=run_id,
+            run_attempt=attempt,
+            read=read,
+            observe_only=phase_a,
+            verdict_before=boundary,
+        )
+        if observation.outcome not in ("PASS", "FAIL", "CONFLICT"):
+            return replace(completion, quality_observation=observation)
+        if (
+            observation.attempts is None
+            or not any(
+                item.checkout_revision == obligation.revision
+                and item.outcome in ("PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE")
+                for item in observation.attempts
+            )
+            or not _quality_verdicts_precede(
+                repository,
+                token,
+                attempts=observation.attempts,
+                boundary=boundary,
+                accepted_at=obligation.accepted_at,
+                read=read,
+            )
+        ):
+            return unknown
+        return replace(
+            completion,
+            state="COMPLETE",
+            reason="application-completion-development-verdict-settled",
+            quality_obligation=None,
+            quality_observation=observation,
+            settled_quality_obligation=obligation,
+            settled_development_records=completion.settled_development_records or (record,),
+            accepted_record=record,
+            accepted_decision_sha256=accepted_decision_sha256,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return unknown
+
+
 def _application_correlation_fields(correlation: str) -> tuple[str, ...] | None:
     fields = tuple(correlation.split(":"))
     return fields if len(fields) == 8 and fields[0] == "application" else None
@@ -4941,6 +8757,7 @@ def qualify_application_completion(
     read: GitHubReader = _github_json,
     current_dispatch_request_comment_id: int | None = None,
     current_dispatch_issue_number: int | None = None,
+    phase_a_request_comment_id: int | None = None,
     now: datetime | None = None,
 ) -> ApplicationCompletion:
     """Return one exhaustive consequence disposition from durable evidence."""
@@ -5044,7 +8861,52 @@ def qualify_application_completion(
                     == github_repository_api_url(repository, f"issues/{record.issue_number}"),
                 )
             )
+    # Phase A has independently qualified its native dispatch source. Exclude
+    # only that in-flight ingress, not other live or unqualified transports.
+    if phase_a_request_comment_id is not None:
+        own_id = _positive_int(phase_a_request_comment_id)
+        shard_id = _positive_int(current_dispatch_issue_number)
+        own_shard = [item for item in runtime_comments if item.get("id") == own_id]
+        own_global = [item for item in recent if item.get("id") == own_id]
+        if (
+            own_id is None
+            or shard_id is None
+            or current_dispatch_request_comment_id is None
+            or own_id == current_dispatch_request_comment_id
+            or len(own_shard) != 1
+            or len(own_global) != 1
+            or own_id in observed_decisions
+            or any(record.request_comment_id == own_id for record in decisions)
+        ):
+            return ApplicationCompletion("INVALID", "application-completion-phase-a-source-invalid")
+        own = read(repository, token, f"issues/comments/{own_id}")
+        if (
+            not isinstance(own, Mapping)
+            or own.get("id") != own_id
+            or own.get("issue_url") != github_repository_api_url(repository, f"issues/{shard_id}")
+            or own.get("updated_at") != own.get("created_at")
+            or _quality_time(own.get("created_at")) is None
+            or not isinstance(own.get("body"), str)
+            or cast(str, own["body"]).splitlines()[:1]
+            not in (["WORKER_RESULT"], ["EFFECT_REQUEST"])
+            or not _trusted_connector_comment(own, owner)
+            or any(
+                not _trusted_connector_comment(item, owner)
+                or any(
+                    item.get(key) != own.get(key)
+                    for key in ("id", "body", "issue_url", "created_at", "updated_at")
+                )
+                for item in (*own_shard, *own_global)
+            )
+        ):
+            return ApplicationCompletion("INVALID", "application-completion-phase-a-source-invalid")
+
     for comment in (*recent, *issue_comments):
+        if (
+            phase_a_request_comment_id is not None
+            and comment.get("id") == phase_a_request_comment_id
+        ):
+            continue
         if not _trusted_connector_comment(comment, owner):
             continue
         body = comment.get("body")
@@ -5449,8 +9311,27 @@ def qualify_application_completion(
             "application-completion-consequence-without-acceptance",
             request_comment_id=frontier_request_id,
         )
+    settled_prefix: tuple[ApplicationDecisionRecord, ApplicationCompletion] | None = None
     if len(accepted) > 1:
-        return ApplicationCompletion("AMBIGUOUS", "application-completion-accepted-ambiguous")
+        settled_prefix = _settled_development_prefix(
+            repository,
+            token,
+            source=source,
+            accepted=accepted,
+            decision_times=decision_created_at,
+            ingress_times=ingress_created_at,
+            issue_comments=issue_comments,
+            accepted_state=accepted_state,
+            current_revision=current_revision,
+            dispatch_request_id=current_dispatch_request_comment_id,
+            phase_a=phase_a_request_comment_id is not None,
+            current_issue=cast(Mapping[str, object], issue),
+            lifecycle_events=lifecycle,
+            read=read,
+        )
+        if settled_prefix is None:
+            return ApplicationCompletion("AMBIGUOUS", "application-completion-accepted-ambiguous")
+        accepted = [settled_prefix[0]]
     classifications: dict[int, PreacceptClassification] = {}
     for request_id in current_request_ids - accepted_request_ids:
         candidate = candidates[request_id]
@@ -5547,7 +9428,19 @@ def qualify_application_completion(
     # edited or deleted after ACCEPT, do not parse its new text and do not
     # replay worker semantics; the exact accepted record remains the only
     # resumable payload.
-    return accepted_state(record, source)
+    completion = accepted_state(record, source) if settled_prefix is None else settled_prefix[1]
+    return _current_development_completion(
+        repository,
+        token,
+        source=source,
+        record=record,
+        completion=completion,
+        current_revision=current_revision,
+        dispatch_request_id=current_dispatch_request_comment_id,
+        phase_a=phase_a_request_comment_id is not None,
+        accepted_decision_sha256=_accepted_decision_sha256(record, issue_comments),
+        read=read,
+    )
 
 
 def render_dispatch_result_document(
@@ -5770,11 +9663,21 @@ def plan_dispatch_decision(
     decision: DispatchDecision,
     application_continuation: str | None = None,
     qualified_carrier: QualifiedCarrierPlan | None = None,
+    quality_call: dict[str, str] | None = None,
 ) -> BridgePlan:
     identity = _request_identity(event)
     if identity is None:
         return BridgePlan(False)
     issue_number, request_comment_id = identity
+    if quality_call is not None and (
+        decision.disposition != "NO_WORK"
+        or decision.reason != "verification-obligation-pending"
+        or quality_call.get("quality_source_comment_id") != str(request_comment_id)
+        or quality_call.get("quality_definition_revision") != default_branch_revision
+        or application_continuation is not None
+        or qualified_carrier is not None
+    ):
+        raise ValueError("quality call is not bound to the non-authorizing dispatch")
     return BridgePlan(
         should_emit=True,
         issue_number=issue_number,
@@ -5786,6 +9689,7 @@ def plan_dispatch_decision(
             application_continuation=application_continuation,
             qualified_carrier=qualified_carrier,
         ),
+        quality_call=quality_call,
     )
 
 
@@ -5811,12 +9715,24 @@ def _write_outputs(path: Path, plan: BridgePlan, *, repair_admission: bool = Fal
         lines.append(f"issue_number={plan.issue_number}")
     if plan.request_comment_id is not None:
         lines.append(f"request_comment_id={plan.request_comment_id}")
+    if plan.quality_call is not None:
+        lines.extend(
+            f"{key}={value}"
+            for key, value in plan.quality_call.items()
+            if key != "quality_obligation"
+        )
+        print("native_quality_plan=" + json.dumps(plan.quality_call, sort_keys=True))
+    else:
+        print("native_quality_plan=none")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _write_result_payload(path: Path, plan: BridgePlan) -> None:
     if plan.should_emit and plan.result_body is not None:
-        path.write_text(plan.result_body + "\n", encoding="utf-8")
+        payload = (plan.result_body + "\n").encode("utf-8")
+        path.write_bytes(payload)
+        if plan.quality_call is not None:
+            print("native_quality_result_sha256=" + hashlib.sha256(payload).hexdigest())
 
 
 @dataclass(frozen=True)
@@ -6283,7 +10199,55 @@ def main() -> int:
                     f"issue-{source.issue_number}:{source.action}",
                 )
         continuation_body = None
-        if completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
+        quality_call = None
+        if (
+            completion.state == "RESUMABLE"
+            and completion.quality_obligation is not None
+            and completion.quality_obligation.carrier_revision
+            == completion.quality_obligation.revision
+        ):
+            obligation = completion.quality_obligation
+            decision = replace(
+                decision,
+                selected_issue_id=None,
+                selected_routing=None,
+                disposition="NO_WORK",
+                reason="verification-obligation-pending",
+            )
+            run_id = _positive_int_string(os.environ.get("GITHUB_RUN_ID", ""))
+            run_attempt = _positive_int_string(os.environ.get("GITHUB_RUN_ATTEMPT", ""))
+            if (
+                os.environ.get("GITHUB_EVENT_NAME") == "issue_comment"
+                and os.environ.get("GITHUB_WORKFLOW_SHA") == args.revision
+                and run_id is not None
+                and run_attempt is not None
+            ):
+                observation = completion.quality_observation
+                if observation is None:
+                    observation = plan_native_quality_verification(
+                        repository,
+                        token,
+                        revision=obligation.revision,
+                        branch=obligation.branch,
+                        workflow_blob=obligation.workflow_blob,
+                        obligation_id=obligation.obligation_id,
+                        accepted_at=obligation.accepted_at,
+                        current_revision=args.revision,
+                        default_branch=obligation.default_branch,
+                        request_comment_id=identity[1],
+                        run_id=run_id,
+                        run_attempt=run_attempt,
+                        read=_github_json,
+                        log_read=_github_job_log,
+                    )
+                if (
+                    observation.outcome == "NO_VERDICT"
+                    and observation.call is not None
+                    and observation.call.get("quality_run_id") == str(run_id)
+                    and observation.call.get("quality_run_attempt") == str(run_attempt)
+                ):
+                    quality_call = observation.call
+        elif completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
             if (
                 completion.reason
                 in {
@@ -6325,6 +10289,7 @@ def main() -> int:
             decision=decision,
             application_continuation=continuation_body,
             qualified_carrier=completion.qualified_carrier,
+            quality_call=quality_call,
         )
     _write_outputs(args.github_output, plan)
     _write_result_payload(args.result_payload, plan)

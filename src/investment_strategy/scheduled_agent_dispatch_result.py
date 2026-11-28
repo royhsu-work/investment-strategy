@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -15,10 +16,12 @@ from investment_strategy.issue_comment_bridge import (
     MachineDispatchDecision,
     parse_dispatch_result_document,
     parse_dispatch_run_name,
+    qualify_failed_native_quality_audit,
 )
 from investment_strategy.scheduled_agent_carrier import (
     github_read_bytes_with_retry,
     github_repository_api_url,
+    github_run_artifact_identity,
 )
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -125,7 +128,7 @@ def fetch_dispatch_result(
     run_id: int,
     current_revision: str,
 ) -> MachineDispatchDecision:
-    """Read exactly one successful bridge run and its one structured Artifact result."""
+    """Read exact dispatch evidence; failed quality callers are NO_WORK audit only."""
 
     if request_comment_id <= 0 or run_id <= 0 or _SHA.fullmatch(current_revision) is None:
         raise RuntimeError("exact dispatch run identity is invalid")
@@ -153,7 +156,7 @@ def fetch_dispatch_result(
         or run.get("event") != "issue_comment"
         or run.get("head_sha") != current_revision
         or run.get("status") != "completed"
-        or run.get("conclusion") != "success"
+        or run.get("conclusion") not in ("success", "failure")
     ):
         raise RuntimeError("exact dispatch run identity or completion is invalid")
 
@@ -185,12 +188,37 @@ def fetch_dispatch_result(
     if artifact_id is None or artifact.get("expired") is not False:
         raise RuntimeError("exact dispatch result Artifact is expired or invalid")
 
-    result = parse_dispatch_result_document(
-        _github_bytes(repository, token, f"actions/artifacts/{artifact_id}/zip")
-    )
+    raw = _github_bytes(repository, token, f"actions/artifacts/{artifact_id}/zip")
+    result = parse_dispatch_result_document(raw)
     if (
         result.request_comment_id != request_comment_id
         or result.default_branch_revision != current_revision
     ):
         raise RuntimeError("exact dispatch result is missing, ambiguous, or stale")
+    if run.get("conclusion") == "failure":
+        digest = hashlib.sha256(raw).hexdigest()
+        identity = github_run_artifact_identity(
+            artifact, run_id=run_id, run_head_sha=current_revision
+        )
+        if (
+            result.disposition != "NO_WORK"
+            or result.reason != "verification-obligation-pending"
+            or identity != (artifact_id, "sha256:" + digest)
+        ):
+            raise RuntimeError("failed dispatch run is not qualified NO_WORK audit")
+
+        def log_read(repo: str, credential: str, job_id: int) -> str:
+            return _github_bytes(repo, credential, f"actions/jobs/{job_id}/logs").decode("utf-8")
+
+        if not qualify_failed_native_quality_audit(
+            repository,
+            token,
+            run=run,
+            request_comment_id=request_comment_id,
+            current_revision=current_revision,
+            artifact_sha256=digest,
+            read=_github_json,
+            log_read=log_read,
+        ):
+            raise RuntimeError("failed dispatch run is not qualified NO_WORK audit")
     return result

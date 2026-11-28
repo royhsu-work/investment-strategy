@@ -31,13 +31,12 @@ prove the applicable formal results and their accepted effects, routing, old PR 
 blobs and current-base preimages. The worker never creates a ref or selects a different Action;
 subsequent slices use the qualified new PR and the existing PR-head carrier actuator.
 
-The semantic Executor does not assume a mutable checkout or shell. For executable behavior, use the
-repository-owned TDD guidance and supported source-bound CI evidence. For material procedural-only
-changes, use the approved semantic evaluation. Submit exact candidate blobs for repository-owned
-verification, including full `uv run pytest`, `uv run ruff check .`,
-`uv run ruff format --check .`, and `uv run mypy src tests`, then fresh reauthorization and ACCEPT.
-Only the already-verified content is materialized after ACCEPT; a pre-ACCEPT verifier failure has
-zero authoritative repository consequence.
+The semantic Executor does not assume a mutable checkout or shell. Follow the implementation and TDD
+Skills for authorized physical-only saves, exact native static-first CI, and separately verified
+formal delivery. For material procedural-only changes, use the approved semantic evaluation. A saved
+candidate can be pending or failed; it is not a formal completion. Preserve the current scope,
+fresh authorization and exact effect protections. Only application-authorized publication after
+the required current exact gates may establish formal delivery.
 
 Before READY or review handoff, verify the exact current implementation PR head is non-Draft and
 all required checks are current. The implementation-review Action is the next model-derived Action.

@@ -83,9 +83,7 @@ from investment_strategy.scheduled_agent_runtime import (
 )
 from investment_strategy.scheduled_agent_validation_resource import (
     ValidationResourceTarget,
-    completed_task_bookkeeping_is_current,
-    task_checkpoint_is_exact,
-    verify_implementation_candidate,
+    _content_sha_at,
     work_product_path_allowed,
 )
 from investment_strategy.scheduled_agent_wire import (
@@ -153,6 +151,7 @@ class EffectBatch:
     source: WorkerRequest
     effects: tuple[StagedEffect, ...]
     typed_result: BoundedActionResult | None = None
+    reviewed_task_ids: tuple[str, ...] | None = None
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -306,7 +305,6 @@ EffectRejectionProvider = Callable[[], ApplicationRejection | None]
 EffectApplier = Callable[[StagedEffect], None]
 PostconditionObserver = Callable[[StagedEffect], bool]
 CarrierPlanProvider = Callable[[StagedEffect], CarrierPlan | None]
-ImplementationCheckpointValidator = Callable[[MaterializationRequest, tuple[str, ...]], bool]
 
 
 def parse_effect_batch(
@@ -325,6 +323,7 @@ def parse_effect_batch(
             for effect in result.requested_effects
         ),
         typed_result=result.typed_result,
+        reviewed_task_ids=result.reviewed_task_ids,
     )
 
 
@@ -478,23 +477,56 @@ def _formal_action_result_body_is_bounded(
     )
 
 
+def _implementation_development_save(
+    batch: EffectBatch, *, include_task_markers: bool = True
+) -> bool:
+    """Recognize physical-only save shape, independently of write authority."""
+    typed_result = batch.typed_result
+    if (
+        (batch.source.role, batch.source.action) != ("executor", "implement-change")
+        or typed_result is None
+        or typed_result.result.kind is not ResultKind.MORE_IMPLEMENTATION_REQUIRED
+        or len(batch.effects) != 1
+    ):
+        return False
+    effect = batch.effects[0]
+    if effect.kind != GITHUB_MUTATION_KIND or effect.derived:
+        return False
+    payload = _effect_payload(effect)
+    if payload is None:
+        return False
+    try:
+        request = find_materialization_payload(payload, batch.source)
+    except ValueError:
+        return False
+    return (
+        request is not None
+        and request.expected_change == typed_result.change
+        and request.change == typed_result.change
+        and bool(request.files)
+        and (
+            all(PurePosixPath(file.path).parts[:1] != ("openspec",) for file in request.files)
+            or (
+                include_task_markers
+                and len(request.files) == 1
+                and request.files[0].path == f"openspec/changes/{request.change}/tasks.md"
+                and request.files[0].expected_sha is not None
+                and request.files[0].blob_sha != request.files[0].expected_sha
+            )
+        )
+    )
+
+
 def _implementation_checkpoint_effects_complete(
     batch: EffectBatch,
     decision: ActionApplicationDecision,
-    validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
     accepted_intent: bool,
     durable_checkpoint_revision: str | None = None,
     defer_issue_comments: bool = False,
     observe_postcondition: PostconditionObserver | None = None,
     original_322_recovery: bool = False,
 ) -> bool:
-    """Require exact task/checkpoint effects before a new intent advances.
-
-    Executable candidate verification is a Phase-A gate.  A durable ACCEPTED
-    intent is already past that linearization point, so Phase B must reconcile
-    its immutable effects and postconditions without requalifying or
-    semantically downgrading the intent.
-    """
+    """Reconcile an immutable historical completion bundle, never admit a new one."""
 
     if (
         batch.source.role != "executor"
@@ -502,6 +534,8 @@ def _implementation_checkpoint_effects_complete(
         or decision.result.result.kind not in _IMPLEMENTATION_COMPLETION_RESULTS
     ):
         return True
+    if not accepted_intent:
+        return False
     if original_322_recovery:
         # The #322 caller has qualified the accepted authority, current
         # consequence and effect-relevant I/R/M/S/F pre-formal predicates.
@@ -595,21 +629,17 @@ def _implementation_checkpoint_effects_complete(
         or checkpoint_indexes[0] >= formal_result_indexes[0]
     ):
         return False
-    if accepted_intent:
-        # On lost response, completed materialization and checkpoint effects
-        # may be proven by fresh reads without replaying their physical plan.
-        return (
-            defer_issue_comments
-            or durable_checkpoint_revision is not None
-            or (
-                observe_postcondition is not None
-                and observe_postcondition(batch.effects[task_index])
-                and observe_postcondition(batch.effects[checkpoint_indexes[0]])
-            )
+    # On lost response, completed materialization and checkpoint effects
+    # may be proven by fresh reads without replaying their physical plan.
+    return (
+        defer_issue_comments
+        or durable_checkpoint_revision is not None
+        or (
+            observe_postcondition is not None
+            and observe_postcondition(batch.effects[task_index])
+            and observe_postcondition(batch.effects[checkpoint_indexes[0]])
         )
-    if validate_implementation_checkpoint is None:
-        return False
-    return validate_implementation_checkpoint(request, completed_task_ids)
+    )
 
 
 def _pending_continuation_is_eligible(
@@ -656,13 +686,14 @@ def _typed_application_plan(
     batch: EffectBatch,
     preflight: DispatchPreflight,
     current_revision: str | None,
-    validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
     allow_pending_continuation: bool,
     accepted_intent: bool,
     durable_checkpoint_revision: str | None = None,
     defer_issue_comments: bool = False,
     observe_postcondition: PostconditionObserver | None = None,
     original_322_recovery: bool = False,
+    validate_implementation_delivery: Callable[[StagedEffect], bool] | None = None,
+    validate_implementation_finding: Callable[[EffectBatch], bool] | None = None,
 ) -> tuple[ActionApplicationDecision | None, StagedEffect | None, ApplyResult | None]:
     typed_result = batch.typed_result
     if typed_result is None:
@@ -764,15 +795,49 @@ def _typed_application_plan(
             ),
         )
 
-    if not _implementation_checkpoint_effects_complete(
-        batch,
-        decision,
-        validate_implementation_checkpoint,
-        accepted_intent,
-        durable_checkpoint_revision,
-        defer_issue_comments,
-        observe_postcondition,
-        original_322_recovery,
+    if (
+        not accepted_intent
+        and action == ModelAction.REVIEW_IMPLEMENTATION
+        and typed_result.result.kind == ResultKind.FINDINGS
+        and (validate_implementation_finding is None or not validate_implementation_finding(batch))
+    ):
+        return (
+            decision,
+            None,
+            ApplyResult(False, "typed application rejected:implementation-finding-scope"),
+        )
+
+    qualified_delivery = False
+    if (
+        not original_322_recovery
+        and (batch.source.role, batch.source.action) == ("executor", "implement-change")
+        and typed_result.result.kind in _IMPLEMENTATION_COMPLETION_RESULTS
+        and len(batch.effects) == 1
+        and batch.effects[0].kind == "issue-comment"
+        and not batch.effects[0].derived
+        and validate_implementation_delivery is not None
+    ):
+        effect = batch.effects[0]
+        payload = _effect_payload(effect)
+        body = payload.get("body") if payload is not None else None
+        qualified_delivery = (
+            isinstance(body, str)
+            and _formal_action_result_body_is_bounded(body, source=batch.source, decision=decision)
+            and validate_implementation_delivery(effect)
+        )
+
+    if (
+        not _implementation_development_save(batch)
+        and not qualified_delivery
+        and not _implementation_checkpoint_effects_complete(
+            batch,
+            decision,
+            accepted_intent,
+            durable_checkpoint_revision,
+            defer_issue_comments,
+            observe_postcondition,
+            original_322_recovery,
+        )
     ):
         return (
             decision,
@@ -1311,7 +1376,6 @@ def apply_effect_batch(
     apply_effect: EffectApplier,
     observe_postcondition: PostconditionObserver,
     current_revision: str | None = None,
-    validate_implementation_checkpoint: ImplementationCheckpointValidator | None = None,
     apply_derived: bool = True,
     defer_issue_comments: bool = False,
     allow_pending_continuation: bool = False,
@@ -1326,6 +1390,8 @@ def apply_effect_batch(
         Callable[[ActionApplicationDecision, str, str], bool] | None
     ) = None,
     original_322_recovery: bool = False,
+    validate_implementation_delivery: Callable[[StagedEffect], bool] | None = None,
+    validate_implementation_finding: Callable[[EffectBatch], bool] | None = None,
 ) -> ApplyResult:
     """Apply one typed batch after fresh source reauthorization."""
 
@@ -1334,13 +1400,14 @@ def apply_effect_batch(
         batch,
         current_preflight,
         current_revision,
-        validate_implementation_checkpoint,
         allow_pending_continuation,
         accepted_intent,
         durable_checkpoint_revision,
         defer_issue_comments,
         observe_postcondition,
         original_322_recovery,
+        validate_implementation_delivery,
+        validate_implementation_finding,
     )
     if typed_rejection is not None:
         if (
@@ -1354,6 +1421,9 @@ def apply_effect_batch(
         return typed_rejection
     if typed_decision is None or derived_effect is None:
         return ApplyResult(False, "typed application rejected:plan-missing")
+
+    # A development save has no formal consequence or derived routing write.
+    apply_derived = apply_derived and not _implementation_development_save(batch)
 
     # A Lead retirement is one exact, irreversible carrier effect.  Do not
     # normalize away additional requested writes and then claim that only the
@@ -1904,6 +1974,7 @@ class GitHubEffectAdapter:
         pending_application_correlation: str | None = None,
         authorization_revision: str | None = None,
         accepted_intent: bool = False,
+        physical_marker_save: bool = False,
         accepted_correction_observer: (
             Callable[[StagedEffect], tuple[int, MaterializationProof] | None] | None
         ) = None,
@@ -1921,6 +1992,9 @@ class GitHubEffectAdapter:
         self.pending_application_correlation = pending_application_correlation
         self.authorization_revision = authorization_revision
         self.accepted_intent = accepted_intent
+        self._physical_marker_save = physical_marker_save
+        self._qualified_marker_request: MaterializationRequest | None = None
+        self._qualified_delivery_evidence: dict[str, object] | None = None
         self._accepted_correction_observer = (
             accepted_correction_observer if accepted_intent else None
         )
@@ -1933,85 +2007,304 @@ class GitHubEffectAdapter:
         self._merge_metadata: dict[str, tuple[str, str]] = {}
         self._materialization_targets: dict[StagedEffect, ValidationResourceTarget] = {}
 
-    def validate_implementation_checkpoint(
-        self,
-        request: MaterializationRequest,
-        completed_task_ids: tuple[str, ...],
-    ) -> bool:
-        """Validate one checkpoint against the canonical carrier decision and task slice."""
-
-        if not _valid_sha(self.current_revision):
+    def _delivery_carrier_matches(self) -> bool:
+        evidence = self._qualified_delivery_evidence
+        current_revision = self.current_revision
+        if evidence is None or current_revision is None:
             return False
-        if request.pr_number is None:
-            candidate_ref = self._default_branch()
-            if (
-                candidate_ref is None
-                or request.base_sha != self.current_revision
-                or not qualify_supersession_branch(
-                    repository=self.repository,
-                    token=self.token,
-                    issue_number=self.source.issue_number,
-                    change=request.change,
-                    branch=request.branch,
-                    current_revision=cast(str, self.current_revision),
-                    read=_github_json,
-                )
-            ):
-                return False
-        else:
-            candidate_ref = request.branch
-            decision = qualify_implementation_carrier(
-                repository=self.repository,
-                token=self.token,
-                source=self.source,
-                change=request.change,
-                pr_number=request.pr_number,
-                current_revision=cast(str, self.current_revision),
-                read=_github_json,
-            )
-            if (
-                decision.disposition
-                not in {"QUALIFIED", "RECONCILIATION_REQUIRED", "HISTORICAL_MERGED"}
-                or decision.branch != request.branch
-                or decision.head_sha is None
-                or request.base_sha != decision.head_sha
-            ):
-                return False
-            if decision.disposition == "HISTORICAL_MERGED" and (
-                request.base_sha != decision.head_sha
-                or not completed_task_bookkeeping_is_current(
-                    self.repository,
-                    self.token,
-                    change=request.change,
-                    revision=decision.head_sha,
-                    files=request.files,
-                )
-            ):
-                return False
-        task_files = tuple(
-            file
-            for file in request.files
-            if file.path == f"openspec/changes/{request.change}/tasks.md"
-        )
-        if len(task_files) != 1:
-            return False
-        if not task_checkpoint_is_exact(
-            self.repository,
-            self.token,
-            expected_change=request.change,
-            base_sha=request.base_sha,
-            file=task_files[0],
-            completed_task_ids=completed_task_ids,
+        revision = evidence.get("revision")
+        branch = evidence.get("branch")
+        marker_blob = evidence.get("marker_blob")
+        current_task_blob = evidence.get("current_task_blob", marker_blob)
+        pr_number = evidence.get("pr_number")
+        if (
+            not isinstance(revision, str)
+            or not _valid_sha(revision)
+            or not isinstance(branch, str)
+            or not _valid_sha(marker_blob)
+            or not _valid_sha(current_task_blob)
+            or not isinstance(pr_number, int)
+            or isinstance(pr_number, bool)
+            or pr_number <= 0
         ):
             return False
-        return verify_implementation_candidate(
-            self.repository,
-            self.token,
-            base_sha=request.base_sha,
-            base_ref=candidate_ref,
-            current_revision=cast(str, self.current_revision),
-            files=request.files,
+        carrier = qualify_implementation_carrier(
+            repository=self.repository,
+            token=self.token,
+            source=self.source,
+            change=self.authorized_change,
+            current_revision=current_revision,
+            pr_number=pr_number,
+            read=_github_json,
         )
+        return (
+            carrier.disposition == "QUALIFIED"
+            and carrier.branch == branch
+            and carrier.head_sha == revision
+            and _content_sha_at(
+                self.repository,
+                self.token,
+                path=f"openspec/changes/{self.authorized_change}/tasks.md",
+                revision=revision,
+            )
+            == current_task_blob
+        )
+
+    def _delivery_gates_are_current(self) -> bool:
+        """Re-observe the same qualified native gates before a new formal write."""
+        from investment_strategy.issue_comment_bridge import (
+            _native_strict_marker_evidence,
+            plan_native_quality_verification,
+        )
+
+        evidence = self._qualified_delivery_evidence
+        current_revision = self.current_revision
+        if evidence is None or current_revision is None:
+            return False
+        revision = evidence.get("revision")
+        branch = evidence.get("branch")
+        quality = _as_mapping(evidence.get("quality"))
+        dispatch = _as_mapping(evidence.get("dispatch"))
+        if (
+            not isinstance(revision, str)
+            or not isinstance(branch, str)
+            or quality is None
+            or dispatch is None
+            or quality.get("revision") != revision
+            or quality.get("branch") != branch
+            or quality.get("authorization_revision") != current_revision
+            or dispatch.get("authorization_revision") != current_revision
+        ):
+            return False
+        request_id = _positive_comment_id(quality.get("request_comment_id"))
+        dispatch_id = _positive_comment_id(dispatch.get("dispatch_request_comment_id"))
+        run_id = _positive_comment_id(dispatch.get("run_id"))
+        run_attempt = _positive_comment_id(dispatch.get("run_attempt"))
+        workflow_blob = quality.get("workflow_blob")
+        obligation_id = quality.get("obligation_id")
+        if (
+            request_id is None
+            or dispatch_id is None
+            or run_id is None
+            or run_attempt is None
+            or not isinstance(workflow_blob, str)
+            or not isinstance(obligation_id, str)
+        ):
+            return False
+        try:
+            default_branch = self._default_branch()
+            if default_branch is None:
+                return False
+            comments = _paged_github_list(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}/comments?sort=created",
+            )
+            matches = [
+                (item, record)
+                for item in comments
+                if is_github_actions_comment(item)
+                for record in (parse_application_decision(item.get("body")),)
+                if record is not None and record.request_comment_id == request_id
+            ]
+            if len(matches) != 1:
+                return False
+            item, record = matches[0]
+            comment_id = _positive_comment_id(item.get("id"))
+            body = item.get("body")
+            accepted_at = item.get("created_at")
+            issue_url = (
+                f"https://api.github.com/repos/{self.repository}/issues/{self.source.issue_number}"
+            )
+            if (
+                comment_id is None
+                or not isinstance(body, str)
+                or _sha256_text(body) != quality.get("accepted_decision_sha256")
+                or not isinstance(accepted_at, str)
+                or item.get("updated_at") != accepted_at
+                or item.get("issue_url") != issue_url
+                or record.disposition != "ACCEPTED"
+                or record.issue_number != self.source.issue_number
+                or record.role != self.source.role
+                or record.action != self.source.action
+                or record.change != self.authorized_change
+                or record.result_kind != "more-implementation-required"
+            ):
+                return False
+            observed = _github_json(self.repository, self.token, f"issues/comments/{comment_id}")
+            if (
+                not isinstance(observed, Mapping)
+                or not is_github_actions_comment(observed)
+                or any(
+                    observed.get(key) != item.get(key)
+                    for key in ("id", "body", "created_at", "updated_at", "issue_url")
+                )
+            ):
+                return False
+            observation = plan_native_quality_verification(
+                self.repository,
+                self.token,
+                revision=revision,
+                branch=branch,
+                workflow_blob=workflow_blob,
+                obligation_id=obligation_id,
+                accepted_at=accepted_at,
+                current_revision=current_revision,
+                default_branch=default_branch,
+                request_comment_id=dispatch_id,
+                run_id=run_id,
+                run_attempt=run_attempt,
+                read=_github_json,
+                observe_only=True,
+            )
+            return observation.outcome == "PASS" and bool(
+                _native_strict_marker_evidence(
+                    self.repository,
+                    self.token,
+                    revision=revision,
+                    branch=branch,
+                    current_revision=current_revision,
+                    read=_github_json,
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return False
+
+    def validate_implementation_finding(self, batch: EffectBatch) -> bool:
+        """Qualify the new native review scope before the immutable ACCEPT."""
+        from investment_strategy.issue_comment_bridge import (
+            qualify_initial_implementation_finding,
+        )
+
+        typed = batch.typed_result
+        revision = self.current_revision
+        if (
+            typed is None
+            or revision is None
+            or not _valid_sha(revision)
+            or len(batch.effects) != 1
+            or batch.effects[0].kind != "issue-comment"
+            or batch.effects[0].derived
+        ):
+            return False
+        payload = _effect_payload(batch.effects[0])
+        body = payload.get("body") if payload is not None else None
+        if not isinstance(body, str):
+            return False
+        try:
+            if not self._default_branch_still_current():
+                return False
+            return qualify_initial_implementation_finding(
+                self.repository,
+                self.token,
+                source=self.source,
+                change=self.authorized_change,
+                evidence_ref=typed.result.evidence_ref,
+                reviewed_task_ids=batch.reviewed_task_ids,
+                formal_body=body,
+                current_revision=revision,
+                read=_github_json,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return False
+
+    def validate_implementation_delivery(self, effect: StagedEffect) -> bool:
+        """Qualify publication independently of legacy checkpoint materialization."""
+        from investment_strategy.issue_comment_bridge import (
+            qualify_initial_implementation_delivery,
+        )
+
+        current_revision = self.current_revision
+        result_kind = self.expected_result_kind
+        request_id = self.request_comment_id
+        payload = _effect_payload(effect)
+        body = payload.get("body") if payload is not None else None
+        if (
+            current_revision is None
+            or not _valid_sha(current_revision)
+            or request_id is None
+            or result_kind is None
+            or not isinstance(body, str)
+        ):
+            return False
+        values = dict(line.split(": ", 1) for line in body.splitlines()[1:])
+        revision = values.get("Revision")
+        if revision is None or not _valid_sha(revision):
+            return False
+        try:
+            default_branch = self._default_branch()
+            if default_branch is None or not self._default_branch_still_current():
+                return False
+            if self.accepted_intent:
+                comments = _paged_github_list(
+                    self.repository,
+                    self.token,
+                    f"issues/{self.source.issue_number}/comments?sort=created",
+                )
+                matches = [
+                    (item, record)
+                    for item in comments
+                    if is_github_actions_comment(item)
+                    for record in (parse_application_decision(item.get("body")),)
+                    if record is not None and record.request_comment_id == request_id
+                ]
+                if len(matches) != 1:
+                    return False
+                item, record = matches[0]
+                comment_id = _positive_comment_id(item.get("id"))
+                if (
+                    comment_id is None
+                    or record.disposition != "ACCEPTED"
+                    or record.issue_number != self.source.issue_number
+                    or record.role != self.source.role
+                    or record.action != self.source.action
+                    or record.change != self.authorized_change
+                    or record.result_kind != result_kind
+                    or record.authorization_revision != self.authorization_revision
+                ):
+                    return False
+                observed = _github_json(
+                    self.repository, self.token, f"issues/comments/{comment_id}"
+                )
+                if (
+                    not isinstance(observed, Mapping)
+                    or not is_github_actions_comment(observed)
+                    or observed.get("id") != comment_id
+                    or observed.get("body") != item.get("body")
+                ):
+                    return False
+                raw = json.loads(record.raw_worker_result)
+                evidence = (
+                    raw.get("_native_implementation_delivery") if isinstance(raw, dict) else None
+                )
+                if (
+                    not isinstance(evidence, dict)
+                    or evidence.get("revision") != revision
+                    or evidence.get("result_kind") != result_kind
+                ):
+                    return False
+                self._qualified_delivery_evidence = evidence
+                return self._delivery_carrier_matches() or (
+                    self._existing_issue_comment(self._application_bound_comment_body(body))
+                    is not None
+                )
+            evidence = qualify_initial_implementation_delivery(
+                self.repository,
+                self.token,
+                source=self.source,
+                change=self.authorized_change,
+                revision=revision,
+                result_kind=result_kind,
+                request_comment_id=request_id,
+                current_revision=current_revision,
+                default_branch=default_branch,
+            )
+            if evidence is None:
+                return False
+            self._qualified_delivery_evidence = evidence
+            return self._delivery_carrier_matches()
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return False
 
     def effect_rejection(self) -> ApplicationRejection | None:
         return self._last_rejection
@@ -2900,6 +3193,28 @@ class GitHubEffectAdapter:
                     ),
                 )
                 return False
+            if self._physical_marker_save and not self.accepted_intent:
+                if proof.disposition != "INCOMPLETE":
+                    return False
+                if self._qualified_marker_request != request:
+                    # The first guard precedes ACCEPT. Later guards still prove
+                    # the physical preimage; do not reclassify our own ACCEPT
+                    # as a new predecessor within this invocation.
+                    from investment_strategy.issue_comment_bridge import (
+                        qualify_initial_marker_save,
+                    )
+
+                    if self.request_comment_id is None or not qualify_initial_marker_save(
+                        self.repository,
+                        self.token,
+                        request=request,
+                        source=self.source,
+                        request_comment_id=self.request_comment_id,
+                        current_revision=current_revision,
+                        default_branch=default_branch,
+                    ):
+                        return False
+                    self._qualified_marker_request = request
             return proof.disposition in {"COMPLETE", "INCOMPLETE"}
         if operation == "issue-label-add":
             return True
@@ -3370,7 +3685,16 @@ class GitHubEffectAdapter:
                 )
             return qualified
         if effect.kind == "issue-comment":
-            return True
+            qualified = self._qualified_delivery_evidence is None or (
+                self._delivery_carrier_matches() and self._delivery_gates_are_current()
+            )
+            if not qualified:
+                self._last_rejection = ApplicationRejection(
+                    ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+                    expected="fresh native implementation delivery gates",
+                    observed=effect.payload_json,
+                )
+            return qualified
         guarded = payload is not None and self._guard_github_mutation(payload)
         if not guarded and self._last_rejection is None:
             self._last_rejection = ApplicationRejection(
@@ -3657,6 +3981,15 @@ class GitHubEffectAdapter:
                     f"Repository-derived successor: {successor_text}",
                 )
 
+            if self._qualified_delivery_evidence is not None:
+                evidence_hash = _sha256_text(
+                    json.dumps(
+                        self._qualified_delivery_evidence, sort_keys=True, separators=(",", ":")
+                    )
+                )
+                lines = [line for line in lines if not line.startswith("Evidence:")]
+                lines.append(f"Evidence: native-delivery:{evidence_hash}")
+
             # A materialization is an application effect, not merely an input
             # to the effect batch.  Once its exact target has been freshly
             # observed, the following canonical formal result must carry that
@@ -3765,6 +4098,15 @@ class GitHubEffectAdapter:
         if self.request_comment_id is None:
             return False
         stored_worker_result = semantic_intent_payload(raw_worker_result)
+        decoded = json.loads(stored_worker_result)
+        if isinstance(decoded, dict) and (
+            self._qualified_delivery_evidence is not None
+            or "_native_implementation_delivery" in decoded
+        ):
+            decoded.pop("_native_implementation_delivery", None)
+            if disposition == "ACCEPTED" and self._qualified_delivery_evidence is not None:
+                decoded["_native_implementation_delivery"] = self._qualified_delivery_evidence
+            stored_worker_result = json.dumps(decoded, sort_keys=True, separators=(",", ":"))
         body = render_application_decision_body(
             request_comment_id=self.request_comment_id,
             request_body=request_body,
@@ -4672,6 +5014,7 @@ def run_effect_application(
     pending_application_correlation: str | None = None,
     authorized_change: str | None = None,
     authorization_revision: str | None = None,
+    request_comment_id: int | None = None,
     accepted_intent: bool = False,
     reconcile_only: bool = False,
     original_322_recovery: bool = False,
@@ -4692,6 +5035,9 @@ def run_effect_application(
         authorized_change=batch.typed_result.change,
         current_revision=current_revision,
         expected_result_kind=batch.typed_result.result.kind.value,
+        request_comment_id=request_comment_id,
+        physical_marker_save=_implementation_development_save(batch)
+        and not _implementation_development_save(batch, include_task_markers=False),
         materialization_promote_change=materialization_promote_change,
         validated_materialization_revision=validated_materialization_revision,
         allow_pending_continuation=allow_pending_continuation,
@@ -4706,7 +5052,8 @@ def run_effect_application(
         apply_effect=adapter.apply,
         observe_postcondition=adapter.observe_postcondition,
         current_revision=current_revision,
-        validate_implementation_checkpoint=adapter.validate_implementation_checkpoint,
+        validate_implementation_delivery=getattr(adapter, "validate_implementation_delivery", None),
+        validate_implementation_finding=getattr(adapter, "validate_implementation_finding", None),
         apply_derived=apply_derived,
         defer_issue_comments=defer_issue_comments,
         allow_pending_continuation=allow_pending_continuation,

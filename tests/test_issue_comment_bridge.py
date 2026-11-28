@@ -205,6 +205,575 @@ def test_small_workflow_run_history_requires_complete_stable_pages(fault: str) -
     )
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        "complete",
+        "no-runs",
+        "fork",
+        "no-count",
+        "short",
+        "wrong-event",
+        "wrong-head",
+        "wrong-repo",
+        "missing-head-repo",
+        "duplicate",
+        "capped",
+    ],
+)
+def test_native_quality_inventory_requires_complete_exact_source_runs(case: str) -> None:
+    repository = "royhsu-work/investment-strategy"
+
+    def run(run_id: int, event: str) -> dict[str, object]:
+        return {
+            "id": run_id,
+            "event": event,
+            "head_sha": REVISION,
+            "run_attempt": 1,
+            "path": ".github/workflows/quality.yml",
+            "repository": {"full_name": repository},
+            "head_repository": {"full_name": repository},
+        }
+
+    def read(repo: str, token: str, path: str) -> object:
+        assert repo == repository and token
+        url = urlsplit(path)
+        assert url.path == "actions/workflows/quality.yml/runs"
+        query = parse_qs(url.query)
+        assert query["per_page"] == ["100"]
+        page = int(query["page"][0])
+        event = query.get("event", [None])[0]
+        if case == "capped":
+            if event == "push":
+                assert query["head_sha"] == [REVISION]
+                return {
+                    "total_count": 1000,
+                    "workflow_runs": [run(i, "push") for i in range(1, 101)],
+                }
+            if event is None:
+                assert "head_sha" not in query
+                history = [run(i, "push") for i in range(1, 1002)] + [run(1002, "pull_request")]
+                history[0]["head_sha"] = "a" * 40
+                history.append(run(1003, "push"))
+                return {
+                    "total_count": len(history),
+                    "workflow_runs": history[(page - 1) * 100 : page * 100],
+                }
+        assert query["head_sha"] == [REVISION]
+        assert event == "push" or event == "pull_request", query
+        selected = run(1 if event == "push" else 2, event)
+        if case == "capped":
+            selected["id"] = 1002
+        if case == "no-runs":
+            return {"total_count": 0, "workflow_runs": []}
+        if event == "pull_request":
+            return {"total_count": 1, "workflow_runs": [selected]}
+
+        if case == "no-count":
+            return {"workflow_runs": [selected]}
+        if case == "short":
+            return {"total_count": 2, "workflow_runs": [selected]}
+        if case == "wrong-event":
+            selected["event"] = "pull_request"
+        if case == "wrong-head":
+            selected["head_sha"] = "a" * 40
+        if case == "wrong-repo":
+            selected["repository"] = {"full_name": "other/repository"}
+        if case == "missing-head-repo":
+            del selected["head_repository"]
+        if case == "fork":
+            selected["head_repository"] = {"full_name": "other/repository"}
+        if case == "duplicate":
+            selected["id"] = 2
+        return {"total_count": 1, "workflow_runs": [selected]}
+
+    collect = getattr(bridge, "read_native_quality_runs", None)
+    assert callable(collect), "Bridge must collect the exact native quality run inventory"
+    runs = collect(repository, "token", REVISION, read=read)
+    if case in {"complete", "no-runs", "fork", "capped"}:
+        assert runs is not None
+        ids = {item["id"] for item in runs}
+        expected = {
+            "complete": {1, 2},
+            "no-runs": set(),
+            "fork": {2},
+            "capped": set(range(2, 1004)),
+        }
+        assert ids == expected[case]
+    else:
+        assert runs is None
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("empty", ()),
+        ("pass", ((75, 1, "PASS"),)),
+        ("retry-conflict", ((75, 1, "PYTEST_STEP_FAILURE"), (75, 2, "PASS"))),
+        ("cancel-retry", ((75, 1, "NO_VERDICT"), (75, 2, "PASS"))),
+        ("pending-retry", ((75, 1, "PASS"), (75, 2, "PENDING"))),
+        ("missing-attempt", ((75, 1, "INDETERMINATE"), (75, 2, "PASS"))),
+        ("prior-active", None),
+        ("late-pr", None),
+        ("attempt-changed", None),
+        ("wrong-ref", ()),
+        ("unknown-ref", None),
+        ("contradictory-summary", None),
+        ("short-list", None),
+        ("two-producers", ((75, 1, "PASS"), (76, 1, "PASS"))),
+    ],
+)
+def test_native_quality_history_preserves_every_exact_attempt(
+    case: str, expected: tuple[tuple[int, int, str], ...] | None
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    branch = "agent/example"
+    workflow_path = ".github/workflows/quality.yml"
+    workflow_blob = "a" * 40
+    merge_definition = "b" * 40
+    retries = {"retry-conflict", "cancel-retry", "pending-retry", "missing-attempt", "prior-active"}
+    latest = 2 if case in retries else 1
+    names = (
+        "Set up job",
+        "Run actions/checkout@v4",
+        "Prove exact quality checkout",
+        "Run astral-sh/setup-uv@v6",
+        "Run actions/setup-python@v5",
+        "Ruff lint",
+        "Ruff format check",
+        "Mypy",
+        "Run tests",
+    )
+    reads = {"push": 0, "pull_request": 0}
+
+    def source(run_id: int, attempt: int) -> dict[str, object]:
+        status, conclusion = "completed", "success"
+        conclusion_value: str | None = conclusion
+        if case in {"retry-conflict", "contradictory-summary"} and attempt == 1:
+            conclusion = "failure"
+        if case == "cancel-retry" and attempt == 1:
+            conclusion = "cancelled"
+        if (case == "pending-retry" and attempt == 2) or (case == "prior-active" and attempt == 1):
+            status, conclusion_value = "in_progress", None
+        if status == "completed":
+            conclusion_value = conclusion
+        return {
+            "id": run_id,
+            "run_attempt": attempt,
+            "event": "push" if run_id == 75 else "pull_request",
+            "path": workflow_path,
+            "repository": {"full_name": repository},
+            "head_repository": {"full_name": repository},
+            "head_sha": REVISION,
+            "head_branch": branch,
+            "status": status,
+            "conclusion": conclusion_value,
+        }
+
+    def read(repo: str, token: str, path: str) -> object:
+        assert repo == repository and token
+        url = urlsplit(path)
+        if url.path == "actions/workflows/quality.yml/runs":
+            query = parse_qs(url.query)
+            event = query["event"][0]
+            assert event in reads and query["head_sha"] == [REVISION]
+            reads[event] += 1
+            runs: list[dict[str, object]] = []
+            if event == "push" and case != "empty":
+                attempt = latest + 1 if case == "attempt-changed" and reads[event] > 1 else latest
+                row = source(75, attempt)
+                if case == "wrong-ref":
+                    row["head_branch"] = "other"
+                if case == "unknown-ref":
+                    del row["head_branch"]
+                if case == "contradictory-summary":
+                    row["conclusion"] = "success"
+                runs.append(row)
+            if event == "pull_request" and (
+                case == "two-producers" or (case == "late-pr" and reads[event] > 1)
+            ):
+                runs.append(source(76, 1))
+            return {
+                "total_count": len(runs) + (case == "short-list"),
+                "workflow_runs": runs,
+            }
+        if path == f"git/commits/{merge_definition}":
+            return {
+                "sha": merge_definition,
+                "parents": [{"sha": "c" * 40}, {"sha": REVISION}],
+            }
+        if url.path == f"contents/{workflow_path}":
+            assert parse_qs(url.query)["ref"][0] in {REVISION, merge_definition}
+            return {"path": workflow_path, "type": "file", "sha": workflow_blob}
+        if url.path.startswith("actions/runs/"):
+            parts = url.path.split("/")
+            run_id, attempt = int(parts[2]), int(parts[4])
+            assert run_id in {75, 76}
+            row = source(run_id, attempt)
+            if len(parts) == 5:
+                return None if case == "missing-attempt" and attempt == 1 else row
+            assert parts[5:] == ["jobs"]
+            conclusion = row["conclusion"]
+            assert conclusion in {"success", "failure", "cancelled"}
+            outcomes = ["success"] * len(names)
+            outcomes[-1] = cast(str, conclusion)
+            job = {
+                "id": run_id * 10 + attempt,
+                "run_id": run_id,
+                "run_attempt": attempt,
+                "head_sha": REVISION,
+                "name": "quality",
+                "status": "completed",
+                "conclusion": conclusion,
+                "steps": [
+                    {
+                        "name": name,
+                        "number": number,
+                        "status": "completed",
+                        "conclusion": outcome,
+                    }
+                    for number, (name, outcome) in enumerate(zip(names, outcomes, strict=True), 1)
+                ],
+            }
+            return {"total_count": 1, "jobs": [job]}
+        raise AssertionError(path)
+
+    def log_read(repo: str, token: str, job_id: int) -> str:
+        assert repo == repository and token
+        run_id, attempt = divmod(job_id, 10)
+        definition = REVISION if run_id == 75 else merge_definition
+        return "\n".join(
+            [
+                "##[group]Run actual_sha=$(git rev-parse HEAD)",
+                "##[endgroup]",
+                f"quality_repository={repository}",
+                f"quality_target_sha={REVISION}",
+                f"quality_checkout_sha={REVISION}",
+                f"quality_definition_sha={definition}",
+                f"quality_run_id={run_id}",
+                f"quality_run_attempt={attempt}",
+                "##[group]Run astral-sh/setup-uv@v6",
+            ]
+        )
+
+    observe = getattr(bridge, "read_native_quality_history", None)
+    assert callable(observe), "Bridge must reconstruct every exact native quality attempt"
+    history = observe(
+        repository,
+        "token",
+        REVISION,
+        branch=branch,
+        workflow_blob=workflow_blob,
+        read=read,
+        log_read=log_read,
+    )
+    actual = (
+        None
+        if history is None
+        else tuple((item.run_id, item.run_attempt, item.outcome) for item in history)
+    )
+    assert actual == expected
+    if history is not None:
+        for item in history:
+            if item.outcome in ("PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"):
+                assert getattr(item, "job_id", None) == item.run_id * 10 + item.run_attempt
+                assert getattr(item, "checkout_revision", None) == REVISION
+                expected_definition = REVISION if item.run_id == 75 else merge_definition
+                assert getattr(item, "definition_revision", None) == expected_definition
+
+
+@pytest.mark.parametrize(
+    ("case", "expected", "will_call"),
+    [
+        ("empty", "NO_VERDICT", True),
+        ("observe-pass", "PASS", False),
+        ("observe-fail", "FAIL", False),
+        ("observe-empty", "NO_VERDICT", False),
+        ("observe-active", "INDETERMINATE", False),
+        ("observe-failed-dispatch", "INDETERMINATE", False),
+        ("missing-run", "INDETERMINATE", False),
+        ("deleted-source", "INDETERMINATE", False),
+        ("edited-source", "INDETERMINATE", False),
+        ("unrelated-comment", "NO_VERDICT", True),
+        ("active", "PENDING", False),
+        ("skipped", "NO_VERDICT", True),
+        ("not-invoked", "NO_VERDICT", True),
+        ("cancelled", "NO_VERDICT", True),
+        ("pass", "PASS", False),
+        ("pytest", "FAIL", False),
+        ("static", "FAIL", False),
+        ("setup-checkout", "NO_VERDICT", True),
+        ("setup-uv", "NO_VERDICT", True),
+        ("setup-failed-proof", "INDETERMINATE", False),
+        ("setup-wrong-witness", "INDETERMINATE", False),
+        ("rerun-conflict", "CONFLICT", False),
+        ("rerun-cancelled", "PASS", False),
+        ("missing-plan", "INDETERMINATE", False),
+        ("wrong-plan", "INDETERMINATE", False),
+        ("wrong-target", "INDETERMINATE", False),
+        ("wrong-job-attempt", "INDETERMINATE", False),
+        ("missing-jobs", "INDETERMINATE", False),
+        ("changed-attempt", "INDETERMINATE", False),
+        ("foreign-current", "INDETERMINATE", False),
+        ("stale-main", "INDETERMINATE", False),
+        ("wrong-source", "INDETERMINATE", False),
+        ("unknown-count", "INDETERMINATE", False),
+    ],
+)
+def test_native_quality_obligation_plans_only_after_complete_caller_history(
+    case: str, expected: str, will_call: bool
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    target, producer = "a" * 40, "b" * 40
+    obligation = "c" * 64
+    accepted_at = "2026-09-03T03:30:00Z"
+    definition = REVISION
+    api = f"https://api.github.com/repos/{repository}"
+    prior = case not in {"empty", "observe-empty", "foreign-current", "stale-main", "wrong-source"}
+    latest = 2 if case in {"rerun-conflict", "rerun-cancelled"} else 1
+    run_reads = 0
+    names = (
+        "Set up job",
+        "Run actions/checkout@v4",
+        "Prove exact quality checkout",
+        "Run astral-sh/setup-uv@v6",
+        "Run actions/setup-python@v5",
+        "Ruff lint",
+        "Ruff format check",
+        "Mypy",
+        "Run tests",
+    )
+
+    def comment(source: int) -> dict[str, object]:
+        return {
+            "id": source,
+            "body": (
+                "Ordinary discussion"
+                if source == 900 and case in {"edited-source", "unrelated-comment"}
+                else REQUEST_BODY
+            ),
+            "created_at": "2026-09-03T03:40:00Z" if source == 900 else "2026-09-03T03:45:00Z",
+            "updated_at": (
+                "2026-09-03T03:40:00Z"
+                if source == 900 and case != "edited-source"
+                else "2026-09-03T03:45:00Z"
+            ),
+            "issue_url": f"{api}/issues/142",
+            "user": {"login": "royhsu-work"},
+            "performed_via_github_app": {
+                "slug": "untrusted" if case == "wrong-source" else "chatgpt-codex-connector"
+            },
+        }
+
+    def conclusion(attempt: int) -> str:
+        if (
+            case in {"pytest", "static", "observe-fail"}
+            or case.startswith("setup-")
+            or (case == "rerun-conflict" and attempt == 1)
+        ):
+            return "failure"
+        if case == "cancelled" or (case == "rerun-cancelled" and attempt == 2):
+            return "cancelled"
+        return "success"
+
+    def run(run_id: int, attempt: int) -> dict[str, object]:
+        source = 901 if run_id == 77 else 900
+        active = (run_id == 77 and not case.startswith("observe-")) or case == "active"
+        active = active or (run_id == 77 and case == "observe-active")
+        result = conclusion(attempt)
+        if run_id == 77:
+            if case == "observe-failed-dispatch":
+                result = "failure"
+            elif case == "observe-fail":
+                result = "success"
+        return {
+            "id": run_id,
+            "run_attempt": attempt,
+            "display_title": f"Scheduled Agent Dispatch {source}",
+            "head_sha": definition,
+            "head_branch": "main",
+            "event": "issue_comment",
+            "path": ".github/workflows/scheduled-agent-bridge.yml",
+            "repository": {"full_name": repository},
+            "head_repository": {
+                "full_name": "other/repo" if case == "foreign-current" else repository
+            },
+            "created_at": comment(source)["created_at"],
+            "status": "in_progress" if active else "completed",
+            "conclusion": None if active else result,
+        }
+
+    def correlation(source: int, run_id: int, attempt: int) -> str:
+        return hashlib.sha256(
+            f"{obligation}:{definition}:{source}:{run_id}:{attempt}".encode()
+        ).hexdigest()
+
+    def call(source: int, run_id: int, attempt: int) -> dict[str, str]:
+        return {
+            "quality_obligation": obligation,
+            "quality_target_repository": repository,
+            "quality_target_revision": target,
+            "quality_definition_revision": definition,
+            "quality_verification_correlation": correlation(source, run_id, attempt),
+            "quality_source_comment_id": str(source),
+            "quality_run_id": str(run_id),
+            "quality_run_attempt": str(attempt),
+            "quality_call": "true",
+            "quality_result": "verification-obligation-pending",
+        }
+
+    def jobs(attempt: int) -> list[dict[str, object]]:
+        planner = {
+            "id": 750 + attempt * 2,
+            "run_id": 75,
+            "run_attempt": attempt,
+            "head_sha": definition,
+            "name": "bridge",
+            "status": "completed",
+            "conclusion": "success",
+            "steps": [
+                {"name": name, "number": n, "status": "completed", "conclusion": "success"}
+                for n, name in enumerate(
+                    (
+                        "Check out authoritative default branch",
+                        "Record exact checked-out default-branch revision",
+                        "Plan exact correlated machine dispatch decision",
+                        "Upload exact run-scoped machine dispatch result",
+                    ),
+                    1,
+                )
+            ],
+        }
+        if case == "not-invoked":
+            return [planner]
+        verdict = "skipped" if case == "skipped" else conclusion(attempt)
+        outcomes = ["success"] * len(names)
+        if case == "static":
+            outcomes[-3:] = ["failure", "skipped", "skipped"]
+        elif case.startswith("setup-"):
+            failed = {"setup-checkout": 1, "setup-failed-proof": 2}.get(case, 3)
+            outcomes[failed:] = ["failure"] + ["skipped"] * (len(names) - failed - 1)
+        else:
+            outcomes[-1] = verdict
+        quality = {
+            "id": 751 + attempt * 2,
+            "run_id": 75,
+            "run_attempt": 1 if case == "wrong-job-attempt" else attempt,
+            "head_sha": definition,
+            "name": "verify_quality / quality",
+            "status": "completed",
+            "conclusion": verdict,
+            "steps": [
+                {"name": name, "number": n, "status": "completed", "conclusion": outcome}
+                for n, (name, outcome) in enumerate(zip(names, outcomes, strict=True), 1)
+            ],
+        }
+        if case == "wrong-job-attempt":
+            quality["run_attempt"] = attempt + 1
+        return [planner, quality]
+
+    def read(repo: str, token: str, path: str) -> object:
+        nonlocal run_reads
+        assert repo == repository and token
+        url = urlsplit(path)
+        if path == "":
+            return {"full_name": repository, "default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": "f" * 40 if case == "stale-main" else definition}}
+        if url.path == "contents/.github/workflows/quality.yml":
+            assert parse_qs(url.query)["ref"][0] in {definition, target}
+            return {"type": "file", "path": url.path.removeprefix("contents/"), "sha": producer}
+        if url.path == "issues/comments":
+            return ([comment(900)] if prior and case != "deleted-source" else []) + [comment(901)]
+        if url.path.startswith("issues/comments/"):
+            source = int(url.path.rsplit("/", 1)[1])
+            return None if source == 900 and case == "deleted-source" else comment(source)
+        if path == "issues/142":
+            return _event()["issue"]
+        if url.path == "actions/workflows/quality.yml/runs":
+            return {"total_count": 0, "workflow_runs": []}
+        if url.path == "actions/workflows/scheduled-agent-bridge.yml/runs":
+            run_reads += 1
+            number = latest + 1 if case == "changed-attempt" and run_reads > 1 else latest
+            rows = [run(77, 1)]
+            if prior and case != "missing-run":
+                rows.append(run(75, number))
+            result: dict[str, object] = {"workflow_runs": rows}
+            if case != "unknown-count":
+                result["total_count"] = len(rows)
+            return result
+        if url.path.startswith("actions/runs/"):
+            parts = url.path.split("/")
+            run_id, attempt = int(parts[2]), int(parts[4])
+            if len(parts) == 5:
+                return run(run_id, attempt)
+            assert run_id == 75 and parts[5:] == ["jobs"]
+            rows = jobs(attempt)
+            return {"total_count": len(rows) + (case == "missing-jobs"), "jobs": rows}
+        raise AssertionError(path)
+
+    def log_read(repo: str, token: str, job_id: int) -> str:
+        assert repo == repository and token
+        attempt = (job_id - 750) // 2
+        if job_id % 2 == 0:
+            if case == "missing-plan":
+                return "no receipt"
+            receipt = call(900, 75, attempt)
+            if case == "wrong-plan":
+                receipt["quality_verification_correlation"] = "d" * 64
+            if case == "wrong-target":
+                receipt["quality_target_revision"] = "f" * 40
+            if case in {"skipped", "not-invoked"}:
+                return "native_quality_plan=none"
+            return "native_quality_plan=" + json.dumps(receipt, sort_keys=True)
+        if case in {"setup-checkout", "setup-failed-proof"}:
+            return "No successful checkout proof"
+        return "\n".join(
+            [
+                "##[group]Run actual_sha=$(git rev-parse HEAD)",
+                "##[endgroup]",
+                f"quality_repository={repository}",
+                f"quality_target_sha={target}",
+                f"quality_checkout_sha={'f' * 40 if case == 'setup-wrong-witness' else target}",
+                f"quality_definition_sha={definition}",
+                "quality_run_id=75",
+                f"quality_run_attempt={attempt}",
+                "quality_source_comment_id=900",
+                f"quality_verification_correlation={correlation(900, 75, attempt)}",
+                "##[group]Run astral-sh/setup-uv@v6",
+            ]
+        )
+
+    observe = getattr(bridge, "plan_native_quality_verification", None)
+    assert callable(observe), "Bridge must qualify caller history before planning native quality"
+    result = observe(
+        repository,
+        "token",
+        revision=target,
+        branch="agent/example",
+        workflow_blob=producer,
+        obligation_id=obligation,
+        accepted_at=accepted_at,
+        current_revision=definition,
+        default_branch="main",
+        request_comment_id=901,
+        run_id=77,
+        run_attempt=1,
+        read=read,
+        log_read=log_read,
+        **({"observe_only": True} if case.startswith("observe-") else {}),
+    )
+    assert result.outcome == expected
+    assert result.call == (call(901, 77, 1) if will_call else None)
+    if result.attempts is not None:
+        for item in result.attempts:
+            if item.outcome in ("PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"):
+                assert getattr(item, "job_id", None) == 751 + item.run_attempt * 2
+                assert getattr(item, "checkout_revision", None) == target
+                assert getattr(item, "definition_revision", None) == definition
+                assert getattr(item, "source_comment_id", None) == 900
+
+
 def test_prior_dispatch_handoff_indexes_run_history_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5219,25 +5788,42 @@ def test_completed_application_consumes_only_exact_complete_carrier_outcome(
     assert completion.recovery_artifact == recovery
 
 
+@pytest.mark.parametrize("first_publication_rejected", [False, True])
 def test_read_only_reconciliation_reobserves_later_complete_without_replay(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, first_publication_rejected: bool
 ) -> None:
     """A stable unknown is observed again; only new COMPLETE proof dispatches."""
+    failure: dict[str, object] = {
+        "reason": "indeterminate accepted effects require reconciliation",
+        "mutation_status": "unknown",
+        "unfinished_boundary": "effect-reconciliation",
+        "failed_effect_index": 1,
+        "failed_effect_kind": "issue-comment",
+        "failed_effect_sha256": "b" * 64,
+        "completed_effect_indexes": [0],
+        "completed_effect_sha256": ["c" * 64],
+        "rejection": None,
+    }
+    if first_publication_rejected:
+        failure.update(
+            {
+                "reason": "fresh native implementation delivery gates",
+                "mutation_status": "not-complete",
+                "unfinished_boundary": "effect-precondition",
+                "failed_effect_index": 0,
+                "completed_effect_indexes": [],
+                "completed_effect_sha256": [],
+                "rejection": {"classification": "effect-precondition-unsatisfied"},
+                "operation_stage": "BEFORE-WRITE",
+                "write_call_entered": False,
+            }
+        )
+    assert application._accepted_recovery_boundary(failure) == "READ_ONLY"
     recovery = replace(
         _qualified_recovery_fixture(continuation_eligible=True),
         document={
             "prior_failure_evidence_sha256": ["a" * 64],
-            "failure_evidence": {
-                "reason": "indeterminate accepted effects require reconciliation",
-                "mutation_status": "unknown",
-                "unfinished_boundary": "effect-reconciliation",
-                "failed_effect_index": 1,
-                "failed_effect_kind": "issue-comment",
-                "failed_effect_sha256": "b" * 64,
-                "completed_effect_indexes": [0],
-                "completed_effect_sha256": ["c" * 64],
-                "rejection": None,
-            },
+            "failure_evidence": failure,
         },
     )
     monkeypatch.setattr(
@@ -5259,9 +5845,19 @@ def test_read_only_reconciliation_reobserves_later_complete_without_replay(
         read_count[0] += 1
         if observed["conflict"]:
             return application.AcceptedPostEffectProof("UNSAFE", "immutable checkpoint conflicts")
+        frontier = None
+        if first_publication_rejected and observed["complete"]:
+            frontier = application.RecoveryProofResult(
+                "NOT_APPLIED",
+                "FORMAL_RESULT",
+                application.CompleteNeverCalledWitness(90, 0, "a" * 64, ((777, 1, 999),)),
+                "FORMAL_RESULT",
+                0,
+            )
         return application.AcceptedPostEffectProof(
             "COMPLETE" if observed["complete"] else "INDETERMINATE",
             "fresh accepted proof",
+            pending_frontier_proof=frontier,
         )
 
     monkeypatch.setattr(bridge, "classify_accepted_read_only_effects", observe)
@@ -5296,6 +5892,10 @@ def test_read_only_reconciliation_reobserves_later_complete_without_replay(
     assert third.state == "RESUMABLE"
     assert third.reason == "application-completion-continuation-required"
     assert third.recovery_artifact is recovery
+    if first_publication_rejected:
+        assert third.accepted_proof is not None
+        assert third.accepted_proof.pending_frontier_proof is not None
+        assert third.accepted_proof.pending_frontier_proof.frontier_index == 0
     assert read_count[0] == 3
     # An actual contradiction cannot be mislabeled as a transient GET.
     # This does not select a new semantic Action or replay an Effect.
@@ -10497,3 +11097,2814 @@ def test_native_r9_handoff_cannot_substitute_for_real_application_qualifier() ->
     assert "issues/comments/9001" in read_paths
     assert "git/ref/heads/main" in read_paths
     assert all(not path.startswith(("POST ", "PATCH ", "DELETE ")) for path in read_paths)
+
+
+@pytest.mark.parametrize(
+    ("case", "expected", "will_call"),
+    [
+        ("valid", "NO_WORK", True),
+        ("pending", "NO_WORK", False),
+        ("unknown", "NO_WORK", False),
+        ("stale-definition", "NO_WORK", False),
+        ("incomplete-write", "FAIL_CLOSED", False),
+        ("historical-save", "FAIL_CLOSED", False),
+        ("active-application", "FAIL_CLOSED", False),
+    ],
+)
+def test_saved_development_obligation_drives_native_bridge_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    case: str,
+    expected: str,
+    will_call: bool,
+) -> None:
+    from investment_strategy.scheduled_agent_application_materialization import (
+        MaterializationProof,
+        MaterializationRevisions,
+        MaterializationWitness,
+    )
+    from investment_strategy.scheduled_agent_validation_resource import ValidationResourceTarget
+
+    repository = "owner/repo"
+    test_token = "test-token"  # noqa: S105
+    saved, producer = "a" * 40, "b" * 40
+    current_carrier = "c" * 40 if case == "historical-save" else saved
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    change = "native-quality"
+    branch = "agent/native-quality"
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+        action=source.action,
+        role=source.role,
+        result_kind="more-implementation-required",
+        change=change,
+    )
+    lines = cast(str, request["body"]).splitlines()
+    worker = json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: ")))
+    payload = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": change,
+        "change": change,
+        "branch": branch,
+        "base_sha": REVISION,
+        "message": "Save test work",
+        "files": [
+            {
+                "path": "tests/test_native_quality.py",
+                "expected_sha": "1" * 40,
+                "blob_sha": "2" * 40,
+            }
+        ],
+        "pr_number": 139,
+    }
+    worker["requested_effects"] = [{"kind": "github-mutation", "payload_json": json.dumps(payload)}]
+    encoded = base64.b64encode(json.dumps(worker).encode()).decode()
+    request["body"] = "\n".join((lines[0], lines[1], f"Worker-Result-B64: {encoded}"))
+    accepted = _application_decision_comment(request)
+    accepted["updated_at"] = accepted["created_at"]
+    accepted["issue_url"] = f"https://api.github.com/repos/{repository}/issues/138"
+    record = bridge.parse_application_decision(cast(str, accepted["body"]))
+    assert record is not None
+    issue = {
+        **_current_source_issue(),
+        "title": "Implement native quality",
+        "body": f"Change: {change}",
+        "labels": [{"name": "action:implement-change"}],
+    }
+    run = {
+        "id": 75,
+        "run_attempt": 1,
+        "status": "in_progress" if case == "active-application" else "completed",
+        "conclusion": None if case == "active-application" else "success",
+        "head_sha": REVISION,
+        "head_branch": "main",
+        "repository": {"full_name": repository},
+        "head_repository": {"full_name": repository},
+        "path": ".github/workflows/scheduled-agent-application.yml",
+        "event": "issue_comment",
+        "display_title": bridge.render_application_run_name(654),
+    }
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path == "":
+            return {"full_name": repository, "default_branch": "main"}
+        if path == "issues/comments/654":
+            return request
+        if path == "issues/comments/700":
+            return accepted
+        if path.startswith("contents/.github/workflows/quality.yml?"):
+            return {
+                "type": "file",
+                "path": ".github/workflows/quality.yml",
+                "sha": producer,
+            }
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": REVISION}}
+        if path.startswith("actions/runs/75/attempts/1/jobs"):
+            return {
+                "total_count": 1,
+                "jobs": [
+                    {
+                        "id": 76,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "steps": [
+                            {
+                                "name": "Freshly authorize and apply repository-owned effects",
+                                "conclusion": "success",
+                            }
+                        ],
+                    }
+                ],
+            }
+        if path.startswith("actions/runs/75/artifacts"):
+            return {"total_count": 0, "artifacts": []}
+        return None
+
+    def prove(
+        materialization: Mapping[str, object], observed: bridge.WorkerRequest, **kw: object
+    ) -> MaterializationProof:
+        assert materialization == payload
+        assert observed == source and kw["accepted_intent"] is True
+        if case == "incomplete-write":
+            return MaterializationProof("INCOMPLETE")
+        return MaterializationProof(
+            "COMPLETE",
+            target=ValidationResourceTarget(
+                repository, current_carrier, "correlation", 139, change, branch=branch
+            ),
+            witness=MaterializationWitness(
+                saved,
+                (("tests/test_native_quality.py", "2" * 40),),
+                MaterializationRevisions(REVISION, REVISION, REVISION, REVISION),
+            ),
+        )
+
+    observed_completions: list[bridge.ApplicationCompletion] = []
+
+    def qualify(*_args: object, **_kw: object) -> bridge.ApplicationCompletion:
+        completion = bridge._accepted_application_state(
+            repository=repository,
+            token=test_token,
+            source=source,
+            record=record,
+            issue_comments=(accepted,),
+            lifecycle_events=(),
+            current_issue=issue,
+            current_revision=REVISION,
+            read=read,
+            current_dispatch_request_comment_id=987,
+        )
+        observed_completions.append(completion)
+        return completion
+
+    planned: list[str] = []
+
+    def plan(_repo: str, _token: str, **kw: object) -> bridge.NativeQualityObservation:
+        assert kw["revision"] == saved
+        assert kw["workflow_blob"] == producer
+        assert kw["branch"] == branch
+        assert kw["accepted_at"] == accepted["created_at"]
+        assert kw["request_comment_id"] == 987
+        assert kw["run_id"] == 77 and kw["run_attempt"] == 1
+        obligation = cast(str, kw["obligation_id"])
+        assert len(obligation) == 64
+        planned.append(obligation)
+        if case == "pending":
+            return bridge.NativeQualityObservation("PENDING")
+        if case == "unknown":
+            return bridge.NativeQualityObservation("INDETERMINATE")
+        return bridge.NativeQualityObservation(
+            "NO_VERDICT",
+            call=bridge._quality_call_fields(repository, saved, REVISION, obligation, 987, 77, 1),
+        )
+
+    monkeypatch.setattr(bridge, "prove_materialization", prove, raising=False)
+    monkeypatch.setattr(bridge, "_application_runs", lambda *_a, **_kw: (run,))
+    monkeypatch.setattr(bridge, "_formal_consequence", lambda **_kw: False)
+    monkeypatch.setattr(bridge, "_successor_consequence_supersedes", lambda **_kw: False)
+    monkeypatch.setattr(bridge, "qualify_application_completion", qualify)
+    monkeypatch.setattr(bridge, "plan_native_quality_verification", plan)
+    monkeypatch.setattr(bridge, "acquire_current_github_preflight", lambda *_a: None)
+    monkeypatch.setattr(
+        bridge,
+        "classify_dispatch",
+        lambda _p: _decision(
+            "AUTHORIZE", issue_number=138, routing=("executor", "implement-change")
+        ),
+    )
+    monkeypatch.setenv("GITHUB_REPOSITORY", repository)
+    monkeypatch.setenv("GITHUB_TOKEN", test_token)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "issue_comment")
+    monkeypatch.setenv("GITHUB_RUN_ID", "77")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("GITHUB_WORKFLOW_SHA", "f" * 40 if case == "stale-definition" else REVISION)
+    event_path, outputs, result_path = (
+        tmp_path / "event.json",
+        tmp_path / "outputs",
+        tmp_path / "dispatch-result.json",
+    )
+    event_path.write_text(json.dumps(_event()), encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            REVISION,
+            "--github-output",
+            str(outputs),
+            "--result-payload",
+            str(result_path),
+        ],
+    )
+    assert bridge.main() == 0
+    result = bridge.parse_dispatch_result_document(result_path.read_bytes())
+    assert result.disposition == expected
+    assert result.issue_number is None and result.action is None
+    assert result.application_continuation is None and result.qualified_carrier is None
+    output = outputs.read_text(encoding="utf-8")
+    if expected == "NO_WORK":
+        assert result.reason == "verification-obligation-pending"
+    assert ("quality_call=true" in output) == will_call
+    receipt = next(
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("native_quality_plan=")
+    )
+    if will_call:
+        assert len(planned) == 1
+        fields = json.loads(receipt.split("=", 1)[1])
+        assert fields["quality_obligation"] == planned[0]
+        assert f"quality_target_revision={saved}" in output
+        assert "quality_result=verification-obligation-pending" in output
+    else:
+        assert receipt == "native_quality_plan=none"
+        if case == "historical-save":
+            assert not planned
+            assert len(observed_completions) == 1
+            obligation = observed_completions[0].quality_obligation
+            assert obligation is not None
+            assert obligation.revision == saved
+            assert getattr(obligation, "carrier_revision", None) == current_carrier
+            assert getattr(obligation, "carrier_base", None) == REVISION
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "exact",
+        "closed-shard",
+        "replayed",
+        "same-second",
+        "late-run",
+        "foreign-run",
+        "wrong-action",
+        "wrong-definition",
+        "wrong-digest",
+        "missing-job",
+        "incomplete-runs",
+        "edited-dispatch",
+        "historical-rerun",
+        "historical-wrong-attempt",
+        "historical-wrong-digest",
+    ],
+)
+def test_development_ingress_requires_one_exact_native_dispatch_source(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    repository = "owner/repo"
+    token = "token"  # noqa: S105
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    issue_url = "https://api.github.com/repos/owner/repo/issues/142"
+    dispatch = {
+        "id": 987,
+        "body": REQUEST_BODY,
+        "created_at": "2026-09-03T03:45:00Z",
+        "updated_at": "2026-09-03T03:45:00Z",
+        "issue_url": issue_url,
+        "user": {"login": "owner"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+    ingress = _effect_request_comment(
+        comment_id=986,
+        created_at="2026-09-03T03:47:00Z",
+        action=source.action,
+        role=source.role,
+        result_kind="more-implementation-required",
+        change="native-quality",
+    )
+    ingress.update(updated_at=ingress["created_at"], issue_url=issue_url)
+    comments = [dispatch, ingress]
+    if case == "replayed":
+        comments.append(
+            {
+                **ingress,
+                "id": 985,
+                "created_at": "2026-09-03T03:46:30Z",
+                "updated_at": "2026-09-03T03:46:30Z",
+            }
+        )
+    if case == "same-second":
+        dispatch["created_at"] = ingress["created_at"]
+        dispatch["updated_at"] = ingress["created_at"]
+    if case == "edited-dispatch":
+        dispatch["updated_at"] = "2026-09-03T03:46:00Z"
+    run = {
+        "id": 77,
+        "run_attempt": 1,
+        "head_sha": "f" * 40 if case == "wrong-definition" else REVISION,
+        "head_branch": "main",
+        "event": "issue_comment",
+        "path": ".github/workflows/scheduled-agent-bridge.yml",
+        "repository": {"full_name": repository},
+        "head_repository": {"full_name": "foreign/repo" if case == "foreign-run" else repository},
+        "status": "completed",
+        "conclusion": "success",
+        "display_title": bridge.render_dispatch_run_name(987),
+        "created_at": "2026-09-03T03:45:01Z",
+        "updated_at": ("2026-09-03T03:48:00Z" if case == "late-run" else "2026-09-03T03:46:00Z"),
+    }
+    job = {
+        "id": 78,
+        "name": "bridge",
+        "run_id": 77,
+        "run_attempt": 1,
+        "head_sha": run["head_sha"],
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-09-03T03:45:05Z",
+        "completed_at": "2026-09-03T03:45:59Z",
+        "steps": [
+            {"name": name, "status": "completed", "conclusion": "success"}
+            for name in (
+                "Check out authoritative default branch",
+                "Record exact checked-out default-branch revision",
+                "Plan exact correlated machine dispatch decision",
+                "Upload exact run-scoped machine dispatch result",
+            )
+        ],
+    }
+    artifact = bridge.render_dispatch_result_document(
+        request_comment_id=987,
+        default_branch_revision=REVISION,
+        decision=_decision(
+            "AUTHORIZE",
+            issue_number=138,
+            routing=(
+                ("lead", "explore-change")
+                if case == "wrong-action"
+                else ("executor", "implement-change")
+            ),
+        ),
+    ).encode()
+    digest = "sha256:" + hashlib.sha256(artifact).hexdigest()
+    metadata = {
+        "id": 79,
+        "name": "dispatch-result.json",
+        "expired": False,
+        "digest": "sha256:" + "0" * 64 if case == "wrong-digest" else digest,
+        "workflow_run": {"id": 77, "head_sha": run["head_sha"]},
+        "created_at": "2026-09-03T03:45:58Z",
+    }
+
+    historical = case.startswith("historical-")
+    latest_run = (
+        {**run, "run_attempt": 2, "updated_at": "2026-09-03T03:50:00Z"} if historical else run
+    )
+    expected_source = (
+        {
+            "dispatch_request_comment_id": 987,
+            "run_id": 77,
+            "run_attempt": 2 if case == "historical-wrong-attempt" else 1,
+            "job_id": 78,
+            "artifact_id": 79,
+            "artifact_digest": (
+                "sha256:" + "0" * 64 if case == "historical-wrong-digest" else digest
+            ),
+            "authorization_revision": REVISION,
+        }
+        if historical
+        else None
+    )
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path == "issues/comments/986":
+            return ingress
+        if path == "issues/comments/987":
+            return dispatch
+        if path == "issues/142":
+            return _event(state="closed" if case == "closed-shard" else "open")["issue"]
+        if path.startswith("issues/142/comments?"):
+            return comments
+        if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?"):
+            return {
+                "total_count": 2 if case == "incomplete-runs" else 1,
+                "workflow_runs": [latest_run],
+            }
+        if path == "actions/runs/77":
+            return latest_run
+        if path == "actions/runs/77/attempts/1":
+            return run
+        if path == "actions/runs/77/attempts/2":
+            return latest_run
+        if path == "actions/artifacts/79":
+            return metadata
+        if path.startswith("actions/runs/77/attempts/1/jobs"):
+            return {"total_count": 1, "jobs": [] if case == "missing-job" else [job]}
+        if path.startswith("actions/runs/77/artifacts?"):
+            return {"total_count": 1, "artifacts": [metadata]}
+        return None
+
+    monkeypatch.setattr(bridge, "read_github_artifact_bytes", lambda *_args: artifact)
+    qualify = getattr(bridge, "qualify_development_dispatch_source", None)
+    assert callable(qualify), "Application must bind a new save to its exact native dispatch"
+    proof = qualify(
+        repository,
+        token,
+        source=source,
+        request_comment_id=986,
+        current_revision=REVISION,
+        default_branch="main",
+        read=read,
+        expected_source=expected_source,
+    )
+    if case in {"exact", "closed-shard", "historical-rerun"}:
+        assert proof is not None
+        assert proof.dispatch_request_comment_id == 987
+        assert proof.run_id == 77 and proof.run_attempt == 1
+        assert proof.job_id == 78 and proof.artifact_id == 79
+        assert proof.artifact_digest == digest
+        assert proof.authorization_revision == REVISION
+    else:
+        assert proof is None
+
+
+@pytest.mark.parametrize("phase_a", [False, True])
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("pass", "COMPLETE"),
+        ("red", "COMPLETE"),
+        ("conflict", "COMPLETE"),
+        ("pending", "RESUMABLE"),
+        ("no-verdict", "RESUMABLE"),
+        ("unknown", "RESUMABLE"),
+    ],
+)
+def test_current_saved_development_verdict_qualifies_shared_frontier(
+    monkeypatch: pytest.MonkeyPatch, phase_a: bool, case: str, expected: str
+) -> None:
+    _assert_saved_development_frontier(monkeypatch, phase_a, case, expected)
+
+
+@pytest.mark.parametrize("phase_a", [False, True])
+@pytest.mark.parametrize(
+    ("history", "expected"),
+    [
+        ("red", "COMPLETE"),
+        ("marker-red", "COMPLETE"),
+        ("missing", "AMBIGUOUS"),
+        ("late", "AMBIGUOUS"),
+        ("wrong-base", "AMBIGUOUS"),
+        ("replay", "AMBIGUOUS"),
+        ("unknown-write", "AMBIGUOUS"),
+        ("ambiguous-order", "AMBIGUOUS"),
+        ("latest-pending", "RESUMABLE"),
+        ("latest-unknown", "INVALID"),
+        ("publication-pending", "RESUMABLE"),
+        ("publication-unknown", "INVALID"),
+        ("publication-invalidated", "COMPLETE"),
+        ("publication-invalidated-pending", "RESUMABLE"),
+        ("publication-invalidated-partial", "RESUMABLE"),
+        ("publication-invalidated-pass", "RESUMABLE"),
+        ("publication-invalidated-stale", "COMPLETE"),
+        ("publication-invalidated-stale-unknown", "RESUMABLE"),
+        ("publication-invalidated-stale-republished", "RESUMABLE"),
+        ("publication-invalidated-stale-republished-partial", "AMBIGUOUS"),
+        ("publication-invalidated-republished", "AMBIGUOUS"),
+        ("publication-invalidated-corrected", "COMPLETE"),
+        ("publication-invalidated-corrected-without-negative", "AMBIGUOUS"),
+        ("publication-invalidated-corrected-partial", "AMBIGUOUS"),
+        ("invalidated-input", "AMBIGUOUS"),
+        ("rollover", "COMPLETE"),
+    ],
+)
+def test_development_frontier_retires_only_causal_saved_prefix(
+    monkeypatch: pytest.MonkeyPatch, phase_a: bool, history: str, expected: str
+) -> None:
+    case = "pass"
+    if history in ("publication-invalidated", "publication-invalidated-partial"):
+        case = "conflict"
+    elif history == "publication-invalidated-pending":
+        case = "pending"
+    elif history == "publication-invalidated-stale-unknown":
+        case = "unknown"
+    _assert_saved_development_frontier(monkeypatch, phase_a, case, expected, history)
+
+
+def _assert_saved_development_frontier(
+    monkeypatch: pytest.MonkeyPatch,
+    phase_a: bool,
+    case: str,
+    expected: str,
+    history: str | None = None,
+) -> None:
+    """Both ingress and dispatch consume the same saved-work qualification."""
+    from dataclasses import asdict
+
+    repository = "owner/repo"
+    token = "test-token"  # noqa: S105
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    change = "native-quality"
+    saved, producer = "a" * 40, "b" * 40
+    prior_saved = "c" * 40
+    invalidated = history is not None and history.startswith("publication-invalidated")
+    publication = history in ("publication-pending", "publication-unknown") or invalidated
+    corrected = history is not None and history.startswith("publication-invalidated-corrected")
+    stale = history is not None and history.startswith("publication-invalidated-stale")
+    republished = history is not None and "republished" in history
+    has_successor = corrected or republished
+    current_main = "f" * 40 if stale else REVISION
+    target = prior_saved if publication and not corrected else saved
+    branch = "agent/native-quality"
+    shard_url = f"https://api.github.com/repos/{repository}/issues/142"
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+        action=source.action,
+        role=source.role,
+        change=change,
+        result_kind="more-implementation-required",
+    )
+    request["updated_at"] = request["created_at"]
+    request["issue_url"] = shard_url
+    lines = cast(str, request["body"]).splitlines()
+    worker = json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: ")))
+    payload = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": change,
+        "change": change,
+        "branch": branch,
+        "base_sha": prior_saved if history is not None and history != "wrong-base" else REVISION,
+        "message": "Save test work",
+        "files": [
+            {
+                "path": "tests/test_native_quality.py",
+                "expected_sha": "1" * 40,
+                "blob_sha": "2" * 40,
+            }
+        ],
+        "pr_number": 139,
+    }
+    worker["requested_effects"] = [{"kind": "github-mutation", "payload_json": json.dumps(payload)}]
+    encoded = base64.b64encode(json.dumps(worker).encode()).decode()
+    request["body"] = "\n".join((lines[0], lines[1], f"Worker-Result-B64: {encoded}"))
+    original_receipt = bridge.DevelopmentDispatchSource(
+        601, 60, 1, 61, 62, "sha256:" + "1" * 64, REVISION
+    )
+    worker["_native_development_dispatch"] = asdict(original_receipt)
+    worker["_semantic_intent_version"] = 2
+    prior_receipt = bridge.DevelopmentDispatchSource(
+        501, 50, 1, 51, 52, "sha256:" + "2" * 64, REVISION
+    )
+    prior_worker = dict(worker)
+    prior_worker.pop("_native_development_dispatch")
+    prior_worker.pop("_semantic_intent_version")
+    prior_payload = {**payload, "base_sha": REVISION}
+    if history == "marker-red" or publication:
+        prior_payload["files"] = [
+            {
+                "path": f"openspec/changes/{change}/tasks.md",
+                "expected_sha": "7" * 40,
+                "blob_sha": "8" * 40,
+            }
+        ]
+        prior_payload["message"] = "Save verified marker before its independent quality gate"
+    prior_effect = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps(prior_payload),
+    }
+    prior_worker["requested_effects"] = [prior_effect]
+    prior_raw = base64.b64encode(json.dumps(prior_worker).encode()).decode()
+    prior_request = {
+        **request,
+        "id": 554,
+        "body": "\n".join((lines[0], lines[1], f"Worker-Result-B64: {prior_raw}")),
+        "created_at": "2026-09-18T00:00:00Z",
+        "updated_at": "2026-09-18T00:00:00Z",
+    }
+    if history == "rollover":
+        prior_request["issue_url"] = f"https://api.github.com/repos/{repository}/issues/141"
+    prior_worker["_native_development_dispatch"] = asdict(prior_receipt)
+    prior_worker["_semantic_intent_version"] = 2
+    prior_encoded = base64.b64encode(json.dumps(prior_worker).encode()).decode()
+    prior_projection = {
+        **prior_request,
+        "body": "\n".join((lines[0], lines[1], f"Worker-Result-B64: {prior_encoded}")),
+    }
+    prior = _application_decision_comment(prior_projection, comment_id=600)
+    prior["created_at"] = (
+        "2026-09-18T01:30:00Z" if history == "ambiguous-order" else "2026-09-18T00:30:00Z"
+    )
+    prior["updated_at"] = prior["created_at"]
+    prior["issue_url"] = f"https://api.github.com/repos/{repository}/issues/138"
+    prior["body"] = cast(str, prior["body"]).replace(
+        hashlib.sha256(cast(str, prior_projection["body"]).encode()).hexdigest(),
+        hashlib.sha256(cast(str, prior_request["body"]).encode()).hexdigest(),
+    )
+    prior_digest = hashlib.sha256(cast(str, prior["body"]).encode()).hexdigest()
+    prior_obligation = bridge.NativeQualityObligation(
+        prior_saved,
+        branch,
+        producer,
+        "4" * 64,
+        cast(str, prior["created_at"]),
+        "main",
+        prior_saved if history == "latest-pending" or (publication and not corrected) else saved,
+        REVISION,
+    )
+    prior_verdict = bridge.NativeQualityAttempt(
+        57, 1, "PASS" if publication else "PYTEST_STEP_FAILURE", 58, prior_saved, prior_saved, None
+    )
+    if history is not None and history != "missing":
+        worker["_native_development_predecessor"] = {
+            "request_comment_id": 554,
+            "accepted_decision_sha256": prior_digest,
+            "revision": prior_saved,
+            "branch": branch,
+            "workflow_blob": "d" * 40 if history == "invalidated-input" else producer,
+            "obligation_id": prior_obligation.obligation_id,
+            "authorization_revision": REVISION,
+            "attempts": [asdict(prior_verdict)],
+        }
+    if publication:
+        worker["requested_effects"] = []
+        raw_publication = {key: value for key, value in worker.items() if not key.startswith("_")}
+        encoded = base64.b64encode(json.dumps(raw_publication).encode()).decode()
+        request["body"] = "\n".join((lines[0], lines[1], f"Worker-Result-B64: {encoded}"))
+        worker["_native_implementation_delivery"] = {
+            "scope_task_ids": ["1.1"],
+            "revision": prior_saved,
+            "pr_number": 139,
+            "branch": branch,
+            "reviewed_revision": REVISION,
+            "review_comment_id": 500,
+            "marker_request_comment_id": 554,
+            "marker_accepted_decision_sha256": prior_digest,
+            "marker_revision": prior_saved,
+            "marker_blob": "8" * 40,
+            "quality": worker.pop("_native_development_predecessor"),
+            "strict": [[41, 1, 42]],
+            "dispatch": worker.pop("_native_development_dispatch"),
+            "result_kind": "more-implementation-required",
+        }
+    if history == "replay":
+        worker["_native_development_dispatch"] = asdict(prior_receipt)
+    accepted_encoded = base64.b64encode(json.dumps(worker).encode()).decode()
+    projected_request = {
+        **request,
+        "body": "\n".join((lines[0], lines[1], f"Worker-Result-B64: {accepted_encoded}")),
+    }
+    accepted = _application_decision_comment(projected_request)
+    projected_body = cast(str, projected_request["body"])
+    original_body = cast(str, request["body"])
+    accepted["body"] = cast(str, accepted["body"]).replace(
+        hashlib.sha256(projected_body.encode()).hexdigest(),
+        hashlib.sha256(original_body.encode()).hexdigest(),
+    )
+    accepted["updated_at"] = accepted["created_at"]
+    accepted["issue_url"] = f"https://api.github.com/repos/{repository}/issues/138"
+    decision = bridge.parse_application_decision(accepted["body"])
+    assert decision is not None
+    obligation = bridge.NativeQualityObligation(
+        saved,
+        branch,
+        producer,
+        "3" * 64,
+        cast(str, accepted["created_at"]),
+        "main",
+        saved,
+        prior_saved if history is not None and history != "wrong-base" else REVISION,
+    )
+    correction_receipt = bridge.DevelopmentDispatchSource(
+        701, 70, 1, 71, 72, "sha256:" + "3" * 64, current_main
+    )
+    correction_verdict = bridge.NativeQualityAttempt(
+        87, 1, "PYTEST_STEP_FAILURE", 88, prior_saved, prior_saved, None
+    )
+    correction_request = {
+        **request,
+        "id": 754,
+        "created_at": "2026-09-18T01:56:00Z",
+        "updated_at": "2026-09-18T01:56:00Z",
+    }
+    correction_worker = {key: value for key, value in worker.items() if not key.startswith("_")}
+    correction_worker["requested_effects"] = (
+        [] if republished else [{"kind": "github-mutation", "payload_json": json.dumps(payload)}]
+    )
+    correction_raw = base64.b64encode(json.dumps(correction_worker).encode()).decode()
+    authorization_line = f"Authorization-Revision: {current_main}"
+    correction_request["body"] = "\n".join(
+        (lines[0], authorization_line, f"Worker-Result-B64: {correction_raw}")
+    )
+    correction_worker["_semantic_intent_version"] = 2
+    correction_worker["_native_development_dispatch"] = asdict(correction_receipt)
+    correction_worker["_native_development_predecessor"] = {
+        **worker.get("_native_implementation_delivery", {}).get("quality", {}),
+        "attempts": [
+            asdict(
+                prior_verdict
+                if history == "publication-invalidated-corrected-without-negative"
+                else correction_verdict
+            )
+        ],
+    }
+    if republished:
+        correction_worker.pop("_native_development_dispatch")
+        correction_worker.pop("_native_development_predecessor")
+        correction_worker["_native_implementation_delivery"] = {
+            **worker["_native_implementation_delivery"],
+            "quality": {
+                **worker["_native_implementation_delivery"]["quality"],
+                "authorization_revision": current_main,
+            },
+            "dispatch": asdict(correction_receipt),
+        }
+    correction_encoded = base64.b64encode(json.dumps(correction_worker).encode()).decode()
+    correction_projection = {
+        **correction_request,
+        "body": "\n".join(
+            (lines[0], authorization_line, f"Worker-Result-B64: {correction_encoded}")
+        ),
+    }
+    correction_accepted = _application_decision_comment(correction_projection, comment_id=800)
+    correction_accepted["body"] = cast(str, correction_accepted["body"]).replace(
+        hashlib.sha256(cast(str, correction_projection["body"]).encode()).hexdigest(),
+        hashlib.sha256(cast(str, correction_request["body"]).encode()).hexdigest(),
+    )
+    correction_accepted["created_at"] = "2026-09-18T01:58:00Z"
+    correction_accepted["updated_at"] = correction_accepted["created_at"]
+    correction_accepted["issue_url"] = f"https://api.github.com/repos/{repository}/issues/138"
+    if corrected:
+        obligation = replace(obligation, accepted_at=cast(str, correction_accepted["created_at"]))
+    dispatch = {
+        **request,
+        "id": 987,
+        "body": "DISPATCH_REQUEST\nRequested-At: 2026-09-18T02:00:00Z",
+        "created_at": "2026-09-18T02:00:00Z",
+        "updated_at": "2026-09-18T02:00:00Z",
+    }
+    own = {
+        **request,
+        "id": 989,
+        "created_at": "2026-09-18T02:05:00Z",
+        "updated_at": "2026-09-18T02:05:00Z",
+    }
+    shard = [request, dispatch, *([own] if phase_a else [])]
+    accepted_comments = [accepted]
+    if history is not None:
+        if history != "rollover":
+            shard.insert(0, prior_request)
+        accepted_comments.insert(0, prior)
+    if has_successor:
+        shard.insert(2, correction_request)
+        accepted_comments.append(correction_accepted)
+    global_comments = [*shard, *accepted_comments]
+    if history == "rollover":
+        global_comments.insert(0, prior_request)
+    issue = {
+        **_current_source_issue(),
+        "body": f"Change: {change}",
+        "labels": [{"name": "action:implement-change"}],
+    }
+    run = {
+        "id": 77,
+        "run_attempt": 1,
+        "status": "completed" if phase_a else "in_progress",
+        "conclusion": "success" if phase_a else None,
+        "head_sha": current_main,
+        "head_branch": "main",
+        "repository": {"full_name": repository},
+        "head_repository": {"full_name": repository},
+        "path": ".github/workflows/scheduled-agent-bridge.yml",
+        "event": "issue_comment",
+        "display_title": bridge.render_dispatch_run_name(987),
+        "created_at": "2026-09-18T02:00:00Z",
+        "updated_at": "2026-09-18T02:02:00Z",
+    }
+    planner = {
+        "id": 78,
+        "run_id": 77,
+        "run_attempt": 1,
+        "head_sha": current_main,
+        "name": "bridge",
+        "status": run["status"],
+        "conclusion": run["conclusion"],
+        "started_at": "2026-09-18T02:00:01Z",
+        "completed_at": "2026-09-18T02:02:00Z" if phase_a else None,
+        "steps": [
+            {
+                "name": "Plan exact correlated machine dispatch decision",
+                "started_at": "2026-09-18T02:00:10Z",
+            }
+        ],
+    }
+    quality_job = {
+        "id": 88,
+        "run_id": 87,
+        "run_attempt": 1,
+        "head_sha": target,
+        "name": "quality",
+        "status": "completed",
+        "conclusion": "success" if case == "pass" else "failure",
+        "started_at": "2026-09-18T01:40:00Z",
+        "completed_at": "2026-09-18T01:50:00Z",
+    }
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path.startswith("issues/138/comments?"):
+            return accepted_comments
+        if path.startswith("issues/142/comments?"):
+            return shard
+        if path.startswith("issues/comments?"):
+            return global_comments
+        if path == "issues/138":
+            return issue
+        if path.startswith("issues/138/timeline?"):
+            return []
+        if path.startswith("issues/comments/"):
+            return next(item for item in global_comments if path.endswith(f"/{item['id']}"))
+        if path == "actions/runs/60/attempts/1/jobs":
+            return {
+                "total_count": 1,
+                "jobs": [
+                    {
+                        **planner,
+                        "id": 61,
+                        "run_id": 60,
+                        "head_sha": REVISION,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "started_at": "2026-09-18T00:49:00Z",
+                        "completed_at": "2026-09-18T00:59:00Z",
+                        "steps": [
+                            {
+                                "name": "Plan exact correlated machine dispatch decision",
+                                "started_at": "2026-09-18T00:50:00Z",
+                            }
+                        ],
+                    }
+                ],
+            }
+        if path == "actions/runs/57/attempts/1":
+            return {
+                **run,
+                "id": 57,
+                "head_sha": prior_saved,
+                "head_branch": branch,
+                "event": "push",
+                "status": "completed",
+                "conclusion": "success" if publication else "failure",
+            }
+        if path == "actions/jobs/58":
+            return {
+                **quality_job,
+                "id": 58,
+                "run_id": 57,
+                "head_sha": prior_saved,
+                "conclusion": "success" if publication else "failure",
+                "started_at": "2026-09-18T00:35:00Z",
+                "completed_at": (
+                    "2026-09-18T00:51:00Z" if history == "late" else "2026-09-18T00:45:00Z"
+                ),
+            }
+        if path == "actions/runs/70/attempts/1/jobs":
+            return {
+                "total_count": 1,
+                "jobs": [
+                    {
+                        **planner,
+                        "id": 71,
+                        "run_id": 70,
+                        "head_sha": current_main,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "started_at": "2026-09-18T01:54:00Z",
+                        "completed_at": "2026-09-18T01:55:50Z",
+                        "steps": [
+                            {
+                                "name": "Plan exact correlated machine dispatch decision",
+                                "started_at": "2026-09-18T01:55:00Z",
+                            }
+                        ],
+                    }
+                ],
+            }
+        if path == "actions/runs/87/attempts/1" and corrected:
+            return {
+                **run,
+                "id": 87,
+                "head_sha": prior_saved,
+                "head_branch": branch,
+                "event": "push",
+                "status": "completed",
+                "conclusion": "failure",
+            }
+        if path == "actions/jobs/888" and has_successor:
+            return {
+                "id": 888,
+                "run_id": 777,
+                "run_attempt": 1,
+                "status": "completed",
+                "conclusion": "failure",
+                "completed_at": "2026-09-18T01:52:00Z",
+            }
+        if path == "actions/runs/77/attempts/1/jobs":
+            return {"total_count": 1, "jobs": [planner]}
+        if path in ("actions/runs/77", "actions/runs/77/attempts/1"):
+            return run
+        if path == "actions/jobs/78":
+            return planner
+        if path == "actions/jobs/88":
+            if corrected:
+                return {**quality_job, "head_sha": prior_saved, "conclusion": "failure"}
+            return quality_job
+        if path == "actions/jobs/89":
+            job = {**quality_job, "id": 89, "run_id": 90, "conclusion": "success"}
+            if corrected:
+                job["started_at"] = "2026-09-18T01:58:10Z"
+                job["completed_at"] = "2026-09-18T01:59:50Z"
+            return job
+        if path == "":
+            return {"full_name": repository, "default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": current_main}}
+        if stale and path == f"compare/{REVISION}...{current_main}":
+            return {"status": "ahead", "base_commit": {"sha": REVISION}}
+        if path.startswith("contents/"):
+            return {"sha": producer, "type": "file", "path": ".github/workflows/quality.yml"}
+        raise AssertionError(path)
+
+    def observe(*_args: object, **_kwargs: object) -> bridge.NativeQualityObservation:
+        red = bridge.NativeQualityAttempt(87, 1, "PYTEST_STEP_FAILURE", 88, target, target, None)
+        green = bridge.NativeQualityAttempt(90, 1, "PASS", 89, target, target, None)
+        if case == "red":
+            return bridge.NativeQualityObservation("FAIL", (red,))
+        if case == "pass":
+            return bridge.NativeQualityObservation("PASS", (green,))
+        if case == "conflict":
+            return bridge.NativeQualityObservation("CONFLICT", (red, green))
+        if case == "pending":
+            return bridge.NativeQualityObservation("PENDING")
+        if case == "no-verdict":
+            return bridge.NativeQualityObservation("NO_VERDICT")
+        return bridge.NativeQualityObservation("INDETERMINATE")
+
+    monkeypatch.setattr(
+        bridge,
+        "_derive_frontier",
+        lambda **_kw: (
+            SimpleNamespace(event=SimpleNamespace(comment_id=500, application_correlation=None)),
+            True,
+        ),
+    )
+
+    def observe_accepted(**kw: object) -> bridge.ApplicationCompletion:
+        record = kw["record"]
+        assert isinstance(record, bridge.ApplicationDecisionRecord)
+        if record.request_comment_id == 754 and republished:
+            return bridge.ApplicationCompletion("RESUMABLE", "pending-write", 754, job_id=81)
+        if record.request_comment_id == 654:
+            if history in ("latest-pending", "publication-pending"):
+                return bridge.ApplicationCompletion("RESUMABLE", "pending-write", 654, job_id=81)
+            if history in ("latest-unknown", "publication-unknown"):
+                return bridge.ApplicationCompletion("INVALID", "unknown-write", 654)
+            if invalidated:
+                digest = hashlib.sha256(cast(str, accepted["body"]).encode()).hexdigest()
+                recovery = replace(
+                    _qualified_recovery_fixture(continuation_eligible=True),
+                    request_comment_id=654,
+                    accepted_decision_sha256=digest,
+                    document={
+                        "failure_evidence": {
+                            "unfinished_boundary": "effect-precondition",
+                            "mutation_status": "not-complete",
+                            "failed_effect_index": 0,
+                            "failed_effect_kind": "issue-comment",
+                            "failed_effect_sha256": "b" * 64,
+                            "completed_effect_indexes": [],
+                            "completed_effect_sha256": [],
+                            "operation_stage": "BEFORE-WRITE",
+                            "write_call_entered": False,
+                            "rejection": {
+                                "classification": "effect-precondition-unsatisfied",
+                                "expected": "fresh native implementation delivery gates",
+                            },
+                        }
+                    },
+                )
+                witness = application.CompleteNeverCalledWitness(
+                    654, 0, digest, ((recovery.run_id, recovery.run_attempt, recovery.artifact_id),)
+                )
+                frontier_proof = application.RecoveryProofResult(
+                    "NOT_APPLIED", "FORMAL_RESULT", witness, "FORMAL_RESULT", 0
+                )
+                return bridge.ApplicationCompletion(
+                    "RESUMABLE",
+                    "application-completion-continuation-required",
+                    654,
+                    recovery_artifact=recovery,
+                    accepted_proof=application.AcceptedPostEffectProof(
+                        "COMPLETE",
+                        "fresh accepted proof",
+                        pending_frontier_proof=(
+                            None
+                            if history
+                            in (
+                                "publication-invalidated-partial",
+                                "publication-invalidated-corrected-partial",
+                                "publication-invalidated-stale-republished-partial",
+                            )
+                            else frontier_proof
+                        ),
+                    ),
+                    accepted_record=record,
+                    accepted_decision_sha256=digest,
+                )
+        return bridge.ApplicationCompletion(
+            "RESUMABLE",
+            "verification-obligation-pending",
+            record.request_comment_id,
+            quality_obligation=(
+                (None if history == "unknown-write" else prior_obligation)
+                if record.request_comment_id == 554
+                else obligation
+            ),
+        )
+
+    monkeypatch.setattr(bridge, "_accepted_application_state", observe_accepted)
+    monkeypatch.setattr(
+        bridge,
+        "_qualified_physical_original_accepted_effects",
+        lambda **kw: bridge.parse_effect_batch(
+            kw["record"].raw_worker_result, source, authorized_change=change
+        ),
+    )
+    monkeypatch.setattr(bridge, "_complete_workflow_runs", lambda *_a, **_kw: (run,))
+    monkeypatch.setattr(
+        bridge,
+        "qualify_development_dispatch_source",
+        lambda *_a, **kw: (
+            prior_receipt
+            if kw["request_comment_id"] == 554 or history == "replay"
+            else correction_receipt
+            if kw["request_comment_id"] == 754
+            else original_receipt
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "read_native_quality_attempt",
+        lambda *_a, **kw: correction_verdict if kw["run_id"] == 87 else prior_verdict,
+    )
+    monkeypatch.setattr(bridge, "plan_native_quality_verification", observe)
+    if invalidated:
+        monkeypatch.setattr(
+            bridge,
+            "qualify_implementation_carrier",
+            lambda **_kw: SimpleNamespace(
+                disposition="QUALIFIED", branch=branch, head_sha=prior_saved
+            ),
+        )
+    completion = bridge.qualify_application_completion(
+        repository,
+        token,
+        source=source,
+        current_revision=current_main,
+        current_dispatch_request_comment_id=987,
+        current_dispatch_issue_number=142,
+        phase_a_request_comment_id=989 if phase_a else None,
+        read=read,
+        now=datetime(2026, 9, 18, 2, 6, tzinfo=UTC),
+    )
+    assert completion.state == expected
+    if expected == "COMPLETE":
+        assert completion.quality_obligation is None
+        if history in ("publication-invalidated", "publication-invalidated-stale"):
+            assert completion.request_comment_id == 554
+            assert completion.quality_observation is not None
+            assert completion.quality_observation.outcome == ("PASS" if stale else "CONFLICT")
+            assert tuple(
+                item.request_comment_id for item in completion.settled_development_records
+            ) == (554,)
+        elif corrected:
+            assert completion.request_comment_id == 754
+            assert completion.quality_observation is not None
+            assert completion.quality_observation.outcome == "PASS"
+            assert tuple(
+                item.request_comment_id for item in completion.settled_development_records
+            ) == (554, 754)
+        else:
+            assert completion.request_comment_id == 654
+    elif republished:
+        if expected == "RESUMABLE":
+            assert completion.request_comment_id == 754
+            assert completion.quality_obligation is None
+            assert completion.job_id == 81
+        else:
+            assert completion.request_comment_id is None
+    elif corrected:
+        assert completion.request_comment_id is None
+    elif invalidated:
+        assert completion.request_comment_id == 654
+        assert completion.quality_obligation is None
+    elif history in (
+        "latest-pending",
+        "latest-unknown",
+        "publication-pending",
+        "publication-unknown",
+    ):
+        assert completion.request_comment_id == 654
+        assert completion.quality_obligation is None
+        if history in ("latest-pending", "publication-pending"):
+            assert completion.job_id == 81
+    elif expected == "RESUMABLE":
+        assert completion.quality_obligation == obligation
+
+
+@pytest.mark.parametrize(
+    "prior_evidence",
+    [
+        "valid",
+        "missing",
+        "wrong-hash",
+        "returned",
+        "returned-missing",
+        "legacy",
+        "legacy-missing-checkpoint",
+        "legacy-wrong-scope",
+    ],
+)
+@pytest.mark.parametrize(
+    "operation", ["marker", "publish", "wrong-kind", "wrong-head", "fail", "corrected", "pending"]
+)
+def test_next_slice_requires_bound_prior_native_delivery(
+    monkeypatch: pytest.MonkeyPatch, prior_evidence: str, operation: str
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(monkeypatch, prior_evidence, operation)
+
+
+def test_reviewed_single_slice_correction_reuses_its_delivered_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(monkeypatch, "finding", "corrected")
+
+
+def test_reviewed_multi_slice_correction_reuses_last_delivered_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-multi", "corrected"
+    )
+
+
+@pytest.mark.parametrize("phase_a", [False, True])
+def test_reviewed_earlier_slice_correction_preserves_later_markers(
+    monkeypatch: pytest.MonkeyPatch, phase_a: bool
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-multi-earlier", "corrected", reconcile_phase_a=phase_a
+    )
+
+
+def test_reviewed_correction_rejects_finding_outside_approved_task_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-wrong-scope", "corrected"
+    )
+
+
+@pytest.mark.parametrize("phase_a", [False, True])
+def test_reviewed_correction_publication_preserves_accepted_owner(
+    monkeypatch: pytest.MonkeyPatch, phase_a: bool
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding", "corrected", reconcile_phase_a=phase_a
+    )
+
+
+@pytest.mark.parametrize("prior_evidence", ["finding", "finding-multi-earlier"])
+@pytest.mark.parametrize(
+    "operation", ["evidence-only", "evidence-only-fail", "evidence-only-owned"]
+)
+def test_reviewed_same_head_supplements_evidence_without_another_save(
+    monkeypatch: pytest.MonkeyPatch, prior_evidence: str, operation: str
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(monkeypatch, prior_evidence, operation)
+
+
+def test_repeated_finding_after_earlier_slice_delivery_keeps_original_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-multi-earlier", "corrected", repeat_finding=True
+    )
+
+
+@pytest.mark.parametrize(
+    "explanation",
+    [
+        "F1: Slice 1.1 needs correction; reference task 9.9 is incidental.",
+        "F1: 任務 1.1 需要修正，版本 9.9 並非任務範圍。",
+    ],
+)
+def test_reviewed_structured_scope_is_independent_of_finding_prose(
+    monkeypatch: pytest.MonkeyPatch, explanation: str
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-multi-earlier", "corrected", finding_explanation=explanation
+    )
+
+
+def test_reviewed_structured_scope_must_match_original_accepted_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-multi-earlier", "corrected", scope_conflict=True
+    )
+
+
+def test_reviewed_missing_structured_scope_does_not_default_to_only_slice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch,
+        "finding",
+        "corrected",
+        omit_scope=True,
+        finding_explanation="F1: Scope absent.",
+    )
+
+
+@pytest.mark.parametrize("operation", ["corrected", "evidence-only"])
+def test_reviewed_affected_groups_deliver_first_group_before_ready(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-multi-earlier", operation, affected_groups=True
+    )
+
+
+@pytest.mark.parametrize("operation", ["corrected", "evidence-only", "evidence-only-owned"])
+@pytest.mark.parametrize("invalid_binding", [False, True])
+def test_reviewed_affected_groups_continue_after_first_formal_delivery(
+    monkeypatch: pytest.MonkeyPatch, operation: str, invalid_binding: bool
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch,
+        "finding-multi",
+        operation,
+        affected_groups=True,
+        continued_correction=True,
+        invalid_binding=invalid_binding,
+    )
+
+
+@pytest.mark.parametrize("wrapper", ["standard", "guarded"])
+@pytest.mark.parametrize("case", ["valid", "missing", "unknown", "mixed", "stale"])
+def test_native_review_scope_is_qualified_before_application(
+    monkeypatch: pytest.MonkeyPatch, wrapper: str, case: str
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch,
+        "finding-multi",
+        "evidence-only",
+        affected_groups=True,
+        review_ingress=wrapper,
+        review_case=case,
+    )
+
+
+def _assert_next_slice_requires_bound_prior_native_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+    prior_evidence: str,
+    operation: str,
+    *,
+    reconcile_phase_a: bool | None = None,
+    repeat_finding: bool = False,
+    finding_explanation: str | None = None,
+    scope_conflict: bool = False,
+    omit_scope: bool = False,
+    affected_groups: bool = False,
+    continued_correction: bool = False,
+    invalid_binding: bool = False,
+    review_ingress: str | None = None,
+    review_case: str = "valid",
+) -> None:
+    from investment_strategy import scheduled_agent_validation_resource as resources
+
+    repository = "royhsu-work/investment-strategy"
+    token = "token"  # noqa: S105 - synthetic test credential
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    change = "native-next-slice"
+    branch = f"agent/{change}"
+    prior_head = "d" * 40
+    prior_marker_base = "a" * 40
+    prior_marker_preimage = "6" * 40
+    evidence_only = operation.startswith("evidence-only")
+    head = prior_head if evidence_only else "b" * 40
+    current_marker_base = "c" * 40
+    earlier_finding = prior_evidence == "finding-multi-earlier"
+    multi_finding = earlier_finding or prior_evidence == "finding-multi"
+    finding_correction = multi_finding or prior_evidence in ("finding", "finding-wrong-scope")
+    prior_task = "2.1" if multi_finding else "1.1"
+    target_task = "1.1" if earlier_finding else prior_task
+    first_head, first_base, first_preimage = "11" * 20, "12" * 20, "13" * 20
+    prior_result_kind = "ready" if finding_correction else "more-implementation-required"
+    marker_head = "e" * 40 if operation == "corrected" else head
+    if finding_correction:
+        marker_head = prior_head
+    publishing = operation != "marker"
+    task_blob, candidate_blob = "1" * 40, "2" * 40
+    path = f"openspec/changes/{change}/tasks.md"
+    task_text = "## Slice 1\n- [x] 1.1 First\n\n## Slice 2\n- [ ] 2.1 Next\n"
+    candidate = task_text.replace("- [ ] 2.1", "- [x] 2.1")
+    if finding_correction:
+        if not multi_finding:
+            candidate = "## Slice 1\n- [x] 1.1 First\n"
+        task_text = candidate
+        candidate_blob = task_blob
+    review = _formal_frontier_comment(
+        10,
+        action="review-openspec",
+        role="reviewer",
+        result="pass",
+        successor="Executor / implement-change",
+        request_id=9,
+        change=change,
+    )
+    review["body"] = cast(str, review["body"]).replace("ACTION_RESULT", "REVIEW_RESULT", 1)
+    marker_request = _effect_request_comment(
+        comment_id=30,
+        created_at="2026-09-18T02:00:03Z",
+        action=source.action,
+        role=source.role,
+        result_kind="more-implementation-required",
+        change=change,
+    )
+    marker_request["user"] = {"login": "royhsu-work"}
+    marker_request["issue_url"] = f"https://api.github.com/repos/{repository}/issues/140"
+    marker_request["updated_at"] = marker_request["created_at"]
+    marker_lines = cast(str, marker_request["body"]).splitlines()
+    marker_worker = json.loads(
+        base64.b64decode(marker_lines[2].removeprefix("Worker-Result-B64: "))
+    )
+    marker_payload = {
+        "operation": "application-materialize",
+        "issue_number": source.issue_number,
+        "expected_change": change,
+        "change": change,
+        "pr_number": 139,
+        "branch": branch,
+        "base_sha": prior_marker_base,
+        "message": "Save first verified markers",
+        "files": [{"path": path, "expected_sha": prior_marker_preimage, "blob_sha": task_blob}],
+    }
+    marker_worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(marker_payload)}
+    ]
+    marker_encoded = base64.b64encode(json.dumps(marker_worker).encode()).decode()
+    marker_request["body"] = "\n".join(
+        (marker_lines[0], marker_lines[1], f"Worker-Result-B64: {marker_encoded}")
+    )
+    marker_accepted = _application_decision_comment(marker_request, comment_id=40)
+    marker_accepted["created_at"] = "2026-09-18T02:00:04Z"
+    marker_accepted["updated_at"] = marker_accepted["created_at"]
+    marker_digest = hashlib.sha256(cast(str, marker_accepted["body"]).encode()).hexdigest()
+    prior_request = _effect_request_comment(
+        comment_id=70,
+        created_at="2026-09-18T02:00:06Z",
+        action=source.action,
+        role=source.role,
+        result_kind=prior_result_kind,
+        change=change,
+    )
+    prior_request["user"] = {"login": "royhsu-work"}
+    prior_request["issue_url"] = f"https://api.github.com/repos/{repository}/issues/140"
+    prior_request["updated_at"] = prior_request["created_at"]
+    evidence = {
+        "scope_task_ids": [prior_task],
+        "revision": prior_head,
+        "pr_number": 139,
+        "branch": branch,
+        "reviewed_revision": REVISION,
+        "review_comment_id": 10,
+        "marker_request_comment_id": 30,
+        "marker_accepted_decision_sha256": marker_digest,
+        "marker_revision": prior_head,
+        "marker_blob": task_blob,
+        "quality": {
+            "request_comment_id": 30,
+            "accepted_decision_sha256": marker_digest,
+            "revision": prior_head,
+            "branch": branch,
+            "workflow_blob": "4" * 40,
+            "obligation_id": "5" * 64,
+            "authorization_revision": REVISION,
+            "attempts": [
+                {
+                    "run_id": 43,
+                    "run_attempt": 1,
+                    "outcome": "PASS",
+                    "job_id": 44,
+                    "checkout_revision": prior_head,
+                    "definition_revision": prior_head,
+                    "source_comment_id": None,
+                }
+            ],
+        },
+        "strict": [[41, 1, 42]],
+        "dispatch": {
+            "dispatch_request_comment_id": 50,
+            "run_id": 51,
+            "run_attempt": 1,
+            "job_id": 52,
+            "artifact_id": 53,
+            "artifact_digest": "sha256:" + "1" * 64,
+            "authorization_revision": REVISION,
+        },
+        "result_kind": prior_result_kind,
+    }
+    original_body = cast(str, prior_request["body"])
+    lines = original_body.splitlines()
+    worker = json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: ")))
+    legacy = prior_evidence.startswith("legacy")
+    checkpoint_body = "\n".join(
+        (
+            "SLICE_CHECKPOINT",
+            "Workflow: #138",
+            f"Change: {change}",
+            "Action: implement-change",
+            "Role: executor",
+            "Completed-Tasks: 1.1",
+            f"Revision: {prior_marker_base}",
+            "Application-Correlation: pending-application-binding",
+            "Gate-Evidence: historical accepted candidate verifier",
+            "Remaining-Approved-Boundary: Slice 2",
+        )
+    )
+    if legacy:
+        worker["requested_effects"] = [
+            {
+                "kind": "github-mutation",
+                "payload_json": json.dumps(marker_payload),
+            },
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps({"issue_number": 138, "body": checkpoint_body}),
+            },
+        ]
+        original_body = "\n".join(
+            (
+                lines[0],
+                lines[1],
+                f"Worker-Result-B64: {base64.b64encode(json.dumps(worker).encode()).decode()}",
+            )
+        )
+        prior_request["body"] = original_body
+    elif prior_evidence not in ("missing", "returned-missing"):
+        worker["_native_implementation_delivery"] = evidence
+    encoded = base64.b64encode(json.dumps(worker).encode()).decode()
+    projected_request = {
+        **prior_request,
+        "body": "\n".join((lines[0], lines[1], f"Worker-Result-B64: {encoded}")),
+    }
+    accepted = _application_decision_comment(projected_request, comment_id=80)
+    accepted["body"] = cast(str, accepted["body"]).replace(
+        hashlib.sha256(cast(str, projected_request["body"]).encode()).hexdigest(),
+        hashlib.sha256(original_body.encode()).hexdigest(),
+    )
+    accepted["created_at"] = "2026-09-18T02:00:07Z"
+    accepted["updated_at"] = accepted["created_at"]
+    delivered = _formal_frontier_comment(
+        100,
+        action=source.action,
+        role=source.role,
+        result=prior_result_kind,
+        successor=(
+            "Reviewer / review-implementation"
+            if finding_correction
+            else "Executor / implement-change"
+        ),
+        request_id=70,
+        change=change,
+    )
+    evidence_digest = hashlib.sha256(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if prior_evidence == "wrong-hash":
+        evidence_digest = "0" * 64
+    delivered["body"] = (
+        cast(str, delivered["body"]).replace(
+            f"\nRevision: {REVISION}\n", f"\nRevision: {prior_head}\n"
+        )
+        + f"\nEvidence: native-delivery:{evidence_digest}"
+    )
+    delivered["updated_at"] = delivered["created_at"]
+    comments: tuple[dict[str, object], ...] = (review, marker_accepted, accepted, delivered)
+    if legacy:
+        correlation = (
+            f"application:70:138:{change}:executor:implement-change:"
+            f"more-implementation-required:{REVISION}"
+        )
+        observed_checkpoint = {
+            **delivered,
+            "id": 90,
+            "created_at": "2026-09-18T02:00:09Z",
+            "updated_at": "2026-09-18T02:00:09Z",
+            "body": checkpoint_body.replace(
+                f"Revision: {prior_marker_base}", f"Revision: {prior_head}"
+            ).replace("pending-application-binding", correlation),
+        }
+        if prior_evidence == "legacy-wrong-scope":
+            observed_checkpoint["body"] = cast(str, observed_checkpoint["body"]).replace(
+                "Completed-Tasks: 1.1", "Completed-Tasks: 2.1"
+            )
+        delivered["body"] = cast(str, delivered["body"]).split("\nEvidence:", 1)[0]
+        comments = (review, accepted, delivered)
+        if prior_evidence != "legacy-missing-checkpoint":
+            comments = (review, accepted, observed_checkpoint, delivered)
+    transitions: list[tuple[int, str, str | None]] = [
+        (10, "review-openspec", "implement-change"),
+        (100, source.action, "review-implementation" if finding_correction else source.action),
+    ]
+    older_requests: dict[str, dict[str, object]] = {}
+    if multi_finding:
+        # Earlier completion has its own accepted marker, bytes and formal event.
+        review["created_at"] = "2026-09-18T01:59:01Z"
+        older_marker = {**marker_request, "id": 11, "created_at": "2026-09-18T01:59:03Z"}
+        older_marker["updated_at"] = older_marker["created_at"]
+        older_payload = {
+            **marker_payload,
+            "base_sha": first_base,
+            "files": [
+                {"path": path, "expected_sha": first_preimage, "blob_sha": prior_marker_preimage}
+            ],
+        }
+        older_worker = {
+            **marker_worker,
+            "requested_effects": [
+                {"kind": "github-mutation", "payload_json": json.dumps(older_payload)}
+            ],
+        }
+        older_encoded = base64.b64encode(json.dumps(older_worker).encode()).decode()
+        older_marker["body"] = "\n".join(
+            (marker_lines[0], marker_lines[1], f"Worker-Result-B64: {older_encoded}")
+        )
+        older_marker_accepted = _application_decision_comment(older_marker, comment_id=12)
+        older_marker_accepted["created_at"] = "2026-09-18T01:59:04Z"
+        older_marker_accepted["updated_at"] = older_marker_accepted["created_at"]
+        older_digest = hashlib.sha256(cast(str, older_marker_accepted["body"]).encode()).hexdigest()
+        older_request = {**prior_request, "id": 13, "created_at": "2026-09-18T01:59:06Z"}
+        older_request["updated_at"] = older_request["created_at"]
+        older_original = json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: ")))
+        older_original["result_kind"] = "more-implementation-required"
+        older_encoded = base64.b64encode(json.dumps(older_original).encode()).decode()
+        older_request["body"] = "\n".join(
+            (lines[0], lines[1], f"Worker-Result-B64: {older_encoded}")
+        )
+        older_quality = cast(dict[str, object], evidence["quality"])
+        older_attempts = cast(list[dict[str, object]], older_quality["attempts"])
+        older_evidence = {
+            **evidence,
+            "scope_task_ids": ["1.1"],
+            "revision": first_head,
+            "marker_request_comment_id": 11,
+            "marker_accepted_decision_sha256": older_digest,
+            "marker_revision": first_head,
+            "marker_blob": prior_marker_preimage,
+            "quality": {
+                **older_quality,
+                "request_comment_id": 11,
+                "accepted_decision_sha256": older_digest,
+                "revision": first_head,
+                "attempts": [
+                    {
+                        **older_attempts[0],
+                        "run_id": 31,
+                        "job_id": 32,
+                        "checkout_revision": first_head,
+                        "definition_revision": first_head,
+                    }
+                ],
+            },
+            "strict": [[33, 1, 34]],
+            "dispatch": {
+                "dispatch_request_comment_id": 15,
+                "run_id": 16,
+                "run_attempt": 1,
+                "job_id": 17,
+                "artifact_id": 18,
+                "artifact_digest": "sha256:" + "2" * 64,
+                "authorization_revision": REVISION,
+            },
+            "result_kind": "more-implementation-required",
+        }
+        older_projected = {**older_original, "_native_implementation_delivery": older_evidence}
+        older_encoded = base64.b64encode(json.dumps(older_projected).encode()).decode()
+        older_projection = {
+            **older_request,
+            "body": "\n".join((lines[0], lines[1], f"Worker-Result-B64: {older_encoded}")),
+        }
+        older_accepted = _application_decision_comment(older_projection, comment_id=14)
+        older_accepted["body"] = cast(str, older_accepted["body"]).replace(
+            hashlib.sha256(cast(str, older_projection["body"]).encode()).hexdigest(),
+            hashlib.sha256(cast(str, older_request["body"]).encode()).hexdigest(),
+        )
+        older_accepted["created_at"] = "2026-09-18T01:59:07Z"
+        older_accepted["updated_at"] = older_accepted["created_at"]
+        older_delivered = _formal_frontier_comment(
+            20,
+            action=source.action,
+            role=source.role,
+            result="more-implementation-required",
+            successor="Executor / implement-change",
+            request_id=13,
+            change=change,
+        )
+        older_evidence_digest = hashlib.sha256(
+            json.dumps(older_evidence, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        older_delivered["body"] = (
+            cast(str, older_delivered["body"]).replace(
+                f"\nRevision: {REVISION}\n", f"\nRevision: {first_head}\n"
+            )
+            + f"\nEvidence: native-delivery:{older_evidence_digest}"
+        )
+        older_delivered["created_at"] = "2026-09-18T01:59:10Z"
+        older_delivered["updated_at"] = older_delivered["created_at"]
+        comments = (review, older_marker_accepted, older_accepted, older_delivered, *comments[1:])
+        transitions.insert(1, (20, source.action, source.action))
+        older_requests = {"issues/comments/11": older_marker, "issues/comments/13": older_request}
+    finding_request = _effect_request_comment(
+        comment_id=130,
+        created_at="2026-09-18T02:00:12Z",
+        action="review-implementation",
+        role="reviewer",
+        result_kind="findings",
+        change=change,
+    )
+    if finding_correction:
+        finding_request["user"] = {"login": "royhsu-work"}
+        finding_request["issue_url"] = f"https://api.github.com/repos/{repository}/issues/140"
+        finding_request["updated_at"] = finding_request["created_at"]
+        finding_lines = cast(str, finding_request["body"]).splitlines()
+        finding_worker = json.loads(
+            base64.b64decode(finding_lines[2].removeprefix("Worker-Result-B64: "))
+        )
+        finding_worker["evidence_ref"] = f"https://github.com/{repository}/commit/{prior_head}"
+        task_id = "9.9" if prior_evidence == "finding-wrong-scope" else target_task
+        finding_content = (
+            f"F1: approved task {task_id} lacks verification evidence."
+            if evidence_only
+            else f"F1: approved task {task_id} requires content correction."
+        )
+        if finding_explanation is not None:
+            finding_content = finding_explanation
+        finding_worker["result_content"] = finding_content
+        if affected_groups:
+            finding_worker["reviewed_task_ids"] = ["2.1", "1.1"]
+        elif not omit_scope:
+            finding_worker["reviewed_task_ids"] = ["2.1"] if scope_conflict else [task_id]
+        finding_encoded = base64.b64encode(json.dumps(finding_worker).encode()).decode()
+        finding_request["body"] = "\n".join(
+            (finding_lines[0], finding_lines[1], f"Worker-Result-B64: {finding_encoded}")
+        )
+        finding_accepted = _application_decision_comment(finding_request, comment_id=135)
+        if scope_conflict:
+            projected_worker = {**finding_worker, "reviewed_task_ids": [task_id]}
+            encoded_projection = base64.b64encode(json.dumps(projected_worker).encode()).decode()
+            finding_projection = {
+                **finding_request,
+                "body": "\n".join(
+                    (finding_lines[0], finding_lines[1], f"Worker-Result-B64: {encoded_projection}")
+                ),
+            }
+            finding_accepted = _application_decision_comment(finding_projection, comment_id=135)
+            finding_accepted["body"] = cast(str, finding_accepted["body"]).replace(
+                hashlib.sha256(cast(str, finding_projection["body"]).encode()).hexdigest(),
+                hashlib.sha256(cast(str, finding_request["body"]).encode()).hexdigest(),
+            )
+        finding_accepted["created_at"] = "2026-09-18T02:00:13Z"
+        finding_accepted["updated_at"] = finding_accepted["created_at"]
+        finding = _formal_frontier_comment(
+            140,
+            action="review-implementation",
+            role="reviewer",
+            result="findings",
+            successor="Executor / implement-change",
+            request_id=130,
+            change=change,
+        )
+        finding["body"] = (
+            cast(str, finding["body"])
+            .replace("ACTION_RESULT", "REVIEW_RESULT", 1)
+            .replace(f"\nRevision: {REVISION}\n", f"\nRevision: {prior_head}\n")
+            + f"\nEvidence: {finding_content}"
+        )
+        finding["updated_at"] = finding["created_at"]
+        comments = (*comments, finding_accepted, finding)
+        transitions.append((140, "review-implementation", source.action))
+    if repeat_finding or continued_correction:
+        # The first correction was delivered at the reviewed head.
+        assert earlier_finding or continued_correction
+        repeated_kind = "ready"
+        repeated_successor = "Reviewer / review-implementation"
+        if continued_correction:
+            repeated_kind = "more-implementation-required"
+            repeated_successor = "Executor / implement-change"
+        repeated_evidence = {
+            **older_evidence,
+            "revision": prior_head,
+            "current_task_blob": task_blob,
+            "quality": evidence["quality"],
+            "strict": evidence["strict"],
+            "dispatch": {
+                "dispatch_request_comment_id": 151,
+                "run_id": 152,
+                "run_attempt": 1,
+                "job_id": 153,
+                "artifact_id": 154,
+                "artifact_digest": "sha256:" + "3" * 64,
+                "authorization_revision": REVISION,
+            },
+            "result_kind": repeated_kind,
+        }
+        if continued_correction:
+            finding_body = cast(str, finding_accepted["body"])
+            origin_digest = hashlib.sha256(finding_body.encode()).hexdigest()
+            if invalid_binding:
+                origin_digest = "0" * 64
+            repeated_evidence.update(
+                {
+                    "finding_application_correlation": (
+                        f"application:130:138:{change}:reviewer:review-implementation:"
+                        f"findings:{REVISION}"
+                    ),
+                    "finding_accepted_decision_sha256": origin_digest,
+                    "finding_revision": prior_head,
+                }
+            )
+        repeated_request = {
+            **prior_request,
+            "id": 155,
+            "created_at": "2026-09-18T02:00:16Z",
+            "updated_at": "2026-09-18T02:00:16Z",
+        }
+        repeated_original = json.loads(
+            base64.b64decode(lines[2].removeprefix("Worker-Result-B64: "))
+        )
+        repeated_original["result_kind"] = repeated_kind
+        original_encoded = base64.b64encode(json.dumps(repeated_original).encode()).decode()
+        repeated_request["body"] = "\n".join(
+            (lines[0], lines[1], f"Worker-Result-B64: {original_encoded}")
+        )
+        repeated_worker = {
+            **repeated_original,
+            "_native_implementation_delivery": repeated_evidence,
+        }
+        repeated_encoded = base64.b64encode(json.dumps(repeated_worker).encode()).decode()
+        repeated_projection = {
+            **repeated_request,
+            "body": "\n".join(
+                (
+                    lines[0],
+                    lines[1],
+                    f"Worker-Result-B64: {repeated_encoded}",
+                )
+            ),
+        }
+        repeated_accepted = _application_decision_comment(repeated_projection, comment_id=165)
+        repeated_accepted["body"] = cast(str, repeated_accepted["body"]).replace(
+            hashlib.sha256(cast(str, repeated_projection["body"]).encode()).hexdigest(),
+            hashlib.sha256(cast(str, repeated_request["body"]).encode()).hexdigest(),
+        )
+        repeated_accepted["created_at"] = "2026-09-18T02:00:17Z"
+        repeated_accepted["updated_at"] = repeated_accepted["created_at"]
+        repeated_delivery = _formal_frontier_comment(
+            180,
+            action=source.action,
+            role=source.role,
+            result=repeated_kind,
+            successor=repeated_successor,
+            request_id=155,
+            change=change,
+        )
+        repeated_digest = hashlib.sha256(
+            json.dumps(repeated_evidence, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        repeated_delivery["body"] = (
+            cast(str, repeated_delivery["body"]).replace(
+                f"\nRevision: {REVISION}\n", f"\nRevision: {prior_head}\n"
+            )
+            + f"\nEvidence: native-delivery:{repeated_digest}"
+        )
+        repeated_delivery["updated_at"] = repeated_delivery["created_at"]
+        if continued_correction:
+            comments = (*comments, repeated_accepted, repeated_delivery)
+            transitions.append((180, source.action, source.action))
+            older_requests["issues/comments/155"] = repeated_request
+        else:
+            second_finding_request = {
+                **finding_request,
+                "id": 210,
+                "created_at": "2026-09-18T02:00:20Z",
+                "updated_at": "2026-09-18T02:00:20Z",
+            }
+            second_finding_accepted = _application_decision_comment(
+                second_finding_request, comment_id=215
+            )
+            second_finding_accepted["created_at"] = "2026-09-18T02:00:21Z"
+            second_finding_accepted["updated_at"] = second_finding_accepted["created_at"]
+            second_finding = {
+                **finding,
+                "id": 220,
+                "created_at": "2026-09-18T02:00:22Z",
+                "updated_at": "2026-09-18T02:00:22Z",
+                "body": cast(str, finding["body"]).replace("application:130:", "application:210:"),
+            }
+            comments = (
+                *comments,
+                repeated_accepted,
+                repeated_delivery,
+                second_finding_accepted,
+                second_finding,
+            )
+            transitions.extend(
+                [
+                    (180, source.action, "review-implementation"),
+                    (220, "review-implementation", source.action),
+                ]
+            )
+            older_requests.update(
+                {
+                    "issues/comments/155": repeated_request,
+                    "issues/comments/210": second_finding_request,
+                }
+            )
+    if prior_evidence in ("returned", "returned-missing"):
+        blocker = _formal_frontier_comment(
+            120,
+            action=source.action,
+            role=source.role,
+            result="spec-blocker",
+            successor="Lead / resolve-question",
+            request_id=110,
+            change=change,
+        )
+        resolution = _formal_frontier_comment(
+            140,
+            action="resolve-question",
+            role="lead",
+            result="ready",
+            successor="Executor / implement-change",
+            request_id=130,
+            change=change,
+        )
+        comments = (*comments, blocker, resolution)
+        transitions.extend(
+            [(120, source.action, "resolve-question"), (140, "resolve-question", source.action)]
+        )
+    lifecycle = tuple(_frontier_lifecycle(transitions))
+    if multi_finding:
+        for item in lifecycle:
+            if item["id"] in (10, 1000, 1001):
+                item["created_at"] = cast(str, item["created_at"]).replace("02:00:", "01:59:")
+            elif item["id"] == 20:
+                item["created_at"] = "2026-09-18T01:59:10Z"
+    issue = {
+        **_current_source_issue(),
+        "labels": [{"name": "action:implement-change"}],
+        "body": f"Change: {change}",
+    }
+
+    def read(_repository: str, _token: str, api_path: str) -> object:
+        if api_path in older_requests:
+            return older_requests[api_path]
+        if multi_finding and api_path in (
+            f"compare/{first_head}...{head}",
+            f"compare/{first_head}...{prior_head}",
+        ):
+            return {"status": "ahead", "base_commit": {"sha": first_head}}
+        if api_path == "issues/comments/200":
+            return {"id": 200, "issue_url": f"https://api.github.com/repos/{repository}/issues/140"}
+        if api_path == "issues/comments/30":
+            return marker_request
+        if api_path == "issues/comments/70":
+            return prior_request
+        if api_path == "issues/comments/130" and finding_correction:
+            return finding_request
+        if api_path == "issues/138":
+            return issue
+        if api_path.startswith("issues/138/comments?"):
+            return list(comments)
+        if api_path.startswith("issues/138/timeline?"):
+            return list(lifecycle)
+        if api_path == f"compare/{prior_head}...{head}":
+            return {"status": "ahead", "base_commit": {"sha": prior_head}}
+        raise AssertionError(api_path)
+
+    frontier, qualified = bridge._derive_frontier(  # noqa: SLF001
+        repository=repository,
+        token=token,
+        source=source,
+        current_issue=issue,
+        issue_comments=comments,
+        lifecycle_events=lifecycle,
+        current_revision=REVISION,
+        read=read,
+    )
+    assert qualified and frontier is not None
+    record = bridge.parse_application_decision(accepted["body"])
+    assert record is not None
+    assert (
+        bridge._qualified_physical_original_accepted_effects(  # noqa: SLF001
+            record=record, source=source, repository=repository, token=token, read=read
+        )
+        is not None
+    )
+    receipt = bridge.DevelopmentDispatchSource(
+        170, 171, 1, 172, 173, "sha256:" + "1" * 64, REVISION
+    )
+    saved_request = _effect_request_comment(
+        comment_id=150,
+        created_at="2026-09-18T02:00:16Z",
+        action=source.action,
+        role=source.role,
+        result_kind="more-implementation-required",
+        change=change,
+    )
+    if publishing:
+        saved_request["user"] = {"login": "royhsu-work"}
+        saved_request["issue_url"] = f"https://api.github.com/repos/{repository}/issues/140"
+        saved_request["updated_at"] = saved_request["created_at"]
+        saved_lines = cast(str, saved_request["body"]).splitlines()
+        saved_worker = json.loads(
+            base64.b64decode(saved_lines[2].removeprefix("Worker-Result-B64: "))
+        )
+        saved_payload = {
+            **marker_payload,
+            "base_sha": current_marker_base,
+            "message": "Save verified next markers",
+            "files": [{"path": path, "expected_sha": task_blob, "blob_sha": candidate_blob}],
+        }
+        saved_worker["requested_effects"] = [
+            {"kind": "github-mutation", "payload_json": json.dumps(saved_payload)}
+        ]
+        saved_encoded = base64.b64encode(json.dumps(saved_worker).encode()).decode()
+        saved_request["body"] = "\n".join(
+            (saved_lines[0], saved_lines[1], f"Worker-Result-B64: {saved_encoded}")
+        )
+    saved = _application_decision_comment(saved_request, comment_id=160)
+    saved["created_at"] = "2026-09-18T02:00:17Z"
+    saved["updated_at"] = saved["created_at"]
+    if not finding_correction:
+        comments = (*comments, saved)
+    saved_record = bridge.parse_application_decision(saved["body"])
+    assert saved_record is not None
+    settled: tuple[bridge.ApplicationDecisionRecord, ...] = (saved_record,)
+    latest = saved_record
+    latest_comment = saved
+    if operation == "corrected":
+        correction_stamp = "2026-09-18T02:00:18Z"
+        if repeat_finding or continued_correction:
+            correction_stamp = "2026-09-18T02:00:26Z"
+        correction_request = {
+            **saved_request,
+            "id": 190,
+            "created_at": correction_stamp,
+            "updated_at": correction_stamp,
+        }
+        correction_lines = cast(str, correction_request["body"]).splitlines()
+        correction_worker = json.loads(
+            base64.b64decode(correction_lines[2].removeprefix("Worker-Result-B64: "))
+        )
+        correction_payload = {
+            **marker_payload,
+            "base_sha": marker_head,
+            "message": "Correct failed marked slice without another marker write",
+            "files": [
+                {
+                    "path": "tests/test_native_next.py",
+                    "expected_sha": "7" * 40,
+                    "blob_sha": "8" * 40,
+                }
+            ],
+        }
+        correction_worker["requested_effects"] = [
+            {"kind": "github-mutation", "payload_json": json.dumps(correction_payload)}
+        ]
+        correction_encoded = base64.b64encode(json.dumps(correction_worker).encode()).decode()
+        correction_request["body"] = "\n".join(
+            (correction_lines[0], correction_lines[1], f"Worker-Result-B64: {correction_encoded}")
+        )
+        corrected = _application_decision_comment(correction_request, comment_id=195)
+        corrected["created_at"] = "2026-09-18T02:00:19Z"
+        if repeat_finding or continued_correction:
+            corrected["created_at"] = "2026-09-18T02:00:27Z"
+        corrected["updated_at"] = corrected["created_at"]
+        comments = (*comments, corrected)
+        correction_record = bridge.parse_application_decision(corrected["body"])
+        assert correction_record is not None
+        settled = (correction_record,) if finding_correction else (saved_record, correction_record)
+        latest = correction_record
+        latest_comment = corrected
+    save_accepted_at = "2026-09-18T02:00:17Z"
+    if continued_correction:
+        save_accepted_at = cast(str, latest_comment["created_at"])
+    completion = bridge.ApplicationCompletion(
+        "RESUMABLE" if operation == "pending" else "COMPLETE",
+        "qualified current saved work",
+        request_comment_id=latest.request_comment_id,
+        accepted_record=latest,
+        accepted_decision_sha256=hashlib.sha256(
+            cast(str, latest_comment["body"]).encode()
+        ).hexdigest(),
+        settled_quality_obligation=bridge.NativeQualityObligation(
+            prior_head if operation == "wrong-head" else head,
+            branch,
+            "4" * 40,
+            "5" * 64,
+            save_accepted_at,
+            "main",
+            head,
+            prior_head,
+        ),
+        quality_observation=bridge.NativeQualityObservation(
+            "PENDING" if operation == "pending" else "FAIL" if operation == "fail" else "PASS",
+            (
+                bridge.NativeQualityAttempt(
+                    180,
+                    1,
+                    "PYTEST_STEP_FAILURE" if operation == "fail" else "PASS",
+                    181,
+                    head,
+                    head,
+                    None,
+                ),
+            ),
+        ),
+        settled_development_records=settled,
+    )
+    if evidence_only:
+        historical_quality_record = bridge.parse_application_decision(marker_accepted["body"])
+        assert historical_quality_record is not None
+        latest = historical_quality_record
+        historical_obligation = bridge.NativeQualityObligation(
+            prior_head,
+            branch,
+            "4" * 40,
+            "5" * 64,
+            cast(str, marker_accepted["created_at"]),
+            "main",
+            prior_head,
+            prior_marker_base,
+        )
+        completion = bridge.ApplicationCompletion(
+            "RESUMABLE" if operation == "evidence-only-owned" else "NONE",
+            "current occurrence observation",
+        )
+        if continued_correction:
+            # Same-Action Phase A may observe the already completed formal
+            # predecessor, not NONE. An unsettled owner still blocks progress.
+            completion = bridge.ApplicationCompletion(
+                "RESUMABLE" if operation == "evidence-only-owned" else "COMPLETE",
+                "application-completion-complete",
+                request_comment_id=155,
+            )
+
+        def observe_historical_job(*args: object, **kwargs: object) -> bridge.ApplicationCompletion:
+            assert args[:3] == (repository, token, 30)
+            assert kwargs["record"] == historical_quality_record
+            assert kwargs["accepted_decision_sha256"] == marker_digest
+            assert kwargs["current_revision"] == REVISION
+            return bridge.ApplicationCompletion(
+                "RESUMABLE",
+                "verification-obligation-pending",
+                request_comment_id=30,
+                quality_obligation=historical_obligation,
+            )
+
+        def observe_historical_gate(
+            *args: object, **kwargs: object
+        ) -> bridge.NativeQualityObservation:
+            assert kwargs["revision"] == prior_head
+            assert kwargs["branch"] == branch
+            assert kwargs["accepted_at"] == marker_accepted["created_at"]
+            assert kwargs["workflow_blob"] == historical_obligation.workflow_blob
+            assert kwargs["obligation_id"] == historical_obligation.obligation_id
+            assert kwargs["request_comment_id"] == receipt.dispatch_request_comment_id
+            assert kwargs["run_id"] == receipt.run_id
+            assert kwargs["run_attempt"] == receipt.run_attempt
+            assert kwargs["observe_only"] is True
+            return bridge.NativeQualityObservation(
+                "FAIL" if operation == "evidence-only-fail" else "PASS",
+                (
+                    bridge.NativeQualityAttempt(
+                        43,
+                        1,
+                        "PYTEST_STEP_FAILURE" if operation == "evidence-only-fail" else "PASS",
+                        44,
+                        prior_head,
+                        prior_head,
+                        None,
+                    ),
+                ),
+            )
+
+        monkeypatch.setattr(bridge, "_application_job", observe_historical_job)
+        monkeypatch.setattr(
+            bridge,
+            "_development_acceptance_source",
+            lambda *a, **kw: bridge.DevelopmentDispatchSource(
+                50, 51, 1, 52, 53, "sha256:" + "1" * 64, REVISION
+            ),
+        )
+        monkeypatch.setattr(
+            bridge,
+            "_complete_workflow_runs",
+            lambda *a, **kw: ({"display_title": bridge.render_dispatch_run_name(170)},),
+        )
+        monkeypatch.setattr(
+            bridge,
+            "_quality_bridge_run",
+            lambda *a, **kw: (171, 1, REVISION, "completed", "success"),
+        )
+        planning_stamp = "2026-09-18T02:00:16Z"
+        if continued_correction:
+            planning_stamp = "2026-09-18T02:00:25Z"
+        monkeypatch.setattr(
+            bridge,
+            "github_complete_job_inventory",
+            lambda *a, **kw: (
+                {
+                    "name": "bridge",
+                    "run_id": 171,
+                    "run_attempt": 1,
+                    "head_sha": REVISION,
+                    "started_at": "2026-09-18T02:00:15Z",
+                    "steps": [
+                        {
+                            "name": "Plan exact correlated machine dispatch decision",
+                            "started_at": planning_stamp,
+                        }
+                    ],
+                },
+            ),
+        )
+        monkeypatch.setattr(bridge, "_quality_verdicts_precede", lambda *a, **kw: True)
+        monkeypatch.setattr(bridge, "plan_native_quality_verification", observe_historical_gate)
+    monkeypatch.setattr(bridge, "qualify_development_dispatch_source", lambda *a, **kw: receipt)
+    monkeypatch.setattr(bridge, "qualify_application_completion", lambda *a, **kw: completion)
+    monkeypatch.setattr(
+        bridge,
+        "qualify_implementation_carrier",
+        lambda **kw: SimpleNamespace(disposition="QUALIFIED", branch=branch, head_sha=head),
+    )
+    monkeypatch.setattr(bridge, "openspec_review_revision_applies", lambda *a, **kw: True)
+    monkeypatch.setattr(bridge, "_native_strict_marker_evidence", lambda *a, **kw: ((182, 1, 183),))
+
+    def content_sha(*args: object, revision: str, **kwargs: object) -> str:
+        if multi_finding and revision == first_base:
+            return first_preimage
+        if multi_finding and revision == first_head:
+            return prior_marker_preimage
+        if revision == prior_marker_base:
+            return prior_marker_preimage
+        return candidate_blob if publishing and revision in (head, marker_head) else task_blob
+
+    def content_text(*args: object, revision: str, **kwargs: object) -> str:
+        if multi_finding and revision == first_base:
+            return task_text.replace("- [x]", "- [ ]")
+        if revision == prior_marker_base or (multi_finding and revision == first_head):
+            return task_text.replace(f"- [x] {prior_task}", f"- [ ] {prior_task}")
+        return candidate if publishing and revision in (head, marker_head) else task_text
+
+    for module in (bridge, resources):
+        monkeypatch.setattr(module, "_content_sha_at", content_sha)
+        monkeypatch.setattr(module, "_content_text_at", content_text)
+    monkeypatch.setattr(
+        resources,
+        "_blob_text",
+        lambda *a: (
+            task_text.replace("- [x] 2.1", "- [ ] 2.1")
+            if multi_finding and a[-1] == prior_marker_preimage
+            else task_text
+            if a[-1] == task_blob
+            else candidate
+        ),
+    )
+    if review_ingress is not None:
+        from investment_strategy import scheduled_agent_effects as effects
+        from investment_strategy import scheduled_agent_merge_acceptance as merge_acceptance
+
+        # Reconstruct the exact READY predecessor, before any finding acceptance.
+        reviewer = bridge.WorkerRequest(138, "reviewer", "review-implementation")
+        comments = comments[: comments.index(finding_accepted)]
+        lifecycle = tuple(_frontier_lifecycle(transitions[:-1]))
+        for item in lifecycle:
+            if item["id"] in (10, 1000, 1001):
+                item["created_at"] = cast(str, item["created_at"]).replace("02:00:", "01:59:")
+            elif item["id"] == 20:
+                item["created_at"] = "2026-09-18T01:59:10Z"
+        issue["labels"] = [{"name": "action:review-implementation"}]
+        raw = dict(finding_worker)
+        if review_case == "missing":
+            raw.pop("reviewed_task_ids")
+        elif review_case == "unknown":
+            raw["reviewed_task_ids"] = ["9.9"]
+        elif review_case == "mixed":
+            raw["reviewed_task_ids"] = ["1.1", "9.9"]
+        elif review_case == "stale":
+            raw["evidence_ref"] = f"https://github.com/{repository}/commit/{first_head}"
+        raw_result = bridge._application_owned_worker_result(  # noqa: SLF001
+            json.dumps(raw),
+            source=reviewer,
+            change=change,
+            current_revision=REVISION,
+            result_revision=prior_head,
+            request_comment_id=130,
+        )
+        preflight = acquire_dispatch_preflight(
+            observations=(
+                GitHubIssueObservation(
+                    issue_number=138,
+                    change=change,
+                    routing=("reviewer", "review-implementation"),
+                    state="open",
+                    created_order=1,
+                    authoritative=True,
+                ),
+            ),
+            source_total_count=1,
+            incomplete_results=False,
+            exhausted=True,
+            human_authorized=True,
+        )
+        applied: list[effects.StagedEffect] = []
+        dispositions: list[str] = []
+
+        def persist(*args: object, **kwargs: object) -> bool:
+            dispositions.append(cast(str, kwargs["disposition"]))
+            return True
+
+        for module in (effects, merge_acceptance):
+            monkeypatch.setattr(module, "acquire_current_github_preflight", lambda *a: preflight)
+        monkeypatch.setattr(effects, "_github_json", read)
+        monkeypatch.setattr(effects.GitHubEffectAdapter, "_default_branch", lambda self: "main")
+        monkeypatch.setattr(
+            effects.GitHubEffectAdapter, "_default_branch_still_current", lambda self: True
+        )
+        monkeypatch.setattr(effects.GitHubEffectAdapter, "guard", lambda self, effect: True)
+        monkeypatch.setattr(
+            effects.GitHubEffectAdapter, "apply", lambda self, effect: applied.append(effect)
+        )
+        monkeypatch.setattr(
+            effects.GitHubEffectAdapter,
+            "observe_postcondition",
+            lambda self, effect: effect in applied,
+        )
+        monkeypatch.setattr(effects.GitHubEffectAdapter, "persist_application_decision", persist)
+        if review_ingress == "guarded":
+            _, result = merge_acceptance.run_guarded_effect_application(
+                raw_result,
+                source=reviewer,
+                repository=repository,
+                token=token,
+                current_revision=REVISION,
+                request_comment_id=130,
+                application_request_body=cast(str, finding_request["body"]),
+                authorization_revision=REVISION,
+            )
+        else:
+            _, result = effects.run_effect_application(
+                raw_result,
+                source=reviewer,
+                repository=repository,
+                token=token,
+                current_revision=REVISION,
+                request_comment_id=130,
+                authorization_revision=REVISION,
+            )
+        if review_case == "valid":
+            assert result.applied, result.reason
+            assert [effect.kind for effect in applied] == ["issue-comment", "routing-transition"]
+            if review_ingress == "guarded":
+                assert dispositions == ["ACCEPTED"]
+        else:
+            assert not result.applied
+            assert not applied
+            assert "ACCEPTED" not in dispositions
+        return
+    if finding_correction:
+        qualification = bridge.build_qualification_input(
+            issue_number=source.issue_number,
+            change=change,
+            state="open",
+            current_routing=frontier.current_routing,
+            comments=comments,
+            current_revision=REVISION,
+            lifecycle_events=lifecycle,
+        )
+        expected_events = 4 if multi_finding else 3
+        if repeat_finding:
+            expected_events = 6
+        if continued_correction:
+            expected_events = 5
+        assert len(qualification.events) == expected_events
+        reviewed = qualification.events[0]
+        historical, current_finding = qualification.events[-2:]
+        if continued_correction:
+            historical, current_finding = qualification.events[-3:-1]
+        assert qualification.events[-1] == frontier.event
+        assert current_finding.revision == historical.revision == prior_head
+        assert current_finding.default_branch_revision == REVISION
+        decisions = bridge._application_decisions(comments)  # noqa: SLF001
+        finding_owners = bridge._frontier_application_decisions(  # noqa: SLF001
+            decisions, replace(frontier, event=current_finding)
+        )
+        assert len(finding_owners) == 1
+        reviewer = bridge.WorkerRequest(138, "reviewer", "review-implementation")
+        finding_record = finding_owners[0]
+        original_finding = bridge._qualified_physical_original_accepted_effects(  # noqa: SLF001
+            record=finding_record, source=reviewer, repository=repository, token=token, read=read
+        )
+        if not scope_conflict:
+            assert original_finding is not None and not original_finding.effects
+        projected = json.loads(
+            bridge._application_owned_worker_result(  # noqa: SLF001
+                finding_record.raw_worker_result,
+                source=reviewer,
+                change=change,
+                current_revision=REVISION,
+                result_revision=prior_head,
+                request_comment_id=finding_record.request_comment_id,
+            )
+        )
+        observed_body = next(
+            cast(str, comment["body"])
+            for comment in comments
+            if comment["id"] == current_finding.comment_id
+        )
+        projected_body = projected["result_content"]
+        assert [line for line in projected_body.splitlines() if line.startswith("Evidence:")] == [
+            line for line in observed_body.splitlines() if line.startswith("Evidence:")
+        ]
+        assert bridge._bound_native_delivery_scope(  # noqa: SLF001
+            repository,
+            token,
+            source=source,
+            frontier=frontier,
+            event=historical,
+            review=reviewed,
+            scope=(target_task if repeat_finding else prior_task,),
+            comments=comments,
+            branch=branch,
+            pr_number=139,
+            revision=head,
+            current_revision=REVISION,
+            read=read,
+        )
+        if earlier_finding or continued_correction:
+            assert bridge._bound_native_delivery_scope(  # noqa: SLF001
+                repository,
+                token,
+                source=source,
+                frontier=frontier,
+                event=qualification.events[1],
+                review=reviewed,
+                scope=("1.1",),
+                comments=comments,
+                branch=branch,
+                pr_number=139,
+                revision=head,
+                current_revision=REVISION,
+                read=read,
+            )
+        parsed_slices = bridge._task_slices(candidate)  # noqa: SLF001
+        assert parsed_slices == (
+            ((("1.1", True),), (("2.1", True),)) if multi_finding else ((("1.1", True),),)
+        )
+        historical_marker = bridge._reviewed_correction_marker(  # noqa: SLF001
+            repository,
+            token,
+            source=source,
+            frontier=frontier,
+            comments=comments,
+            lifecycle=lifecycle,
+            slices=parsed_slices,
+            branch=branch,
+            revision=head,
+            current_revision=REVISION,
+            read=read,
+        )
+        if (
+            prior_evidence != "finding-wrong-scope"
+            and not multi_finding
+            and not omit_scope
+            and not scope_conflict
+        ):
+            assert historical_marker is not None
+            assert historical_marker[1].request_comment_id == 30
+
+    if publishing:
+        monkeypatch.setattr(
+            bridge,
+            "prove_materialization",
+            lambda *a, **kw: SimpleNamespace(
+                disposition="COMPLETE",
+                target=SimpleNamespace(revision=head, branch=branch, pr_number=139),
+                witness=SimpleNamespace(
+                    revision=first_head if earlier_finding else marker_head,
+                    desired_blobs=(
+                        (path, prior_marker_preimage if earlier_finding else candidate_blob),
+                    ),
+                ),
+            ),
+        )
+        expected_kind = "ready"
+        if affected_groups and not continued_correction:
+            expected_kind = "more-implementation-required"
+        requested_kind = expected_kind
+        if operation == "wrong-kind":
+            requested_kind = "more-implementation-required"
+        evidence_result = bridge.qualify_initial_implementation_delivery(
+            repository,
+            token,
+            source=source,
+            change=change,
+            revision=head,
+            result_kind=requested_kind,
+            request_comment_id=200,
+            current_revision=REVISION,
+            default_branch="main",
+            read=read,
+        )
+        if (
+            prior_evidence == "finding-wrong-scope"
+            or scope_conflict
+            or omit_scope
+            or invalid_binding
+            or operation in ("evidence-only-fail", "evidence-only-owned")
+        ):
+            assert evidence_result is None
+            return
+        if finding_correction:
+            assert evidence_result is not None
+            assert evidence_result["scope_task_ids"] == [target_task]
+            assert evidence_result["revision"] == head
+            assert evidence_result["result_kind"] == expected_kind
+            if affected_groups:
+                assert evidence_result["finding_application_correlation"] == (
+                    f"application:130:138:{change}:reviewer:review-implementation:"
+                    f"findings:{REVISION}"
+                )
+                finding_body = cast(str, finding_accepted["body"])
+                finding_digest = hashlib.sha256(finding_body.encode()).hexdigest()
+                assert evidence_result["finding_accepted_decision_sha256"] == finding_digest
+                assert evidence_result["finding_revision"] == prior_head
+                wrong_kind = "more-implementation-required" if continued_correction else "ready"
+                wrong_delivery = bridge.qualify_initial_implementation_delivery(
+                    repository,
+                    token,
+                    source=source,
+                    change=change,
+                    revision=head,
+                    result_kind=wrong_kind,
+                    request_comment_id=200,
+                    current_revision=REVISION,
+                    default_branch="main",
+                    read=read,
+                )
+                assert wrong_delivery is None
+            assert evidence_result["marker_revision"] == (
+                first_head if earlier_finding else prior_head
+            )
+            assert evidence_result["marker_request_comment_id"] == (11 if earlier_finding else 30)
+            if earlier_finding:
+                assert evidence_result["marker_blob"] == prior_marker_preimage
+                assert evidence_result["current_task_blob"] == task_blob
+            quality = evidence_result["quality"]
+            assert isinstance(quality, dict)
+            assert quality["request_comment_id"] == latest.request_comment_id
+            if reconcile_phase_a is not None:
+                from dataclasses import asdict
+
+                publication_request = _effect_request_comment(
+                    comment_id=200,
+                    created_at="2026-09-18T02:00:22Z",
+                    action=source.action,
+                    role=source.role,
+                    result_kind="ready",
+                    change=change,
+                )
+                publication_request["user"] = {"login": "royhsu-work"}
+                publication_request["issue_url"] = (
+                    f"https://api.github.com/repos/{repository}/issues/140"
+                )
+                publication_request["updated_at"] = publication_request["created_at"]
+                publication_body = cast(str, publication_request["body"])
+                publication_lines = publication_body.splitlines()
+                publication_worker = json.loads(
+                    base64.b64decode(publication_lines[2].removeprefix("Worker-Result-B64: "))
+                )
+                publication_worker["_native_implementation_delivery"] = evidence_result
+                publication_encoded = base64.b64encode(
+                    json.dumps(publication_worker).encode()
+                ).decode()
+                projection = {
+                    **publication_request,
+                    "body": "\n".join(
+                        (
+                            publication_lines[0],
+                            publication_lines[1],
+                            f"Worker-Result-B64: {publication_encoded}",
+                        )
+                    ),
+                }
+                publication_accept = _application_decision_comment(projection, comment_id=205)
+                publication_accept["body"] = cast(str, publication_accept["body"]).replace(
+                    hashlib.sha256(cast(str, projection["body"]).encode()).hexdigest(),
+                    hashlib.sha256(publication_body.encode()).hexdigest(),
+                )
+                publication_accept["created_at"] = "2026-09-18T02:00:23Z"
+                publication_accept["updated_at"] = publication_accept["created_at"]
+                publication = bridge.parse_application_decision(publication_accept["body"])
+                assert publication is not None
+                comments = (*comments, publication_accept)
+                obligation = completion.settled_quality_obligation
+                assert obligation is not None
+                save_stamp = cast(str, latest_comment["created_at"])
+                settled_save = replace(
+                    completion,
+                    state="RESUMABLE",
+                    quality_obligation=replace(obligation, accepted_at=save_stamp),
+                    settled_quality_obligation=None,
+                )
+                pending = bridge.ApplicationCompletion(
+                    "RESUMABLE", "pending-write", publication.request_comment_id, job_id=201
+                )
+                latest_receipt = replace(receipt, dispatch_request_comment_id=160)
+
+                def read_recovery(repo: str, auth: str, api_path: str) -> object:
+                    if api_path == "issues/comments/200":
+                        return publication_request
+                    return read(repo, auth, api_path)
+
+                assert evidence_result["dispatch"] == asdict(receipt)
+                monkeypatch.setattr(
+                    bridge,
+                    "_development_acceptance_source",
+                    lambda *a, **kw: latest_receipt if kw["record"] == latest else receipt,
+                )
+                monkeypatch.setattr(
+                    bridge,
+                    "_development_planning_boundary",
+                    lambda *a, **kw: datetime(2026, 9, 18, 2, 0, 21, tzinfo=UTC),
+                )
+                monkeypatch.setattr(
+                    bridge, "_quality_workflow_blob", lambda *a, **kw: obligation.workflow_blob
+                )
+                monkeypatch.setattr(
+                    bridge, "_historical_development_verdict", lambda *a, **kw: True
+                )
+                recovered = bridge._settled_development_prefix(  # noqa: SLF001
+                    repository,
+                    token,
+                    source=source,
+                    accepted=[latest, publication],
+                    decision_times={
+                        latest.request_comment_id: save_stamp,
+                        publication.request_comment_id: "2026-09-18T02:00:23Z",
+                    },
+                    ingress_times={
+                        latest.request_comment_id: "2026-09-18T02:00:18Z",
+                        publication.request_comment_id: "2026-09-18T02:00:22Z",
+                    },
+                    issue_comments=comments,
+                    accepted_state=lambda record, _: settled_save if record == latest else pending,
+                    current_revision=REVISION,
+                    dispatch_request_id=210,
+                    phase_a=reconcile_phase_a,
+                    current_issue=issue,
+                    lifecycle_events=lifecycle,
+                    read=read_recovery,
+                )
+                assert recovered == (publication, pending)
+        elif prior_evidence in ("valid", "returned", "legacy") and operation in (
+            "publish",
+            "corrected",
+        ):
+            assert evidence_result is not None
+            assert evidence_result["scope_task_ids"] == ["2.1"]
+            assert evidence_result["revision"] == head
+            assert evidence_result["result_kind"] == "ready"
+            assert evidence_result["marker_revision"] == marker_head
+            assert evidence_result["marker_request_comment_id"] == 150
+            quality = evidence_result["quality"]
+            assert isinstance(quality, dict)
+            assert quality["request_comment_id"] == latest.request_comment_id
+        else:
+            assert evidence_result is None
+        return
+    request = bridge.MaterializationRequest(
+        138,
+        change,
+        change,
+        branch,
+        head,
+        "Save next verified markers",
+        (resources.WorkProductFile(path, candidate_blob, task_blob),),
+        139,
+    )
+    assert bridge.qualify_initial_marker_save(
+        repository,
+        token,
+        request=request,
+        source=source,
+        request_comment_id=200,
+        current_revision=REVISION,
+        default_branch="main",
+        read=read,
+    ) is (prior_evidence in ("valid", "returned", "legacy"))
+
+
+@pytest.mark.parametrize("task_state", ["ordinary", "earlier-correction", "stale-correction"])
+@pytest.mark.parametrize(
+    ("verdict", "strict_pass"),
+    [("PASS", True), ("CONFLICT", True), ("PENDING", True), ("PASS", False)],
+)
+def test_native_delivery_reobserves_quality_before_publication(
+    monkeypatch: pytest.MonkeyPatch,
+    verdict: Literal["PASS", "CONFLICT", "PENDING"],
+    strict_pass: bool,
+    task_state: str,
+) -> None:
+    from investment_strategy import scheduled_agent_effects as effects
+
+    repository = "royhsu-work/investment-strategy"
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    change = "native-delivery"
+    branch = f"agent/{change}"
+    revision, blob = "b" * 40, "c" * 40
+    request = _effect_request_comment(
+        comment_id=70,
+        created_at="2026-09-18T02:00:06Z",
+        action=source.action,
+        role=source.role,
+        result_kind="more-implementation-required",
+        change=change,
+    )
+    accepted = _application_decision_comment(request, comment_id=80)
+    accepted["updated_at"] = accepted["created_at"]
+    accepted["issue_url"] = f"https://api.github.com/repos/{repository}/issues/138"
+    digest = hashlib.sha256(cast(str, accepted["body"]).encode()).hexdigest()
+    attempt = bridge.NativeQualityAttempt(43, 1, "PASS", 44, revision, revision, None)
+    evidence: dict[str, object] = {
+        "revision": revision,
+        "branch": branch,
+        "pr_number": 139,
+        "marker_blob": blob,
+        "result_kind": "ready",
+        "quality": {
+            "request_comment_id": 70,
+            "accepted_decision_sha256": digest,
+            "revision": revision,
+            "branch": branch,
+            "workflow_blob": "4" * 40,
+            "obligation_id": "5" * 64,
+            "authorization_revision": REVISION,
+            "attempts": [
+                {
+                    "run_id": 43,
+                    "run_attempt": 1,
+                    "outcome": "PASS",
+                    "job_id": 44,
+                    "checkout_revision": revision,
+                    "definition_revision": revision,
+                    "source_comment_id": None,
+                }
+            ],
+        },
+        "dispatch": {
+            "dispatch_request_comment_id": 50,
+            "run_id": 51,
+            "run_attempt": 1,
+            "job_id": 52,
+            "artifact_id": 53,
+            "artifact_digest": "sha256:" + "1" * 64,
+            "authorization_revision": REVISION,
+        },
+        "strict": [[41, 1, 42]],
+    }
+
+    current_blob = blob
+    if task_state != "ordinary":
+        evidence["current_task_blob"] = "d" * 40
+        if task_state == "earlier-correction":
+            current_blob = "d" * 40
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path.startswith("issues/138/comments?"):
+            return [accepted]
+        if path == "issues/comments/80":
+            return accepted
+        raise AssertionError(path)
+
+    def observe(*args: object, **kwargs: object) -> bridge.NativeQualityObservation:
+        assert kwargs["revision"] == revision
+        assert kwargs["branch"] == branch
+        assert kwargs["accepted_at"] == accepted["created_at"]
+        assert kwargs["request_comment_id"] == 50
+        assert kwargs["run_id"] == 51
+        assert kwargs["run_attempt"] == 1
+        assert kwargs["observe_only"] is True
+        return bridge.NativeQualityObservation(verdict, (attempt,))
+
+    monkeypatch.setattr(
+        bridge, "qualify_initial_implementation_delivery", lambda *a, **kw: evidence
+    )
+    monkeypatch.setattr(bridge, "plan_native_quality_verification", observe)
+    monkeypatch.setattr(
+        bridge,
+        "_native_strict_marker_evidence",
+        lambda *a, **kw: ((41, 1, 42),) if strict_pass else (),
+    )
+    monkeypatch.setattr(effects, "_github_json", read)
+    monkeypatch.setattr(
+        effects,
+        "qualify_implementation_carrier",
+        lambda **kw: SimpleNamespace(disposition="QUALIFIED", branch=branch, head_sha=revision),
+    )
+    monkeypatch.setattr(effects, "_content_sha_at", lambda *a, **kw: current_blob)
+    adapter = effects.GitHubEffectAdapter(
+        repository,
+        "test-token",  # noqa: S106 - synthetic test credential
+        source,
+        authorized_change=change,
+        current_revision=REVISION,
+        expected_result_kind="ready",
+        request_comment_id=90,
+    )
+    monkeypatch.setattr(adapter, "_source_still_current", lambda: True)
+    monkeypatch.setattr(adapter, "_default_branch_still_current", lambda: True)
+    monkeypatch.setattr(adapter, "_default_branch", lambda: "main")
+    formal = _formal_frontier_comment(
+        100,
+        action=source.action,
+        role=source.role,
+        result="ready",
+        successor="Reviewer / review-implementation",
+        request_id=90,
+        change=change,
+        revision=revision,
+    )
+    effect = effects.StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 138, "body": formal["body"]}),
+    )
+    if task_state == "stale-correction":
+        assert not adapter.validate_implementation_delivery(effect)
+        return
+    assert adapter.validate_implementation_delivery(effect)
+    assert adapter.guard(effect) is (verdict == "PASS" and strict_pass)
+    if verdict != "PASS" or not strict_pass:
+        from investment_strategy import scheduled_agent_application_bridge as application
+
+        rejection = adapter.effect_rejection()
+        assert rejection is not None
+        recovery = effects.EffectRecoveryEvidence(
+            failed_effect_index=0,
+            failed_effect_kind=effect.kind,
+            failed_effect_sha256=hashlib.sha256(effect.payload_json.encode()).hexdigest(),
+            completed_effect_indexes=(),
+            completed_effect_sha256=(),
+            mutation_status="not-complete",
+            unfinished_boundary="effect-precondition",
+            rejection=rejection,
+            operation_stage="BEFORE-WRITE",
+            write_call_entered=False,
+        )
+        failure = application._recovery_failure_document(
+            effects.ApplyResult(False, "effect precondition rejected", recovery_evidence=recovery)
+        )
+        assert application._accepted_recovery_boundary(failure) == "READ_ONLY"

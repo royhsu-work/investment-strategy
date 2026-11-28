@@ -28,6 +28,10 @@ import investment_strategy.scheduled_agent_runtime as runtime
 import investment_strategy.scheduled_agent_validation_resource as resources
 from investment_strategy.scheduled_agent_action_model import (
     Action,
+    ActionApplicationDecision,
+    ActionSource,
+    ApplicationDisposition,
+    BoundedActionResult,
     ResultKind,
     TypedResult,
     next_action,
@@ -383,6 +387,7 @@ class GitHubSequence:
         request_id: int,
         extra: list[dict[str, str]] | None = None,
         validation_passed: bool = False,
+        legacy_accepted: bool = False,
     ) -> effects.ApplyResult:
         if kind == "continue-accepted":
             decisions = [
@@ -552,6 +557,32 @@ class GitHubSequence:
                 "user": {"login": "royhsu-work"},
                 "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
             }
+            if legacy_accepted:
+                # A pre-upgrade ACCEPT is fixture history, not a fresh grant by
+                # the new Application. Resume it through the actual Phase B.
+                assert model_action is Action.IMPLEMENT_CHANGE
+                assert successor is Action.REVIEW_IMPLEMENTATION
+                decision = ActionApplicationDecision(
+                    ApplicationDisposition.ACCEPT,
+                    ActionSource(229, CHANGE, model_action, self.main),
+                    BoundedActionResult(229, CHANGE, model_action, TypedResult(ResultKind(kind))),
+                    successor,
+                    role_for(successor),
+                )
+                accepted = effects.render_application_decision_body(
+                    request_comment_id=request_id,
+                    request_body=request_body,
+                    authorization_revision=self.main,
+                    decision=decision,
+                    disposition="ACCEPTED",
+                    raw_worker_result=raw,
+                    reason="pre-upgrade accepted implementation completion",
+                )
+                # Only the simulated historical ACCEPT is seeded here; all
+                # materialization/comment/routing effects remain real code.
+                self.read(
+                    REPO, "test", "issues/229/comments", method="POST", payload={"body": accepted}
+                )
             event_comment_id = request_id
         event = {
             "action": "created",
@@ -582,7 +613,8 @@ class GitHubSequence:
                     ["--validation-passed", "--validated-revision", HEAD]
                     if validation_passed
                     else []
-                ),
+                )
+                + (["--run-attempt", "2"] if legacy_accepted else []),
             )
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
@@ -605,6 +637,7 @@ class GitHubSequence:
         request_id: int,
         extra: list[dict[str, str]] | None = None,
         validation_passed: bool = False,
+        legacy_accepted: bool = False,
     ) -> effects.ApplyResult:
         # Each wake is a fresh Python process. Only the emulated remote REST state
         # survives; no adapter cache, imported module state or local receipt does.
@@ -618,6 +651,7 @@ class GitHubSequence:
                     "request_id": request_id,
                     "extra": extra,
                     "validation_passed": validation_passed,
+                    "legacy_accepted": legacy_accepted,
                 }
             ),
             text=True,
@@ -635,7 +669,7 @@ class GitHubSequence:
 
 
 @pytest.mark.parametrize("interruption", [None, "formal-result", "routing"])
-def test_merge_delivery_and_rereview_use_one_evolving_rest_sequence(
+def test_merge_and_legacy_accepted_delivery_rereview_use_one_evolving_rest_sequence(
     monkeypatch: pytest.MonkeyPatch,
     interruption: str | None,
 ) -> None:
@@ -703,7 +737,7 @@ def test_merge_delivery_and_rereview_use_one_evolving_rest_sequence(
         },
     ]
     github.interrupt_after = interruption
-    result = github.apply("ready", 104, checkpoint_effects)
+    result = github.apply("ready", 104, checkpoint_effects, legacy_accepted=True)
     if interruption is not None:
         assert not result.applied and "after durable" in str(result.reason)
         if interruption == "formal-result":
@@ -750,6 +784,7 @@ if __name__ == "__main__":
                 request["request_id"],
                 request["extra"],
                 request.get("validation_passed", False),
+                request.get("legacy_accepted", False),
             )
         except SequenceInterruption as error:
             result = effects.ApplyResult(False, str(error))

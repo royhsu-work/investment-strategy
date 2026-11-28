@@ -5314,6 +5314,289 @@ def test_actual_implementation_constructor_is_proved_by_fresh_consumers(
     assert proof_git.mutations == before
 
 
+@pytest.mark.parametrize(
+    "case",
+    ["current", "stale-preimage", "review-required", "unqualified-review", "mixed", "comment"],
+)
+def test_development_save_uses_actual_ingress_application_and_git_carrier(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    """Exercise development saves and rejections through raw ingress and real Git objects."""
+    import investment_strategy.scheduled_agent_application_carrier as carrier
+    import investment_strategy.scheduled_agent_effects as effects
+    import investment_strategy.scheduled_agent_merge_acceptance as acceptance
+    from investment_strategy.scheduled_agent_runtime import (
+        GitHubIssueObservation,
+        _qualify_current_observation,
+        acquire_dispatch_preflight,
+    )
+    from investment_strategy.workflow_dispatch import DispatchPreflight
+
+    proof_git.source = WorkerRequest(322, "executor", "implement-change")
+    proof_git.routing = proof_git.source.action
+    proof_git.path = "tests/test_partial_work.py"
+    tasks_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    proof_git.main = proof_git.commit(
+        {proof_git.path: "def test_work():\n    assert True\n"}, "Default work", (proof_git.base,)
+    )
+    proof_git.authorization = proof_git.main
+    proof_git.base = proof_git.commit(
+        {
+            f"openspec/changes/{_CHANGE}/proposal.md": "Approved proposal",
+            tasks_path: "- [ ] 1.1 Work\n",
+        },
+        "Approved work",
+        (proof_git.main,),
+    )
+    cast(dict[str, object], proof_git.prs[0]["base"])["sha"] = proof_git.main
+    proof_git.set_head(proof_git.base)
+    proof_git.desired = proof_git.blob("def test_work():\n    assert False\n")
+    proof_git.allow_writes = True
+    payload = proof_git.payload()
+    if case == "mixed":
+        cast(list[dict[str, object]], payload["files"]).append(
+            {
+                "path": tasks_path,
+                "blob_sha": proof_git.blob("- [x] 1.1 Work\n"),
+                "expected_sha": proof_git.entries(proof_git.base)[tasks_path]["sha"],
+            }
+        )
+    requested = [{"kind": "github-mutation", "payload_json": json.dumps(payload)}]
+    if case == "comment":
+        requested.append(
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps({"issue_number": 322, "body": "Publish progress"}),
+            }
+        )
+    worker = {
+        "issue_number": 322,
+        "role": "executor",
+        "action": "implement-change",
+        "change": _CHANGE,
+        "result_kind": "more-implementation-required",
+        "evidence_ref": "test-only-candidate",
+        "result_content": "Save partial test work",
+        "requested_effects": requested,
+    }
+    comments: list[dict[str, object]] = []
+
+    def read(repository: str, token: str, path: str, **kwargs: object) -> object:
+        if path.startswith("pulls/324/files"):
+            return proof_git.comparison(proof_git.main, proof_git.head)["files"]
+        if path.startswith("issues/322/comments?"):
+            return list(comments)
+        if path == "issues/322/comments":
+            assert kwargs.get("method") == "POST"
+            body = cast(dict[str, object], kwargs["payload"])["body"]
+            assert isinstance(body, str) and body.startswith("APPLICATION_DECISION\n")
+            comment = {
+                "id": 1001 + len(comments),
+                "body": body,
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+            }
+            comments.append(comment)
+            return comment
+        if path.startswith("issues/comments/"):
+            comment_id = int(path.rsplit("/", 1)[1])
+            return next(comment for comment in comments if comment["id"] == comment_id)
+        return proof_git.api(repository, token, path, **kwargs)
+
+    monkeypatch.setattr(carrier, "_github_json", read)
+    monkeypatch.setattr(materialization, "_github_json", read)
+    monkeypatch.setattr(validation_resource, "_github_json", read)
+    monkeypatch.setattr(effects, "_github_json", read)
+    monkeypatch.setattr(application_bridge, "_github_json", read)
+
+    def preflight() -> DispatchPreflight:
+        observation = GitHubIssueObservation(
+            issue_number=322,
+            change=_CHANGE,
+            routing=(
+                ("reviewer", "review-openspec")
+                if proof_git.routing == "review-openspec"
+                else ("executor", "implement-change")
+            ),
+            state="open",
+            created_order=1,
+            authoritative=True,
+        )
+        if case == "unqualified-review":
+            observation = _qualify_current_observation(observation, (), (), proof_git.main)
+        return acquire_dispatch_preflight(
+            observations=(observation,),
+            source_total_count=1,
+            incomplete_results=False,
+            exhausted=True,
+        )
+
+    monkeypatch.setattr(acceptance, "acquire_current_github_preflight", lambda *_: preflight())
+
+    def project(document: dict[str, object], request_id: int) -> tuple[str, str]:
+        body = "WORKER_RESULT\n" + json.dumps(document) + "\n"
+        request = application_bridge.canonicalize_raw_worker_result(
+            body=body,
+            source=proof_git.source,
+            authorized_change=_CHANGE,
+            repository=proof_git.repository,
+            current_revision=proof_git.main,
+        )
+        projected = application_bridge._fresh_application_worker_result(
+            request.raw_worker_result,
+            source=proof_git.source,
+            change=_CHANGE,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            default_branch="main",
+            request_comment_id=request_id,
+        )
+        return body, projected
+
+    def apply(body: str, projected: str, request_id: int) -> effects.ApplyResult:
+        _, result = acceptance.run_guarded_effect_application(
+            projected,
+            source=proof_git.source,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            request_comment_id=request_id,
+            application_request_body=body,
+            authorization_revision=proof_git.main,
+            authorized_change=_CHANGE,
+        )
+        return result
+
+    body, projected = project(worker, 901)
+    if case == "stale-preimage":
+        competing = proof_git.commit(
+            {proof_git.path: "def test_work():\n    assert 2 + 2 == 4\n"},
+            "Concurrent change to the same test",
+            (proof_git.base,),
+        )
+        proof_git.set_head(competing)
+    if case == "review-required":
+        proof_git.routing = "review-openspec"
+
+    initial_head = proof_git.head
+    if case != "current":
+        result = apply(body, projected, 901)
+        assert not result.applied, result
+        reason = {
+            "stale-preimage": "effect precondition rejected",
+            "review-required": "typed application rejected:model-selection",
+            "unqualified-review": "typed application rejected:model-selection",
+            "mixed": "typed application rejected:implementation-checkpoint-incomplete",
+            "comment": "typed application rejected:implementation-checkpoint-incomplete",
+        }
+        assert result.reason == reason[case], result
+        if case in {"mixed", "comment"}:
+            assert len(comments) == 1
+            rejection = effects.parse_application_decision(comments[0]["body"])
+            assert rejection is not None and rejection.disposition == "REJECTED"
+            assert rejection.request_comment_id == 901
+        else:
+            assert comments == []
+        assert proof_git.mutations == []
+        assert proof_git.git("rev-parse", f"refs/heads/{proof_git.branch}") == initial_head
+        return
+
+    before_write = _prove_payload_git(proof_git, payload)
+    assert before_write.disposition == "INCOMPLETE", before_write
+    with pytest.raises(CarrierRequired) as required:
+        apply(body, projected, 901)
+    plan = required.value.plan
+
+    assert plan.force is False
+    assert plan.expected["ref_sha"] == proof_git.base
+    assert plan.requested["commit_parents"] == [proof_git.base]
+    assert len(comments) == 1
+    record = effects.parse_application_decision(comments[0]["body"])
+    assert record is not None and record.disposition == "ACCEPTED"
+    assert record.request_comment_id == 901
+    assert record.request_body_sha256 == hashlib.sha256(body.encode()).hexdigest()
+
+    def reconcile() -> tuple[effects.EffectBatch, effects.ApplyResult]:
+        return acceptance.run_guarded_effect_application(
+            record.raw_worker_result,
+            source=proof_git.source,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            authorized_change=_CHANGE,
+            authorization_revision=record.authorization_revision,
+            accepted_intent=True,
+            reconcile_only=True,
+            uncertain_effect_index=0,
+        )
+
+    written = list(proof_git.mutations)
+    _, unobserved = reconcile()
+    assert not unobserved.applied, unobserved
+    assert unobserved.reason == "indeterminate accepted effects require reconciliation"
+    assert proof_git.mutations == written
+    assert len(comments) == 1
+
+    saved = cast(str, plan.requested["sha"])
+    proof_git.set_head(saved)
+    assert proof_git.entries(saved)[proof_git.path]["sha"] == proof_git.desired
+    assert proof_git.entries(saved)[tasks_path] == proof_git.entries(proof_git.base)[tasks_path]
+    batch, resumed = reconcile()
+    assert resumed.applied, resumed
+    assert len(batch.effects) == 1
+    assert proof_git.mutations == written
+    assert len(comments) == 1
+    assert proof_git.routing == "implement-change"
+    proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert proof.disposition == "COMPLETE", proof
+    assert proof.witness is not None and proof.witness.revision == saved
+
+    # A separately authorized effect can change the same path without replaying W.
+    # Proof that a settled native verdict permits the new dispatch is Slice 1.3.
+    corrected_blob = proof_git.blob("def test_work():\n    assert True\n")
+    correction = {
+        **payload,
+        "base_sha": saved,
+        "message": "Correct saved work",
+        "files": [
+            {
+                "path": proof_git.path,
+                "blob_sha": corrected_blob,
+                "expected_sha": proof_git.desired,
+            }
+        ],
+    }
+    correction_body, correction_result = project(
+        {
+            **worker,
+            "requested_effects": [
+                {"kind": "github-mutation", "payload_json": json.dumps(correction)}
+            ],
+        },
+        902,
+    )
+    with pytest.raises(CarrierRequired) as corrected_plan:
+        apply(correction_body, correction_result, 902)
+    assert corrected_plan.value.plan.expected["ref_sha"] == saved
+    corrected = cast(str, corrected_plan.value.plan.requested["sha"])
+    proof_git.set_head(corrected)
+    assert proof_git.entries(corrected)[proof_git.path]["sha"] == corrected_blob
+    assert proof_git.entries(corrected)[tasks_path] == proof_git.entries(saved)[tasks_path]
+    assert len(comments) == 2
+    correction_record = effects.parse_application_decision(comments[1]["body"])
+    assert correction_record is not None and correction_record.disposition == "ACCEPTED"
+    assert correction_record.request_comment_id == 902
+    written = list(proof_git.mutations)
+    evolved = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert evolved.disposition == "COMPLETE", evolved
+    assert evolved.witness is not None and evolved.witness.revision == saved
+    assert evolved.target is not None and evolved.target.revision == corrected
+    assert proof_git.mutations == written
+
+
 def test_workflow_file_implementation_delegates_git_objects_to_existing_carrier(
     proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
@@ -5703,6 +5986,87 @@ def test_exact_accepted_preimage_preserves_witness_across_legal_second_commit(
     assert evolved.witness.revisions.mutation_preimage == first_parent
     assert files[0]["expected_sha"] == accepted_preimage
     assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize("changed_input", ["none", "artifact", "dependency", "config", "validator"])
+def test_shared_artifact_witness_retains_original_and_observes_relevant_inputs(
+    proof_git: _ProofGitRepository, changed_input: str
+) -> None:
+    """Exercise the shared seam, not #473 artifact-specific admission or validation."""
+    fixture = proof_git
+    inputs = {
+        "artifact": fixture.path,
+        "dependency": f"openspec/specs/{_CHANGE}/spec.md",
+        "config": "openspec/config.yaml",
+        "validator": ".github/workflows/openspec-validate.yml",
+    }
+    fixture.base = fixture.commit(
+        {path: f"original {kind}" for kind, path in inputs.items()},
+        "Qualified artifact inputs",
+        (fixture.base,),
+    )
+    fixture.authorization = fixture.base
+    fixture.main = fixture.base
+    fixture.prs.clear()
+    fixture.install_pr(324, fixture.branch, fixture.base)
+    fixture.set_head(fixture.base)
+    payload = fixture.payload()
+    saved = fixture.commit({fixture.path: "accepted content"}, fixture.message, (fixture.base,))
+    fixture.set_head(saved)
+    first = _prove_payload_git(fixture, payload, accepted_intent=True)
+    assert first.disposition == "COMPLETE", first
+    assert first.witness is not None and first.witness.revision == saved
+    assert first.target is not None and first.target.revision == saved
+
+    # A legal same-Change edit may change the artifact itself. Other inputs
+    # arrive from the qualified default branch through the existing overlay.
+    changed_path = "README.md" if changed_input == "none" else inputs[changed_input]
+    if changed_input == "artifact":
+        current = fixture.commit({changed_path: "new input"}, "Later authorized work", (saved,))
+    else:
+        if changed_input == "none":
+            unrelated = fixture.commit({changed_path: "new input"}, "Unrelated edit", (saved,))
+            fixture.set_head(unrelated)
+            rejected = _prove_payload_git(fixture, payload, accepted_intent=True)
+            assert rejected.disposition == "CONTRADICTORY", rejected
+            assert rejected.reason == "materialization descendant changes unrelated paths"
+        fixture.main = fixture.commit({changed_path: "new input"}, "Main advance", (fixture.base,))
+        current = fixture.commit(
+            {changed_path: "new input"},
+            f"Reconcile default-branch ancestry for {_CHANGE}",
+            (saved, fixture.main),
+        )
+    fixture.set_head(current)
+    observed = _prove_payload_git(fixture, payload, accepted_intent=True)
+    assert observed.disposition == "COMPLETE", observed
+    assert observed.witness is not None
+    assert observed.witness.revision == first.witness.revision
+    assert observed.witness.desired_blobs == first.witness.desired_blobs
+    assert (
+        observed.witness.revisions.accepted_authorization
+        == first.witness.revisions.accepted_authorization
+    )
+    assert observed.witness.revisions.carrier_base == first.witness.revisions.carrier_base
+    assert observed.witness.revisions.mutation_preimage == first.witness.revisions.mutation_preimage
+    assert observed.witness.revisions.current_default == fixture.main
+    assert observed.target is not None and observed.target.revision == current
+
+    def identities(revision: str) -> tuple[str | None, ...]:
+        return tuple(
+            validation_resource._content_sha_at(
+                fixture.repository, _TOKEN, path=path, revision=revision
+            )
+            for path in inputs.values()
+        )
+
+    # The test oracle compares actual content identities; the artifact-local
+    # evidence owner remains #473. Historical persistence alone is not reuse
+    # authority for a changed dependency or validator.
+    historical, applicable = identities(saved), identities(current)
+    assert all(identity is not None for identity in historical + applicable)
+    assert (historical == applicable) is (changed_input == "none")
+    assert _apply_git(fixture, payload=payload, accepted_intent=True) == observed.target
+    assert fixture.mutations == []
 
 
 def test_separate_forward_correction_git_witness_does_not_launder_original_unknown(
@@ -6242,7 +6606,7 @@ def test_imported_reader_incomplete_github_observation_is_unknown(
 def test_content_materialization_keeps_unrelated_divergent_parent_tree(
     proof_git: _ProofGitRepository,
 ) -> None:
-    """Content-only accepted paths must not integrate conflicting main paths."""
+    """An authorized Lead artifact save keeps its witness after a subsequent edit."""
     common = proof_git.base
     parent = proof_git.commit(
         {"README.md": "carrier-specific documentation"}, "Carrier work", (common,)
@@ -6254,6 +6618,7 @@ def test_content_materialization_keeps_unrelated_divergent_parent_tree(
     )
     proof_git.authorization = proof_git.main
     unrelated_before = proof_git.entries(parent)["README.md"]
+    original = proof_git.payload()
     assert _prove_git(proof_git, accepted_intent=True).disposition == "INCOMPLETE"
     proof_git.allow_writes = True
     with pytest.raises(CarrierRequired) as raised:
@@ -6273,6 +6638,28 @@ def test_content_materialization_keeps_unrelated_divergent_parent_tree(
     assert witness.witness.revisions.mutation_preimage == parent
     before = list(proof_git.mutations)
     _apply_git(proof_git, accepted_intent=True)
+    assert proof_git.mutations == before
+
+    edited_blob = proof_git.blob("revised proposal")
+    edit = {
+        **original,
+        "base_sha": commit,
+        "message": "Revise the existing OpenSpec artifact",
+        "files": [
+            {"path": proof_git.path, "blob_sha": edited_blob, "expected_sha": proof_git.desired}
+        ],
+    }
+    with pytest.raises(CarrierRequired) as later:
+        _apply_git(proof_git, payload=edit, accepted_intent=True)
+    assert later.value.plan.expected["ref_sha"] == commit
+    revised = cast(str, later.value.plan.requested["sha"])
+    proof_git.set_head(revised)
+    assert proof_git.entries(revised)[proof_git.path]["sha"] == edited_blob
+    before = list(proof_git.mutations)
+    original_proof = _prove_payload_git(proof_git, original, accepted_intent=True)
+    assert original_proof.disposition == "COMPLETE", original_proof
+    assert original_proof.witness is not None and original_proof.witness.revision == commit
+    assert original_proof.target is not None and original_proof.target.revision == revised
     assert proof_git.mutations == before
 
 

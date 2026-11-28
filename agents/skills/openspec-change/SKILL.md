@@ -34,6 +34,16 @@ an exact manifest with path, blob SHA, and current expected SHA. The worker MUST
 or commit, move a ref, mutate an Issue, or choose routing. Application owns those operations and
 freshly verifies parent, tree, ref, PR/head, file, and validation postconditions.
 
+For authorized artifact saves, apply the shared persistence and continuation contract in
+`agents/AGENTS.md`. Reconstruct the saved content and qualified applicable verification using the
+artifact's exact content, relevant upstream/canonical/config and validator identities. Reuse only
+still-valid work; requalify affected evidence when inputs change. Save/report is not a formal result
+or exit; report artifact-local success only after its applicable validation and fresh readback.
+Preserve the spec-driven DAG, capability coverage, scope, lawful semantic correction, final exact-R
+strict and independent review. The full artifact-specific preactivation delivery in #473 remains
+required; this common procedure does not grant new unset-Change ingress or require full Python CI
+for each artifact.
+
 For a material correction, return one structured ready-for-openspec-review result or one bounded
 human-decision-required/blocked result with exact evidence. Do not choose or execute the successor
 in the same wake. Independent Reviewer / review-openspec must review the resulting exact revision.

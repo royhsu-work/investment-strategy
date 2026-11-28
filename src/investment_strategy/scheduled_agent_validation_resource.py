@@ -35,6 +35,7 @@ from investment_strategy.scheduled_agent_carrier import (
     carrier_pr_identity,
     create_exact_git_commit,
     create_exact_git_tree,
+    github_complete_job_inventory,
     github_read_bytes_with_retry,
     github_write_bytes,
     make_carrier_plan,
@@ -958,6 +959,462 @@ def _blob_text(repository: str, token: str, blob_sha: str) -> str:
         return base64.b64decode("".join(content.split()), validate=True).decode("utf-8")
     except (binascii.Error, UnicodeDecodeError) as exc:
         raise RuntimeError("work-product blob is not valid UTF-8") from exc
+
+
+_NATIVE_QUALITY_SETUP_STEPS = (
+    "Set up job",
+    "Run actions/checkout@v4",
+    "Prove exact quality checkout",
+    "Run astral-sh/setup-uv@v6",
+    "Run actions/setup-python@v5",
+)
+_NATIVE_QUALITY_STEPS = ("Ruff lint", "Ruff format check", "Mypy", "Run tests")
+_NATIVE_QUALITY_CHECKOUT_LOG = "##[group]Run actual_sha=$(git rev-parse HEAD)"
+_NATIVE_QUALITY_SETUP_LOG = "##[group]Run astral-sh/setup-uv@v6"
+_ACTIONS_LOG_TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT\S+Z ")
+
+
+def _native_quality_receipt(log: str, *, called: bool = False) -> list[str] | None:
+    """Read the checkout witness only within the trusted pre-test step boundary."""
+
+    lines = [_ACTIONS_LOG_TIMESTAMP.sub("", line) for line in log.splitlines()]
+    if (
+        lines.count(_NATIVE_QUALITY_CHECKOUT_LOG) != 1
+        or lines.count(_NATIVE_QUALITY_SETUP_LOG) != 1
+    ):
+        return None
+    start = lines.index(_NATIVE_QUALITY_CHECKOUT_LOG)
+    end = lines.index(_NATIVE_QUALITY_SETUP_LOG)
+    size = 9 if called else 7
+    return lines[end - size : end] if end - size > start else None
+
+
+def _native_quality_step_outcomes(job: Mapping[str, object]) -> tuple[str, ...] | None:
+    """Return the complete, ordered native quality step conclusions."""
+    required = _NATIVE_QUALITY_SETUP_STEPS + _NATIVE_QUALITY_STEPS
+    raw_steps = job.get("steps")
+    if not isinstance(raw_steps, list):
+        return None
+    steps: list[Mapping[str, object]] = []
+    for raw in raw_steps:
+        step = _as_mapping(raw)
+        if step is None:
+            return None
+        if step.get("name") in required:
+            steps.append(step)
+    if tuple(step["name"] for step in steps) != required:
+        return None
+    numbers: list[int] = []
+    for step in steps:
+        number = step.get("number")
+        if type(number) is not int or number <= 0 or step.get("status") != "completed":
+            return None
+        numbers.append(number)
+    if numbers != sorted(set(numbers)):
+        return None
+    outcomes: list[str] = []
+    for step in steps:
+        conclusion = step.get("conclusion")
+        if not isinstance(conclusion, str):
+            return None
+        outcomes.append(conclusion)
+    return tuple(outcomes)
+
+
+def native_quality_setup_failure_index(job: Mapping[str, object]) -> int | None:
+    """Locate a positively observed fail-fast setup failure, not a verdict."""
+    outcomes = _native_quality_step_outcomes(job)
+    if job.get("conclusion") != "failure" or outcomes is None or "failure" not in outcomes:
+        return None
+    failed = outcomes.index("failure")
+    skipped = ("skipped",) * (len(outcomes) - failed - 1)
+    if (
+        failed < len(_NATIVE_QUALITY_SETUP_STEPS)
+        and outcomes == ("success",) * failed + ("failure",) + skipped
+    ):
+        return failed
+    return None
+
+
+def native_quality_witness_matches(
+    log: str,
+    *,
+    repository: str,
+    revision: str,
+    definition_sha: str,
+    run_id: int,
+    run_attempt: int,
+    source_comment_id: int | None = None,
+    verification_correlation: str | None = None,
+) -> bool:
+    if (source_comment_id is None) != (verification_correlation is None):
+        return False
+    expected = [
+        "##[endgroup]",
+        f"quality_repository={repository}",
+        f"quality_target_sha={revision}",
+        f"quality_checkout_sha={revision}",
+        f"quality_definition_sha={definition_sha}",
+        f"quality_run_id={run_id}",
+        f"quality_run_attempt={run_attempt}",
+    ]
+    if source_comment_id is not None:
+        if (
+            type(source_comment_id) is not int
+            or source_comment_id <= 0
+            or verification_correlation is None
+            or re.fullmatch(r"[0-9a-f]{64}", verification_correlation) is None
+        ):
+            return False
+        expected.extend(
+            [
+                f"quality_source_comment_id={source_comment_id}",
+                f"quality_verification_correlation={verification_correlation}",
+            ]
+        )
+    return _native_quality_receipt(log, called=source_comment_id is not None) == expected
+
+
+def qualify_native_quality_job(
+    job: Mapping[str, object],
+    log: str,
+    *,
+    repository: str,
+    revision: str,
+    definition_sha: str,
+    run_id: int,
+    run_attempt: int,
+    job_id: int,
+    job_name: str,
+    source_comment_id: int | None = None,
+    verification_correlation: str | None = None,
+) -> Literal["PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"] | None:
+    """Interpret one exact job from a qualified producer and attempt.
+
+    The caller must bind the job and complete job log to the native attempt
+    inventory and independently qualify the producer. A pytest step failure
+    supplies no claim about an intended assertion or a test-only revision.
+    """
+    identity = {"id": job_id, "run_id": run_id, "run_attempt": run_attempt}
+    if (
+        not repository
+        or not job_name
+        or not _valid_sha(revision)
+        or not _valid_sha(definition_sha)
+        or any(
+            type(expected) is not int
+            or expected <= 0
+            or type(job.get(field)) is not int
+            or job.get(field) != expected
+            for field, expected in identity.items()
+        )
+        or job.get("name") != job_name
+        or job.get("status") != "completed"
+        or job.get("conclusion") not in ("success", "failure")
+    ):
+        return None
+
+    step_outcomes = _native_quality_step_outcomes(job)
+    if step_outcomes is None:
+        return None
+    setup_count = len(_NATIVE_QUALITY_SETUP_STEPS)
+    if any(outcome != "success" for outcome in step_outcomes[:setup_count]):
+        return None
+
+    # Only consume the witness emitted between the checkout proof's command
+    # group and the first tooling setup. Later candidate output cannot supply it.
+    if not native_quality_witness_matches(
+        log,
+        repository=repository,
+        revision=revision,
+        definition_sha=definition_sha,
+        run_id=run_id,
+        run_attempt=run_attempt,
+        source_comment_id=source_comment_id,
+        verification_correlation=verification_correlation,
+    ):
+        return None
+
+    outcomes = step_outcomes[setup_count:]
+    if job["conclusion"] == "success":
+        return "PASS" if outcomes == ("success",) * len(outcomes) else None
+    if "failure" not in outcomes:
+        return None
+    failed = outcomes.index("failure")
+    skipped = ("skipped",) * (len(outcomes) - failed - 1)
+    if outcomes != ("success",) * failed + ("failure",) + skipped:
+        return None
+    return "PYTEST_STEP_FAILURE" if failed == len(outcomes) - 1 else "STATIC_STEP_FAILURE"
+
+
+def read_native_quality_verdict(
+    repository: str,
+    token: str,
+    *,
+    revision: str,
+    branch: str,
+    workflow_blob: str,
+    run_id: int,
+    run_attempt: int,
+    event: str,
+    read: Callable[[str, str, str], object],
+    log_read: Callable[[str, str, int], str],
+) -> Literal["PASS", "STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"] | None:
+    """Project a qualified attempt onto the existing mechanical verdict interface."""
+    outcome = read_native_quality_attempt(
+        repository,
+        token,
+        revision=revision,
+        branch=branch,
+        workflow_blob=workflow_blob,
+        run_id=run_id,
+        run_attempt=run_attempt,
+        event=event,
+        read=read,
+        log_read=log_read,
+    ).outcome
+    if outcome == "PASS" or outcome == "STATIC_STEP_FAILURE" or outcome == "PYTEST_STEP_FAILURE":
+        return outcome
+    return None
+
+
+def read_native_quality_attempt(
+    repository: str,
+    token: str,
+    *,
+    revision: str,
+    branch: str,
+    workflow_blob: str,
+    run_id: int,
+    run_attempt: int,
+    event: str,
+    read: Callable[[str, str, str], object],
+    log_read: Callable[[str, str, int], str],
+) -> NativeQualityAttempt:
+    """Read an exact ordinary attempt without conflating no verdict and missing evidence.
+
+    The producer blob is selected by the gate owner. Active or incomplete
+    evidence cannot authorize another invocation; a terminal no-verdict
+    requires positively observed native run/job evidence.
+    """
+    unknown = NativeQualityAttempt(run_id, run_attempt, "INDETERMINATE")
+    pending = NativeQualityAttempt(run_id, run_attempt, "PENDING")
+    no_verdict = NativeQualityAttempt(run_id, run_attempt, "NO_VERDICT")
+    if (
+        not repository
+        or not _valid_sha(revision)
+        or not _valid_branch(branch)
+        or not _valid_sha(workflow_blob)
+        or type(run_id) is not int
+        or run_id <= 0
+        or type(run_attempt) is not int
+        or run_attempt <= 0
+        or event not in ("push", "pull_request")
+    ):
+        return unknown
+    workflow_path = ".github/workflows/quality.yml"
+    try:
+        run = _as_mapping(read(repository, token, f"actions/runs/{run_id}/attempts/{run_attempt}"))
+        if run is None:
+            return unknown
+        run_repo = _as_mapping(run.get("repository"))
+        head_repo = _as_mapping(run.get("head_repository"))
+        if (
+            type(run.get("id")) is not int
+            or run.get("id") != run_id
+            or type(run.get("run_attempt")) is not int
+            or run.get("run_attempt") != run_attempt
+            or run_repo is None
+            or run_repo.get("full_name") != repository
+            or head_repo is None
+            or head_repo.get("full_name") != repository
+            or run.get("path") != workflow_path
+            or run.get("event") != event
+            or run.get("head_sha") != revision
+            or run.get("head_branch") != branch
+        ):
+            return unknown
+        status, conclusion = run.get("status"), run.get("conclusion")
+        if status in ("queued", "in_progress", "requested", "waiting", "pending"):
+            return pending if conclusion is None else unknown
+        no_verdict_conclusions = (
+            "cancelled",
+            "skipped",
+            "timed_out",
+            "action_required",
+            "startup_failure",
+            "stale",
+            "neutral",
+        )
+        if status != "completed" or conclusion not in (
+            "success",
+            "failure",
+            *no_verdict_conclusions,
+        ):
+            return unknown
+        jobs = github_complete_job_inventory(
+            repository, token, run_id=run_id, run_attempt=run_attempt, read=read
+        )
+        if jobs is None:
+            return unknown
+        if not jobs:
+            return no_verdict if conclusion in no_verdict_conclusions else unknown
+        if len(jobs) != 1:
+            return unknown
+        job = jobs[0]
+        job_id = job.get("id")
+        if (
+            type(job_id) is not int
+            or job_id <= 0
+            or type(job.get("run_id")) is not int
+            or job.get("run_id") != run_id
+            or type(job.get("run_attempt")) is not int
+            or job.get("run_attempt") != run_attempt
+            or job.get("head_sha") != revision
+            or job.get("name") != "quality"
+            or job.get("status") != "completed"
+            or job.get("conclusion") != conclusion
+        ):
+            return unknown
+        if conclusion in no_verdict_conclusions:
+            return no_verdict
+
+        # A proved fail-fast setup failure is not a mechanical quality verdict.
+        # Failed checkout proof is ambiguous; after a successful proof the
+        # same exact producer/witness qualification remains necessary.
+        failed = native_quality_setup_failure_index(job)
+        if failed is not None:
+            if failed < 2:
+                return no_verdict
+            if failed == 2:
+                return unknown
+        log = log_read(repository, token, job_id)
+        receipt = _native_quality_receipt(log)
+        if receipt is None or not receipt[4].startswith("quality_definition_sha="):
+            return unknown
+        definition_sha = receipt[4].removeprefix("quality_definition_sha=")
+        verdict = qualify_native_quality_job(
+            job,
+            log,
+            repository=repository,
+            revision=revision,
+            definition_sha=definition_sha,
+            run_id=run_id,
+            run_attempt=run_attempt,
+            job_id=job_id,
+            job_name="quality",
+        )
+        if verdict is None and not (
+            failed is not None
+            and failed > 2
+            and _valid_sha(definition_sha)
+            and native_quality_witness_matches(
+                log,
+                repository=repository,
+                revision=revision,
+                definition_sha=definition_sha,
+                run_id=run_id,
+                run_attempt=run_attempt,
+            )
+        ):
+            return unknown
+
+        if event == "push":
+            if definition_sha != revision:
+                return unknown
+        else:
+            if definition_sha == revision:
+                return unknown
+            commit = _as_mapping(read(repository, token, f"git/commits/{definition_sha}"))
+            if commit is None or commit.get("sha") != definition_sha:
+                return unknown
+            parents = commit.get("parents")
+            if not isinstance(parents, list) or len(parents) != 2:
+                return unknown
+            base, head = (_as_mapping(parent) for parent in parents)
+            if (
+                base is None
+                or not _valid_sha(base.get("sha"))
+                or base.get("sha") == revision
+                or head is None
+                or head.get("sha") != revision
+            ):
+                return unknown
+
+        # Read immutable Git content at both the selected target and executed
+        # definition. Never use the current PR's mutable merge ref as evidence.
+        for source in dict.fromkeys((revision, definition_sha)):
+            file = _as_mapping(
+                read(repository, token, f"contents/{workflow_path}?{urlencode({'ref': source})}")
+            )
+            if (
+                file is None
+                or file.get("path") != workflow_path
+                or file.get("type") != "file"
+                or file.get("sha") != workflow_blob
+            ):
+                return unknown
+        if verdict is None:
+            return no_verdict
+        return NativeQualityAttempt(
+            run_id,
+            run_attempt,
+            verdict,
+            job_id=job_id,
+            checkout_revision=revision,
+            definition_revision=definition_sha,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return unknown
+
+
+@dataclass(frozen=True)
+class NativeQualityAttempt:
+    """One attempt observation for an already selected exact quality gate."""
+
+    run_id: int
+    run_attempt: int
+    outcome: Literal[
+        "PASS",
+        "STATIC_STEP_FAILURE",
+        "PYTEST_STEP_FAILURE",
+        "NO_VERDICT",
+        "PENDING",
+        "INDETERMINATE",
+    ]
+    job_id: int | None = None
+    checkout_revision: str | None = None
+    definition_revision: str | None = None
+    source_comment_id: int | None = None
+
+
+def reduce_native_quality_attempts(
+    attempts: tuple[NativeQualityAttempt, ...] | None,
+) -> Literal["PASS", "FAIL", "CONFLICT", "NO_VERDICT", "PENDING", "INDETERMINATE"]:
+    """Reduce every attempt for one exact gate without granting dispatch authority.
+
+    The caller supplies a complete inventory or None. NO_VERDICT on an attempt
+    requires positively observed terminal evidence, including a qualified absence
+    of a usable job. Attempts used for historical settlement remain available
+    independently of this current aggregate.
+    """
+    if attempts is None:
+        return "INDETERMINATE"
+    identities = {(item.run_id, item.run_attempt) for item in attempts}
+    if len(identities) != len(attempts) or any(
+        type(value) is not int or value <= 0 for identity in identities for value in identity
+    ):
+        return "INDETERMINATE"
+
+    failures = {"STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE"}
+    outcomes = {item.outcome for item in attempts}
+    if not outcomes <= {"PASS", "NO_VERDICT", "PENDING", *failures}:
+        return "INDETERMINATE"
+    if "PENDING" in outcomes:
+        return "PENDING"
+    if outcomes & failures:
+        return "CONFLICT" if "PASS" in outcomes else "FAIL"
+    return "PASS" if "PASS" in outcomes else "NO_VERDICT"
 
 
 _IMPLEMENTATION_VERIFICATION_COMMANDS: tuple[tuple[str, ...], ...] = (

@@ -12,6 +12,7 @@ from urllib.request import Request
 
 import pytest
 
+import investment_strategy.scheduled_agent_carrier as carrier
 import investment_strategy.scheduled_agent_validation_resource as resource
 from investment_strategy.scheduled_agent_application_carrier import (
     ImplementationCarrierQualification,
@@ -34,6 +35,487 @@ _REVISION = "013510b12c5d3cde869308a319a1e2fb12cdfa60"
 _PR_HEAD = "05e1e84523651c6a9bc4ebbe4b275b12dae74dbf"
 _CHANGE = "simplify-scheduled-agent-control-plane"
 _FIXTURE_VALUE = "fixture-value"
+
+
+@pytest.mark.parametrize("case", ["complete", "missing", "duplicate", "wrong-attempt"])
+def test_exact_job_inventory_preserves_all_native_job_evidence(case: str) -> None:
+    jobs: list[dict[str, object]] = [
+        {
+            "id": index,
+            "name": "other",
+            "run_id": 75,
+            "run_attempt": 2,
+        }
+        for index in range(1, 101)
+    ]
+    quality: dict[str, object] = {
+        "id": 101,
+        "name": "quality",
+        "run_id": 75,
+        "run_attempt": 2,
+        "status": "completed",
+        "conclusion": "success",
+        "steps": [{"name": "Run tests", "number": 9, "conclusion": "success"}],
+    }
+    endpoint = "actions/runs/75/attempts/2/jobs"
+
+    def read(repository: str, token: str, path: str) -> object:
+        assert repository == _REPOSITORY and token
+        if path == endpoint:
+            return {"total_count": 101, "jobs": jobs[:30]}
+        if path == f"{endpoint}?per_page=100&page=1":
+            return {"total_count": 101, "jobs": jobs}
+        assert path == f"{endpoint}?per_page=100&page=2"
+        if case == "missing":
+            return {"total_count": 101, "jobs": []}
+        if case == "duplicate":
+            return {"total_count": 101, "jobs": [jobs[0]]}
+        if case == "wrong-attempt":
+            return {"total_count": 101, "jobs": [{**quality, "run_attempt": 1}]}
+        return {"total_count": 101, "jobs": [quality]}
+
+    collect = getattr(carrier, "github_complete_job_inventory", None)
+    assert callable(collect), "native quality must reuse a complete attempt job inventory"
+    inventory = collect(_REPOSITORY, "token", run_id=75, run_attempt=2, read=read)
+    if case == "complete":
+        assert inventory == (*jobs, quality)
+    else:
+        assert inventory is None
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("pass", "PASS"),
+        ("static", "STATIC_STEP_FAILURE"),
+        ("pytest", "PYTEST_STEP_FAILURE"),
+        ("setup", None),
+        ("canceled", None),
+        ("active", None),
+        ("wrong-attempt", None),
+        ("wrong-job", None),
+        ("wrong-definition", None),
+        ("wrong-checkout", None),
+        ("missing-witness", None),
+        ("late-witness", None),
+        ("duplicate-witness", None),
+        ("missing-step", None),
+        ("continued-after-failure", None),
+        ("contradictory-conclusion", None),
+        ("called-pass", "PASS"),
+        ("called-static", "STATIC_STEP_FAILURE"),
+        ("called-pytest", "PYTEST_STEP_FAILURE"),
+        ("called-wrong-source", None),
+        ("called-wrong-correlation", None),
+        ("called-missing-correlation", None),
+        ("called-late-correlation", None),
+        ("called-ordinary-witness", None),
+        ("ordinary-called-witness", None),
+    ],
+)
+def test_native_quality_verdict_requires_exact_job_and_ordered_steps(
+    case: str, expected: str | None
+) -> None:
+    names = (
+        "Set up job",
+        "Run actions/checkout@v4",
+        "Prove exact quality checkout",
+        "Run astral-sh/setup-uv@v6",
+        "Run actions/setup-python@v5",
+        "Ruff lint",
+        "Ruff format check",
+        "Mypy",
+        "Run tests",
+    )
+    outcomes = dict.fromkeys(names, "success")
+    if case in {"static", "called-static", "continued-after-failure"}:
+        outcomes["Ruff format check"] = "failure"
+        if case in {"static", "called-static"}:
+            outcomes.update({"Mypy": "skipped", "Run tests": "skipped"})
+    elif case in {"pytest", "called-pytest"}:
+        outcomes["Run tests"] = "failure"
+    elif case == "setup":
+        outcomes["Run actions/setup-python@v5"] = "failure"
+        outcomes.update(dict.fromkeys(names[5:], "skipped"))
+    elif case == "missing-step":
+        del outcomes["Mypy"]
+
+    called = case.startswith("called-")
+    job_name = "verify_quality / quality" if called else "quality"
+    job: dict[str, object] = {
+        "id": 101 if case != "wrong-job" else 102,
+        "name": job_name,
+        "run_id": 75,
+        "run_attempt": 2 if case != "wrong-attempt" else 1,
+        "status": "completed" if case != "active" else "in_progress",
+        "conclusion": (
+            "cancelled"
+            if case == "canceled"
+            else "failure"
+            if "failure" in outcomes.values() or case == "contradictory-conclusion"
+            else "success"
+        ),
+        "steps": [
+            {"name": name, "number": index, "status": "completed", "conclusion": outcome}
+            for index, (name, outcome) in enumerate(outcomes.items(), 1)
+        ],
+    }
+    checkout = _PR_HEAD if case != "wrong-checkout" else _REVISION
+    definition = _REVISION if case != "wrong-definition" else _PR_HEAD
+    witness = [
+        f"quality_repository={_REPOSITORY}",
+        f"quality_target_sha={_PR_HEAD}",
+        f"quality_checkout_sha={checkout}",
+        f"quality_definition_sha={definition}",
+        "quality_run_id=75",
+        "quality_run_attempt=2",
+    ]
+    correlation = "b" * 64 if case == "called-wrong-correlation" else "a" * 64
+    call_witness = [
+        f"quality_source_comment_id={902 if case == 'called-wrong-source' else 901}",
+        f"quality_verification_correlation={correlation}",
+    ]
+    if case == "called-missing-correlation":
+        call_witness.pop()
+    if (called or case == "ordinary-called-witness") and case not in {
+        "called-late-correlation",
+        "called-ordinary-witness",
+    }:
+        witness.extend(call_witness)
+    lines = ["##[group]Run actual_sha=$(git rev-parse HEAD)", "##[endgroup]"]
+    if case not in {"missing-witness", "late-witness"}:
+        lines.extend(witness)
+    if case == "duplicate-witness":
+        lines.extend(witness)
+    lines.append("##[group]Run astral-sh/setup-uv@v6")
+    if case == "late-witness":
+        lines.extend(witness)
+    if case == "called-late-correlation":
+        lines.extend(call_witness)
+    log = "\n".join(f"2026-11-27T14:23:11.7489587Z {line}" for line in lines)
+
+    qualify = getattr(resource, "qualify_native_quality_job", None)
+    assert callable(qualify), "Validation Resource must qualify the exact native quality job"
+    assert (
+        qualify(
+            job,
+            log,
+            repository=_REPOSITORY,
+            revision=_PR_HEAD,
+            definition_sha=_REVISION,
+            run_id=75,
+            run_attempt=2,
+            job_id=101,
+            job_name=job_name,
+            **({"source_comment_id": 901, "verification_correlation": "a" * 64} if called else {}),
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("attempts", "expected"),
+    [
+        (None, "INDETERMINATE"),
+        ((), "NO_VERDICT"),
+        (((31, 1, "NO_VERDICT"),), "NO_VERDICT"),
+        (((31, 1, "PENDING"),), "PENDING"),
+        (((31, 1, "PASS"), (32, 1, "PASS")), "PASS"),
+        (((31, 1, "PASS"), (32, 1, "NO_VERDICT")), "PASS"),
+        (((31, 1, "PASS"), (32, 1, "INDETERMINATE")), "INDETERMINATE"),
+        (((31, 1, "PASS"), (32, 1, "PENDING")), "PENDING"),
+        (((31, 1, "PASS"), (31, 1, "PASS")), "INDETERMINATE"),
+        (((31, 1, "PASS"), (31, 1, "PYTEST_STEP_FAILURE")), "INDETERMINATE"),
+        (((31, 1, "PASS"), (32, 1, "PYTEST_STEP_FAILURE")), "CONFLICT"),
+        (((31, 1, "PYTEST_STEP_FAILURE"), (32, 1, "PASS")), "CONFLICT"),
+        (((31, 1, "PYTEST_STEP_FAILURE"), (31, 2, "PASS")), "CONFLICT"),
+        (((31, 1, "STATIC_STEP_FAILURE"), (32, 1, "PYTEST_STEP_FAILURE")), "FAIL"),
+    ],
+)
+def test_native_quality_frontier_uses_complete_distinct_attempts(
+    attempts: tuple[tuple[int, int, str], ...] | None, expected: str
+) -> None:
+    observe = getattr(resource, "reduce_native_quality_attempts", None)
+    attempt = getattr(resource, "NativeQualityAttempt", None)
+    assert callable(observe) and callable(attempt), "native quality needs an attempt reducer"
+
+    evidence = None if attempts is None else tuple(attempt(*item) for item in attempts)
+    assert observe(evidence) == expected
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("push", "PASS"),
+        ("pull-request", "PASS"),
+        ("static", "STATIC_STEP_FAILURE"),
+        ("pytest", "PYTEST_STEP_FAILURE"),
+        ("wrong-source", None),
+        ("wrong-attempt", None),
+        ("wrong-branch", None),
+        ("wrong-head", None),
+        ("wrong-job-head", None),
+        ("missing-job", None),
+        ("wrong-parent", None),
+        ("wrong-definition-blob", None),
+        ("wrong-target-blob", None),
+        ("wrong-checkout", None),
+        ("contradictory-run", None),
+    ],
+)
+def test_native_quality_verdict_reads_exact_ordinary_producer(
+    case: str, expected: str | None
+) -> None:
+    event = "push" if case == "push" else "pull_request"
+    definition = _PR_HEAD if event == "push" else "a" * 40
+    workflow_blob = "b" * 40
+    branch = "agent/" + _CHANGE
+    endpoint = "actions/runs/75/attempts/2"
+    names = (
+        "Set up job",
+        "Run actions/checkout@v4",
+        "Prove exact quality checkout",
+        "Run astral-sh/setup-uv@v6",
+        "Run actions/setup-python@v5",
+        "Ruff lint",
+        "Ruff format check",
+        "Mypy",
+        "Run tests",
+    )
+    outcomes = dict.fromkeys(names, "success")
+    if case == "static":
+        outcomes.update({"Mypy": "failure", "Run tests": "skipped"})
+    if case == "pytest":
+        outcomes["Run tests"] = "failure"
+    conclusion = "failure" if "failure" in outcomes.values() else "success"
+    run: dict[str, object] = {
+        "id": 75,
+        "run_attempt": 1 if case == "wrong-attempt" else 2,
+        "repository": {"full_name": _REPOSITORY},
+        "head_repository": {"full_name": _REPOSITORY},
+        "path": (
+            ".github/workflows/other.yml"
+            if case == "wrong-source"
+            else ".github/workflows/quality.yml"
+        ),
+        "event": event,
+        "head_sha": _REVISION if case == "wrong-head" else _PR_HEAD,
+        "head_branch": "other" if case == "wrong-branch" else branch,
+        "status": "completed",
+        "conclusion": "failure" if case == "contradictory-run" else conclusion,
+    }
+    job: dict[str, object] = {
+        "id": 101,
+        "run_id": 75,
+        "run_attempt": 2,
+        "head_sha": _REVISION if case == "wrong-job-head" else _PR_HEAD,
+        "name": "quality",
+        "status": "completed",
+        "conclusion": conclusion,
+        "steps": [
+            {"name": name, "number": number, "status": "completed", "conclusion": outcome}
+            for number, (name, outcome) in enumerate(outcomes.items(), 1)
+        ],
+    }
+
+    def read(repo: str, token: str, path: str) -> object:
+        assert repo == _REPOSITORY and token
+        if path == endpoint:
+            return run
+        if path in (f"{endpoint}/jobs", f"{endpoint}/jobs?per_page=100&page=1"):
+            return {"total_count": 1, "jobs": [] if case == "missing-job" else [job]}
+        if path == f"git/commits/{definition}":
+            return {
+                "sha": definition,
+                "parents": [
+                    {"sha": _REVISION},
+                    {"sha": "c" * 40 if case == "wrong-parent" else _PR_HEAD},
+                ],
+            }
+        for revision in (_PR_HEAD, definition):
+            if path == f"contents/.github/workflows/quality.yml?ref={revision}":
+                wrong = (case == "wrong-definition-blob" and revision == definition) or (
+                    case == "wrong-target-blob" and revision == _PR_HEAD
+                )
+                return {
+                    "path": ".github/workflows/quality.yml",
+                    "type": "file",
+                    "sha": "d" * 40 if wrong else workflow_blob,
+                }
+        raise AssertionError(path)
+
+    def log_read(repo: str, token: str, job_id: int) -> str:
+        assert repo == _REPOSITORY and token and job_id == 101
+        checkout = _REVISION if case == "wrong-checkout" else _PR_HEAD
+        return "\n".join(
+            [
+                "##[group]Run actual_sha=$(git rev-parse HEAD)",
+                "##[endgroup]",
+                f"quality_repository={_REPOSITORY}",
+                f"quality_target_sha={_PR_HEAD}",
+                f"quality_checkout_sha={checkout}",
+                f"quality_definition_sha={definition}",
+                "quality_run_id=75",
+                "quality_run_attempt=2",
+                "##[group]Run astral-sh/setup-uv@v6",
+            ]
+        )
+
+    observe = getattr(resource, "read_native_quality_verdict", None)
+    assert callable(observe), "native quality must observe the actual ordinary producer"
+    assert (
+        observe(
+            _REPOSITORY,
+            "token",
+            revision=_PR_HEAD,
+            branch=branch,
+            workflow_blob=workflow_blob,
+            run_id=75,
+            run_attempt=2,
+            event=event,
+            read=read,
+            log_read=log_read,
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("active", "PENDING"),
+        ("missing-attempt", "INDETERMINATE"),
+        ("skipped", "NO_VERDICT"),
+        ("canceled", "NO_VERDICT"),
+        ("setup-failure", "NO_VERDICT"),
+        ("proof-failure", "INDETERMINATE"),
+        ("success-no-job", "INDETERMINATE"),
+        ("incomplete-jobs", "INDETERMINATE"),
+        ("active-job-terminal-run", "INDETERMINATE"),
+        ("missing-witness", "INDETERMINATE"),
+        ("contradictory-run", "INDETERMINATE"),
+        ("wrong-attempt", "INDETERMINATE"),
+        ("unknown-status", "INDETERMINATE"),
+        ("pass", "PASS"),
+    ],
+)
+def test_native_quality_attempt_distinguishes_no_verdict_from_unknown(
+    case: str, expected: str
+) -> None:
+    branch = "agent/" + _CHANGE
+    endpoint = "actions/runs/75/attempts/2"
+    workflow_blob = "b" * 40
+    workflow_path = ".github/workflows/quality.yml"
+    names = (
+        "Set up job",
+        "Run actions/checkout@v4",
+        "Prove exact quality checkout",
+        "Run astral-sh/setup-uv@v6",
+        "Run actions/setup-python@v5",
+        "Ruff lint",
+        "Ruff format check",
+        "Mypy",
+        "Run tests",
+    )
+    outcomes = ["success"] * len(names)
+    conclusion = "success"
+    if case in {"setup-failure", "proof-failure", "canceled"}:
+        failure = {"setup-failure": 3, "proof-failure": 2, "canceled": 8}[case]
+        conclusion = "cancelled" if case == "canceled" else "failure"
+        outcomes[failure:] = [conclusion] + ["skipped"] * (len(names) - failure - 1)
+    if case == "skipped":
+        conclusion = "skipped"
+    run: dict[str, object] = {
+        "id": 75,
+        "run_attempt": 1 if case == "wrong-attempt" else 2,
+        "repository": {"full_name": _REPOSITORY},
+        "head_repository": {"full_name": _REPOSITORY},
+        "head_sha": _PR_HEAD,
+        "head_branch": branch,
+        "path": workflow_path,
+        "event": "push",
+        "status": "completed",
+        "conclusion": conclusion,
+    }
+    if case in {"active", "unknown-status"}:
+        run.update(
+            {
+                "status": "in_progress" if case == "active" else "unknown",
+                "conclusion": None,
+            }
+        )
+    if case == "contradictory-run":
+        run["conclusion"] = "failure"
+    job: dict[str, object] = {
+        "id": 101,
+        "run_id": 75,
+        "run_attempt": 2,
+        "head_sha": _PR_HEAD,
+        "name": "quality",
+        "status": "completed",
+        "conclusion": conclusion,
+        "steps": [
+            {
+                "name": name,
+                "number": number,
+                "status": "completed",
+                "conclusion": outcome,
+            }
+            for number, (name, outcome) in enumerate(zip(names, outcomes, strict=True), 1)
+        ],
+    }
+    if case == "active-job-terminal-run":
+        job.update({"status": "in_progress", "conclusion": None})
+
+    def read(repository: str, token: str, path: str) -> object:
+        assert repository == _REPOSITORY and token
+        if path == endpoint:
+            return None if case == "missing-attempt" else run
+        if path in (f"{endpoint}/jobs", f"{endpoint}/jobs?per_page=100&page=1"):
+            if case in {"skipped", "success-no-job"}:
+                return {"total_count": 0, "jobs": []}
+            if case == "incomplete-jobs":
+                return {"total_count": 1, "jobs": []}
+            if case == "active":
+                return None
+            return {"total_count": 1, "jobs": [job]}
+        if path == f"contents/{workflow_path}?ref={_PR_HEAD}":
+            return {"path": workflow_path, "type": "file", "sha": workflow_blob}
+        raise AssertionError(path)
+
+    def log_read(repository: str, token: str, job_id: int) -> str:
+        assert repository == _REPOSITORY and token and job_id == 101
+        if case in {"missing-witness", "proof-failure"}:
+            return ""
+        return "\n".join(
+            [
+                "##[group]Run actual_sha=$(git rev-parse HEAD)",
+                "##[endgroup]",
+                f"quality_repository={_REPOSITORY}",
+                f"quality_target_sha={_PR_HEAD}",
+                f"quality_checkout_sha={_PR_HEAD}",
+                f"quality_definition_sha={_PR_HEAD}",
+                "quality_run_id=75",
+                "quality_run_attempt=2",
+                "##[group]Run astral-sh/setup-uv@v6",
+            ]
+        )
+
+    observe = getattr(resource, "read_native_quality_attempt", None)
+    assert callable(observe), "native quality must distinguish terminal no-verdict from unknown"
+    attempt = observe(
+        _REPOSITORY,
+        "token",
+        revision=_PR_HEAD,
+        branch=branch,
+        workflow_blob=workflow_blob,
+        run_id=75,
+        run_attempt=2,
+        event="push",
+        read=read,
+        log_read=log_read,
+    )
+    assert (attempt.run_id, attempt.run_attempt, attempt.outcome) == (75, 2, expected)
 
 
 def test_candidate_checkout_uses_actions_compatible_basic_auth() -> None:

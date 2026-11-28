@@ -447,7 +447,7 @@ def test_native_close_recurrence_is_rejected_before_durable_merge(
     assert result.reason == "fresh merge acceptance rejected"
 
 
-def test_guarded_application_passes_checkpoint_validator_to_shared_batch(
+def test_guarded_application_passes_only_native_delivery_validator_to_shared_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = WorkerRequest(issue_number=159, role="executor", action="implement-change")
@@ -465,7 +465,8 @@ def test_guarded_application_passes_checkpoint_validator_to_shared_batch(
     captured: dict[str, object] = {}
 
     def capture_validator(_batch: object, **kwargs: object) -> merge_acceptance.ApplyResult:
-        captured["validator"] = kwargs.get("validate_implementation_checkpoint")
+        captured["validator"] = kwargs.get("validate_implementation_delivery")
+        assert "validate_implementation_checkpoint" not in kwargs
         return merge_acceptance.ApplyResult(False, "captured")
 
     monkeypatch.setattr(merge_acceptance, "apply_effect_batch", capture_validator)

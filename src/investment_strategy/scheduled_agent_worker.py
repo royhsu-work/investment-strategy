@@ -8,6 +8,7 @@ machine-authorized Action.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -40,6 +41,7 @@ class WorkerActionResult:
     result_content: str
     requested_effects: tuple[WorkerRequestedEffect, ...]
     typed_result: BoundedActionResult
+    reviewed_task_ids: tuple[str, ...] | None = None
 
 
 def _effect_from_payload(payload: object) -> WorkerRequestedEffect:
@@ -130,6 +132,21 @@ def parse_worker_result(
         raise ValueError("worker result vocabulary is invalid") from exc
     if role_for(model_action).value != request.role:
         raise ValueError("authorized Role is not derived from Action")
+    reviewed_task_ids: tuple[str, ...] | None = None
+    if "reviewed_task_ids" in decoded:
+        task_ids = decoded["reviewed_task_ids"]
+        if (
+            (model_action, kind) != (ModelAction.REVIEW_IMPLEMENTATION, ResultKind.FINDINGS)
+            or not isinstance(task_ids, list)
+            or not task_ids
+            or any(
+                not isinstance(task_id, str) or re.fullmatch(r"\d+(?:\.\d+)+", task_id) is None
+                for task_id in task_ids
+            )
+            or len(set(task_ids)) != len(task_ids)
+        ):
+            raise ValueError("invalid structured implementation finding task IDs")
+        reviewed_task_ids = tuple(task_ids)
     typed = BoundedActionResult(
         issue_number=request.issue_number,
         change=change,
@@ -144,4 +161,5 @@ def parse_worker_result(
         result_content=result_content,
         requested_effects=tuple(_effect_from_payload(item) for item in requested_effects),
         typed_result=typed,
+        reviewed_task_ids=reviewed_task_ids,
     )

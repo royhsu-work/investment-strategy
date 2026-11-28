@@ -40,6 +40,7 @@ from investment_strategy.scheduled_agent_effects import (
     EffectBatch,
     GitHubEffectAdapter,
     StagedEffect,
+    _implementation_development_save,
     _source_from_environment,
     _write_github_outputs,
     apply_effect_batch,
@@ -794,6 +795,8 @@ def run_effect_application(
         current_revision=current_revision,
         expected_result_kind=batch.typed_result.result.kind.value,
         request_comment_id=request_comment_id,
+        physical_marker_save=_implementation_development_save(batch)
+        and not _implementation_development_save(batch, include_task_markers=False),
         materialization_promote_change=materialization_promote_change,
         validated_materialization_revision=validated_materialization_revision,
         allow_pending_continuation=allow_pending_continuation,
@@ -843,7 +846,12 @@ def run_effect_application(
             apply_effect=apply_with_fresh_guard,
             observe_postcondition=adapter.observe_postcondition,
             current_revision=current_revision,
-            validate_implementation_checkpoint=adapter.validate_implementation_checkpoint,
+            validate_implementation_delivery=getattr(
+                adapter, "validate_implementation_delivery", None
+            ),
+            validate_implementation_finding=getattr(
+                adapter, "validate_implementation_finding", None
+            ),
             apply_derived=apply_derived,
             defer_issue_comments=defer_issue_comments,
             allow_pending_continuation=allow_pending_continuation,
