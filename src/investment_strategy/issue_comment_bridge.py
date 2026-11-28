@@ -7439,6 +7439,8 @@ def _settled_development_prefix(
     ordered.sort(key=lambda item: item[0])
     prior: tuple[ApplicationDecisionRecord, NativeQualityObligation, str, datetime] | None = None
     prior_completion: ApplicationCompletion | None = None
+    settled_records: list[ApplicationDecisionRecord] = []
+    retired_publication: tuple[datetime, ApplicationRecoveryArtifact] | None = None
     seen_dispatch: set[int] = set()
     seen_revisions: set[str] = set()
     try:
@@ -7454,8 +7456,7 @@ def _settled_development_prefix(
                 # unknown effect. Qualify its exact Original and intended
                 # carrier preimage, not an invented completed write.
                 if (
-                    index != len(ordered) - 1
-                    or prior is None
+                    prior is None
                     or completion.state not in ("RESUMABLE", "INVALID")
                 ):
                     return None
@@ -7480,7 +7481,7 @@ def _settled_development_prefix(
                         return None
                     marker_id = _positive_int(delivery.get("marker_request_comment_id"))
                     markers = [
-                        item for _, item in ordered[:index] if item.request_comment_id == marker_id
+                        item for item in settled_records if item.request_comment_id == marker_id
                     ]
                     if len(markers) != 1 or _accepted_decision_sha256(
                         markers[0], issue_comments
@@ -7490,7 +7491,7 @@ def _settled_development_prefix(
                     carrier_branch = prior[1].branch
                     carrier_base = prior[1].revision
                 else:
-                    if not _implementation_development_save(original):
+                    if index != len(ordered) - 1 or not _implementation_development_save(original):
                         return None
                     materialization = find_materialization_payload(
                         json.loads(original.effects[0].payload_json), source
@@ -7611,6 +7612,50 @@ def _settled_development_prefix(
                     read=read,
                 ):
                     return None
+                if retired_publication is not None:
+                    # A later accepted correction must independently prove the
+                    # negative verdict at its own planning boundary. A fresh
+                    # verdict today cannot authorize an old successor.
+                    retired_at, artifact = retired_publication
+                    attempts = evidence.get("attempts")
+                    job = read(repository, token, f"actions/jobs/{artifact.job_id}")
+                    completed = (
+                        _quality_time(job.get("completed_at"))
+                        if isinstance(job, Mapping)
+                        else None
+                    )
+                    if (
+                        publication is not None
+                        or not isinstance(attempts, list)
+                        or not any(
+                            isinstance(attempt, Mapping)
+                            and attempt.get("outcome")
+                            in ("STATIC_STEP_FAILURE", "PYTEST_STEP_FAILURE")
+                            for attempt in attempts
+                        )
+                        or not isinstance(job, Mapping)
+                        or job.get("id") != artifact.job_id
+                        or job.get("run_id") != artifact.run_id
+                        or job.get("run_attempt") != artifact.run_attempt
+                        or job.get("status") != "completed"
+                        or job.get("conclusion") != "failure"
+                        or completed is None
+                        or not retired_at < completed < boundary
+                    ):
+                        return None
+                    retired_publication = None
+                if publication is not None and index != len(ordered) - 1:
+                    artifact = completion.recovery_artifact
+                    if not (
+                        isinstance(artifact, ApplicationRecoveryArtifact)
+                        and _native_delivery_never_called(record, completion, digest)
+                    ):
+                        return None
+                    # Preserve the immutable ACCEPT as history, without
+                    # attributing either a save or a formal consequence to it.
+                    retired_publication = stamp, artifact
+                    seen_dispatch.add(receipt.dispatch_request_comment_id)
+                    continue
                 if (
                     publication is not None
                     and prior_completion is not None
@@ -7623,7 +7668,7 @@ def _settled_development_prefix(
                         record=previous,
                         completion=replace(
                             prior_completion,
-                            settled_development_records=tuple(item for _, item in ordered[:index]),
+                            settled_development_records=tuple(settled_records),
                         ),
                         current_revision=current_revision,
                         dispatch_request_id=dispatch_request_id,
@@ -7658,7 +7703,7 @@ def _settled_development_prefix(
                             and _paged_list(
                                 repository,
                                 token,
-                                f"issues/{source.issue_number}/comments",
+                                f"issues/{source.issue_number}/comments?sort=created&direction=asc",
                                 read=read,
                             )
                             == issue_comments
@@ -7685,11 +7730,16 @@ def _settled_development_prefix(
             seen_revisions.add(obligation.revision)
             prior = record, obligation, digest, stamp
             prior_completion = completion
-        if prior is None or prior[1].revision != prior[1].carrier_revision:
+            settled_records.append(record)
+        if (
+            retired_publication is not None
+            or prior is None
+            or prior[1].revision != prior[1].carrier_revision
+        ):
             return None
         return record, replace(
             completion,
-            settled_development_records=tuple(item for _, item in ordered),
+            settled_development_records=tuple(settled_records),
         )
     except (OSError, RuntimeError, TypeError, ValueError, LookupError):
         return None
