@@ -11936,3 +11936,197 @@ def _assert_saved_development_frontier(
             assert completion.job_id == 81
     elif expected == "RESUMABLE":
         assert completion.quality_obligation == obligation
+
+
+@pytest.mark.parametrize("prior_evidence", ["valid", "missing", "wrong-hash"])
+def test_next_slice_marker_requires_bound_prior_native_delivery(
+    monkeypatch: pytest.MonkeyPatch, prior_evidence: str
+) -> None:
+    from investment_strategy import scheduled_agent_validation_resource as resources
+
+    repository = "royhsu-work/investment-strategy"
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    change = "native-next-slice"
+    branch = f"agent/{change}"
+    prior_head = "d" * 40
+    head = "b" * 40
+    task_blob, candidate_blob = "1" * 40, "2" * 40
+    path = f"openspec/changes/{change}/tasks.md"
+    task_text = "## Slice 1\n- [x] 1.1 First\n\n## Slice 2\n- [ ] 2.1 Next\n"
+    candidate = task_text.replace("- [ ] 2.1", "- [x] 2.1")
+    review = _formal_frontier_comment(
+        40,
+        action="review-openspec",
+        role="reviewer",
+        result="pass",
+        successor="Executor / implement-change",
+        request_id=30,
+        change=change,
+    )
+    review["body"] = cast(str, review["body"]).replace("ACTION_RESULT", "REVIEW_RESULT", 1)
+    prior_request = _effect_request_comment(
+        comment_id=70,
+        created_at="2026-09-18T02:00:06Z",
+        action=source.action,
+        role=source.role,
+        result_kind="more-implementation-required",
+        change=change,
+    )
+    prior_request["user"] = {"login": "royhsu-work"}
+    prior_request["issue_url"] = f"https://api.github.com/repos/{repository}/issues/140"
+    prior_request["updated_at"] = prior_request["created_at"]
+    evidence = {
+        "scope_task_ids": ["1.1"],
+        "revision": prior_head,
+        "pr_number": 139,
+        "branch": branch,
+        "reviewed_revision": REVISION,
+        "review_comment_id": 40,
+        "marker_request_comment_id": 60,
+        "marker_accepted_decision_sha256": "3" * 64,
+        "marker_revision": prior_head,
+        "marker_blob": task_blob,
+        "quality": {"revision": prior_head},
+        "strict": [[41, 1, 42]],
+        "dispatch": {"dispatch_request_comment_id": 50},
+        "result_kind": "more-implementation-required",
+    }
+    original_body = cast(str, prior_request["body"])
+    lines = original_body.splitlines()
+    worker = json.loads(base64.b64decode(lines[2].removeprefix("Worker-Result-B64: ")))
+    if prior_evidence != "missing":
+        worker["_native_implementation_delivery"] = evidence
+    encoded = base64.b64encode(json.dumps(worker).encode()).decode()
+    projected_request = {
+        **prior_request,
+        "body": "\n".join((lines[0], lines[1], f"Worker-Result-B64: {encoded}")),
+    }
+    accepted = _application_decision_comment(projected_request, comment_id=80)
+    accepted["body"] = cast(str, accepted["body"]).replace(
+        hashlib.sha256(cast(str, projected_request["body"]).encode()).hexdigest(),
+        hashlib.sha256(original_body.encode()).hexdigest(),
+    )
+    accepted["created_at"] = "2026-09-18T02:00:07Z"
+    accepted["updated_at"] = accepted["created_at"]
+    delivered = _formal_frontier_comment(
+        100,
+        action=source.action,
+        role=source.role,
+        result="more-implementation-required",
+        successor="Executor / implement-change",
+        request_id=70,
+        change=change,
+    )
+    evidence_digest = hashlib.sha256(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if prior_evidence == "wrong-hash":
+        evidence_digest = "0" * 64
+    delivered["body"] = (
+        cast(str, delivered["body"]).replace(
+            f"\nRevision: {REVISION}\n", f"\nRevision: {prior_head}\n"
+        )
+        + f"\nEvidence: native-delivery:{evidence_digest}"
+    )
+    comments = (review, accepted, delivered)
+    lifecycle = tuple(
+        _frontier_lifecycle(
+            [(40, "review-openspec", "implement-change"), (100, source.action, source.action)]
+        )
+    )
+    issue = {
+        **_current_source_issue(),
+        "labels": [{"name": "action:implement-change"}],
+        "body": f"Change: {change}",
+    }
+
+    def read(_repository: str, _token: str, api_path: str) -> object:
+        if api_path == "issues/comments/200":
+            return {"id": 200, "issue_url": f"https://api.github.com/repos/{repository}/issues/140"}
+        if api_path == "issues/comments/70":
+            return prior_request
+        if api_path == "issues/138":
+            return issue
+        if api_path.startswith("issues/138/comments?"):
+            return list(comments)
+        if api_path.startswith("issues/138/timeline?"):
+            return list(lifecycle)
+        if api_path == f"compare/{prior_head}...{head}":
+            return {"status": "ahead", "base_commit": {"sha": prior_head}}
+        raise AssertionError(api_path)
+
+    frontier, qualified = bridge._derive_frontier(  # noqa: SLF001
+        repository=repository,
+        token="token",
+        source=source,
+        current_issue=issue,
+        issue_comments=comments,
+        lifecycle_events=lifecycle,
+        current_revision=REVISION,
+        read=read,
+    )
+    assert qualified and frontier is not None
+    record = bridge.parse_application_decision(accepted["body"])
+    assert record is not None
+    assert bridge._qualified_physical_original_accepted_effects(  # noqa: SLF001
+        record=record, source=source, repository=repository, token="token", read=read
+    ) is not None
+    receipt = bridge.DevelopmentDispatchSource(170, 171, 1, 172, 173, "sha256:" + "1" * 64, REVISION)
+    saved_request = _effect_request_comment(
+        comment_id=150,
+        created_at="2026-09-18T02:00:11Z",
+        action=source.action,
+        role=source.role,
+        result_kind="more-implementation-required",
+        change=change,
+    )
+    saved = _application_decision_comment(saved_request, comment_id=160)
+    saved_record = bridge.parse_application_decision(saved["body"])
+    assert saved_record is not None
+    completion = bridge.ApplicationCompletion(
+        "COMPLETE",
+        "qualified current saved work",
+        request_comment_id=150,
+        accepted_record=saved_record,
+        accepted_decision_sha256=hashlib.sha256(cast(str, saved["body"]).encode()).hexdigest(),
+        settled_quality_obligation=bridge.NativeQualityObligation(
+            head, branch, "4" * 40, "5" * 64, "2026-09-18T02:00:12Z", "main", head, prior_head
+        ),
+        quality_observation=bridge.NativeQualityObservation(
+            "PASS", (bridge.NativeQualityAttempt(180, 1, "PASS", 181, head, head, None),)
+        ),
+        settled_development_records=(saved_record,),
+    )
+    monkeypatch.setattr(bridge, "qualify_development_dispatch_source", lambda *a, **kw: receipt)
+    monkeypatch.setattr(bridge, "qualify_application_completion", lambda *a, **kw: completion)
+    monkeypatch.setattr(
+        bridge,
+        "qualify_implementation_carrier",
+        lambda **kw: SimpleNamespace(disposition="QUALIFIED", branch=branch, head_sha=head),
+    )
+    monkeypatch.setattr(bridge, "openspec_review_revision_applies", lambda *a, **kw: True)
+    monkeypatch.setattr(bridge, "_native_strict_marker_evidence", lambda *a, **kw: ((182, 1, 183),))
+    for module in (bridge, resources):
+        monkeypatch.setattr(module, "_content_sha_at", lambda *a, **kw: task_blob)
+        monkeypatch.setattr(module, "_content_text_at", lambda *a, **kw: task_text)
+    monkeypatch.setattr(resources, "_blob_text", lambda *a, **kw: candidate)
+    request = bridge.MaterializationRequest(
+        138,
+        change,
+        change,
+        branch,
+        head,
+        "Save next verified markers",
+        (resources.WorkProductFile(path, candidate_blob, task_blob),),
+        139,
+    )
+    assert bridge.qualify_initial_marker_save(
+        repository,
+        "token",
+        request=request,
+        source=source,
+        request_comment_id=200,
+        current_revision=REVISION,
+        default_branch="main",
+        read=read,
+    ) is (prior_evidence == "valid")
