@@ -12452,3 +12452,123 @@ def test_next_slice_requires_bound_prior_native_delivery(
         default_branch="main",
         read=read,
     ) is (prior_evidence in ("valid", "returned", "legacy"))
+
+@pytest.mark.parametrize("verdict", ["PASS", "CONFLICT", "PENDING"])
+def test_native_delivery_reobserves_quality_before_publication(
+    monkeypatch: pytest.MonkeyPatch,
+    verdict: Literal["PASS", "CONFLICT", "PENDING"],
+) -> None:
+    from investment_strategy import scheduled_agent_effects as effects
+
+    repository = "royhsu-work/investment-strategy"
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    change = "native-delivery"
+    branch = f"agent/{change}"
+    revision, blob = "b" * 40, "c" * 40
+    request = _effect_request_comment(
+        comment_id=70,
+        created_at="2026-09-18T02:00:06Z",
+        action=source.action,
+        role=source.role,
+        result_kind="more-implementation-required",
+        change=change,
+    )
+    accepted = _application_decision_comment(request, comment_id=80)
+    accepted["updated_at"] = accepted["created_at"]
+    accepted["issue_url"] = f"https://api.github.com/repos/{repository}/issues/138"
+    digest = hashlib.sha256(cast(str, accepted["body"]).encode()).hexdigest()
+    attempt = bridge.NativeQualityAttempt(43, 1, "PASS", 44, revision, revision, None)
+    evidence: dict[str, object] = {
+        "revision": revision,
+        "branch": branch,
+        "pr_number": 139,
+        "marker_blob": blob,
+        "result_kind": "ready",
+        "quality": {
+            "request_comment_id": 70,
+            "accepted_decision_sha256": digest,
+            "revision": revision,
+            "branch": branch,
+            "workflow_blob": "4" * 40,
+            "obligation_id": "5" * 64,
+            "authorization_revision": REVISION,
+            "attempts": [
+                {
+                    "run_id": 43,
+                    "run_attempt": 1,
+                    "outcome": "PASS",
+                    "job_id": 44,
+                    "checkout_revision": revision,
+                    "definition_revision": revision,
+                    "source_comment_id": None,
+                }
+            ],
+        },
+        "dispatch": {
+            "dispatch_request_comment_id": 50,
+            "run_id": 51,
+            "run_attempt": 1,
+            "job_id": 52,
+            "artifact_id": 53,
+            "artifact_digest": "sha256:" + "1" * 64,
+            "authorization_revision": REVISION,
+        },
+        "strict": [[41, 1, 42]],
+    }
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path.startswith("issues/138/comments?"):
+            return [accepted]
+        if path == "issues/comments/80":
+            return accepted
+        raise AssertionError(path)
+
+    def observe(*args: object, **kwargs: object) -> bridge.NativeQualityObservation:
+        assert kwargs["revision"] == revision
+        assert kwargs["branch"] == branch
+        assert kwargs["accepted_at"] == accepted["created_at"]
+        assert kwargs["request_comment_id"] == 50
+        assert kwargs["run_id"] == 51
+        assert kwargs["run_attempt"] == 1
+        assert kwargs["observe_only"] is True
+        return bridge.NativeQualityObservation(verdict, (attempt,))
+
+    monkeypatch.setattr(bridge, "qualify_initial_implementation_delivery", lambda *a, **kw: evidence)
+    monkeypatch.setattr(bridge, "plan_native_quality_verification", observe)
+    monkeypatch.setattr(bridge, "_native_strict_marker_evidence", lambda *a, **kw: ((41, 1, 42),))
+    monkeypatch.setattr(effects, "_github_json", read)
+    monkeypatch.setattr(
+        effects,
+        "qualify_implementation_carrier",
+        lambda **kw: SimpleNamespace(disposition="QUALIFIED", branch=branch, head_sha=revision),
+    )
+    monkeypatch.setattr(effects, "_content_sha_at", lambda *a, **kw: blob)
+    adapter = effects.GitHubEffectAdapter(
+        repository,
+        "test-token",  # noqa: S106 - synthetic test credential
+        source,
+        authorized_change=change,
+        current_revision=REVISION,
+        expected_result_kind="ready",
+        request_comment_id=90,
+    )
+    monkeypatch.setattr(adapter, "_source_still_current", lambda: True)
+    monkeypatch.setattr(adapter, "_default_branch_still_current", lambda: True)
+    monkeypatch.setattr(adapter, "_default_branch", lambda: "main")
+    formal = _formal_frontier_comment(
+        100,
+        action=source.action,
+        role=source.role,
+        result="ready",
+        successor="Reviewer / review-implementation",
+        request_id=90,
+        change=change,
+        revision=revision,
+    )
+    effect = effects.StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 138, "body": formal["body"]}),
+    )
+    assert adapter.validate_implementation_delivery(effect)
+    assert adapter.guard(effect) is (verdict == "PASS")
+
