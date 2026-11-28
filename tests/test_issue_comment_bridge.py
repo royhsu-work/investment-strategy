@@ -12268,6 +12268,14 @@ def test_reviewed_single_slice_correction_reuses_its_delivered_marker(
     _assert_next_slice_requires_bound_prior_native_delivery(monkeypatch, "finding", "corrected")
 
 
+def test_reviewed_correction_rejects_finding_outside_approved_task_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_next_slice_requires_bound_prior_native_delivery(
+        monkeypatch, "finding-wrong-scope", "corrected"
+    )
+
+
 @pytest.mark.parametrize("phase_a", [False, True])
 def test_reviewed_correction_publication_preserves_accepted_owner(
     monkeypatch: pytest.MonkeyPatch, phase_a: bool
@@ -12296,7 +12304,7 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
     prior_marker_preimage = "6" * 40
     head = "b" * 40
     current_marker_base = "c" * 40
-    finding_correction = prior_evidence == "finding"
+    finding_correction = prior_evidence in ("finding", "finding-wrong-scope")
     prior_result_kind = "ready" if finding_correction else "more-implementation-required"
     marker_head = "e" * 40 if operation == "corrected" else head
     if finding_correction:
@@ -12530,7 +12538,8 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             base64.b64decode(finding_lines[2].removeprefix("Worker-Result-B64: "))
         )
         finding_worker["evidence_ref"] = f"https://github.com/{repository}/commit/{prior_head}"
-        finding_content = "F1: approved task 1.1 requires content correction."
+        task_id = "9.9" if prior_evidence == "finding-wrong-scope" else "1.1"
+        finding_content = f"F1: approved task {task_id} requires content correction."
         finding_worker["result_content"] = finding_content
         finding_encoded = base64.b64encode(json.dumps(finding_worker).encode()).decode()
         finding_request["body"] = "\n".join(
@@ -12841,8 +12850,9 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             current_revision=REVISION,
             read=read,
         )
-        assert historical_marker is not None
-        assert historical_marker[1].request_comment_id == 30
+        if prior_evidence != "finding-wrong-scope":
+            assert historical_marker is not None
+            assert historical_marker[1].request_comment_id == 30
 
     if publishing:
         monkeypatch.setattr(
@@ -12868,6 +12878,9 @@ def _assert_next_slice_requires_bound_prior_native_delivery(
             default_branch="main",
             read=read,
         )
+        if prior_evidence == "finding-wrong-scope":
+            assert evidence_result is None
+            return
         if finding_correction:
             assert evidence_result is not None
             assert evidence_result["scope_task_ids"] == ["1.1"]
