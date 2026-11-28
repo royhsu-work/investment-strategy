@@ -12416,7 +12416,10 @@ def test_next_slice_requires_bound_prior_native_delivery(
             default_branch="main",
             read=read,
         )
-        if prior_evidence in ("valid", "returned", "legacy") and operation in ("publish", "corrected"):
+        if prior_evidence in ("valid", "returned", "legacy") and operation in (
+            "publish",
+            "corrected",
+        ):
             assert evidence_result is not None
             assert evidence_result["scope_task_ids"] == ["2.1"]
             assert evidence_result["revision"] == head
