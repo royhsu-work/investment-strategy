@@ -145,7 +145,7 @@ def parse_worker_result(
             )
             or len(set(task_ids)) != len(task_ids)
         ):
-            raise ValueError("reviewed_task_ids must identify distinct implementation finding tasks")
+            raise ValueError("invalid structured implementation finding task IDs")
         reviewed_task_ids = tuple(task_ids)
     typed = BoundedActionResult(
         issue_number=request.issue_number,
